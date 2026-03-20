@@ -1,8 +1,10 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.remotes.add module
+"""Dialog for connecting remote identifiers to the active vault.
 
-Dialog for connecting remote identifiers
+This module covers both supported intake paths for a remote identifier:
+resolving an OOBI URL and importing a KERI event file. The dialog validates the
+minimal fields, starts the appropriate doer, and reacts to doer events from the
+vault signal bridge.
 """
 import re
 from urllib import parse
@@ -30,7 +32,7 @@ OOBI_RE = re.compile(r'\A/oobi/(?P<cid>[^/]+)(?:/(?P<role>[^/]+)(?:/(?P<eid>[^/]
 
 
 class AddRemoteIdentifierDialog(LocksmithDialog):
-    """Dialog for connecting a remote identifier."""
+    """Dialog that connects a remote identifier by OOBI or file import."""
     def __init__(self, app, parent=None):
         """
         Initialize the AddRemoteIdentifierDialog.
@@ -220,7 +222,7 @@ class AddRemoteIdentifierDialog(LocksmithDialog):
             self.show_error(f"Failed to read file: {str(e)}")
 
     def _on_connect(self):
-        """Handle Connect button click."""
+        """Validate the form and start the selected connection workflow."""
         # Clear any previous errors
         self.clear_error()
 
@@ -342,6 +344,8 @@ class AddRemoteIdentifierDialog(LocksmithDialog):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only the remote-connection doers owned by this dialog are handled here.
         """
         # Handle ResolveOobiDoer events
         if doer_name == "ResolveOobiDoer":

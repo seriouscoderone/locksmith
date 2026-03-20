@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.remotes.delete module
+"""Confirmation dialog for deleting a remote identifier.
 
-Dialog for deleting remote remote identifiers with confirmation
+This module wraps the shared resource-deletion dialog and binds it to the
+remoting helper that removes an organizer-backed remote identifier.
 """
 from typing import TYPE_CHECKING
 
@@ -18,7 +18,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class DeleteRemoteIdDialog(LocksmithResourceDeletionDialog):
-    """Dialog for confirming and deleting a remote identifier."""
+    """Confirmation dialog that deletes a remote identifier from the active vault."""
 
     def __init__(self, remote_id_alias: str, prefix: str, icon_path: str, app, parent: "VaultPage" = None):
         """
