@@ -2,7 +2,10 @@
 """
 locksmith.core.apping module
 
-This module contains main Locksmith Application class
+Application-level state and lifecycle coordination for Locksmith.
+
+This module owns the active vault references, application configuration, and the
+plugin-manager callbacks that need to happen when a vault is opened or closed.
 """
 from pathlib import Path
 
@@ -61,7 +64,7 @@ class LocksmithApplication:
     @property
     def root(self) -> str:
         """API AID for ESSR encryption from config.
-        
+
         Note: Despite the name 'root', this returns the API AID (delegated AID)
         which is the encryption target for ESSR. The loadbalancer can only sign
         as its delegated AID, not the parent root AID.
@@ -75,7 +78,7 @@ class LocksmithApplication:
 
     def open_vault(self, name: str, vault, qtask):
         """
-        Open a vault and store references.
+        Open a vault, store its active references, and notify plugins.
 
         Args:
             name (str): Name of the vault
@@ -102,7 +105,12 @@ class LocksmithApplication:
         self._resolve_default_oobis_if_needed()
 
     def close_vault(self):
-        """Close the currently open vault."""
+        """Close the current vault and release its external resources.
+
+        This notifies plugins before teardown, stops the running Qt task, and closes
+        the underlying LMDB-backed stores so the vault can be reopened safely in the
+        same process.
+        """
         if self.qtask is not None:
             logger.info(f"Closing vault: {self.name}")
 
@@ -145,7 +153,7 @@ class LocksmithApplication:
         Delete a vault and all its database files from disk.
 
         Uses KERI's built-in close(clear=True) method on each database instance
-        to properly delete files. This is the correct KERI pattern since each 
+        to properly delete files. This is the correct KERI pattern since each
         class knows its own path.
 
         Args:
@@ -293,4 +301,3 @@ class LocksmithApplication:
                 envs.append(p.stem)
 
         return sorted(envs)  # Return sorted list
-        

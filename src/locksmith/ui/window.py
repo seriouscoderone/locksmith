@@ -2,7 +2,10 @@
 """
 locksmith.ui.window module
 
-This module contains the main window for the Locksmith application.
+Main window composition for Locksmith.
+
+The window wires together the application object, top-level pages, toolbar, vault drawer,
+and plugin discovery so provider-specific UI can extend the base wallet shell.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
@@ -29,8 +32,11 @@ class LocksmithWindow(QMainWindow):
     """
     Main application window.
 
-    Handles composition of components, navigation management,
-    and delegates functionality to specialized components.
+    Handles top-level UI composition, navigation, and plugin-aware page wiring.
+
+    The window owns the ``LocksmithApplication`` instance, creates the base Home and Vault
+    pages, and invokes plugin discovery so provider plugins can register additional pages
+    and menu sections into the vault experience.
     """
 
     def __init__(self, config: LocksmithConfig | None = None):
