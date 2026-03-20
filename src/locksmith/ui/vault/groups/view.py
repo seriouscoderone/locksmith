@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.view module
+"""Dialog for inspecting an existing group identifier.
 
-Dialog for viewing group identifier details
+This module presents the read-heavy detail view for a group habitat, including
+its AID, KEL, witness-derived OOBIs, and group-specific key-state refresh path.
 """
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -22,7 +22,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class ViewGroupIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
-    """Dialog for viewing identifier details."""
+    """Dialog that displays group identifier details and related refresh actions."""
 
     def __init__(self, icon_path, app, identifier_alias, parent=None):
         """
