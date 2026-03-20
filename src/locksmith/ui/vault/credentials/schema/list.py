@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.schema.list module
+"""Schema list page for credential workflows inside an open vault.
 
-Schema list content page (displayed within VaultPage container).
+This module renders the schema table used by the credentials submenu and owns
+the refresh path for schema add, edit, and delete operations.
 """
 import logging
 from typing import Dict, Any, TYPE_CHECKING
@@ -23,10 +23,11 @@ logger = logging.getLogger(__name__)
 
 class SchemaListPage(BaseListPage):
     """
-    Schema list content page.
+    Content page that lists credential schemas available to the active vault.
 
-    This is a content-only page that displays within the VaultPage container.
-    The VaultPage manages the navigation menu.
+    ``VaultPage`` handles navigation to this page. This module is responsible
+    for flattening schema and registry state into table rows and opening the
+    dialogs that inspect or remove an individual schema.
     """
 
     def __init__(self, parent: "VaultPage" = None):
@@ -91,7 +92,9 @@ class SchemaListPage(BaseListPage):
         """
         Load actual schema data from the opened vault.
 
-        This method is called after a vault is opened and hby is available.
+        This method is called after a vault is opened and ``hby`` is available.
+        It walks the schema store and annotates each row with registry-derived
+        issuer information when present.
         """
         try:
             schema_data = []
@@ -138,7 +141,7 @@ class SchemaListPage(BaseListPage):
         dialog.open()
 
     def _on_row_action(self, row_data: Dict[str, Any], action: str):
-        """Handle row action from skewer menu."""
+        """Handle a row action selected from the schema actions menu."""
         schema_name = row_data.get('Schema Name', 'Unknown')
         schema_version = row_data.get('Version', 'Unknown')
         schema_said = row_data.get('SAID', '')
@@ -173,8 +176,8 @@ class SchemaListPage(BaseListPage):
         """
         Set the vault name for this page and load schema data.
 
-        This is called by VaultPage.on_show() after a vault is opened,
-        ensuring that self.app.vault.hby is available.
+        ``VaultPage.on_show()`` calls this after a vault is opened so the page
+        can read schema data and subscribe to vault-local refresh events.
 
         Args:
             vault_name: Name of the open vault
@@ -200,6 +203,8 @@ class SchemaListPage(BaseListPage):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only schema mutations that change the visible table trigger a reload.
         """
         logger.debug(f"SchemaListPage received doer_event: {doer_name} - {event_type}")
 

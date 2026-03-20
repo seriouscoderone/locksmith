@@ -1,8 +1,10 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.issued.list module
+"""Issued-credentials list page for an open vault session.
 
-Issued credentials list content page (displayed within VaultPage container).
+This module renders the table used for credentials that were issued from the
+currently opened wallet. It also owns the refresh hooks that keep the table in
+sync with issuance, revocation, grant, and deletion activity emitted by the
+vault's signal bridge.
 """
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -26,10 +28,11 @@ logger = help.ogler.getLogger(__name__)
 
 class IssuedCredentialsListPage(BaseListPage):
     """
-    Issued credentials list content page.
+    Content page that lists credentials issued from the active vault.
 
-    This is a content-only page that displays within the VaultPage container.
-    The VaultPage manages the navigation menu.
+    ``VaultPage`` owns navigation and lifecycle. This page is responsible for
+    loading credential rows from ``vault.rgy.reger`` and opening the dialogs
+    that operate on an issued credential.
     """
 
     def __init__(self, parent: "VaultPage" = None):
@@ -98,7 +101,9 @@ class IssuedCredentialsListPage(BaseListPage):
         """
         Load issued credentials data from the opened vault.
 
-        This method is called after a vault is opened and hby is available.
+        This method is called after a vault is opened and ``hby`` is available.
+        It flattens the credential registry state into table rows that the
+        paginated widget can render directly.
         """
         try:
             org = connecting.Organizer(hby=self.app.vault.hby)
@@ -153,7 +158,7 @@ class IssuedCredentialsListPage(BaseListPage):
         dialog.open()
 
     def _on_row_action(self, row_data: Dict[str, Any], action: str):
-        """Handle row action from skewer menu."""
+        """Handle a row action selected from the credential actions menu."""
         credential_schema = row_data.get('Schema', 'Unknown')
         credential_recipient = row_data.get('Recipient', 'Unknown')
         credential_issuer = row_data.get('Issuer', 'Unknown')
@@ -212,8 +217,9 @@ class IssuedCredentialsListPage(BaseListPage):
         """
         Set the vault name for this page and load credentials data.
 
-        This is called by VaultPage.on_show() after a vault is opened,
-        ensuring that self.app.vault.hby is available.
+        ``VaultPage.on_show()`` calls this after a vault is opened, ensuring
+        that ``self.app.vault.hby`` is available and that the page can bind to
+        the vault-local signal bridge.
 
         Args:
             vault_name: Name of the open vault
@@ -239,6 +245,9 @@ class IssuedCredentialsListPage(BaseListPage):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only the issued-credential events that affect the visible table cause a
+        reload.
         """
         logger.debug(f"IssuedCredentialsListPage received doer_event: {doer_name} - {event_type}")
 
