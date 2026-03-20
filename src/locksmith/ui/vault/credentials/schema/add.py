@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.schema.add module
+"""Dialog for loading a credential schema into the active vault.
 
-Dialog for loading credential schemas
+This module supports both schema intake paths, OOBI and file import, and can
+optionally start the registry setup needed to use the loaded schema for
+credential issuance.
 """
 from keri import help
 import re
@@ -28,7 +29,7 @@ SCHEMA_OOBI_RE = re.compile(r'\A/oobi/(?P<said>[^/]+)/?\Z', re.IGNORECASE)
 
 
 class AddSchemaDialog(LocksmithDialog):
-    """Dialog for loading a credential schema."""
+    """Dialog that loads a schema and optionally prepares it for issuance."""
     def __init__(self, app, parent=None):
         """
         Initialize the AddSchemaDialog.
