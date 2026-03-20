@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.issued.view module
+"""Dialog for inspecting an issued credential.
 
-Dialog for viewing issued credential details
+This module renders the read-heavy details view for an issued credential,
+including issuer and recipient metadata, status, issuance time, and the raw
+credential JSON.
 """
 import json
 import logging
@@ -32,7 +33,7 @@ logger = logging.getLogger(__name__)
 
 
 class ViewIssuedCredentialDialog(LocksmithDialog):
-    """Dialog for viewing issued credential details."""
+    """Dialog that displays issued credential details and raw content."""
     def __init__(self, icon_path, app, credential_said, parent=None):
         """
         Initialize the ViewIssuedCredentialDialog.

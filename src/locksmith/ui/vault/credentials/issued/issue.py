@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.issued.issue module
+"""Dialog for issuing a credential from the active vault.
 
-Dialog for issuing credentials
+This module drives the issuance workflow: choose a schema, pick a recipient,
+materialize any schema-driven fields, and start the issuance doer, including
+the witness-authentication follow-up when required.
 """
 from PySide6.QtCore import QDateTime
 from PySide6.QtGui import QIcon, QIntValidator, QDoubleValidator
@@ -25,7 +26,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class IssueCredentialDialog(LocksmithDialog):
-    """Dialog for issuing a credential."""
+    """Dialog that prepares and starts a credential issuance workflow."""
     def __init__(self, app, parent = None):
         """
         Initialize the IssueCredentialDialog.
