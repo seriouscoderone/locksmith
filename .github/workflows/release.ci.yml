@@ -1,0 +1,207 @@
+name: Release macOS Build
+on:
+  release:
+    types: [created]
+
+jobs:
+  build-macos:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12.6
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.6'
+
+      - name: Setup virtual environment outside of repo
+        run: |
+          python -m venv /tmp/venv
+          source /tmp/venv/bin/activate
+          echo "VIRTUAL_ENV=/tmp/venv" >> $GITHUB_ENV
+          echo "/tmp/venv/bin" >> $GITHUB_PATH
+
+      - name: Install requirements from pyproject.toml
+        run: |
+          source /tmp/venv/bin/activate
+          pip install --upgrade pip
+          pip install setuptools wheel
+          pip install boto3
+          pip install -e .
+
+      # TODO(KERI Foundation): Replace flet build with PySide6 packaging (e.g., PyInstaller).
+      # The previous Flet-based build is no longer applicable.
+      - name: Build macOS application
+        run: |
+          source /tmp/venv/bin/activate
+          echo "ERROR: Build command not configured. Replace this step with PySide6 packaging." && exit 1
+
+      - name: Install create-dmg tool
+        run: |
+          brew install create-dmg
+
+      - name: Set up certificates
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          # Create keychain
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          
+          # Import certificate
+          echo $CERTIFICATE_BASE64 | base64 --decode > certificate.p12
+          security import certificate.p12 -k build.keychain -P "$CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          
+          # Clean up
+          rm certificate.p12
+
+      - name: Set up notarization credentials using API
+        env:
+          API_KEY_CONTENT: ${{ secrets.APPLE_API_KEY_CONTENT }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_KEY_ISSUER: ${{ secrets.APPLE_API_KEY_ISSUER }}
+        run: |
+          # Write the API key to a file
+          echo "$API_KEY_CONTENT" > /tmp/api_key.p8
+          
+          # Store the credentials
+          xcrun notarytool store-credentials "com.CHANGEME.locksmith" \
+            --key /tmp/api_key.p8 \
+            --key-id "$API_KEY_ID" \
+            --issuer "$API_KEY_ISSUER"
+          
+          # Clean up
+          rm /tmp/api_key.p8
+
+
+
+      - name: Set environment variables for signing
+        env:
+          DEVELOPER_ID_APP_CERT: ${{ secrets.DEVELOPER_ID_APP_CERT }}
+          LOCKSMITH_ENVIRONMENT: production
+          APP_ID: com.CHANGEME.locksmith
+          KC_PROFILE: com.CHANGEME.locksmith
+        run: |
+          echo "DEVELOPER_ID_APP_CERT=$DEVELOPER_ID_APP_CERT" >> $GITHUB_ENV
+          echo "LOCKSMITH_ENVIRONMENT=$LOCKSMITH_ENVIRONMENT" >> $GITHUB_ENV
+          echo "APP_ID=$APP_ID" >> $GITHUB_ENV
+          echo "KC_PROFILE=$KC_PROFILE" >> $GITHUB_ENV
+
+      - name: List available certificates
+        run: |
+          security find-identity -v -p codesigning
+          echo $DEVELOPER_ID_APP_CERT
+
+      - name: Create DMG and sign application
+        run: |
+          chmod +x scripts/sign.sh
+          ./scripts/sign.sh
+
+      - name: Set version variable
+        id: set_version
+        run: |
+          version="${{ github.event.release.tag_name }}"
+          if [[ "$version" == v* ]]; then
+            version="${version:1}"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Upload .dmg to DigitalOcean
+        env:
+          SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
+          SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+          SPACES_REGION: ${{ secrets.SPACES_REGION }}
+        run: |
+          source /tmp/venv/bin/activate
+          python scripts/upload.py \
+            --access-key "$SPACES_ACCESS_KEY" \
+            --secret-key "$SPACES_SECRET_KEY" \
+            --region "$SPACES_REGION" \
+            --bucket "CHANGEME-deployment" \
+            --object-key "locksmith/${{ github.event.release.tag_name }}/MacOS/Locksmith.dmg" \
+            --file "build/macos/Locksmith.dmg"
+          python scripts/upload.py \
+            --access-key "$SPACES_ACCESS_KEY" \
+            --secret-key "$SPACES_SECRET_KEY" \
+            --region "$SPACES_REGION" \
+            --bucket "CHANGEME-deployment" \
+            --object-key "locksmith/current/MacOS/Locksmith.dmg" \
+            --file "build/macos/Locksmith.dmg"
+
+  build-windows:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+
+      - name: Set up Python 3.12.6
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.12.6'
+
+      - name: Setup virtual environment outside of repo
+        run: |
+          python -m venv C:\venv
+          echo "VIRTUAL_ENV=C:\venv" >> $env:GITHUB_ENV
+          echo "C:\venv\Scripts" >> $env:GITHUB_PATH
+
+      - name: Install requirements from pyproject.toml
+        run: |
+          pip install --upgrade pip
+          pip install setuptools wheel
+          pip install boto3
+          pip install -e .
+
+      - name: Set UTF-8 encoding for console
+        run: |
+          # Set PYTHONIOENCODING to ensure proper Unicode handling
+          echo "PYTHONIOENCODING=utf-8" >> $env:GITHUB_ENV
+          # Also set PYTHONUTF8=1 to force UTF-8 mode
+          echo "PYTHONUTF8=1" >> $env:GITHUB_ENV
+
+      # TODO(KERI Foundation): Replace flet build with PySide6 packaging (e.g., PyInstaller).
+      # The previous Flet-based build is no longer applicable.
+      - name: Build Windows application
+        run: |
+          echo "ERROR: Build command not configured. Replace this step with PySide6 packaging." ; exit 1
+
+
+      - name: Set version variable
+        id: set_version
+        run: |
+          $version="${{ github.event.release.tag_name }}"
+          if ($version -like "v*") {
+            $version=$version.Substring(1)
+          }
+          echo "version=$version" >> $env:GITHUB_OUTPUT
+
+      - name: Create ZIP file
+        run: |
+          Compress-Archive -Path build\windows\Locksmith.exe -DestinationPath Locksmith.zip
+
+      - name: Upload .zip to DigitalOcean
+        env:
+          SPACES_ACCESS_KEY: ${{ secrets.SPACES_ACCESS_KEY }}
+          SPACES_SECRET_KEY: ${{ secrets.SPACES_SECRET_KEY }}
+          SPACES_REGION: ${{ secrets.SPACES_REGION }}
+        run: |
+          python scripts/upload.py `
+            --access-key "$env:SPACES_ACCESS_KEY" `
+            --secret-key "$env:SPACES_SECRET_KEY" `
+            --region "$env:SPACES_REGION" `
+            --bucket "CHANGEME-deployment" `
+            --object-key "locksmith/${{ github.event.release.tag_name }}/Windows/Locksmith.zip" `
+            --file "Locksmith.zip"
+          python scripts/upload.py `
+            --access-key "$env:SPACES_ACCESS_KEY" `
+            --secret-key "$env:SPACES_SECRET_KEY" `
+            --region "$env:SPACES_REGION" `
+            --bucket "CHANGEME-deployment" `
+            --object-key "locksmith/current/Windows/Locksmith.zip" `
+            --file "Locksmith.zip"
