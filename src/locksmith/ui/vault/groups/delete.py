@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.delete module
+"""Confirmation dialog for deleting a group identifier.
 
-Dialog for deleting group identifiers with confirmation
+This module binds the shared resource-deletion dialog to the identifier removal
+helper used for group habitats.
 """
 from typing import TYPE_CHECKING
 
@@ -18,7 +18,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class DeleteGroupIdentifierDialog(LocksmithResourceDeletionDialog):
-    """Dialog for confirming and deleting an identifier."""
+    """Confirmation dialog that deletes a group identifier from the active vault."""
 
     def __init__(self, identifier_alias: str, icon_path: str, app, parent: "VaultPage" = None):
         """

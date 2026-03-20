@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.authenticate module
+"""Dialog for authenticating witnesses during group workflows.
 
-Dialog for authenticating witnesses during group identifier rotation
+This module is used both immediately after a group rotation and as a retry path
+when witness authentication remains pending for a group identifier.
 """
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
@@ -22,7 +22,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDialog):
-    """Dialog for authenticating witnesses during rotation."""
+    """Dialog that authenticates witnesses for a group identifier workflow."""
 
     def __init__(self, app, hab, witness_ids: list[str], auth_only=False, parent=None):
         """
@@ -100,11 +100,11 @@ class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDial
         # Calculate dialog height based on number of UI entries
         # Base height for title, buttons, padding
         base_height = 180
-        
+
         # Height for individual witness entries (label + field + spacing)
         individual_entry_height = 110
         individual_height = len(self.individual_witnesses) * individual_entry_height
-        
+
         # Height for batch entries (batch label + witness list + field + spacing)
         batch_base_height = 100  # Base height for batch label and passcode field
         batch_per_witness_height = 10  # Additional height per witness in the batch list
@@ -112,7 +112,7 @@ class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDial
             batch_base_height + (len(batch_witness_ids) * batch_per_witness_height)
             for _, batch_witness_ids in self.batch_groups
         )
-        
+
         dialog_height = base_height + individual_height + batch_height
         # Cap at reasonable max height
         dialog_height = min(dialog_height, 700)
@@ -138,6 +138,9 @@ class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDial
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only witness-authentication events for the active group identifier are
+        handled here.
         """
         logger.info(f"GroupWitnessAuthenticationDialog received doer_event: {doer_name} - {event_type}")
 
