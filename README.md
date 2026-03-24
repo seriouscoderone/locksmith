@@ -1,4 +1,4 @@
-# lock
+# LockSmith
 This is  the KERI Foundation open port of the LockSmith wallet
 
 to update assets, in locksmith directory run
