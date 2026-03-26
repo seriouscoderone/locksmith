@@ -43,8 +43,8 @@ Once the editable install is in place:
 Building The Docs
 -----------------
 
-This repo now has a narrow Sphinx scaffold for developer-oriented documentation. Additional
-topic guides can be layered onto that scaffold without changing the local docs workflow.
+This repo does not yet have a full documentation site. The initial Sphinx surface is scoped
+to the plugin contracts and the wallet shell that hosts them.
 
 .. code-block:: bash
 
@@ -70,3 +70,31 @@ added to ``vault.doers``.
 
 When a vault closes, ``PluginManager.on_vault_closed(vault)`` gives plugins a teardown hook
 before the application closes LMDB-backed resources.
+
+See ``plugin-authoring`` for a concrete example of page registration, menu wiring,
+and account-provider setup branching.
+
+Credential Submenu Lifecycle
+----------------------------
+
+The credentials button in ``VaultNavMenu`` expands into three built-in content pages:
+
+#. ``IssuedCredentialsListPage`` for credentials issued from the active wallet
+#. ``ReceivedCredentialsListPage`` for credentials accepted into the wallet
+#. ``SchemaListPage`` for schema records and issuer metadata
+
+``VaultPage`` registers these pages during initialization and switches between them by key.
+Each page delays its data load until ``set_vault_name(...)`` runs after a vault opens, which
+ensures the page can safely read from ``app.vault`` and subscribe to the vault signal bridge.
+
+Identifier Pages
+----------------
+
+The base vault shell also registers built-in list pages for remote and group identifiers:
+
+#. ``RemoteIdentifierListPage`` for organizer-backed contacts, OOBI imports, and role views
+#. ``GroupIdentifierListPage`` for multisig/group habitats and their pending workflow state
+
+These pages follow the same deferred-load pattern as the credentials pages. Each waits until
+``set_vault_name(...)`` runs so it can safely read from ``app.vault`` and react to doer events
+that change the visible table state.
