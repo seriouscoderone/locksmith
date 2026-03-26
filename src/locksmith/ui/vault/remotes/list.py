@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.identifiers.list module
+"""Remote-identifier list page for an open vault session.
 
-Identifier list content page (displayed within VaultPage container).
+This module renders the list of external identifiers known to the active vault
+and owns the refresh logic for OOBI resolution, remote imports, connection
+creation, and role-management events.
 """
 from typing import Dict, Any, TYPE_CHECKING
 from urllib.parse import urlparse, parse_qs
@@ -27,10 +28,10 @@ logger = help.ogler.getLogger(__name__)
 
 class RemoteIdentifierListPage(BaseListPage):
     """
-    Identifier list content page.
+    Content page that lists remote identifiers visible to the active vault.
 
-    This is a content-only page that displays within the VaultPage container.
-    The VaultPage manages the navigation menu.
+    ``VaultPage`` owns navigation to this page. This module handles filtering,
+    table population, and the dialogs that inspect or mutate a remote contact.
     """
 
     def __init__(self, parent: "VaultPage" = None):
@@ -130,7 +131,9 @@ class RemoteIdentifierListPage(BaseListPage):
         """
         Load actual identifier data from the opened vault's hby.
 
-        This method is called after a vault is opened and hby is available.
+        This method is called after a vault is opened and ``hby`` is available.
+        It joins organizer entries, key-state data, and inferred roles into the
+        row format expected by the table widget.
         """
         logger.info("Loading remote identifier data")
         org = self.app.vault.org
@@ -208,7 +211,7 @@ class RemoteIdentifierListPage(BaseListPage):
         export_identifier_to_cesr(self, self.app, identifier_alias)
 
     def _on_row_action(self, row_data: Dict[str, Any], action: str):
-        """Handle row action from skewer menu."""
+        """Handle a row action selected from the remote-identifier menu."""
         remote_identifier_alias = row_data.get('Alias', 'Unknown')
         remote_identifier_prefix = row_data.get('Prefix', 'Unknown')
         logger.info(f"Row action '{action}' triggered for: {remote_identifier_alias}")
@@ -256,8 +259,9 @@ class RemoteIdentifierListPage(BaseListPage):
         """
         Set the vault name for this page and load identifier data.
 
-        This is called by VaultPage.on_show() after a vault is opened,
-        ensuring that self.app.vault.hby is available.
+        ``VaultPage.on_show()`` calls this after a vault is opened so the page
+        can read organizer and kever state, then subscribe to vault-local
+        refresh events.
 
         Args:
             vault_name: Name of the open vault
@@ -283,6 +287,9 @@ class RemoteIdentifierListPage(BaseListPage):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only events that change the visible remote-identifier table trigger a
+        reload.
         """
         logger.debug(f"RemoteIdentifierListPage received doer_event: {doer_name} - {event_type}")
 
@@ -323,4 +330,3 @@ class RemoteIdentifierListPage(BaseListPage):
         # Refresh to show connections as remote identifiers from plugin APIs
         elif doer_name == "AddConnection" and event_type == "connection_added":
             self._load_remote_identifier_data()
-

@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.list module
+"""Group-identifier list page for an open vault session.
 
-Group identifier list content page (displayed within VaultPage container).
+This module renders the multisig/group identifier table and owns the refresh
+logic for group inception, join, interaction, rotation, and witness-
+authentication state changes.
 """
 from typing import Dict, Any, TYPE_CHECKING, List
 
@@ -30,10 +31,11 @@ logger = help.ogler.getLogger(__name__)
 
 class GroupIdentifierListPage(BaseListPage):
     """
-    Group identifier list content page.
+    Content page that lists multisig identifiers for the active vault.
 
-    This is a content-only page that displays within the VaultPage container.
-    The VaultPage manages the navigation menu.
+    ``VaultPage`` routes to this page while this module derives row state from
+    local group habitats, exposes row-specific actions, and highlights pending
+    multisig or witness-authentication work.
     """
 
     def __init__(self, parent: "VaultPage" = None):
@@ -95,8 +97,9 @@ class GroupIdentifierListPage(BaseListPage):
         """
         Load actual group identifier data from the opened vault's hby.
 
-        This method is called after a vault is opened and hby is available.
-        Only loads GroupHab instances (group multisig identifiers).
+        This method is called after a vault is opened and ``hby`` is available.
+        It only loads ``GroupHab`` instances and annotates rows with pending
+        multisig or authentication state when applicable.
         """
 
         try:
@@ -167,7 +170,7 @@ class GroupIdentifierListPage(BaseListPage):
             row_data: Dictionary containing row data (Alias, Prefix, etc.)
 
         Returns:
-            Tuple of (actions_list, action_icons_dict)
+            Tuple of visible action labels and their icon mapping.
         """
         identifier_prefix = row_data.get('Prefix', '')
 
@@ -211,7 +214,7 @@ class GroupIdentifierListPage(BaseListPage):
         export_identifier_to_cesr(self, self.app, identifier_alias)
 
     def _on_row_action(self, row_data: Dict[str, Any], action: str):
-        """Handle row action from skewer menu."""
+        """Handle a row action selected from the group-identifier menu."""
         identifier_alias = row_data.get('Alias', 'Unknown')
         identifier_prefix = row_data.get('Prefix', 'Unknown')
         logger.info(f"Row action '{action}' triggered for group identifier: {identifier_alias}")
@@ -305,8 +308,8 @@ class GroupIdentifierListPage(BaseListPage):
         """
         Set the vault name for this page and load group identifier data.
 
-        This is called by VaultPage.on_show() after a vault is opened,
-        ensuring that self.app.vault.hby is available.
+        ``VaultPage.on_show()`` calls this after a vault is opened so the page
+        can read group habitat state and subscribe to vault-local refresh events.
 
         Args:
             vault_name: Name of the open vault
@@ -332,6 +335,9 @@ class GroupIdentifierListPage(BaseListPage):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only group lifecycle events that change the visible table state trigger
+        a reload.
         """
         logger.debug(f"GroupIdentifierListPage received doer_event: {doer_name} - {event_type}")
 
