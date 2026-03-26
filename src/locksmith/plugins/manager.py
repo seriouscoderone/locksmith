@@ -2,7 +2,8 @@
 """
 locksmith.plugins.manager module
 
-Plugin discovery, initialization, and lifecycle management.
+Discover installed Locksmith plugins, register their UI surface, and relay vault lifecycle
+events to them.
 """
 from __future__ import annotations
 
@@ -26,14 +27,24 @@ ENTRY_POINT_GROUP = "locksmith.plugins"
 
 
 class PluginManager:
-    """Discovers, initializes, and manages Locksmith plugins."""
+    """Discover, initialize, and coordinate installed Locksmith plugins.
+
+    The manager is created once on :class:`locksmith.core.apping.LocksmithApplication`
+    startup. It loads entry points from the ``locksmith.plugins`` group, asks each plugin
+    to register pages and menu sections, and later relays vault lifecycle callbacks.
+    """
 
     def __init__(self, app: Any):
         self._app = app
         self._plugins: dict[str, PluginBase] = {}
 
     def discover_and_initialize(self, vault_page: VaultPage, nav_menu: VaultNavMenu) -> None:
-        """Discover plugins via entry points, initialize them, and register pages/menus."""
+        """Load plugins from entry points and register their UI extensions.
+
+        Args:
+            vault_page: Vault page instance that accepts plugin-provided pages.
+            nav_menu: Vault navigation menu that accepts plugin sections.
+        """
         eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
         for ep in eps:
             try:
@@ -60,7 +71,12 @@ class PluginManager:
                 logger.exception(f"Failed to load plugin from entry point '{ep.name}'")
 
     def on_vault_opened(self, vault: Any) -> None:
-        """Notify all plugins that a vault has been opened."""
+        """Notify plugins that a vault is open and attach their background doers.
+
+        Each plugin receives the vault callback first, then any doers returned from
+        :meth:`locksmith.plugins.base.PluginBase.get_doers` are appended to
+        ``vault.doers``.
+        """
         for plugin in self._plugins.values():
             try:
                 plugin.on_vault_opened(vault)
@@ -69,7 +85,7 @@ class PluginManager:
                 logger.exception(f"Plugin '{plugin.plugin_id}' failed on_vault_opened")
 
     def on_vault_closed(self, vault: Any) -> None:
-        """Notify all plugins that a vault is being closed."""
+        """Notify plugins that a vault is closing so they can release resources."""
         for plugin in self._plugins.values():
             try:
                 plugin.on_vault_closed(vault)
