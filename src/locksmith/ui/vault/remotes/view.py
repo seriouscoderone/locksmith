@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.remotes.view module
+"""Dialog for inspecting a remote identifier in depth.
 
-Dialog for viewing remote identifier details
+This module assembles the read-heavy view for a remote identifier, including
+key-state metadata, KEL content, OOBI details, mailbox entries, verification
+history, and role assignment controls.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -34,7 +35,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class ViewRemoteIdentifierDialog(LocksmithDialog):
-    """Dialog for viewing remote identifier details."""
+    """Dialog that shows remote identifier state and related management actions."""
     def __init__(self, icon_path, app, remote_identifier_prefix, parent=None):
         """
         Initialize the ViewRemoteIdentifierDialog.
@@ -132,6 +133,9 @@ class ViewRemoteIdentifierDialog(LocksmithDialog):
 
         Returns:
             dict: Remote identifier details
+
+        This helper still carries placeholder fallback structure for fields that
+        are not always populated by the current remoting helper.
         """
         # TODO: Implement actual lookup of remote identifier from app
         details = self.app.vault.org.get(self.remote_identifier_prefix)
@@ -544,7 +548,7 @@ class ViewRemoteIdentifierDialog(LocksmithDialog):
 
     # Action handlers
     def _on_refresh_keystate(self):
-        """Handle refresh key state button click."""
+        """Start an OOBI-based key-state refresh for the current remote identifier."""
         logger.info(f"Refresh key state clicked for {self.remote_identifier_prefix}")
 
         # Disable button during refresh
@@ -573,7 +577,7 @@ class ViewRemoteIdentifierDialog(LocksmithDialog):
             self.refresh_keystate_button.setEnabled(True)
 
     def _on_keystate_refreshed(self, doer_name, event_type, data):
-        """Handle keystate refresh completion signal."""
+        """Handle completion events from the key-state refresh workflow."""
         if doer_name != "ResolveOobiDoer":
             return
 
@@ -611,7 +615,7 @@ class ViewRemoteIdentifierDialog(LocksmithDialog):
                     pass
 
     def _on_set_role(self):
-        """Handle set role button click."""
+        """Assign a new role to the viewed remote identifier."""
         logger.info("Set role clicked")
 
         # Get selected role

@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.rotate module
+"""Dialog for rotating an existing group multisig identifier.
 
-Dialog for rotating group multisig identifiers.
+This module collects updated thresholds, member changes, and witness changes,
+then starts the group rotation flow for the selected habitat.
 """
 from typing import TYPE_CHECKING
 
@@ -34,7 +34,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class RotateGroupIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
-    """Dialog for rotating group multisig identifiers."""
+    """Dialog that starts group rotation and witness-change workflows."""
 
     def __init__(self, icon_path, app, identifier_alias, parent=None, prepopulate_witnesses=None):
         """

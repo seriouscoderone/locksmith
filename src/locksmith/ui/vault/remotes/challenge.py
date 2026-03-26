@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.remotes.challenge module
+"""Challenge-response dialog for remote identifier verification.
 
-Dialog for challenging remote identifiers with challenge-response verification
+This module exposes both halves of the remote-verification workflow: generating
+an outbound challenge phrase and responding to a received challenge using one of
+the local vault identifiers.
 """
 
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QTabWidget, QPlainTextEdit
@@ -24,7 +25,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class ChallengeRemoteIdentifierDialog(LocksmithDialog):
-    """Dialog for challenging remote identifiers."""
+    """Dialog that runs remote challenge generation and response workflows."""
 
     def __init__(
         self,
@@ -90,7 +91,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
         self.close_button.clicked.connect(self.close)
 
     def _create_styled_tabs(self) -> QTabWidget:
-        """Create styled tab widget for challenge workflows."""
+        """Create the tab widget used to separate generate and respond flows."""
         from locksmith.ui import colors
 
         tabs = QTabWidget()
@@ -236,7 +237,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
             self.associated_identifier_combo.addItem(item_text, userData=hab_pre)
 
     def _on_generate_challenge(self):
-        """Handle generate challenge button click."""
+        """Generate and display a new 12-word challenge phrase."""
         logger.info("Generate challenge clicked")
 
         try:
@@ -275,7 +276,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
             self.show_error(f"Error copying challenge: {str(e)}")
 
     def _on_verify_challenge(self):
-        """Handle verify challenge button click."""
+        """Validate inputs and start the outbound challenge-response doer."""
         logger.info("Verify challenge clicked")
 
         # Get the response text
@@ -331,7 +332,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
             self.verify_challenge_button.setEnabled(True)
 
     def _on_challenge_verified(self, doer_name, event_type, data):
-        """Handle challenge verification completion signal."""
+        """Handle completion events from the challenge verification workflow."""
         if doer_name != "ChallengeVerificationDoer":
             return
 

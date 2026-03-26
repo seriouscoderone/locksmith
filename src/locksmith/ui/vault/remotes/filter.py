@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.remotes.filter module
+"""Filter dialog for narrowing the remote-identifier list.
 
-Filter dialog for remote identifiers.
+This module lets the user constrain the remote list by transferability without
+changing the underlying organizer state.
 """
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel, QButtonGroup
@@ -16,7 +16,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class FilterRemoteIdentifiersDialog(LocksmithDialog):
-    """Dialog for filtering remote identifiers by type."""
+    """Dialog that filters remote identifiers by transferability."""
 
     # Signal emitted when filters are applied
     filter_applied = Signal(dict)  # Emits: {"identifier_type": "transferable"|"non-transferable"|"both"}
@@ -101,7 +101,7 @@ class FilterRemoteIdentifiersDialog(LocksmithDialog):
         logger.debug("Filter reset to default (Both)")
 
     def _on_apply(self):
-        """Apply selected filters and close dialog."""
+        """Emit the selected filter payload and close the dialog."""
         # Determine selected filter
         if self.transferable_radio.isChecked():
             filter_type = "transferable"

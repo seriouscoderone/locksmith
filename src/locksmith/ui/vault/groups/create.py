@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.create module
+"""Dialog for creating a new group multisig identifier.
 
-Dialog for creating new group multisig identifiers.
+This module collects the local member, remote participants, thresholds, and
+optional delegation inputs needed to start a group inception workflow.
 """
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QIcon
@@ -27,6 +27,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class CreateGroupIdentifierDialog(DelegationMixin, LocksmithDialog):
+    """Dialog that starts group multisig inception from the active vault."""
 
     def __init__(self, icon_path, app, parent=None, config=None):
         logger.info("Creating CreateGroupIdentifierDialog...")
@@ -200,7 +201,7 @@ class CreateGroupIdentifierDialog(DelegationMixin, LocksmithDialog):
         self._populate_participants_selector()
 
     def create_group_identifier(self):
-        """Create a new group multisig identifier using the form values."""
+        """Validate form state and start the group inception workflow."""
         logger.info("Creating new group identifier...")
 
         # Get alias
@@ -364,4 +365,3 @@ class CreateGroupIdentifierDialog(DelegationMixin, LocksmithDialog):
 
         # Add to container
         self.participants_selector_layout.addWidget(self.participants_selector)
-
