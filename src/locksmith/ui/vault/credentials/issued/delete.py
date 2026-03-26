@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.issued.delete module
+"""Confirmation dialog for deleting an issued credential.
 
-Dialog for confirming and deleting an issued credential.
+This module binds the shared resource-deletion dialog to the issued-credential
+removal helper and emits the list-refresh event used by the vault UI.
 """
 from keri import help
 from typing import TYPE_CHECKING
@@ -17,7 +17,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 class DeleteIssuedCredentialDialog(LocksmithResourceDeletionDialog):
-    """Dialog for confirming and deleting an issued credential."""
+    """Confirmation dialog that deletes an issued credential from the vault."""
 
     def __init__(self, schema_name: str, said: str, icon_path: str, app, parent: "VaultPage" = None):
         """

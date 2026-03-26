@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.issued.grant module
+"""Dialog for sharing an issued credential.
 
-Dialog for granting (sending or saving) issued credentials.
+This module supports both outbound grant flows for an issued credential:
+sending it to a remote identifier over IPEX or saving the generated grant
+message to disk in CESR form.
 """
 from typing import TYPE_CHECKING
 
@@ -33,9 +34,8 @@ logger = help.ogler.getLogger(__name__)
 class GrantCredentialDialog(LocksmithDialog):
     """Dialog for granting (sending or saving) an issued credential.
 
-    Two modes:
-    - Send: Share credential with a remote identifier via IPEX
-    - Save: Export credential to CESR file
+    Two modes are supported: send via IPEX or save the generated grant message
+    to disk.
     """
 
     def __init__(
@@ -330,7 +330,7 @@ class GrantCredentialDialog(LocksmithDialog):
         return True
 
     def _on_grant(self):
-        """Handle Grant/Save button click."""
+        """Validate state and route to the selected grant workflow."""
         # Clear previous errors
         self.clear_error()
 
@@ -399,7 +399,7 @@ class GrantCredentialDialog(LocksmithDialog):
         self.action_button.setText("Sending...")
 
     def _on_doer_event(self, doer_name: str, event_type: str, data: dict):
-        """Handle doer events from SendGrantDoer."""
+        """Handle completion events from the outbound send-grant workflow."""
         # Only handle events from SendGrantDoer for our credential
         if doer_name != "SendGrantDoer":
             return
