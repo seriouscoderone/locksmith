@@ -3,7 +3,9 @@
 locksmith.ui.vault.page module
 
 Main vault page container displayed when a vault is open.
-Manages the navigation menu and sub-pages via a dynamic string-keyed registry.
+
+This module owns the string-keyed page registry used inside an open vault session and
+coordinates the handoff between core wallet pages and plugin-provided pages.
 """
 from typing import Any, TYPE_CHECKING
 
@@ -37,7 +39,7 @@ class VaultPage(BasePage):
     - Right content area: QStackedWidget with sub-pages
 
     Pages are registered via string keys. Core pages are registered at init;
-    plugin pages are registered dynamically via register_page().
+    plugin pages are registered dynamically via :meth:`register_page`.
     """
 
     def __init__(self, parent: "LocksmithWindow | None" = None):
@@ -191,7 +193,12 @@ class VaultPage(BasePage):
     # -------------------------------------------------------------------------
 
     def _on_plugin_entry_clicked(self, plugin_id: str):
-        """Handle click on a plugin's entry button in the vault menu."""
+        """Handle click on a plugin entry button in the vault menu.
+
+        Account-provider plugins may divert the user into setup pages until their
+        prerequisites are complete. Other plugins push their submenu immediately and
+        navigate to the first registered plugin page.
+        """
         plugin = self.app.plugin_manager.get_plugin(plugin_id)
         if not plugin:
             logger.warning(f"Plugin '{plugin_id}' not found in plugin manager")
@@ -247,6 +254,7 @@ class VaultPage(BasePage):
     # -------------------------------------------------------------------------
 
     def get_toolbar_config(self) -> dict[str, Any]:
+        """Return the toolbar configuration used while a vault is active."""
         return {
             'show_vaults_button': False,
             'show_lock_button': True,

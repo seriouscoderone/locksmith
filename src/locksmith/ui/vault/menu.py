@@ -1,8 +1,11 @@
 # -*- encoding: utf-8 -*-
 """
-locksmith.ui.vault.nav_menu module
+locksmith.ui.vault.menu module
 
-Navigation menu for vault operations (left sidebar when vault is open).
+Navigation menu for vault operations when a vault is open.
+
+This module contains the menu widgets that drive core vault navigation, credentials
+submenus, and plugin-provided submenu sections.
 """
 from typing import TYPE_CHECKING
 
@@ -264,8 +267,8 @@ class VaultNavMenu(QFrame):
     """
     Navigation menu for vault operations.
 
-    Displays on the left side when a vault is open, providing navigation
-    to different vault sections (identifiers, credentials, contacts, etc.).
+    Displays on the left side when a vault is open and provides navigation to
+    built-in vault sections plus dynamically registered plugin sections.
 
     Supports collapsible mode where the menu shows only icons when collapsed
     and expands on hover or when locked open.
@@ -767,8 +770,8 @@ class VaultNavMenu(QFrame):
         Register a plugin section in the navigation menu.
 
         Adds a spacer, divider, and entry button to the main vault menu layout
-        (before the stretch). Submenu items are added to the layout (hidden)
-        and stored for later activation via push_plugin_menu().
+        before the stretch. Submenu items are inserted hidden and stored for
+        later activation via :meth:`push_plugin_menu`.
 
         Args:
             plugin_id: Unique identifier for the plugin
@@ -834,8 +837,8 @@ class VaultNavMenu(QFrame):
         """
         Switch from vault menu to a plugin's submenu.
 
-        Hides all vault menu items, shows the plugin's submenu items,
-        forces menu expanded and locked, and selects the first nav button.
+        Hides all vault menu items, shows the plugin's submenu items, and forces
+        the menu into the expanded locked-open state used for submenu navigation.
 
         Args:
             plugin_id: The plugin whose submenu to show
