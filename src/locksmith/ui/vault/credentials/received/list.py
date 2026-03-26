@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.received.list module
+"""Received-credentials list page for an open vault session.
 
-Received credentials list content page (displayed within VaultPage container).
+This module renders the table of credentials accepted into the currently opened
+wallet and listens for grant-admission or deletion events so the list stays
+current without a full vault reload.
 """
 from typing import Dict, Any, TYPE_CHECKING
 
@@ -23,10 +24,10 @@ logger = help.ogler.getLogger(__name__)
 
 class ReceivedCredentialsListPage(BaseListPage):
     """
-    Received credentials list content page.
+    Content page that lists credentials received by the active vault.
 
-    This is a content-only page that displays within the VaultPage container.
-    The VaultPage manages the navigation menu.
+    ``VaultPage`` keeps this page mounted inside the vault content stack while
+    this module handles table population and credential-level actions.
     """
 
     def __init__(self, parent: "VaultPage" = None):
@@ -92,7 +93,9 @@ class ReceivedCredentialsListPage(BaseListPage):
         """
         Load received credentials data from the opened vault.
 
-        This method is called after a vault is opened and hby is available.
+        This method is called after a vault is opened and ``hby`` is available.
+        It translates registry state into the row structure expected by the
+        paginated table widget.
         """
         try:
             received_credentials_data = []
@@ -141,7 +144,7 @@ class ReceivedCredentialsListPage(BaseListPage):
         dialog.open()
 
     def _on_row_action(self, row_data: Dict[str, Any], action: str):
-        """Handle row action from skewer menu."""
+        """Handle a row action selected from the credential actions menu."""
         credential_schema = row_data.get('Schema', 'Unknown')
         credential_issuer = row_data.get('Issuer', 'Unknown')
         credential_said = row_data.get('SAID', '')
@@ -170,8 +173,8 @@ class ReceivedCredentialsListPage(BaseListPage):
         """
         Set the vault name for this page and load credentials data.
 
-        This is called by VaultPage.on_show() after a vault is opened,
-        ensuring that self.app.vault.hby is available.
+        ``VaultPage.on_show()`` calls this after a vault is opened so the page
+        can safely read from the vault registry and subscribe to update events.
 
         Args:
             vault_name: Name of the open vault
@@ -197,6 +200,9 @@ class ReceivedCredentialsListPage(BaseListPage):
             doer_name: Name of the doer that emitted the event
             event_type: Type of event
             data: Event data dictionary
+
+        Only events that materially change the visible received-credential list
+        trigger a refresh.
         """
         logger.debug(f"ReceivedCredentialsListPage received doer_event: {doer_name} - {event_type}")
 
