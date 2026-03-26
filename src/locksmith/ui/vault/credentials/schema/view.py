@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.schema.view module
+"""Dialog for inspecting a credential schema.
 
-Dialog for viewing credential schema details
+This module shows the loaded schema metadata, whether the schema is currently
+issuable, and the raw schema JSON.
 """
 import json
 import logging
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 
 
 class ViewSchemaDialog(LocksmithDialog):
-    """Dialog for viewing credential schema details."""
+    """Dialog that displays loaded schema metadata and raw content."""
     def __init__(self, icon_path, app, schema_said, parent=None):
         """
         Initialize the ViewSchemaDialog.
@@ -107,7 +107,7 @@ class ViewSchemaDialog(LocksmithDialog):
 
         # Issuable section
         self._build_issue_section(layout)
-        
+
         # Type Section
         self._build_type_section(layout)
 

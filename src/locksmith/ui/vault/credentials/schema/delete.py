@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.schema.delete module
+"""Confirmation dialog for deleting a credential schema.
 
-Dialog for deleting credential schemas with confirmation
+This module binds the shared resource-deletion dialog to the schema-removal
+logic and emits the schema list refresh event used by the vault UI.
 """
 import logging
 from typing import TYPE_CHECKING
@@ -16,7 +16,7 @@ logger = logging.getLogger(__name__)
 
 
 class DeleteSchemaDialog(LocksmithResourceDeletionDialog):
-    """Dialog for confirming and deleting a credential schema."""
+    """Confirmation dialog that deletes a loaded schema from the vault."""
 
     def __init__(self, schema_name: str, said: str, icon_path: str, app, parent: "VaultPage" = None):
         """

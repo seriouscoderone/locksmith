@@ -1,8 +1,9 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.credentials.received.accept module
+"""Dialog for loading an incoming credential grant.
 
-Dialog for accepting/admitting credentials from IPEX grant messages.
+This module handles the first step of the received-credential flow: selecting a
+grant message file, parsing it into the local databases, and handing control to
+the full admit dialog.
 """
 from typing import TYPE_CHECKING
 
@@ -33,8 +34,8 @@ logger = help.ogler.getLogger(__name__)
 class AcceptCredentialDialog(LocksmithDialog):
     """Dialog for accepting credentials from IPEX grant message files.
 
-    Allows users to select an IPEX grant message file (.cesr) from their
-    local machine and admit the credential.
+    Allows the user to select an IPEX grant message file and bootstrap the
+    admit flow from local disk.
     """
 
     def __init__(
