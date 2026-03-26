@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.accept_multisig module
+"""Dialog for accepting an incoming group inception proposal.
 
-Dialog for accepting multisig group inception proposals.
+This module renders the proposal details for a multisig inception exchange and
+lets the local controller choose the signing member used to join the new group.
 """
 from typing import TYPE_CHECKING
 
@@ -37,7 +37,7 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
     """Dialog for accepting multisig group inception proposals.
 
     Displays the proposal details including participants and thresholds,
-    allows selection of local identifier for signing, and accepts/rejects.
+    allows selection of the local signing identifier, and starts the join flow.
     """
 
     def __init__(

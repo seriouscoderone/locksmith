@@ -1,8 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""
-locksmith.ui.vault.groups.accept_rotation module
+"""Dialog for accepting an incoming group rotation proposal.
 
-Dialog for accepting multisig group rotation proposals.
+This module renders the details of a multisig rotation exchange and lets the
+local controller choose the signing member used to join that rotation.
 """
 from typing import TYPE_CHECKING
 
@@ -38,8 +38,8 @@ class AcceptMultisigRotationDialog(LocksmithDialog):
     """Dialog for accepting multisig group rotation proposals.
 
     Displays the rotation proposal details including participants,
-    thresholds, and witness changes. Allows selection of local
-    identifier for signing, then joins the rotation.
+    thresholds, and witness changes. It then starts the join flow for the
+    selected local signing identifier.
     """
 
     def __init__(
