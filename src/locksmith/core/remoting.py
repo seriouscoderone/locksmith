@@ -27,6 +27,27 @@ from mnemonic import Mnemonic
 logger = help.ogler.getLogger(__name__)
 
 
+def upsert_remote_id_metadata(app, pre: str, *, alias=None, cid=None, tag=None, oobi=None):
+    """Create or update Organizer metadata for a resolved remote identifier."""
+    if not pre:
+        return None
+
+    data = {
+        'last-refresh': helping.nowIso8601(),
+    }
+    if alias:
+        data['alias'] = alias
+    if cid:
+        data['cid'] = cid
+    if tag:
+        data['tag'] = tag
+    if oobi:
+        data['oobi'] = oobi
+
+    app.vault.org.update(pre, data)
+    return app.vault.org.get(pre)
+
+
 def get_remote_id_details(app, remote_id_pre: str) -> dict:
     """
     Retrieve detailed information about a remote identifier.
@@ -143,15 +164,14 @@ async def resolve_oobi(app, pre: str, oobi: str | None = None, force=False, alia
         logger.error(f'OOBI Resolution failed for alias {alias} and OOBI {oobi}, {pre} not found in KERI DB.')
         return False
 
-    remote_id = app.vault.org.get(pre)
-
-    if remote_id:
-        remote_id['last-refresh'] = helping.nowIso8601()
-        if cid:
-            remote_id['cid'] = cid
-        if tag:
-            remote_id['tag'] = tag
-        app.vault.org.update(pre, remote_id)
+    upsert_remote_id_metadata(
+        app,
+        pre,
+        alias=alias,
+        cid=cid,
+        tag=tag,
+        oobi=oobi,
+    )
 
     logger.info(f'OOBI resolved: {alias} {oobi}')
     return True
@@ -331,33 +351,15 @@ class ResolveOobiDoer(doing.DoDoer):
                     )
                 return
 
-            # Update or create remote ID record in Organizer
-            remote_id = self.app.vault.org.get(self.pre)
-
-            if remote_id:
-                # Update existing remote ID
-                remote_id['last-refresh'] = helping.nowIso8601()
-                if self.cid:
-                    remote_id['cid'] = self.cid
-                if self.tag:
-                    remote_id['tag'] = self.tag
-                if self.alias:
-                    remote_id['alias'] = self.alias
-
-                self.app.vault.org.update(self.pre, remote_id)
-                logger.info(f'Updated remote ID in Organizer: {self.alias} ({self.pre})')
-            else:
-                logger.info(f'Remote ID not found in Organizer, will be created by system: {self.pre}')
-
-            # Wait for Organizer record to exist (with timeout)
-            org_timeout = datetime.timedelta(seconds=5)
-            org_start = helping.nowUTC()
-
-            while not self.app.vault.org.get(self.pre):
-                if helping.nowUTC() > org_start + org_timeout:
-                    logger.warning(f'Timeout waiting for Organizer record: {self.pre}')
-                    break
-                yield self.tock
+            upsert_remote_id_metadata(
+                self.app,
+                self.pre,
+                alias=self.alias,
+                cid=self.cid,
+                tag=self.tag,
+                oobi=self.oobi,
+            )
+            logger.info(f'Updated remote ID in Organizer: {self.alias} ({self.pre})')
 
             # Now signal success
             if self.signal_bridge:
@@ -941,4 +943,3 @@ class SetRoleDoer(doing.DoDoer):
                     }
                 )
             return
-
