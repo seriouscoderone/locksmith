@@ -1,0 +1,976 @@
+# -*- encoding: utf-8 -*-
+"""
+locksmith.plugins.kerifoundation.witnesses.provision module
+
+Combined server-selection, provisioning, registration, and QR-code page.
+
+The user selects one or more witness servers, then clicks
+"Provision & Register".  The page provisions a witness on each
+selected server, registers the controller AID with each witness,
+resolves OOBIs, and displays TOTP QR codes.  If any step fails the
+entire run is rolled back (best-effort deprovisioning + Organizer and
+DB cleanup).
+"""
+from __future__ import annotations
+
+import asyncio
+from urllib.parse import urlparse
+
+import pyotp
+from PySide6.QtCore import Signal, Qt, QThread, QObject
+from PySide6.QtWidgets import (
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QButtonGroup, QFrame, QProgressBar,
+)
+from keri import help
+from keri.help import helping
+
+from locksmith.core.otping import create_totp_uri
+from locksmith.core.remoting import resolve_oobi
+from locksmith.plugins.kerifoundation.core.configing import load_witness_servers
+from locksmith.plugins.kerifoundation.core.remoting import (
+    deprovision_witness,
+    provision_witness,
+    register_with_witness,
+)
+from locksmith.plugins.kerifoundation.db.basing import (
+    ProvisionedWitnessRecord,
+    WitnessBatches,
+    WitnessRecord,
+)
+from locksmith.ui import colors
+from locksmith.ui.styles import get_monospace_font_family
+from locksmith.ui.toolkit.widgets import (
+    LocksmithButton,
+    LocksmithInvertedButton,
+)
+from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioPanel
+from locksmith.ui.toolkit.widgets.dividers import LocksmithDivider
+from locksmith.ui.toolkit.widgets.page import LocksmithFormPage
+from locksmith.ui.toolkit.widgets.panels import FlowLayout, LocksmithQRPanel
+
+from locksmith.plugins.kerifoundation.witnesses.widgets import WitnessServerCard
+
+logger = help.ogler.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Background worker
+# ---------------------------------------------------------------------------
+
+class _ProvisionRegisterWorker(QObject):
+    """Provisions and registers witnesses in a background thread.
+
+    On failure the worker deprovisionsALL witnesses created during
+    this run before emitting the ``finished`` signal.
+    """
+
+    progress = Signal(str, int, int)      # (phase_label, current, total)
+    finished = Signal(list, str, list)    # (results, error, rollback_failures)
+
+    def __init__(self, hab_pre, hab, servers, secret=None):
+        super().__init__()
+        self._hab_pre = hab_pre
+        self._hab = hab
+        self._servers = servers           # list of WitnessServerConfig
+        self._secret = secret
+        self._provisioned = []            # [{eid, oobi, boot_url, witness_url}, ...]
+
+    def run(self):
+        total = len(self._servers)
+        results = []
+
+        try:
+            # Phase 1 — Provision
+            for i, server in enumerate(self._servers):
+                self.progress.emit(
+                    f"Provisioning witness {i + 1}/{total}...",
+                    i, total * 2,
+                )
+                prov = provision_witness(self._hab_pre, server.boot_url)
+                self._provisioned.append({
+                    "eid": prov["eid"],
+                    "oobi": prov["oobi"],
+                    "boot_url": server.boot_url,
+                    "witness_url": server.witness_url,
+                })
+
+            # Phase 2 — Register
+            for i, entry in enumerate(self._provisioned):
+                self.progress.emit(
+                    f"Registering with witness {i + 1}/{total}...",
+                    total + i, total * 2,
+                )
+                reg = register_with_witness(
+                    self._hab,
+                    entry["eid"],
+                    entry["witness_url"],
+                    secret=self._secret,
+                )
+                # OOBI fallback: prefer service-returned OOBI
+                oobi = reg.get("oobi") or entry["oobi"]
+                results.append({
+                    "eid": entry["eid"],
+                    "totp_seed": reg["totp_seed"],
+                    "oobi": oobi,
+                    "boot_url": entry["boot_url"],
+                    "witness_url": entry["witness_url"],
+                })
+
+            self.finished.emit(results, "", [])
+
+        except Exception as exc:
+            logger.exception("Provision-and-register failed")
+            rollback_failures = self._rollback()
+            self.finished.emit(results, str(exc), rollback_failures)
+
+    def _rollback(self):
+        """Deprovision every witness created during this run.
+
+        Returns a list of witness entries that could NOT be
+        deprovisioned (best-effort).
+        """
+        failures = []
+        for entry in self._provisioned:
+            ok = deprovision_witness(entry["eid"], entry["boot_url"])
+            if not ok:
+                failures.append(entry.copy())
+        return failures
+
+
+# ---------------------------------------------------------------------------
+# Page
+# ---------------------------------------------------------------------------
+
+class WitnessProvisionPage(LocksmithFormPage):
+    """Server selection → provision → register → QR code display."""
+
+    completed = Signal()
+    cancelled = Signal()
+
+    def __init__(self, app=None, parent=None):
+        super().__init__(
+            title="Add Witnesses",
+            icon_path=":/assets/material-icons/witness1.svg",
+            parent=parent,
+        )
+        self._app = app
+        self._db = None
+        self._hab_pre = None
+        self._server_cards: list[WitnessServerCard] = []
+        self._worker = None
+        self._thread = None
+        self._reg_hab = None
+        self._reg_batch_mode = False
+        self._provisioned_in_run: list[dict] = []   # for main-thread rollback
+        self._resolved_eids: list[str] = []          # for Organizer rollback
+        self._persisted_registration_state: dict | None = None
+        self._setup_form()
+
+    def set_app(self, app):
+        self._app = app
+
+    def set_db(self, db):
+        self._db = db
+
+    def set_identifier(self, hab_pre: str):
+        self._hab_pre = hab_pre
+
+    # ------------------------------------------------------------------
+    # UI
+    # ------------------------------------------------------------------
+
+    def _setup_form(self):
+        cl = self.content_layout
+        cl.setSpacing(0)
+
+        # -- Identifier info card --
+        self._id_card = QFrame()
+        self._id_card.setStyleSheet(f"""
+            QFrame {{
+                background-color: white;
+                border: 1px solid {colors.BORDER};
+                border-radius: 8px;
+            }}
+        """)
+        card_layout = QVBoxLayout(self._id_card)
+        card_layout.setContentsMargins(20, 16, 20, 16)
+        card_layout.setSpacing(8)
+
+        id_heading = QLabel("Identifier")
+        id_heading.setStyleSheet(
+            f"font-size: 11px; font-weight: 600; color: {colors.TEXT_SECONDARY}; "
+            "text-transform: uppercase; letter-spacing: 1px; border: none;"
+        )
+        card_layout.addWidget(id_heading)
+
+        mono = get_monospace_font_family()
+        self._id_alias_label = QLabel("—")
+        self._id_alias_label.setStyleSheet(
+            f"font-size: 16px; font-weight: 600; color: {colors.TEXT_PRIMARY}; border: none;"
+        )
+        self._id_alias_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        card_layout.addWidget(self._id_alias_label)
+
+        self._id_prefix_label = QLabel("")
+        self._id_prefix_label.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY}; font-family: {mono}; border: none;"
+        )
+        self._id_prefix_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._id_prefix_label.setVisible(False)
+        card_layout.addWidget(self._id_prefix_label)
+
+        cl.addWidget(self._id_card)
+        cl.addSpacing(20)
+
+        # -- Server selection --
+        server_heading = QLabel("Select Witness Servers")
+        server_heading.setStyleSheet(
+            f"font-size: 13px; font-weight: 600; color: {colors.TEXT_PRIMARY};"
+        )
+        cl.addWidget(server_heading)
+        cl.addSpacing(4)
+
+        server_desc = QLabel(
+            "Choose the servers to provision witnesses on for this identifier."
+        )
+        server_desc.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        server_desc.setWordWrap(True)
+        cl.addWidget(server_desc)
+        cl.addSpacing(8)
+
+        self._select_all_label = QLabel('<a href="#" style="color: #2196F3;">Select All</a>')
+        self._select_all_label.setTextFormat(Qt.TextFormat.RichText)
+        self._select_all_label.linkActivated.connect(self._on_select_all)
+        cl.addWidget(self._select_all_label)
+        cl.addSpacing(8)
+
+        self._server_flow_container = QWidget()
+        self._server_flow_layout = QVBoxLayout(self._server_flow_container)
+        self._server_flow_layout.setContentsMargins(0, 0, 0, 0)
+        self._server_flow_layout.setSpacing(0)
+        self._server_flow = FlowLayout(spacing=12)
+        self._server_flow_layout.addLayout(self._server_flow)
+        cl.addWidget(self._server_flow_container)
+        cl.addSpacing(8)
+
+        self._server_empty_label = QLabel("")
+        self._server_empty_label.setWordWrap(True)
+        self._server_empty_label.setStyleSheet(
+            f"font-size: 12px; color: {colors.TEXT_SECONDARY};"
+        )
+        self._server_empty_label.setVisible(False)
+        cl.addWidget(self._server_empty_label)
+
+        # -- Divider --
+        cl.addSpacing(20)
+        cl.addWidget(LocksmithDivider())
+        cl.addSpacing(20)
+
+        # -- Authentication mode --
+        mode_label = QLabel("Authentication Mode")
+        mode_label.setStyleSheet(
+            f"font-size: 13px; font-weight: 600; color: {colors.TEXT_PRIMARY};"
+        )
+        cl.addWidget(mode_label)
+        cl.addSpacing(4)
+
+        mode_desc = QLabel(
+            "Choose how TOTP secrets are generated for witness authentication."
+        )
+        mode_desc.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        mode_desc.setWordWrap(True)
+        cl.addWidget(mode_desc)
+        cl.addSpacing(12)
+
+        self._mode_group = QButtonGroup(self)
+
+        self._batch_panel = LocksmithRadioPanel(
+            header="Batch",
+            subheader="One shared secret — single QR code for all witnesses",
+        )
+        self._batch_panel.setChecked(True)
+        self._mode_group.addButton(self._batch_panel.radioButton(), 0)
+
+        self._individual_panel = LocksmithRadioPanel(
+            header="Individual",
+            subheader="Separate secret per witness — one QR code each",
+        )
+        self._mode_group.addButton(self._individual_panel.radioButton(), 1)
+
+        mode_layout = QHBoxLayout()
+        mode_layout.setSpacing(12)
+        mode_layout.addWidget(self._batch_panel)
+        mode_layout.addWidget(self._individual_panel)
+        mode_layout.addStretch()
+        cl.addLayout(mode_layout)
+
+        # -- Divider --
+        cl.addSpacing(24)
+        cl.addWidget(LocksmithDivider())
+        cl.addSpacing(20)
+
+        # -- Buttons --
+        btn_layout = QHBoxLayout()
+        btn_layout.setSpacing(12)
+
+        self._back_btn = LocksmithInvertedButton("Back")
+        self._back_btn.clicked.connect(self.cancelled.emit)
+        btn_layout.addWidget(self._back_btn)
+
+        btn_layout.addStretch()
+
+        self._action_btn = LocksmithButton("Provision && Register")
+        self._action_btn.clicked.connect(self._on_action_clicked)
+        btn_layout.addWidget(self._action_btn)
+
+        cl.addLayout(btn_layout)
+
+        # -- Progress (hidden) --
+        self._progress = QProgressBar()
+        self._progress.setVisible(False)
+        self._progress.setStyleSheet(f"""
+            QProgressBar {{
+                border: 1px solid {colors.BORDER};
+                border-radius: 4px;
+                text-align: center;
+                height: 20px;
+            }}
+            QProgressBar::chunk {{
+                background-color: {colors.PRIMARY};
+                border-radius: 3px;
+            }}
+        """)
+        cl.addWidget(self._progress)
+
+        self._status_label = QLabel("")
+        self._status_label.setWordWrap(True)
+        self._status_label.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY};"
+        )
+        cl.addWidget(self._status_label)
+
+        # -- QR container (hidden) --
+        self._qr_container = QWidget()
+        self._qr_layout = QVBoxLayout(self._qr_container)
+        self._qr_layout.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._qr_layout.setContentsMargins(0, 16, 0, 0)
+        self._qr_container.setVisible(False)
+        cl.addWidget(self._qr_container)
+
+        # -- Done button (hidden) --
+        self._done_btn = LocksmithButton("I've Scanned the QR Code")
+        self._done_btn.setVisible(False)
+        self._done_btn.clicked.connect(self.completed.emit)
+        cl.addWidget(self._done_btn, alignment=Qt.AlignmentFlag.AlignCenter)
+
+        cl.addStretch()
+
+    # ------------------------------------------------------------------
+    # Lifecycle
+    # ------------------------------------------------------------------
+
+    def on_show(self):
+        self.clear_error()
+        self.clear_success()
+        self._status_label.setText("")
+        self._qr_container.setVisible(False)
+        self._done_btn.setVisible(False)
+        self._back_btn.setVisible(True)
+        self._back_btn.setEnabled(True)
+        self._action_btn.setVisible(True)
+        self._action_btn.setEnabled(True)
+        self._progress.setVisible(False)
+        self._provisioned_in_run = []
+        self._resolved_eids = []
+        self._persisted_registration_state = None
+
+        self._populate_identifier_card()
+        self._populate_server_cards()
+
+        self.scroll_area.verticalScrollBar().setValue(0)
+
+    def _populate_identifier_card(self):
+        if not self._app or not self._hab_pre:
+            self._id_alias_label.setText("—")
+            self._id_prefix_label.clear()
+            self._id_prefix_label.setVisible(False)
+            return
+
+        hab = self._app.vault.hby.habByPre(self._hab_pre)
+        if hab:
+            alias = self._get_controller_alias(hab)
+            self._id_alias_label.setText(alias or self._hab_pre)
+            self._id_alias_label.setToolTip(alias or self._hab_pre)
+            if alias and alias != self._hab_pre:
+                self._id_prefix_label.setText(self._hab_pre)
+                self._id_prefix_label.setToolTip(self._hab_pre)
+                self._id_prefix_label.setVisible(True)
+            else:
+                self._id_prefix_label.clear()
+                self._id_prefix_label.setVisible(False)
+        else:
+            self._id_alias_label.setText(self._hab_pre)
+            self._id_prefix_label.clear()
+            self._id_prefix_label.setVisible(False)
+
+    def _populate_server_cards(self):
+        # Clear existing cards
+        while self._server_flow.count():
+            child = self._server_flow.takeAt(0)
+            if child and child.widget():
+                child.widget().deleteLater()
+        self._server_cards.clear()
+
+        servers = load_witness_servers(self._app) if self._app else []
+        registered_urls, pending_boot_urls = self._load_existing_server_state()
+
+        for server in servers:
+            card = WitnessServerCard(server)
+            witness_url = self._normalize_url(server.witness_url)
+            boot_url = self._normalize_url(server.boot_url)
+
+            if witness_url in registered_urls:
+                if boot_url in pending_boot_urls:
+                    logger.warning(
+                        "Witness server %s is both registered and pending for %s; "
+                        "treating it as registered",
+                        server.witness_url,
+                        self._hab_pre,
+                    )
+                card.set_status("registered")
+            elif boot_url in pending_boot_urls:
+                card.set_status("pending")
+
+            self._server_cards.append(card)
+            self._server_flow.addWidget(card)
+
+        has_servers = bool(self._server_cards)
+        has_available = any(card.is_available() for card in self._server_cards)
+        self._select_all_label.setVisible(has_available)
+        self._server_empty_label.setVisible((not has_servers) or (not has_available))
+        if not has_servers:
+            message = self._server_configuration_hint()
+        elif not has_available:
+            message = (
+                "All configured witness servers are already registered or pending "
+                "for this identifier."
+            )
+        else:
+            message = ""
+        self._server_empty_label.setText(message)
+        self._action_btn.setEnabled(has_available)
+        self._server_flow_container.updateGeometry()
+        self._server_flow_container.adjustSize()
+
+    # ------------------------------------------------------------------
+    # Actions
+    # ------------------------------------------------------------------
+
+    def _on_select_all(self, _link=None):
+        available_cards = [card for card in self._server_cards if card.is_available()]
+        all_checked = bool(available_cards) and all(c.is_checked() for c in available_cards)
+        for card in available_cards:
+            card.set_checked(not all_checked)
+
+    def _get_selected_servers(self):
+        return [
+            c.server_config
+            for c in self._server_cards
+            if c.is_available() and c.is_checked()
+        ]
+
+    def _on_action_clicked(self):
+        self.clear_error()
+        self.clear_success()
+
+        if not self._app or not self._app.vault:
+            self.show_error("No vault open.")
+            return
+
+        hab = self._app.vault.hby.habByPre(self._hab_pre)
+        if not hab:
+            self.show_error(f"Identifier '{self._hab_pre}' not found.")
+            return
+
+        selected = self._get_selected_servers()
+        if not selected:
+            self.show_error("Select at least one witness server.")
+            return
+
+        batch_mode = self._batch_panel.isChecked()
+        secret = pyotp.random_base32() if batch_mode else None
+
+        self._persisted_registration_state = None
+        self._provisioned_in_run = []
+        self._resolved_eids = []
+        self._action_btn.setEnabled(False)
+        self._back_btn.setEnabled(False)
+        self._set_cards_enabled(False)
+        self._batch_panel.setEnabled(False)
+        self._individual_panel.setEnabled(False)
+
+        total = len(selected) * 2
+        self._progress.setMaximum(total)
+        self._progress.setValue(0)
+        self._progress.setVisible(True)
+        self._status_label.setText("Starting...")
+
+        self._reg_hab = hab
+        self._reg_batch_mode = batch_mode
+
+        self._thread = QThread()
+        self._worker = _ProvisionRegisterWorker(
+            self._hab_pre, hab, selected, secret=secret,
+        )
+        self._worker.moveToThread(self._thread)
+        self._thread.started.connect(self._worker.run)
+        self._worker.progress.connect(self._on_progress)
+        self._worker.finished.connect(self._on_finished)
+        self._worker.finished.connect(self._thread.quit)
+        self._thread.finished.connect(self._on_thread_finished)
+        self._thread.start()
+
+    def _set_cards_enabled(self, enabled):
+        for card in self._server_cards:
+            card.set_interactive(enabled)
+
+    def _on_progress(self, label, current, total):
+        self._progress.setValue(current)
+        self._status_label.setText(label)
+
+    def _on_finished(self, results, error, rollback_failures):
+        self._progress.setVisible(False)
+
+        if error:
+            self._handle_error(error, results, rollback_failures)
+            return
+
+        # Track provisioned entries for potential main-thread rollback
+        self._provisioned_in_run = [
+            {"eid": r["eid"], "boot_url": r["boot_url"], "witness_url": r["witness_url"]}
+            for r in results
+        ]
+
+        # Persist ProvisionedWitnessRecord immediately (before OOBI resolution)
+        self._persist_provisioned_witnesses(results)
+
+        self._status_label.setText("Resolving witness OOBIs...")
+        asyncio.ensure_future(self._finalize_registration(results))
+
+    def _handle_error(self, error, results, rollback_failures):
+        """Handle failure — clean up local DB and show appropriate message."""
+        message = f"Registration failed: {error}"
+        persisted_failures = []
+        persistence_failures = []
+
+        if rollback_failures:
+            persisted_failures, persistence_failures = self._persist_provisioned_witnesses(
+                rollback_failures
+            )
+
+        if persisted_failures:
+            failed_list = self._format_eid_list(persisted_failures)
+            message += (
+                f"\n\nCould not deprovision {len(persisted_failures)} witness(es): "
+                f"{failed_list}. These witnesses remain provisioned and were saved as pending."
+            )
+
+        if persistence_failures:
+            failed_list = self._format_eid_list(persistence_failures)
+            message += (
+                f"\n\nCould not save recovery state for {len(persistence_failures)} "
+                f"witness(es): {failed_list}. Cleanup is partial; you may need to "
+                "remove them manually."
+            )
+
+        self.show_error(message)
+        self._populate_server_cards()
+        self._status_label.setText("")
+        self._re_enable_form()
+
+    async def _finalize_registration(self, results):
+        """Resolve OOBIs, persist records, and show QR codes.
+
+        If any OOBI resolution fails, roll back the entire run:
+        deprovision all witnesses, remove from Organizer, clean DB.
+        """
+        total = len(results)
+        try:
+            for index, res in enumerate(results, start=1):
+                alias = self._witness_alias(res["eid"])
+                self._status_label.setText(
+                    f"Resolving witness OOBI {index}/{total} for {alias}..."
+                )
+                success = await resolve_oobi(
+                    self._app,
+                    pre=res["eid"],
+                    oobi=res["oobi"],
+                    force=True,
+                    alias=alias,
+                    cid=self._reg_hab.pre,
+                    tag="witness",
+                )
+                if not success:
+                    raise ValueError(f"Failed to resolve OOBI for witness {res['eid']}")
+                self._resolved_eids.append(res["eid"])
+
+            self._persisted_registration_state = self._persist_registration_results(
+                results,
+                self._reg_hab,
+                self._reg_batch_mode,
+            )
+            self._show_qr_codes(results, self._reg_hab, self._reg_batch_mode)
+
+        except Exception as exc:
+            logger.exception("Witness registration finalization failed")
+            rollback_message = await self._rollback_finalization(
+                results,
+                self._persisted_registration_state,
+            )
+            message = f"Registration failed: {exc}"
+            if rollback_message:
+                message += f"\n\n{rollback_message}"
+            self.show_error(message)
+            self._populate_server_cards()
+            self._status_label.setText("")
+            self._re_enable_form()
+            return
+
+        self._status_label.setText("")
+        self.show_success(
+            f"Successfully registered {total} witness(es). "
+            "You must scan the QR code below with your authenticator app before continuing."
+        )
+        self._done_btn.setVisible(True)
+        self._back_btn.setVisible(False)
+        self._action_btn.setVisible(False)
+
+    async def _rollback_finalization(self, results, persisted_state=None):
+        """Roll back after OOBI resolution failure.
+
+        Removes witnesses from Organizer, deprovisions on server, and
+        cleans up local DB records.
+        """
+        # Remove any already-resolved witnesses from Organizer
+        if self._app and hasattr(self._app, "vault") and self._app.vault:
+            for eid in self._resolved_eids:
+                try:
+                    self._app.vault.org.rem(eid)
+                    logger.info(f"Removed witness {eid[:12]}... from Organizer during rollback")
+                except Exception:
+                    logger.warning(f"Failed to remove {eid[:12]}... from Organizer", exc_info=True)
+        self._resolved_eids.clear()
+
+        self._remove_persisted_registration_state(persisted_state)
+
+        # Deprovision all witnesses on servers (best-effort)
+        rollback_failures = []
+        for entry in self._provisioned_in_run:
+            ok = deprovision_witness(entry["eid"], entry["boot_url"])
+            if not ok:
+                rollback_failures.append(entry)
+
+        # Clean up local DB
+        persisted_failures = []
+        persistence_failures = []
+        if self._db:
+            failed_eids = {f["eid"] for f in rollback_failures}
+            for entry in self._provisioned_in_run:
+                if entry["eid"] not in failed_eids:
+                    try:
+                        self._db.provisionedWitnesses.rem(keys=(self._hab_pre, entry["boot_url"]))
+                    except Exception:
+                        pass
+
+            failed_results = [res for res in results if res["eid"] in failed_eids]
+            persisted_failures, persistence_failures = self._persist_provisioned_witnesses(
+                failed_results
+            )
+        else:
+            persistence_failures = rollback_failures
+
+        if rollback_failures:
+            failed_list = self._format_eid_list(rollback_failures)
+            logger.warning(
+                f"Could not deprovision {len(rollback_failures)} witnesses during rollback: "
+                f"{failed_list}"
+            )
+
+        messages = []
+        if persisted_failures:
+            failed_list = self._format_eid_list(persisted_failures)
+            messages.append(
+                f"Could not deprovision {len(persisted_failures)} witness(es): {failed_list}. "
+                "These witnesses remain provisioned and were saved as pending."
+            )
+        if persistence_failures:
+            failed_list = self._format_eid_list(persistence_failures)
+            messages.append(
+                f"Could not save recovery state for {len(persistence_failures)} "
+                f"witness(es): {failed_list}. Cleanup is partial; you may need to "
+                "remove them manually."
+            )
+
+        self._persisted_registration_state = None
+        return "\n\n".join(messages)
+
+    # ------------------------------------------------------------------
+    # Persistence (reused from register.py)
+    # ------------------------------------------------------------------
+
+    def _persist_registration_results(self, results, hab, batch_mode):
+        if not self._db:
+            raise ValueError("KF witness database is not available.")
+
+        now = helping.nowIso8601()
+        persisted_state = {"witness_keys": [], "batch_eids": None}
+
+        for res in results:
+            record = WitnessRecord(
+                eid=res["eid"],
+                url=self._extract_base_url(res["oobi"]) or res.get("witness_url", ""),
+                oobi=res["oobi"],
+                totp_seed=res["totp_seed"],
+                hab_pre=hab.pre,
+                registered_at=now,
+                batch_mode=batch_mode,
+            )
+            witness_key = (hab.pre, res["eid"])
+            self._db.witnesses.pin(keys=witness_key, val=record)
+            persisted_state["witness_keys"].append(witness_key)
+            logger.info(f"Stored witness record for {res['eid'][:12]}... on {hab.pre[:12]}...")
+
+        if batch_mode and results:
+            batch_eids = [r["eid"] for r in results]
+            existing = self._db.witBatches.get(keys=(hab.pre,))
+            if existing:
+                if batch_eids not in existing.batches:
+                    existing.batches.append(batch_eids)
+                    self._db.witBatches.pin(keys=(hab.pre,), val=existing)
+                    persisted_state["batch_eids"] = batch_eids
+            else:
+                self._db.witBatches.pin(
+                    keys=(hab.pre,),
+                    val=WitnessBatches(batches=[batch_eids]),
+                )
+                persisted_state["batch_eids"] = batch_eids
+
+        return persisted_state
+
+    # ------------------------------------------------------------------
+    # QR codes (reused from register.py)
+    # ------------------------------------------------------------------
+
+    def _show_qr_codes(self, results, hab, batch_mode):
+        while self._qr_layout.count():
+            child = self._qr_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        controller_alias = self._get_controller_alias(hab)
+
+        if batch_mode:
+            seed = results[0]["totp_seed"]
+            uri = create_totp_uri(
+                secret=seed,
+                vault_name=f"KF-Batch-{hab.pre[:8]}",
+                issuer="KERI Foundation",
+            )
+            panel = LocksmithQRPanel(
+                number="1",
+                witness_name="Batch TOTP",
+                witness_eid=results[0]["eid"],
+                controller_alias=controller_alias,
+                controller_aid=hab.pre,
+                url=uri,
+            )
+            self._qr_layout.addWidget(panel)
+        else:
+            for i, res in enumerate(results, start=1):
+                uri = create_totp_uri(
+                    secret=res["totp_seed"],
+                    vault_name=f"KF-{res['eid'][:12]}",
+                    issuer="KERI Foundation",
+                )
+                panel = LocksmithQRPanel(
+                    number=str(i),
+                    witness_name=self._witness_alias(res["eid"]),
+                    witness_eid=res["eid"],
+                    controller_alias=controller_alias,
+                    controller_aid=hab.pre,
+                    url=uri,
+                )
+                self._qr_layout.addWidget(panel)
+
+        self._qr_container.setVisible(True)
+
+    # ------------------------------------------------------------------
+    # Helpers
+    # ------------------------------------------------------------------
+
+    def _get_controller_alias(self, hab):
+        hab_name = getattr(hab, "name", "")
+        if hab_name:
+            return hab_name
+
+        if self._app and hasattr(self._app, "vault") and self._app.vault:
+            hby = self._app.vault.hby
+            if hby and getattr(hby, "db", None):
+                try:
+                    for (ns, alias), prefix in hby.db.names.getItemIter(keys=()):
+                        if ns == "" and prefix == hab.pre:
+                            return alias
+                except Exception:
+                    logger.debug("Unable to derive controller alias from names DB", exc_info=True)
+        return hab.pre
+
+    def _server_configuration_hint(self):
+        environment = getattr(getattr(self._app, "config", None), "environment", None)
+        env_name = getattr(environment, "value", str(environment or "")).lower()
+        prefix = "KF_DEV" if env_name == "development" else "KF_PROD"
+        return (
+            "No witness servers are configured for this environment. "
+            f"Set {prefix}_WITNESS_URL_1 and {prefix}_BOOT_URL_1 to enable provisioning."
+        )
+
+    def _witness_alias(self, eid):
+        if self._app and hasattr(self._app, "vault") and self._app.vault and self._app.vault.org:
+            remote_id = self._app.vault.org.get(eid)
+            if remote_id and remote_id.get("alias"):
+                return remote_id["alias"]
+        return f"KF Witness {eid[:12]}"
+
+    def _load_existing_server_state(self):
+        registered_urls = set()
+        pending_boot_urls = set()
+
+        if not self._db or not self._hab_pre:
+            return registered_urls, pending_boot_urls
+
+        try:
+            for _, record in self._db.witnesses.getItemIter(keys=(self._hab_pre,)):
+                registered_url = self._normalize_url(record.url)
+                if not registered_url and record.oobi:
+                    registered_url = self._extract_base_url(record.oobi)
+                if registered_url:
+                    registered_urls.add(registered_url)
+        except Exception:
+            logger.warning("Failed loading registered witness state", exc_info=True)
+
+        try:
+            for _, record in self._db.provisionedWitnesses.getItemIter(keys=(self._hab_pre,)):
+                boot_url = self._normalize_url(record.boot_url)
+                if boot_url:
+                    pending_boot_urls.add(boot_url)
+        except Exception:
+            logger.warning("Failed loading pending witness state", exc_info=True)
+
+        return registered_urls, pending_boot_urls
+
+    def _persist_provisioned_witnesses(self, entries):
+        persisted = []
+        failures = []
+
+        if not entries:
+            return persisted, failures
+
+        if not self._db:
+            return persisted, list(entries)
+
+        for entry in entries:
+            try:
+                record = ProvisionedWitnessRecord(
+                    boot_url=entry["boot_url"],
+                    witness_url=entry["witness_url"],
+                    eid=entry["eid"],
+                    oobi=entry["oobi"],
+                    hab_pre=self._hab_pre,
+                    provisioned_at=helping.nowIso8601(),
+                )
+                self._db.provisionedWitnesses.pin(
+                    keys=(self._hab_pre, entry["boot_url"]),
+                    val=record,
+                )
+                persisted.append(entry)
+            except Exception:
+                logger.warning(
+                    "Failed to persist provisioned witness recovery state for %s",
+                    entry.get("eid", "unknown"),
+                    exc_info=True,
+                )
+                failures.append(entry)
+
+        return persisted, failures
+
+    def _remove_persisted_registration_state(self, persisted_state):
+        if not self._db or not persisted_state:
+            return
+
+        for witness_key in persisted_state.get("witness_keys", []):
+            try:
+                self._db.witnesses.rem(keys=witness_key)
+            except Exception:
+                logger.warning(
+                    "Failed to remove witness record during rollback for %s",
+                    witness_key,
+                    exc_info=True,
+                )
+
+        batch_eids = persisted_state.get("batch_eids")
+        if not batch_eids:
+            return
+
+        try:
+            existing = self._db.witBatches.get(keys=(self._hab_pre,))
+            if not existing:
+                return
+            remaining_batches = [batch for batch in existing.batches if batch != batch_eids]
+            if remaining_batches:
+                existing.batches = remaining_batches
+                self._db.witBatches.pin(keys=(self._hab_pre,), val=existing)
+            else:
+                self._db.witBatches.rem(keys=(self._hab_pre,))
+        except Exception:
+            logger.warning(
+                "Failed to remove witness batch during rollback for %s",
+                self._hab_pre,
+                exc_info=True,
+            )
+
+    @staticmethod
+    def _format_eid_list(entries):
+        return ", ".join(entry["eid"][:12] + "..." for entry in entries)
+
+    def _re_enable_form(self):
+        self._action_btn.setEnabled(any(card.is_available() for card in self._server_cards))
+        self._back_btn.setEnabled(True)
+        self._back_btn.setVisible(True)
+        self._set_cards_enabled(True)
+        self._batch_panel.setEnabled(True)
+        self._individual_panel.setEnabled(True)
+
+    def _on_thread_finished(self):
+        if self._worker is not None:
+            self._worker.deleteLater()
+        if self._thread is not None:
+            self._thread.deleteLater()
+        self._worker = None
+        self._thread = None
+
+    @staticmethod
+    def _extract_base_url(oobi):
+        return WitnessProvisionPage._normalize_url(oobi)
+
+    @staticmethod
+    def _normalize_url(url):
+        try:
+            parsed = urlparse(url)
+            if not parsed.scheme or not parsed.hostname:
+                return ""
+            base = f"{parsed.scheme}://{parsed.hostname}"
+            if parsed.port:
+                base += f":{parsed.port}"
+            return base
+        except Exception:
+            return ""

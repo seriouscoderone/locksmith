@@ -48,9 +48,8 @@ dependencies = [
 ]
 
 [project.entry-points."locksmith.plugins"]
-# Example: to register a new plugin, add an entry like:
-# myplugin = "locksmith.plugins.myplugin:MyPlugin"
-# Then run: pip install -e .
+kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
+
 
 [tool.setuptools.packages.find]
 where = ["src"]
