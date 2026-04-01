@@ -6,10 +6,10 @@ Dialog for rotating group multisig identifiers.
 """
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QHBoxLayout
+    QWidget, QVBoxLayout, QLabel, QHBoxLayout, QDialog
 )
 from keri import help
 
@@ -50,6 +50,7 @@ class RotateGroupIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
         self.app = app
         self.identifier_alias = identifier_alias
         self.prepopulate_witnesses = prepopulate_witnesses or []
+        self._finished_follow_up = None
 
         try:
             self.hab = self.app.vault.hby.habByName(identifier_alias)
@@ -166,6 +167,39 @@ class RotateGroupIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
         if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
             logger.info("RotateGroupIdentifierDialog: Connected to vault signal bridge")
+        self.finished.connect(self._on_dialog_finished)
+
+    def _cleanup_signal_connection(self):
+        if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
+            try:
+                self.app.vault.signals.doer_event.disconnect(self._on_doer_event)
+            except RuntimeError:
+                pass
+
+    def _on_dialog_finished(self, result):
+        self._cleanup_signal_connection()
+
+        if result != QDialog.DialogCode.Accepted or self._finished_follow_up is None:
+            self._finished_follow_up = None
+            return
+
+        follow_up = self._finished_follow_up
+        self._finished_follow_up = None
+        QTimer.singleShot(0, follow_up)
+
+    def closeEvent(self, event):
+        self._cleanup_signal_connection()
+        super().closeEvent(event)
+
+    def _open_witness_auth_dialog(self, witness_ids: list[str], auth_only: bool):
+        auth_dialog = GroupWitnessAuthenticationDialog(
+            app=self.app,
+            hab=self.hab,
+            witness_ids=witness_ids,
+            auth_only=auth_only,
+            parent=self.parent()
+        )
+        auth_dialog.open()
 
     def _build_info_section(self, layout):
         """Build the info section with prefix and SN."""
@@ -503,23 +537,19 @@ class RotateGroupIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
         elif event_type == "group_rotation_complete":
             logger.info(f"Group rotation complete: {data.get('alias')} ({data.get('pre')})")
 
-            # Close the rotate dialog
-            self.close()
-
             # Check if witnesses need authentication
             if data.get('needs_witness_auth'):
                 shared_witnesses = data.get('shared_witnesses', [])
                 logger.info(f"Opening authentication dialog for {len(shared_witnesses)} shared witnesses")
-                auth_dialog = GroupWitnessAuthenticationDialog(
-                    app=self.app,
-                    hab=self.hab,
+                self._finished_follow_up = lambda: self._open_witness_auth_dialog(
                     witness_ids=shared_witnesses,
                     auth_only=True,
-                    parent=self.parent()
                 )
-                auth_dialog.open()
             else:
+                self._finished_follow_up = None
                 logger.info("No shared witnesses to authenticate, rotation complete")
+
+            self.accept()
 
         elif event_type == "group_rotation_failed":
             logger.error(f"Group rotation failed: {data.get('error')}")

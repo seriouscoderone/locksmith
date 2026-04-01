@@ -29,6 +29,7 @@ from locksmith.core import indirecting, challenging
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.credentialing import Registrar
 from locksmith.core.grouping import CounselingCompletionDoer
+from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.core.signals import DoerSignalBridge
 from locksmith.core.tasking import QtTask
 from locksmith.core.turretting import TurretDoer
@@ -93,7 +94,7 @@ class Vault(doing.DoDoer):
         oobiery = oobiing.Oobiery(hby=hby)
 
         # Core KERI doers
-        self.receiptor = agenting.Receiptor(hby=hby)
+        self.receiptor = LocksmithReceiptor(hby=hby)
         self.postman = forwarding.Poster(hby=hby)
         self.witPub = agenting.WitnessPublisher(hby=self.hby)
         self.witDoer = agenting.WitnessReceiptor(hby=self.hby)

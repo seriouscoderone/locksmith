@@ -6,10 +6,10 @@ Dialog for accepting multisig group rotation proposals.
 """
 from typing import TYPE_CHECKING
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QScrollArea,
-    QFrame
+    QFrame, QDialog
 )
 from keri import help
 from keri.help import helping
@@ -59,6 +59,7 @@ class AcceptMultisigRotationDialog(LocksmithDialog):
         self.app = app
         self.parent_widget = parent
         self.proposal_said = proposal_said
+        self._finished_follow_up = None
 
         # Load proposal message data
         try:
@@ -91,6 +92,39 @@ class AcceptMultisigRotationDialog(LocksmithDialog):
         # Connect to vault signal bridge for doer events
         if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
+        self.finished.connect(self._on_dialog_finished)
+
+    def _cleanup_signal_connection(self):
+        if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
+            try:
+                self.app.vault.signals.doer_event.disconnect(self._on_doer_event)
+            except RuntimeError:
+                pass
+
+    def _on_dialog_finished(self, result):
+        self._cleanup_signal_connection()
+
+        if result != QDialog.DialogCode.Accepted or self._finished_follow_up is None:
+            self._finished_follow_up = None
+            return
+
+        follow_up = self._finished_follow_up
+        self._finished_follow_up = None
+        QTimer.singleShot(0, follow_up)
+
+    def closeEvent(self, event):
+        self._cleanup_signal_connection()
+        super().closeEvent(event)
+
+    def _open_witness_auth_dialog(self, hab, witness_ids: list[str], auth_only: bool):
+        auth_dialog = GroupWitnessAuthenticationDialog(
+            app=self.app,
+            hab=hab,
+            witness_ids=witness_ids,
+            auth_only=auth_only,
+            parent=self.parent_widget
+        )
+        auth_dialog.open()
 
     def _load_proposal_message(self):
         """Load rotation proposal message using exchanging.cloneMessage()."""
@@ -355,9 +389,6 @@ class AcceptMultisigRotationDialog(LocksmithDialog):
         if event_type == "group_rotation_joined":
             logger.info(f"Successfully joined rotation: {data.get('alias')} ({data.get('pre')})")
 
-            # Close the dialog
-            self.close()
-
             # Check if witnesses need authentication
             if data.get('needs_witness_auth'):
                 shared_witnesses = data.get('shared_witnesses', [])
@@ -366,14 +397,17 @@ class AcceptMultisigRotationDialog(LocksmithDialog):
                 # Get the group hab for witness auth
                 ghab = self.app.vault.hby.habs.get(data.get('pre'))
                 if ghab:
-                    auth_dialog = GroupWitnessAuthenticationDialog(
-                        app=self.app,
+                    self._finished_follow_up = lambda: self._open_witness_auth_dialog(
                         hab=ghab,
                         witness_ids=shared_witnesses,
                         auth_only=True,
-                        parent=self.parent_widget
                     )
-                    auth_dialog.open()
+                else:
+                    self._finished_follow_up = None
+            else:
+                self._finished_follow_up = None
+
+            self.accept()
 
         elif event_type == "group_rotation_join_failed":
             logger.error(f"Failed to join rotation: {data.get('error')}")
