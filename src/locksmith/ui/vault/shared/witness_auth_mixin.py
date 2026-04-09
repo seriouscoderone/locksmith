@@ -204,6 +204,11 @@ class WitnessAuthenticationMixin:
                     codes.append(f"{key}:{passcode}")
         return codes
 
+    def _set_auth_submit_enabled(self, enabled: bool):
+        """Enable or disable the primary submit button if the dialog provides one."""
+        if hasattr(self, 'rotate_button'):
+            self.rotate_button.setEnabled(enabled)
+
     def _on_rotate(self):
         """Handle rotate button click - validate and accept."""
         # Clear any previous errors
@@ -252,6 +257,7 @@ class WitnessAuthenticationMixin:
 
         # If signals is provided, emit the codes instead of authenticating directly
         if hasattr(self, 'signals') and self.signals:
+            self._set_auth_submit_enabled(False)
             logger.info(f"Emitting {len(codes)} auth codes via signals")
             self.signals.auth_codes_entered.emit({'codes': codes})
             self.accept()
@@ -259,6 +265,8 @@ class WitnessAuthenticationMixin:
 
         # Import here to avoid circular dependency
         from locksmith.core.rotating import authenticate_witnesses
+
+        self._set_auth_submit_enabled(False)
 
         # Trigger authentication doer (will emit success/failure events)
         authenticate_witnesses(

@@ -129,6 +129,7 @@ class WitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDialog):
         self.finished.connect(self._cleanup_signal_connection)
 
     def _cleanup_signal_connection(self):
+        self._set_auth_submit_enabled(True)
         if hasattr(self.app, 'vault') and hasattr(self.app.vault, 'signals'):
             try:
                 self.app.vault.signals.doer_event.disconnect(self._on_doer_event)
@@ -173,5 +174,6 @@ class WitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDialog):
                 elif event_type == "witness_authentication_failed":
                     error_msg = data.get('error', 'Authentication failed')
                     logger.error(f"Witness authentication failed: {error_msg}")
+                    self._set_auth_submit_enabled(True)
                     # Show error and keep dialog open for retry
                     self.show_error(error_msg)

@@ -123,6 +123,20 @@ class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDial
         if hasattr(self.app, 'vault') and hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
 
+        self.finished.connect(self._cleanup_signal_connection)
+
+    def _cleanup_signal_connection(self):
+        self._set_auth_submit_enabled(True)
+        if hasattr(self.app, 'vault') and hasattr(self.app.vault, 'signals'):
+            try:
+                self.app.vault.signals.doer_event.disconnect(self._on_doer_event)
+            except RuntimeError:
+                pass
+
+    def closeEvent(self, event):
+        self._cleanup_signal_connection()
+        super().closeEvent(event)
+
     async def _check_and_spawn_keystate_update(self):
         """
         Check if the rotated identifier needs keystate update via plugin hooks.
@@ -157,5 +171,6 @@ class GroupWitnessAuthenticationDialog(WitnessAuthenticationMixin, LocksmithDial
                 elif event_type == "witness_authentication_failed":
                     error_msg = data.get('error', 'Authentication failed')
                     logger.error(f"Witness authentication failed: {error_msg}")
+                    self._set_auth_submit_enabled(True)
                     # Show error and keep dialog open for retry
                     self.show_error(error_msg)
