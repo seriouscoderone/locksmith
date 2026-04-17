@@ -261,6 +261,48 @@ def get_local_identifiers_for_dropdown(app):
 
     return identifiers
 
+
+def list_eligible_local_identifiers(app):
+    """
+    List root-namespace, non-group local identifiers.
+
+    Args:
+        app: Application instance with an open vault
+
+    Returns:
+        list: List of dicts with ``alias`` and ``prefix`` keys
+    """
+    identifiers = []
+
+    if not app or not hasattr(app, 'vault') or not app.vault or not getattr(app.vault, 'hby', None):
+        logger.info("Eligible local identifier load skipped: vault or habery unavailable")
+        return identifiers
+
+    logger.info("Loading eligible local identifiers")
+
+    hby = app.vault.hby
+    for (ns, alias), prefix in hby.db.names.getItemIter(keys=()):
+        if ns != "":
+            continue
+
+        hab = hby.habByName(alias)
+        if hab is None:
+            logger.warning(f"Skipping eligible local identifier entry with missing hab: alias={alias}")
+            continue
+
+        if isinstance(hab, habbing.GroupHab):
+            logger.debug(f"Skipping group identifier from eligible local identifier list: {alias}")
+            continue
+
+        identifiers.append({
+            'alias': alias,
+            'prefix': prefix,
+        })
+
+    logger.info(f"Loaded {len(identifiers)} eligible local identifiers")
+    return identifiers
+
+
 def get_local_non_multisig_identifiers_for_dropdown(app):
     """
     Load identifiers.
@@ -272,15 +314,13 @@ def get_local_non_multisig_identifiers_for_dropdown(app):
         dict: Dict of identifier information keyed by to_string
     """
     identifiers = {}
-    # Load local identifiers
-    for aid, hab in app.vault.hby.habs.items():
-        if isinstance(hab, habbing.GroupHab):
-            continue
-        identifiers[f"{hab.name} - {aid}"] = {
-            'aid': aid,
-            'alias': hab.name
+    for identifier in list_eligible_local_identifiers(app):
+        identifiers[f"{identifier['alias']} - {identifier['prefix']}"] = {
+            'aid': identifier['prefix'],
+            'alias': identifier['alias']
         }
     return identifiers
+
 
 def load_group_members(app):
     """

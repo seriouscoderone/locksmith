@@ -2,12 +2,40 @@
 """
 locksmith.plugins.kerifoundation.db.basing module
 
-LMDB storage for KERI Foundation plugin state — witness records,
-witness batch groupings, and (future) watcher records.
+LMDB storage for KERI Foundation plugin state — account gating state,
+witness records, witness batch groupings, and (future) watcher records.
 """
+from __future__ import annotations
+
 from dataclasses import dataclass, field
+from datetime import datetime, timezone
 
 from keri.db import dbing, koming
+
+
+ACCOUNT_STATUS_PENDING_ONBOARDING = "pending_onboarding"
+ACCOUNT_STATUS_ONBOARDED = "onboarded"
+ACCOUNT_STATUS_FAILED = "failed"
+ACCOUNT_RECORD_KEY = ("default",)
+
+
+@dataclass
+class KFAccountRecord:
+    """Durable local account state for the one-account-per-vault KF plugin."""
+
+    account_aid: str = ""
+    account_alias: str = ""
+    status: str = ACCOUNT_STATUS_PENDING_ONBOARDING
+    created_at: str = ""
+    onboarded_at: str = ""
+    witness_profile_code: str = ""
+    witness_count: int = 0
+    toad: int = 0
+    watcher_required: bool = True
+    region_id: str = ""
+    boot_server_aid: str = ""
+    onboarding_session_id: str = ""
+    onboarding_auth_alias: str = ""
 
 
 @dataclass
@@ -56,6 +84,7 @@ class KFBaser(dbing.LMDBer):
     TempPrefix = "kf"
 
     def __init__(self, name="kerifoundation", headDirPath=None, reopen=True, **kwa):
+        self.accounts = None
         self.witnesses = None
         self.witBatches = None
         self.provisionedWitnesses = None
@@ -66,6 +95,7 @@ class KFBaser(dbing.LMDBer):
     def reopen(self, **kwa):
         super(KFBaser, self).reopen(**kwa)
 
+        self.accounts = koming.Komer(db=self, subkey='acct.', schema=KFAccountRecord)
         self.witnesses = koming.Komer(db=self, subkey='wit.', schema=WitnessRecord)
         self.witBatches = koming.Komer(db=self, subkey='witb.', schema=WitnessBatches)
         self.provisionedWitnesses = koming.Komer(
@@ -74,3 +104,21 @@ class KFBaser(dbing.LMDBer):
         self.watchers = koming.Komer(db=self, subkey='wat.', schema=WatcherRecord)
 
         return self.env
+
+    def get_account(self) -> KFAccountRecord | None:
+        """Return the single local KF account record for this vault, if any."""
+        return self.accounts.get(keys=ACCOUNT_RECORD_KEY)
+
+    def pin_account(self, record: KFAccountRecord) -> None:
+        """Persist the single local KF account record for this vault."""
+        self.accounts.pin(keys=ACCOUNT_RECORD_KEY, val=record)
+
+    def ensure_account(self) -> tuple[KFAccountRecord, bool]:
+        """Create the default local KF account record when missing."""
+        record = self.get_account()
+        if record is not None:
+            return record, False
+
+        record = KFAccountRecord(created_at=datetime.now(timezone.utc).isoformat())
+        self.pin_account(record)
+        return record, True

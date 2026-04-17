@@ -2,8 +2,8 @@
 """
 locksmith.plugins.kerifoundation.plugin module
 
-KERI Foundation plugin — provides witness provisioning and registration
-flows for Lock wallet users.
+KERI Foundation plugin — account-gated witness and watcher flows for
+Locksmith users.
 """
 from __future__ import annotations
 
@@ -11,14 +11,24 @@ from typing import Any
 
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
-from PySide6.QtCore import Qt, QEvent, QObject
+from PySide6.QtCore import Qt, QEvent, QObject, QThread, Signal, Slot
 from keri import help
 
-from locksmith.plugins.base import PluginBase, WitnessProviderPlugin
+from locksmith.plugins.base import AccountProviderPlugin, PluginBase, WitnessProviderPlugin
+from locksmith.plugins.kerifoundation.db.basing import (
+    ACCOUNT_STATUS_FAILED,
+    ACCOUNT_STATUS_ONBOARDED,
+    KFBaser,
+    KFAccountRecord,
+)
+from locksmith.plugins.kerifoundation.onboarding.page import KFOnboardingPage
+from locksmith.plugins.kerifoundation.onboarding.service import (
+    KFBootClient,
+    KFOnboardingService,
+)
 from locksmith.ui.vault.menu import MenuButton, MenuSpacer
 from locksmith.ui.toolkit.widgets.buttons import BackButton
 
-from locksmith.plugins.kerifoundation.db.basing import KFBaser
 from locksmith.plugins.kerifoundation.witnesses.list import WitnessOverviewPage
 from locksmith.plugins.kerifoundation.witnesses.provision import WitnessProvisionPage
 from locksmith.plugins.kerifoundation.watchers.list import WatcherListPage
@@ -27,13 +37,79 @@ from locksmith.plugins.kerifoundation.watchers.register import WatcherRegisterPa
 logger = help.ogler.getLogger(__name__)
 
 
-class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
+class _OnboardingWorker(QObject):
+    """Run KF onboarding off the UI thread."""
+
+    progress = Signal(object)
+    succeeded = Signal(str, object)
+    failed = Signal(str, str)
+    finished = Signal()
+
+    def __init__(self, *, app, db, boot_client, alias: str, witness_profile: str, account_aid: str):
+        super().__init__()
+        self._app = app
+        self._db = db
+        self._boot_client = boot_client
+        self._alias = alias
+        self._witness_profile = witness_profile
+        self._account_aid = account_aid
+
+    @Slot()
+    def run(self):
+        try:
+            service = KFOnboardingService(
+                app=self._app,
+                db=self._db,
+                boot_client=self._boot_client,
+            )
+            outcome = service.onboard(
+                alias=self._alias,
+                witness_profile_code=self._witness_profile,
+                account_aid=self._account_aid,
+                progress=self._emit_progress,
+            )
+        except Exception as ex:
+            logger.exception("KF onboarding failed")
+            self.failed.emit(self._alias, str(ex))
+        else:
+            self.succeeded.emit(self._alias, outcome)
+        finally:
+            self.finished.emit()
+
+    def _emit_progress(self, **kwa):
+        self.progress.emit(dict(kwa))
+
+
+class _OnboardingBridge(QObject):
+    """Marshal onboarding worker callbacks back onto the UI thread."""
+
+    def __init__(self, plugin: "KeriFoundationPlugin"):
+        super().__init__()
+        self._plugin = plugin
+
+    @Slot(object)
+    def on_progress(self, payload):
+        self._plugin._handle_onboarding_progress(payload)
+
+    @Slot(str, object)
+    def on_succeeded(self, alias, outcome):
+        self._plugin._handle_onboarding_success(alias, outcome)
+
+    @Slot(str, str)
+    def on_failed(self, alias, message):
+        self._plugin._handle_onboarding_failure(alias, message)
+
+    @Slot()
+    def on_finished(self):
+        self._plugin._finish_onboarding_run()
+
+
+class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlugin):
     """KERI Foundation witness/watcher provider plugin.
 
-    No account gate — clicking the sidebar entry goes straight to
-    the witness overview.  Users select an identifier, provision and
-    register witnesses, then receive TOTP QR codes for their
-    authenticator app.
+    Entry is gated by a plugin-local account record. Until the record
+    reaches the onboarded state, the plugin stays on the onboarding
+    shell page and does not expose the normal witness/watcher menu.
     """
 
     @property
@@ -45,8 +121,14 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
         self._db = None
         self._wit_btn = None
         self._wat_btn = None
+        self._boot_client = KFBootClient(app)
+        self._onboarding_worker = None
+        self._onboarding_thread = None
+        self._onboarding_bridge = _OnboardingBridge(self)
 
         # Build pages
+        self._onboarding_page = KFOnboardingPage(app)
+        self._onboarding_page.set_boot_client(self._boot_client)
         self._witness_overview = WitnessOverviewPage(app)
         self._witness_provision = WitnessProvisionPage(app)
         self._watcher_list = WatcherListPage(app)
@@ -59,30 +141,32 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
 
     def _wire_internal_signals(self):
         """Connect page signals for navigation."""
-        # Overview "Add Witnesses" → provision page
-        self._witness_overview.add_witnesses_requested.connect(self._on_add_witnesses)
+        self._onboarding_page.confirm_requested.connect(self._on_onboarding_confirm)
+        self._onboarding_page.open_account_requested.connect(self._show_witnesses)
 
-        # Provision page done/cancel → back to overview
+        self._witness_overview.add_witnesses_requested.connect(self._on_add_witnesses)
         self._witness_provision.completed.connect(self._on_provision_completed)
         self._witness_provision.cancelled.connect(self._on_provision_cancelled)
 
     def _on_add_witnesses(self, hab_pre):
         """Navigate to the provision page for a specific identifier."""
+        if not self._has_onboarded_account():
+            self._show_onboarding(
+                reason="witness provisioning blocked until the local KF account is onboarded"
+            )
+            return
+
         self._witness_provision.set_identifier(hab_pre)
         self._navigate("kf_provision")
         self._witness_provision.on_show()
 
     def _on_provision_completed(self):
         """Return to witness overview after successful provisioning."""
-        self._navigate("kf_witnesses")
-        self._witness_overview.on_show()
-        self._set_active_nav(self._wit_btn)
+        self._show_witnesses()
 
     def _on_provision_cancelled(self):
         """Return to witness overview on cancel."""
-        self._navigate("kf_witnesses")
-        self._witness_overview.on_show()
-        self._set_active_nav(self._wit_btn)
+        self._show_witnesses()
 
     def _set_active_nav(self, active_btn):
         """Highlight the active nav button and deactivate the others."""
@@ -98,17 +182,71 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
 
     def on_vault_opened(self, vault: Any) -> None:
         self._db = KFBaser(name=f"kf_{vault.hby.name}", reopen=True)
+        self._boot_client.set_boot_server_aid("")
+        self._onboarding_page.set_db(self._db)
+        self._onboarding_page.set_boot_client(self._boot_client)
         self._witness_overview.set_db(self._db)
+        self._witness_overview.set_boot_client(self._boot_client)
         self._witness_provision.set_db(self._db)
+        self._watcher_list.set_db(self._db)
+        self._watcher_list.set_boot_client(self._boot_client)
+        self._watcher_register.set_db(self._db)
+        self._sync_boot_client_destination()
         logger.info(f"KF plugin DB opened for vault '{vault.hby.name}'")
 
     def on_vault_closed(self, vault: Any) -> None:
         if self._db:
             self._db.close()
             self._db = None
+        self._onboarding_page.set_db(None)
+        self._onboarding_page.set_boot_client(None)
         self._witness_overview.set_db(None)
+        self._witness_overview.set_boot_client(None)
         self._witness_provision.set_db(None)
+        self._watcher_list.set_db(None)
+        self._watcher_list.set_boot_client(None)
+        self._watcher_register.set_db(None)
+        self._boot_client.set_boot_server_aid("")
         logger.info("KF plugin DB closed")
+
+    def is_setup_complete(self, vault: Any) -> bool:
+        record = self._get_account_record()
+        setup_complete = record is not None and record.status == ACCOUNT_STATUS_ONBOARDED
+        chosen_destination = "kf_witnesses" if setup_complete else "kf_onboarding"
+        logger.info(
+            f"KF plugin entry decision for vault '{self._vault_name(vault)}': "
+            f"account_lookup={self._describe_account_record(record)} "
+            f"setup_complete={setup_complete} "
+            f"chosen_destination='{chosen_destination}'"
+        )
+        return setup_complete
+
+    def get_setup_page(self, vault: Any) -> tuple[str, bool]:
+        record = self._get_account_record()
+        if record is None and self._db is not None:
+            record, created = self._db.ensure_account()
+            if created:
+                logger.info(
+                    f"KF account status transition for vault '{self._vault_name(vault)}': "
+                    f"missing -> '{record.status}' "
+                    f"account_lookup={self._describe_account_record(record)}"
+                )
+
+        page_key = "kf_onboarding"
+        should_push_menu = True
+        if record is not None and record.status == ACCOUNT_STATUS_ONBOARDED:
+            page_key = "kf_witnesses"
+
+        if page_key == "kf_onboarding":
+            self._set_active_nav(None)
+            self._onboarding_page.on_show()
+
+        logger.info(
+            f"KF plugin gated destination for vault '{self._vault_name(vault)}': "
+            f"page='{page_key}' push_menu={should_push_menu} "
+            f"account_lookup={self._describe_account_record(record)}"
+        )
+        return page_key, should_push_menu
 
     def get_menu_entry(self) -> MenuButton:
         icon = QIcon(":/assets/custom/SymbolLogo.svg")
@@ -136,9 +274,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
             icon=QIcon(":/assets/material-icons/witness1.svg"),
             label="Witnesses",
         )
-        self._wit_btn.clicked.connect(lambda: self._navigate("kf_witnesses"))
-        self._wit_btn.clicked.connect(lambda: self._witness_overview.on_show())
-        self._wit_btn.clicked.connect(lambda: self._set_active_nav(self._wit_btn))
+        self._wit_btn.clicked.connect(self._show_witnesses)
         items.append(self._wit_btn)
 
         # Watchers nav button
@@ -146,9 +282,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
             icon=QIcon(":/assets/material-icons/watcher.svg"),
             label="Watchers",
         )
-        self._wat_btn.clicked.connect(lambda: self._navigate("kf_watchers"))
-        self._wat_btn.clicked.connect(lambda: self._watcher_list.on_show())
-        self._wat_btn.clicked.connect(lambda: self._set_active_nav(self._wat_btn))
+        self._wat_btn.clicked.connect(self._show_watchers)
         items.append(self._wat_btn)
 
         return items
@@ -160,9 +294,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
         class _LogoClickFilter(QObject):
             def eventFilter(self, obj, event):
                 if event.type() == QEvent.Type.MouseButtonRelease:
-                    plugin._navigate("kf_witnesses")
-                    plugin._witness_overview.on_show()
-                    plugin._set_active_nav(plugin._wit_btn)
+                    plugin._show_default_page()
                     return True
                 return False
 
@@ -170,6 +302,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
 
     def get_pages(self) -> dict[str, QWidget]:
         return {
+            "kf_onboarding": self._onboarding_page,
             "kf_witnesses": self._witness_overview,
             "kf_provision": self._witness_provision,
             "kf_watchers": self._watcher_list,
@@ -197,6 +330,173 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin):
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------
+
+    def _on_onboarding_confirm(self, alias: str, witness_profile: str, account_aid: str):
+        if self._onboarding_thread is not None:
+            logger.warning("Ignoring duplicate KF onboarding request while a run is already active")
+            return
+
+        logger.info(
+            "KF onboarding started for alias='%s' witness_profile='%s' account_aid='%s'",
+            alias,
+            witness_profile,
+            account_aid or "create_new",
+        )
+        self._sync_boot_client_destination()
+        self._onboarding_page.begin_run()
+
+        self._onboarding_thread = QThread()
+        self._onboarding_worker = _OnboardingWorker(
+            app=self._app,
+            db=self._db,
+            boot_client=self._boot_client,
+            alias=alias,
+            witness_profile=witness_profile,
+            account_aid=account_aid,
+        )
+        self._onboarding_worker.moveToThread(self._onboarding_thread)
+        self._onboarding_thread.started.connect(self._onboarding_worker.run)
+        self._onboarding_worker.progress.connect(self._onboarding_bridge.on_progress)
+        self._onboarding_worker.succeeded.connect(self._onboarding_bridge.on_succeeded)
+        self._onboarding_worker.failed.connect(self._onboarding_bridge.on_failed)
+        self._onboarding_worker.finished.connect(self._onboarding_thread.quit)
+        self._onboarding_thread.finished.connect(self._onboarding_worker.deleteLater)
+        self._onboarding_thread.finished.connect(self._onboarding_thread.deleteLater)
+        self._onboarding_thread.finished.connect(self._onboarding_bridge.on_finished)
+        self._onboarding_thread.start()
+
+    def _handle_onboarding_progress(self, kwa: dict):
+        detail = kwa.get("detail", "")
+        logger.info("KF onboarding progress: %s", detail)
+        self._onboarding_page.update_run(
+            stage=kwa.get("stage", ""),
+            detail=detail,
+            boot_verified=bool(kwa.get("boot_verified", False)),
+            completed=bool(kwa.get("completed", False)),
+        )
+
+    def _handle_onboarding_success(self, alias: str, outcome):
+        self._sync_boot_client_destination()
+        self._onboarding_page.complete_run(
+            account_aid=outcome.account_aid,
+            results=outcome.witness_registration.results,
+            batch_mode=outcome.witness_registration.batch_mode,
+        )
+        self._emit_identifier_created(alias=alias, pre=outcome.account_aid)
+        logger.info(
+            "KF onboarding completed for alias='%s' account_aid='%s'",
+            alias,
+            outcome.account_aid,
+        )
+
+    def _handle_onboarding_failure(self, alias: str, message: str):
+        record = self._get_account_record()
+        preserved_session = bool(
+            record is not None and record.onboarding_session_id and record.onboarding_auth_alias
+        )
+        if record is not None:
+            record.status = ACCOUNT_STATUS_FAILED
+            self._db.pin_account(record)
+        follow_up = (
+            "Local progress was preserved. Start onboarding again to resume the saved session."
+            if preserved_session
+            else "This onboarding attempt was abandoned. Start again to continue."
+        )
+        self._onboarding_page.fail_run(
+            f"Onboarding failed: {message}\n\n{follow_up}"
+        )
+        logger.error("KF onboarding failed for alias='%s': %s", alias, message)
+
+    def _finish_onboarding_run(self):
+        self._onboarding_worker = None
+        self._onboarding_thread = None
+
+    def _emit_identifier_created(self, *, alias: str, pre: str) -> None:
+        vault = getattr(self._app, "vault", None)
+        signals = getattr(vault, "signals", None)
+        if signals is None or not pre:
+            return
+
+        signals.emit_doer_event(
+            "InceptDoer",
+            "identifier_created",
+            {"alias": alias, "pre": pre},
+        )
+
+    def _show_default_page(self):
+        if self._has_onboarded_account():
+            self._show_witnesses()
+            return
+
+        self._show_onboarding(reason="default plugin landing blocked by local KF account status")
+
+    def _show_onboarding(self, reason: str):
+        logger.info(
+            f"KF plugin gated destination: page='kf_onboarding' "
+            f"reason='{reason}' account_lookup={self._describe_account_record(self._get_account_record())}"
+        )
+        self._navigate("kf_onboarding")
+        self._onboarding_page.on_show()
+        self._set_active_nav(None)
+
+    def _show_witnesses(self, checked=False):
+        if not self._has_onboarded_account():
+            self._show_onboarding(reason="witness navigation blocked by local KF account status")
+            return
+
+        logger.info(
+            f"KF plugin gated destination: page='kf_witnesses' "
+            f"account_lookup={self._describe_account_record(self._get_account_record())}"
+        )
+        self._navigate("kf_witnesses")
+        self._witness_overview.on_show()
+        self._set_active_nav(self._wit_btn)
+
+    def _show_watchers(self, checked=False):
+        if not self._has_onboarded_account():
+            self._show_onboarding(reason="watcher navigation blocked by local KF account status")
+            return
+
+        logger.info(
+            f"KF plugin gated destination: page='kf_watchers' "
+            f"account_lookup={self._describe_account_record(self._get_account_record())}"
+        )
+        self._navigate("kf_watchers")
+        self._watcher_list.on_show()
+        self._set_active_nav(self._wat_btn)
+
+    def _has_onboarded_account(self) -> bool:
+        record = self._get_account_record()
+        return record is not None and record.status == ACCOUNT_STATUS_ONBOARDED
+
+    def _get_account_record(self) -> KFAccountRecord | None:
+        if self._db is None:
+            return None
+        return self._db.get_account()
+
+    def _sync_boot_client_destination(self):
+        record = self._get_account_record()
+        self._boot_client.set_boot_server_aid(
+            record.boot_server_aid if record is not None else ""
+        )
+
+    @staticmethod
+    def _vault_name(vault: Any) -> str:
+        hby = getattr(vault, "hby", None)
+        return getattr(hby, "name", "unknown")
+
+    @staticmethod
+    def _describe_account_record(record: KFAccountRecord | None) -> str:
+        if record is None:
+            return "missing"
+
+        return (
+            f"status='{record.status}' "
+            f"account_aid='{record.account_aid or '-'}' "
+            f"account_alias='{record.account_alias or '-'}' "
+            f"witness_profile_code='{record.witness_profile_code or '-'}' "
+            f"region_id='{record.region_id or '-'}'"
+        )
 
     def _build_logo_widget(self):
         """Build a small logo + text widget for the plugin submenu header."""
