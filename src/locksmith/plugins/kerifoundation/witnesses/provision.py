@@ -14,6 +14,7 @@ DB cleanup).
 from __future__ import annotations
 
 import asyncio
+from dataclasses import dataclass
 from urllib.parse import urlparse
 
 import pyotp
@@ -26,7 +27,12 @@ from keri import help
 from keri.help import helping
 
 from locksmith.core.otping import create_totp_uri
-from locksmith.core.remoting import resolve_oobi
+from locksmith.core.remoting import (
+    describe_oobi_resolution_state,
+    purge_oobi_resolution_state,
+    resolve_oobi,
+    resolve_oobi_blocking,
+)
 from locksmith.plugins.kerifoundation.core.configing import load_witness_servers
 from locksmith.plugins.kerifoundation.core.remoting import (
     deprovision_witness,
@@ -52,6 +58,338 @@ from locksmith.ui.toolkit.widgets.panels import FlowLayout, LocksmithQRPanel
 from locksmith.plugins.kerifoundation.witnesses.widgets import WitnessServerCard
 
 logger = help.ogler.getLogger(__name__)
+
+
+# ---------------------------------------------------------------------------
+# Shared hosted-witness helpers
+# ---------------------------------------------------------------------------
+
+@dataclass(frozen=True)
+class HostedWitnessAllocation:
+    """Hosted witness details returned by boot-backed onboarding/account views."""
+
+    eid: str
+    witness_url: str
+    oobi: str
+    boot_url: str = ""
+    name: str = ""
+    region_id: str = ""
+    region_name: str = ""
+
+
+@dataclass(frozen=True)
+class HostedWitnessRegistration:
+    """Local witness-registration result reused by onboarding and UI flows."""
+
+    results: list[dict]
+    batch_mode: bool
+
+
+def persist_provisioned_witnesses(db, hab_pre, entries):
+    persisted = []
+    failures = []
+
+    if not entries:
+        return persisted, failures
+
+    if not db:
+        return persisted, list(entries)
+
+    for entry in entries:
+        try:
+            record = ProvisionedWitnessRecord(
+                boot_url=entry["boot_url"],
+                witness_url=entry["witness_url"],
+                eid=entry["eid"],
+                oobi=entry["oobi"],
+                hab_pre=hab_pre,
+                provisioned_at=helping.nowIso8601(),
+            )
+            db.provisionedWitnesses.pin(
+                keys=(hab_pre, entry["boot_url"]),
+                val=record,
+            )
+            persisted.append(entry)
+        except Exception:
+            logger.warning(
+                "Failed to persist provisioned witness recovery state for %s",
+                entry.get("eid", "unknown"),
+                exc_info=True,
+            )
+            failures.append(entry)
+
+    return persisted, failures
+
+
+def persist_registration_results(db, hab_pre, hab, results, batch_mode):
+    if not db:
+        raise ValueError("KF witness database is not available.")
+
+    now = helping.nowIso8601()
+    persisted_state = {"witness_keys": [], "batch_eids": None}
+
+    for res in results:
+        record = WitnessRecord(
+            eid=res["eid"],
+            url=extract_base_url(res["oobi"]) or res.get("witness_url", ""),
+            oobi=res["oobi"],
+            totp_seed=res["totp_seed"],
+            hab_pre=hab.pre,
+            registered_at=now,
+            batch_mode=batch_mode,
+        )
+        witness_key = (hab.pre, res["eid"])
+        db.witnesses.pin(keys=witness_key, val=record)
+        persisted_state["witness_keys"].append(witness_key)
+        logger.info("Stored witness record for %s on %s", res["eid"][:12], hab.pre[:12])
+
+    if batch_mode and results:
+        batch_eids = [r["eid"] for r in results]
+        existing = db.witBatches.get(keys=(hab.pre,))
+        if existing:
+            if batch_eids not in existing.batches:
+                existing.batches.append(batch_eids)
+                db.witBatches.pin(keys=(hab.pre,), val=existing)
+                persisted_state["batch_eids"] = batch_eids
+        else:
+            db.witBatches.pin(
+                keys=(hab.pre,),
+                val=WitnessBatches(batches=[batch_eids]),
+            )
+            persisted_state["batch_eids"] = batch_eids
+
+    return persisted_state
+
+
+def remove_persisted_registration_state(db, hab_pre, persisted_state):
+    if not db or not persisted_state:
+        return
+
+    for witness_key in persisted_state.get("witness_keys", []):
+        try:
+            db.witnesses.rem(keys=witness_key)
+        except Exception:
+            logger.warning(
+                "Failed to remove witness record during rollback for %s",
+                witness_key,
+                exc_info=True,
+            )
+
+    batch_eids = persisted_state.get("batch_eids")
+    if not batch_eids:
+        return
+
+    try:
+        existing = db.witBatches.get(keys=(hab_pre,))
+        if not existing:
+            return
+        remaining_batches = [batch for batch in existing.batches if batch != batch_eids]
+        if remaining_batches:
+            existing.batches = remaining_batches
+            db.witBatches.pin(keys=(hab_pre,), val=existing)
+        else:
+            db.witBatches.rem(keys=(hab_pre,))
+    except Exception:
+        logger.warning(
+            "Failed to remove witness batch during rollback for %s",
+            hab_pre,
+            exc_info=True,
+        )
+
+
+def rollback_registration_state(app, db, hab_pre, provisioned_entries, persisted_state, resolved_eids):
+    if app and hasattr(app, "vault") and app.vault:
+        for eid in resolved_eids:
+            try:
+                app.vault.org.rem(eid)
+                logger.info("Removed witness %s from Organizer during rollback", eid[:12])
+            except Exception:
+                logger.warning("Failed to remove %s from Organizer", eid[:12], exc_info=True)
+
+    remove_persisted_registration_state(db, hab_pre, persisted_state)
+
+    rollback_failures = []
+    for entry in provisioned_entries:
+        boot_url = entry.get("boot_url", "")
+        if not boot_url:
+            logger.error(
+                "Witness rollback missing boot URL for %s during account %s cleanup",
+                entry.get("eid", "unknown"),
+                hab_pre,
+            )
+            rollback_failures.append(entry)
+            continue
+
+        ok = deprovision_witness(entry["eid"], boot_url)
+        if not ok:
+            logger.error(
+                "Witness rollback deprovision failed for %s via %s",
+                entry["eid"],
+                boot_url,
+            )
+            rollback_failures.append(entry)
+            continue
+
+        purge_oobi_resolution_state(app, oobi=entry.get("oobi"))
+
+    persisted_failures = []
+    persistence_failures = []
+    if db:
+        failed_eids = {f["eid"] for f in rollback_failures}
+        for entry in provisioned_entries:
+            if entry["eid"] not in failed_eids and entry.get("boot_url"):
+                try:
+                    db.provisionedWitnesses.rem(keys=(hab_pre, entry["boot_url"]))
+                except Exception:
+                    pass
+
+        failed_results = [res for res in provisioned_entries if res["eid"] in failed_eids]
+        persisted_failures, persistence_failures = persist_provisioned_witnesses(
+            db,
+            hab_pre,
+            failed_results,
+        )
+    else:
+        persistence_failures = rollback_failures
+
+    return rollback_failures, persisted_failures, persistence_failures
+
+
+def format_eid_list(entries):
+    return ", ".join(entry["eid"][:12] + "..." for entry in entries)
+
+
+def format_oobi_resolution_failure(app, hab_pre, result):
+    resolution_state = describe_oobi_resolution_state(
+        app,
+        pre=result.get("eid"),
+        oobi=result.get("oobi"),
+    )
+    return (
+        f"Failed to resolve OOBI for witness {result['eid']}.\n"
+        f"Account AID: {hab_pre}\n"
+        f"Witness URL: {result.get('witness_url') or '-'}\n"
+        f"Boot URL: {result.get('boot_url') or '-'}\n"
+        f"OOBI: {result.get('oobi') or '-'}\n"
+        f"Resolver: {resolution_state}"
+    )
+
+
+def format_cleanup_failure_details(rollback_failures, persisted_failures, persistence_failures):
+    details = []
+    if rollback_failures:
+        details.append(f"rollback={format_eid_list(rollback_failures)}")
+    if persisted_failures:
+        details.append(f"pending={format_eid_list(persisted_failures)}")
+    if persistence_failures:
+        details.append(f"unsaved={format_eid_list(persistence_failures)}")
+    if not details:
+        return ""
+    return "Cleanup after witness registration failure was incomplete: " + " ".join(details)
+
+
+def extract_base_url(oobi):
+    return normalize_url(oobi)
+
+
+def normalize_url(url):
+    try:
+        parsed = urlparse(url)
+        if not parsed.scheme or not parsed.hostname:
+            return ""
+        base = f"{parsed.scheme}://{parsed.hostname}"
+        if parsed.port:
+            base += f":{parsed.port}"
+        return base
+    except Exception:
+        return ""
+
+
+class HostedWitnessRegistrar:
+    """Headless witness registrar reused by KF onboarding."""
+
+    def __init__(self, app=None, db=None):
+        self._app = app
+        self._db = db
+
+    def register(self, *, hab, witnesses: list[HostedWitnessAllocation], batch_mode=True, persist=True):
+        if not witnesses:
+            return HostedWitnessRegistration(results=[], batch_mode=batch_mode)
+
+        secret = pyotp.random_base32() if batch_mode else None
+        results = []
+
+        for witness in witnesses:
+            reg = register_with_witness(
+                hab,
+                witness.eid,
+                witness.witness_url,
+                secret=secret,
+            )
+            oobi = reg.get("oobi") or witness.oobi
+            results.append(
+                {
+                    "eid": witness.eid,
+                    "totp_seed": reg["totp_seed"],
+                    "oobi": oobi,
+                    "boot_url": witness.boot_url,
+                    "witness_url": witness.witness_url,
+                    "name": witness.name,
+                }
+            )
+
+        rollback_db = self._db if persist else None
+        if persist:
+            persist_provisioned_witnesses(self._db, hab.pre, results)
+        persisted_state = None
+        resolved_eids = []
+
+        try:
+            for res in results:
+                success = resolve_oobi_blocking(
+                    self._app,
+                    pre=res["eid"],
+                    oobi=res["oobi"],
+                    force=True,
+                    alias=res.get("name") or f"KF Witness {res['eid'][:12]}",
+                    cid=hab.pre,
+                    tag="witness",
+                )
+                if not success:
+                    message = format_oobi_resolution_failure(self._app, hab.pre, res)
+                    logger.error("%s", message)
+                    raise ValueError(message)
+                resolved_eids.append(res["eid"])
+
+            if persist:
+                persisted_state = persist_registration_results(
+                    self._db,
+                    hab.pre,
+                    hab,
+                    results,
+                    batch_mode,
+                )
+        except Exception as exc:
+            logger.exception("Hosted witness registration failed for account %s", hab.pre)
+            rollback_failures, persisted_failures, persistence_failures = rollback_registration_state(
+                self._app,
+                rollback_db,
+                hab.pre,
+                results,
+                persisted_state,
+                resolved_eids,
+            )
+            cleanup_details = format_cleanup_failure_details(
+                rollback_failures,
+                persisted_failures,
+                persistence_failures,
+            )
+            if cleanup_details:
+                logger.error("%s", cleanup_details)
+                raise ValueError(f"{exc}\n\n{cleanup_details}") from exc
+            raise
+
+        return HostedWitnessRegistration(results=results, batch_mode=batch_mode)
 
 
 # ---------------------------------------------------------------------------
@@ -612,7 +950,9 @@ class WitnessProvisionPage(LocksmithFormPage):
                     tag="witness",
                 )
                 if not success:
-                    raise ValueError(f"Failed to resolve OOBI for witness {res['eid']}")
+                    message = format_oobi_resolution_failure(self._app, self._reg_hab.pre, res)
+                    logger.error("%s", message)
+                    raise ValueError(message)
                 self._resolved_eids.append(res["eid"])
 
             self._persisted_registration_state = self._persist_registration_results(

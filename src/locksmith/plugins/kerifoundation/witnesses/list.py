@@ -2,9 +2,7 @@
 """
 locksmith.plugins.kerifoundation.witnesses.list module
 
-Displays local identifiers with their KERI Foundation witness counts.
-The user clicks "Add Witnesses" on an identifier row to navigate to
-the server-selection / provisioning / registration page.
+Boot-backed witness list for the single onboarded KF account.
 """
 from __future__ import annotations
 
@@ -12,7 +10,7 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget, QLabel
 from keri import help
 
-from locksmith.plugins.kerifoundation.core.identifiers import iter_local_identifier_choices
+from locksmith.plugins.kerifoundation.db.basing import ACCOUNT_STATUS_ONBOARDED
 from locksmith.ui import colors
 from locksmith.ui.toolkit.tables.paginated import PaginatedTableWidget
 
@@ -32,14 +30,15 @@ def _shrink_empty_state_title(table: PaginatedTableWidget, font_size: int = 20):
 
 
 class WitnessOverviewPage(QWidget):
-    """Lists local identifiers with their registered and pending witness counts."""
+    """Shows hosted witness rows for the permanent KF account AID."""
 
-    add_witnesses_requested = Signal(str)  # hab_pre
+    add_witnesses_requested = Signal(str)
 
     def __init__(self, app=None, parent=None):
         super().__init__(parent)
         self._app = app
         self._db = None
+        self._boot_client = None
         self._current_rows = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
@@ -50,115 +49,89 @@ class WitnessOverviewPage(QWidget):
     def set_db(self, db):
         self._db = db
 
+    def set_boot_client(self, boot_client):
+        self._boot_client = boot_client
+
     def _setup_ui(self):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
         self._table = PaginatedTableWidget(
-            columns=["Alias", "Prefix", "Witnesses", "Status"],
+            columns=["Name", "Witness AID", "Region", "Auth", "Endpoint"],
             title="KERI Foundation Witnesses",
             icon_path=":/assets/material-icons/witness1.svg",
             show_search=True,
             show_add_button=False,
             items_per_page=10,
-            row_actions=["Add Witnesses"],
+            row_actions=[],
             row_actions_callback=self._get_row_actions,
-            monospace_columns=["Prefix"],
+            monospace_columns=["Witness AID"],
         )
         _shrink_empty_state_title(self._table)
         self._table.row_action_triggered.connect(self._on_row_action)
-
         layout.addWidget(self._table)
 
     def on_show(self):
-        if not self._app:
+        if not self._app or not self._db or not self._boot_client:
+            self._table.set_static_data([])
             return
         self._refresh_table()
 
     def _refresh_table(self):
-        self._current_rows = self._build_rows()
-        self._table.set_static_data(self._current_rows)
+        try:
+            self._current_rows = self._build_rows()
+            self._table.set_static_data(self._current_rows)
+        except Exception as exc:
+            logger.exception("Failed loading boot-backed KF witness rows")
+            self._current_rows = []
+            self._table.load_error.emit(str(exc))
+            self._table._display_error()
 
     def _build_rows(self):
-        items = []
+        record = self._db.get_account() if self._db else None
+        if record is None or record.status != ACCOUNT_STATUS_ONBOARDED or not record.account_aid:
+            return []
 
-        for alias, prefix in iter_local_identifier_choices(self._app):
-            registered = self._count_registered(prefix)
-            pending = self._count_pending(prefix)
+        hab = self._app.vault.hby.habByPre(record.account_aid) if self._app and self._app.vault else None
+        if hab is None:
+            logger.warning("Permanent KF account AID %s is missing from the local wallet", record.account_aid)
+            return []
 
-            # Build display string
-            if registered and pending:
-                witnesses_text = f"{registered} registered, {pending} pending"
-            elif registered:
-                witnesses_text = f"{registered} registered"
-            elif pending:
-                witnesses_text = f"{pending} pending"
+        rows = []
+        for witness in self._boot_client.list_account_witnesses(
+            hab,
+            account_aid=record.account_aid,
+            destination=record.boot_server_aid,
+        ):
+            local_state = self._db.witnesses.get(keys=(record.account_aid, witness.eid))
+            if local_state is None:
+                auth = "Pending local auth"
+                auth_color = colors.WARNING_TEXT
+            elif local_state.batch_mode:
+                auth = "Batch TOTP configured"
+                auth_color = colors.SUCCESS_TEXT
             else:
-                witnesses_text = "—"
+                auth = "TOTP configured"
+                auth_color = colors.SUCCESS_TEXT
 
-            # Status
-            if registered:
-                status = "Ready"
-                status_color = colors.SUCCESS_TEXT
-            elif pending:
-                status = "Pending"
-                status_color = colors.WARNING_TEXT
-            else:
-                status = "No witnesses"
-                status_color = colors.TEXT_SECONDARY
+            rows.append(
+                {
+                    "Name": witness.name or f"KF Witness {witness.eid[:12]}",
+                    "Witness AID": witness.eid,
+                    "Region": witness.region_name or witness.region_id or "—",
+                    "Auth": auth,
+                    "Endpoint": witness.url or "—",
+                    "_Auth_color": auth_color,
+                }
+            )
 
-            items.append({
-                "Alias": alias,
-                "Prefix": prefix,
-                "Witnesses": witnesses_text,
-                "Status": status,
-                "_hab_pre": prefix,
-                "_Status_color": status_color,
-            })
+        return rows
 
-        return items
+    @staticmethod
+    def _get_row_actions(_row_data):
+        return [], {}
 
-    def _count_registered(self, hab_pre):
-        if not self._db:
-            return 0
-        count = 0
-        try:
-            for _ in self._db.witnesses.getItemIter(keys=(hab_pre,)):
-                count += 1
-        except Exception:
-            pass
-        return count
-
-    def _count_pending(self, hab_pre):
-        """Count provisioned-but-not-registered witnesses for an identifier."""
-        if not self._db:
-            return 0
-
-        # Collect registered EIDs for this identifier
-        registered_eids = set()
-        try:
-            for (_keys, record) in self._db.witnesses.getItemIter(keys=(hab_pre,)):
-                registered_eids.add(record.eid)
-        except Exception:
-            pass
-
-        # Count provisioned records whose EID is not yet registered
-        count = 0
-        try:
-            for (_keys, record) in self._db.provisionedWitnesses.getItemIter(keys=(hab_pre,)):
-                if record.eid and record.eid not in registered_eids:
-                    count += 1
-        except Exception:
-            pass
-
-        return count
-
-    def _get_row_actions(self, row_data):
-        return ["Add Witnesses"], {}
-
-    def _on_row_action(self, data, action):
-        if action == "Add Witnesses":
-            hab_pre = data.get("_hab_pre", "")
-            if hab_pre:
-                self.add_witnesses_requested.emit(hab_pre)
+    @staticmethod
+    def _on_row_action(_data, _action):
+        return

@@ -9,4 +9,4 @@ developer setup guide that later documentation slices build on.
    :caption: Contents
 
    developer-guide
-
+   kerifoundation-plugin
