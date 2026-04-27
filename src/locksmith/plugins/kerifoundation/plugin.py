@@ -24,7 +24,9 @@ from locksmith.plugins.kerifoundation.db.basing import (
 from locksmith.plugins.kerifoundation.onboarding.page import KFOnboardingPage
 from locksmith.plugins.kerifoundation.onboarding.service import (
     KFBootClient,
+    KFBootError,
     KFOnboardingService,
+    KFVaultDeletionService,
 )
 from locksmith.ui.vault.menu import MenuButton, MenuSpacer
 from locksmith.ui.toolkit.widgets.buttons import BackButton
@@ -53,9 +55,16 @@ class _OnboardingWorker(QObject):
         self._alias = alias
         self._witness_profile = witness_profile
         self._account_aid = account_aid
+        self._cancel_requested = False
+
+    def request_cancel(self):
+        self._cancel_requested = True
 
     @Slot()
     def run(self):
+        if self._cancel_requested:
+            self.finished.emit()
+            return
         try:
             service = KFOnboardingService(
                 app=self._app,
@@ -70,9 +79,11 @@ class _OnboardingWorker(QObject):
             )
         except Exception as ex:
             logger.exception("KF onboarding failed")
-            self.failed.emit(self._alias, str(ex))
+            if not self._cancel_requested:
+                self.failed.emit(self._alias, str(ex))
         else:
-            self.succeeded.emit(self._alias, outcome)
+            if not self._cancel_requested:
+                self.succeeded.emit(self._alias, outcome)
         finally:
             self.finished.emit()
 
@@ -112,6 +123,8 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
     shell page and does not expose the normal witness/watcher menu.
     """
 
+    ONBOARDING_SHUTDOWN_TIMEOUT_MS = 2000
+
     @property
     def plugin_id(self) -> str:
         return "kerifoundation"
@@ -125,6 +138,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_worker = None
         self._onboarding_thread = None
         self._onboarding_bridge = _OnboardingBridge(self)
+        self._closing_vault = False
 
         # Build pages
         self._onboarding_page = KFOnboardingPage(app)
@@ -181,6 +195,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             vault_page._show_page(page_key)
 
     def on_vault_opened(self, vault: Any) -> None:
+        self._closing_vault = False
         self._db = KFBaser(name=f"kf_{vault.hby.name}", reopen=True)
         self._boot_client.set_boot_server_aid("")
         self._onboarding_page.set_db(self._db)
@@ -194,9 +209,23 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._sync_boot_client_destination()
         logger.info(f"KF plugin DB opened for vault '{vault.hby.name}'")
 
-    def on_vault_closed(self, vault: Any) -> None:
+    def prepare_vault_deletion(self, vault: Any) -> None:
+        if self._db is None:
+            return
+
+        self._shutdown_background_work(require_onboarding_stopped=True)
+        service = KFVaultDeletionService(
+            app=self._app,
+            db=self._db,
+            boot_client=self._boot_client.clone(),
+        )
+        service.delete_vault_account()
+
+    def on_vault_closed(self, vault: Any, *, clear: bool = False) -> None:
+        self._closing_vault = True
+        self._shutdown_background_work(require_onboarding_stopped=False)
         if self._db:
-            self._db.close()
+            self._db.close(clear=clear)
             self._db = None
         self._onboarding_page.set_db(None)
         self._onboarding_page.set_boot_client(None)
@@ -208,6 +237,45 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._watcher_register.set_db(None)
         self._boot_client.set_boot_server_aid("")
         logger.info("KF plugin DB closed")
+
+    def _shutdown_background_work(self, *, require_onboarding_stopped: bool) -> bool:
+        stopped = True
+        if not self._shutdown_onboarding_worker():
+            message = (
+                "KF onboarding is still active and could not stop promptly. "
+                "Try vault deletion again after onboarding finishes or times out."
+            )
+            if require_onboarding_stopped:
+                raise KFBootError(message)
+            logger.warning(message)
+            stopped = False
+
+        for page in (self._onboarding_page, self._witness_overview, self._watcher_list):
+            shutdown = getattr(page, "shutdown", None)
+            if callable(shutdown):
+                if shutdown() is False:
+                    stopped = False
+
+        if require_onboarding_stopped and not stopped:
+            raise KFBootError(
+                "KF background work is still active and could not stop promptly. "
+                "Try vault deletion again after background work finishes or times out."
+            )
+        return stopped
+
+    def _shutdown_onboarding_worker(self) -> bool:
+        if self._onboarding_worker is not None and hasattr(self._onboarding_worker, "request_cancel"):
+            self._onboarding_worker.request_cancel()
+
+        thread = self._onboarding_thread
+        if thread is not None:
+            logger.info("Waiting for active KF onboarding worker to finish before closing vault")
+            thread.quit()
+            if not thread.wait(self.ONBOARDING_SHUTDOWN_TIMEOUT_MS):
+                return False
+
+        self._finish_onboarding_run()
+        return True
 
     def is_setup_complete(self, vault: Any) -> bool:
         record = self._get_account_record()
@@ -332,6 +400,10 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
     # -------------------------------------------------------------------------
 
     def _on_onboarding_confirm(self, alias: str, witness_profile: str, account_aid: str):
+        if self._closing_vault:
+            logger.warning("Ignoring KF onboarding request while the vault is closing")
+            return
+
         if self._onboarding_thread is not None:
             logger.warning("Ignoring duplicate KF onboarding request while a run is already active")
             return
@@ -349,7 +421,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_worker = _OnboardingWorker(
             app=self._app,
             db=self._db,
-            boot_client=self._boot_client,
+            boot_client=self._boot_client.clone(),
             alias=alias,
             witness_profile=witness_profile,
             account_aid=account_aid,
@@ -366,6 +438,9 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_thread.start()
 
     def _handle_onboarding_progress(self, kwa: dict):
+        if self._closing_vault:
+            return
+
         detail = kwa.get("detail", "")
         logger.info("KF onboarding progress: %s", detail)
         self._onboarding_page.update_run(
@@ -376,6 +451,9 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         )
 
     def _handle_onboarding_success(self, alias: str, outcome):
+        if self._closing_vault:
+            return
+
         self._sync_boot_client_destination()
         self._onboarding_page.complete_run(
             account_aid=outcome.account_aid,
@@ -390,6 +468,9 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         )
 
     def _handle_onboarding_failure(self, alias: str, message: str):
+        if self._closing_vault:
+            return
+
         record = self._get_account_record()
         preserved_session = bool(
             record is not None and record.onboarding_session_id and record.onboarding_auth_alias

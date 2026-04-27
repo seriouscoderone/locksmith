@@ -177,6 +177,13 @@ class KFBootClient:
     def set_boot_server_aid(self, aid: str) -> None:
         self._boot_server_aid = aid or ""
 
+    def clone(self) -> "KFBootClient":
+        """Return an isolated client snapshot safe to hand to a worker thread."""
+        client = KFBootClient(self._app, surfaces=self._surfaces)
+        client._boot_server_aid = self._boot_server_aid
+        client._surface_keystate = dict(self._surface_keystate)
+        return client
+
     def check_health(self) -> dict[str, Any]:
         self._require_onboarding_url()
 
@@ -366,6 +373,21 @@ class KFBootClient:
             destination=destination,
         )
         return self._normalize_watcher_rows(reply.payload)
+
+    def delete_account(
+        self,
+        hab: Any,
+        *,
+        account_aid: str,
+        destination: str = "",
+    ) -> CesrReply:
+        return self.send_exn(
+            surface="account",
+            hab=hab,
+            route="/account/delete",
+            payload={"account_aid": account_aid},
+            destination=destination,
+        )
 
     def send_exn(
         self,
@@ -1512,6 +1534,86 @@ class KFOnboardingService:
     def _emit(progress: ProgressFn, **kwa) -> None:
         if progress is not None:
             progress(**kwa)
+
+
+class KFVaultDeletionService:
+    """Tear down KF remote state before the local vault is deleted."""
+
+    def __init__(
+        self,
+        *,
+        app: Any,
+        db: Any,
+        boot_client: KFBootClient,
+    ):
+        self._app = app
+        self._db = db
+        self._boot_client = boot_client
+
+    def delete_vault_account(self) -> None:
+        if self._db is None:
+            return
+
+        record = self._db.get_account()
+        if record is None:
+            return
+
+        if record.boot_server_aid:
+            self._boot_client.set_boot_server_aid(record.boot_server_aid)
+
+        if record.onboarding_session_id:
+            self._cancel_saved_onboarding(record)
+            return
+
+        if record.status == ACCOUNT_STATUS_ONBOARDED:
+            if not record.account_aid:
+                raise KFBootError(
+                    "The local KF account record is missing the permanent account AID required for deletion."
+                )
+            self._delete_onboarded_account(record)
+
+    def _cancel_saved_onboarding(self, record: KFAccountRecord) -> None:
+        if not record.onboarding_auth_alias:
+            raise KFBootError(
+                "The saved KF onboarding session is missing its hidden auth principal and cannot be cancelled safely."
+            )
+
+        ehab = self._app.vault.hby.habByName(
+            record.onboarding_auth_alias,
+            ns=ONBOARDING_AUTH_NAMESPACE,
+        )
+        if ehab is None:
+            raise KFBootError(
+                "The saved KF onboarding session is missing its hidden auth principal and cannot be cancelled safely."
+            )
+
+        logger.info(
+            "Cancelling saved KF onboarding session %s before vault deletion",
+            record.onboarding_session_id,
+        )
+        self._boot_client.cancel_onboarding(
+            ehab,
+            session_id=record.onboarding_session_id,
+            account_aid=record.account_aid,
+            reason="vault_deleted",
+        )
+
+    def _delete_onboarded_account(self, record: KFAccountRecord) -> None:
+        hab = self._app.vault.hby.habByPre(record.account_aid)
+        if hab is None:
+            raise KFBootError(
+                f"Permanent KF account AID {record.account_aid} is missing from the local wallet and cannot authenticate deletion."
+            )
+
+        logger.info(
+            "Deleting hosted KF account state for %s before vault deletion",
+            record.account_aid,
+        )
+        self._boot_client.delete_account(
+            hab,
+            account_aid=record.account_aid,
+            destination=record.boot_server_aid,
+        )
 
 
 def load_kf_surfaces(app: Any) -> KFSurfaceConfig:

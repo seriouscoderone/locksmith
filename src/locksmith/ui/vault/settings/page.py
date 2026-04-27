@@ -595,16 +595,9 @@ class SettingsPage(QWidget):
         dialog.open()
 
     def _handle_vault_deleted(self, vault_name: str):
-        """Handle vault deletion completion - delete vault files and navigate to home."""
-        logger.info(f"Deleting vault '{vault_name}' and navigating to home")
-        
-        # Delete the vault (closes it first if open, then removes files)
-        if self.app:
-            success = self.app.delete_vault(vault_name)
-            if not success:
-                logger.error(f"Failed to delete vault '{vault_name}'")
-                # Still navigate home even if deletion failed
-        
+        """Handle successful vault deletion and navigate to home."""
+        logger.info(f"Vault '{vault_name}' deleted; navigating to home")
+
         # Find the main window by traversing up the parent chain
         # Widget hierarchy: SettingsPage -> VaultPage -> QStackedWidget -> central_widget -> LocksmithWindow
         widget = self.vault_page

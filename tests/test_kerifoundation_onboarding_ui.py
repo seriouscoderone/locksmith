@@ -45,6 +45,9 @@ class FakeBootClient:
     def __init__(self, *, available=True):
         self.available = available
 
+    def clone(self):
+        return self
+
     def check_health(self):
         if not self.available:
             raise RuntimeError("boot unavailable")

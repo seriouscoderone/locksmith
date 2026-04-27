@@ -44,11 +44,22 @@ class PluginBase(ABC):
         """
         ...
 
+    def prepare_vault_deletion(self, vault: Any) -> None:
+        """Called before a vault is permanently deleted.
+
+        Plugins may use this hook to revoke remote state while the local
+        vault and habery are still available. Raising aborts deletion.
+        """
+        pass
+
     @abstractmethod
-    def on_vault_closed(self, vault: Any) -> None:
+    def on_vault_closed(self, vault: Any, *, clear: bool = False) -> None:
         """Called when a vault is closed.
 
         Cleanup plugin_state, disconnect signals, close DB.
+
+        When ``clear`` is True, any plugin-local durable state tied to the
+        vault should also be deleted from disk.
         """
         ...
 

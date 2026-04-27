@@ -166,11 +166,20 @@ class LocksmithApplication:
 
         logger.info(f"Deleting vault '{vault_name}' using close(clear=True)")
 
+        try:
+            self.plugin_manager.prepare_vault_deletion(self.vault)
+        except Exception:
+            logger.exception(f"Aborting vault deletion for '{vault_name}' during plugin cleanup")
+            return False
+
         # First, shutdown the QtTask to stop all doers
         if self.qtask is not None:
             self.qtask.shutdown()
             self.qtask.cleanup()
             self.qtask = None
+
+        if self.vault is not None:
+            self.plugin_manager.on_vault_closed(self.vault, clear=True)
 
         # Collect all database instances to close with clear=True
         # Order matters: close dependencies first

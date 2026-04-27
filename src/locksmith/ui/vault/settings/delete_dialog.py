@@ -2,9 +2,12 @@ from PySide6.QtCore import Signal, Qt
 from PySide6.QtWidgets import (
     QVBoxLayout, QLabel, QHBoxLayout, QPushButton, QLineEdit, QWidget
 )
+from keri import help
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
+
+logger = help.ogler.getLogger(__name__)
 
 
 class DeleteVaultDialog(LocksmithDialog):
@@ -24,8 +27,9 @@ class DeleteVaultDialog(LocksmithDialog):
 
         # Warning description
         desc = QLabel(
-            f"Are you sure you want to permanently delete the vault "
-            f"<b>'{vault_name}'</b>? This action cannot be undone."
+            f"Deleting vault <b>'{vault_name}'</b> will remove local identifiers, "
+            f"credentials, plugin data, and any provider-managed services tied to "
+            f"this vault. This cannot be undone."
         )
         desc.setWordWrap(True)
         desc.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_MENU};")
@@ -95,7 +99,7 @@ class DeleteVaultDialog(LocksmithDialog):
         )
         
         # Set fixed size (non-resizable)
-        self.setFixedSize(450, 320)
+        self.setFixedSize(450, 340)
         
         # Style the title with red color for danger
         if self.title_label:
@@ -152,6 +156,31 @@ class DeleteVaultDialog(LocksmithDialog):
                 f"Vault name does not match. Please type '{self.vault_name}' exactly."
             )
             return
-        
+
+        if self.app is None:
+            self.show_error("Unable to delete vault: application is not available.")
+            return
+
+        self.delete_btn.setEnabled(False)
+        self._update_delete_button_style()
+        self.clear_error()
+
+        try:
+            success = self.app.delete_vault(self.vault_name)
+        except Exception as ex:
+            logger.exception("Failed to delete vault '%s'", self.vault_name)
+            self.show_error(f"Failed to delete vault: {ex}")
+            self.delete_btn.setEnabled(True)
+            self._update_delete_button_style()
+            return
+
+        if not success:
+            self.show_error(
+                "Failed to delete vault. Hosted service teardown may still be in progress; try again."
+            )
+            self.delete_btn.setEnabled(True)
+            self._update_delete_button_style()
+            return
+
         self.vault_deleted.emit(self.vault_name)
         self.accept()
