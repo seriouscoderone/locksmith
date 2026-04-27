@@ -183,7 +183,7 @@ def introduce_watcher_observed_aid(
     hab,
     watcher_eid: str,
     observed_aid: str,
-    observed_oobi: str,
+    observed_oobis: list[str],
     timeout_seconds: float = 10.0,
 ) -> None:
     """Send the local controller KEL and watcher-add reply to a hosted watcher."""
@@ -192,8 +192,9 @@ def introduce_watcher_observed_aid(
         raise ValueError("watcher_eid is required")
     if not observed_aid:
         raise ValueError("observed_aid is required")
-    if not observed_oobi:
-        raise ValueError("observed_oobi is required")
+    observed_oobis = [oobi for oobi in dict.fromkeys(observed_oobis or []) if oobi]
+    if not observed_oobis:
+        raise ValueError("observed_oobis is required")
 
     ender = hab.db.ends.get(keys=(hab.pre, "watcher", watcher_eid))
     if not ender or not ender.allowed:
@@ -218,14 +219,15 @@ def introduce_watcher_observed_aid(
         serder = serdering.SerderKERI(raw=msg)
         postman.send(serder=serder, attachment=msg[serder.size:])
 
-    msg = hab.reply(
-        route=f"/watcher/{watcher_eid}/add",
-        data=dict(cid=hab.pre, oid=observed_aid, oobi=observed_oobi),
-    )
-    raw = bytes(msg)
-    hab.psr.parseOne(ims=raw)
-    serder = SerderKERI(raw=raw)
-    postman.send(serder=serder, attachment=raw[serder.size:])
+    for observed_oobi in observed_oobis:
+        msg = hab.reply(
+            route=f"/watcher/{watcher_eid}/add",
+            data=dict(cid=hab.pre, oid=observed_aid, oobi=observed_oobi),
+        )
+        raw = bytes(msg)
+        hab.psr.parseOne(ims=raw)
+        serder = SerderKERI(raw=raw)
+        postman.send(serder=serder, attachment=raw[serder.size:])
 
     doer = doing.DoDoer(doers=postman.deliver())
     try:

@@ -1452,19 +1452,22 @@ class KFOnboardingService:
             hab=account_hab,
             watcher_eid=watcher.eid,
             observed_aid=account_hab.pre,
-            observed_oobi=self._account_controller_oobi(
+            observed_oobis=self._account_witness_oobis(
                 account_aid=account_hab.pre,
                 witnesses=witnesses,
             ),
         )
 
     @staticmethod
-    def _account_controller_oobi(*, account_aid: str, witnesses: list[HostedWitnessAllocation]) -> str:
+    def _account_witness_oobis(*, account_aid: str, witnesses: list[HostedWitnessAllocation]) -> list[str]:
+        oobis = []
         for witness in witnesses:
             base = witness.witness_url or extract_base_url(witness.oobi)
             if base:
-                return urljoin(base, f"/oobi/{account_aid}/controller")
-        raise KFBootError("Allocated witnesses did not provide a usable controller OOBI base URL")
+                oobis.append(urljoin(base, f"/oobi/{account_aid}/witness/{witness.eid}"))
+        if not oobis:
+            raise KFBootError("Allocated witnesses did not provide usable witness OOBI URLs")
+        return oobis
 
     def _ensure_account_record(self) -> KFAccountRecord:
         if self._db is None:
