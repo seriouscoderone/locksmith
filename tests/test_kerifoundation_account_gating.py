@@ -1,9 +1,11 @@
 import os
+import threading
 import time
 from types import SimpleNamespace
 
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
+import pytest
 from PySide6.QtCore import QObject, QThread, Signal
 
 from locksmith.plugins.kerifoundation.db.basing import (
@@ -13,6 +15,7 @@ from locksmith.plugins.kerifoundation.db.basing import (
     KFBaser,
     KFAccountRecord,
 )
+from locksmith.plugins.kerifoundation.onboarding.service import KFBootError
 from locksmith.plugins.kerifoundation.plugin import KeriFoundationPlugin
 
 
@@ -239,6 +242,214 @@ def test_kf_plugin_ignores_duplicate_onboarding_request(qapp):
 
     assert calls == []
     assert plugin._onboarding_thread is not None
+
+
+def test_kf_plugin_waits_for_active_onboarding_worker_on_vault_close(qapp, tmp_path, monkeypatch):
+    app = FakeApp()
+    plugin = KeriFoundationPlugin()
+    plugin.initialize(app)
+
+    db = KFBaser(name="kf_close_waits_for_worker", headDirPath=str(tmp_path), reopen=True)
+    plugin._db = db
+    plugin._onboarding_page.set_db(db)
+    db.ensure_account()
+
+    cancel_seen = threading.Event()
+    release_worker = threading.Event()
+
+    class FakeWorker(QObject):
+        progress = Signal(object)
+        succeeded = Signal(str, object)
+        failed = Signal(str, str)
+        finished = Signal()
+
+        def __init__(self, *, app, db, boot_client, alias, witness_profile, account_aid):
+            super().__init__()
+            _ = (app, db, boot_client, alias, witness_profile, account_aid)
+
+        def request_cancel(self):
+            cancel_seen.set()
+            release_worker.set()
+
+        def run(self):
+            release_worker.wait(timeout=0.5)
+            self.finished.emit()
+
+    monkeypatch.setattr(
+        "locksmith.plugins.kerifoundation.plugin._OnboardingWorker",
+        FakeWorker,
+    )
+
+    try:
+        plugin._on_onboarding_confirm("test-account", "1-of-1", "")
+        deadline = time.monotonic() + 1.0
+        while plugin._onboarding_thread is None and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert plugin._onboarding_thread is not None
+
+        plugin.on_vault_closed(app.vault)
+
+        assert cancel_seen.is_set()
+        assert plugin._onboarding_thread is None
+        assert plugin._onboarding_worker is None
+        assert plugin._db is None
+    finally:
+        db.close()
+
+
+def test_kf_plugin_prepare_vault_deletion_aborts_when_onboarding_worker_does_not_stop(
+        qapp, tmp_path, monkeypatch):
+    app = FakeApp()
+    plugin = KeriFoundationPlugin()
+    plugin.initialize(app)
+    plugin.ONBOARDING_SHUTDOWN_TIMEOUT_MS = 10
+
+    db = KFBaser(name="kf_delete_refuses_stuck_worker", headDirPath=str(tmp_path), reopen=True)
+    plugin._db = db
+    plugin._onboarding_page.set_db(db)
+    db.ensure_account()
+
+    cancel_seen = threading.Event()
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    class FakeWorker(QObject):
+        progress = Signal(object)
+        succeeded = Signal(str, object)
+        failed = Signal(str, str)
+        finished = Signal()
+
+        def __init__(self, *, app, db, boot_client, alias, witness_profile, account_aid):
+            super().__init__()
+            _ = (app, db, boot_client, alias, witness_profile, account_aid)
+
+        def request_cancel(self):
+            cancel_seen.set()
+
+        def run(self):
+            worker_started.set()
+            release_worker.wait()
+            self.finished.emit()
+
+    monkeypatch.setattr(
+        "locksmith.plugins.kerifoundation.plugin._OnboardingWorker",
+        FakeWorker,
+    )
+
+    try:
+        plugin._on_onboarding_confirm("test-account", "1-of-1", "")
+        deadline = time.monotonic() + 1.0
+        while not worker_started.is_set() and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert worker_started.is_set()
+
+        with pytest.raises(KFBootError, match="could not stop promptly"):
+            plugin.prepare_vault_deletion(app.vault)
+
+        assert cancel_seen.is_set()
+        assert plugin._db is db
+        assert plugin._onboarding_thread is not None
+    finally:
+        release_worker.set()
+        deadline = time.monotonic() + 1.0
+        while plugin._onboarding_thread is not None and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        if plugin._onboarding_thread is not None:
+            plugin._onboarding_thread.quit()
+            plugin._onboarding_thread.wait(1000)
+            plugin._finish_onboarding_run()
+        db.close()
+
+
+def test_kf_plugin_prepare_vault_deletion_aborts_when_page_shutdown_fails(
+        qapp, tmp_path):
+    app = FakeApp()
+    plugin = KeriFoundationPlugin()
+    plugin.initialize(app)
+
+    db = KFBaser(name="kf_delete_refuses_page_shutdown_failure", headDirPath=str(tmp_path), reopen=True)
+    plugin._db = db
+    plugin._onboarding_page.set_db(db)
+    db.ensure_account()
+    plugin._onboarding_page.shutdown = lambda: False
+
+    try:
+        with pytest.raises(KFBootError, match="background work"):
+            plugin.prepare_vault_deletion(app.vault)
+
+        assert plugin._db is db
+    finally:
+        db.close()
+
+
+def test_kf_plugin_vault_close_detaches_state_when_onboarding_worker_does_not_stop(
+        qapp, tmp_path, monkeypatch):
+    app = FakeApp()
+    plugin = KeriFoundationPlugin()
+    plugin.initialize(app)
+    plugin.ONBOARDING_SHUTDOWN_TIMEOUT_MS = 10
+
+    db = KFBaser(name="kf_close_detaches_stuck_worker", headDirPath=str(tmp_path), reopen=True)
+    plugin._db = db
+    plugin._onboarding_page.set_db(db)
+    db.ensure_account()
+
+    worker_started = threading.Event()
+    release_worker = threading.Event()
+
+    class FakeWorker(QObject):
+        progress = Signal(object)
+        succeeded = Signal(str, object)
+        failed = Signal(str, str)
+        finished = Signal()
+
+        def __init__(self, *, app, db, boot_client, alias, witness_profile, account_aid):
+            super().__init__()
+            _ = (app, db, boot_client, alias, witness_profile, account_aid)
+
+        def request_cancel(self):
+            pass
+
+        def run(self):
+            worker_started.set()
+            release_worker.wait()
+            self.finished.emit()
+
+    monkeypatch.setattr(
+        "locksmith.plugins.kerifoundation.plugin._OnboardingWorker",
+        FakeWorker,
+    )
+
+    try:
+        plugin._on_onboarding_confirm("test-account", "1-of-1", "")
+        deadline = time.monotonic() + 1.0
+        while not worker_started.is_set() and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+
+        assert worker_started.is_set()
+
+        plugin.on_vault_closed(app.vault)
+
+        assert plugin._db is None
+        assert plugin._onboarding_page._db is None
+        assert plugin._witness_overview._db is None
+        assert plugin._watcher_list._db is None
+    finally:
+        release_worker.set()
+        deadline = time.monotonic() + 1.0
+        while plugin._onboarding_thread is not None and time.monotonic() < deadline:
+            qapp.processEvents()
+            time.sleep(0.01)
+        if plugin._onboarding_thread is not None:
+            plugin._onboarding_thread.quit()
+            plugin._onboarding_thread.wait(1000)
+            plugin._finish_onboarding_run()
 
 
 def test_kf_plugin_failure_preserves_resumable_session_state(qapp, tmp_path):

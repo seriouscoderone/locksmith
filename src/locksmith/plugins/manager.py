@@ -68,11 +68,20 @@ class PluginManager:
             except Exception:
                 logger.exception(f"Plugin '{plugin.plugin_id}' failed on_vault_opened")
 
-    def on_vault_closed(self, vault: Any) -> None:
+    def prepare_vault_deletion(self, vault: Any) -> None:
+        """Let plugins revoke remote state before local vault deletion."""
+        for plugin in self._plugins.values():
+            try:
+                plugin.prepare_vault_deletion(vault)
+            except Exception:
+                logger.exception(f"Plugin '{plugin.plugin_id}' failed prepare_vault_deletion")
+                raise
+
+    def on_vault_closed(self, vault: Any, *, clear: bool = False) -> None:
         """Notify all plugins that a vault is being closed."""
         for plugin in self._plugins.values():
             try:
-                plugin.on_vault_closed(vault)
+                plugin.on_vault_closed(vault, clear=clear)
             except Exception:
                 logger.exception(f"Plugin '{plugin.plugin_id}' failed on_vault_closed")
 
