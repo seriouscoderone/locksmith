@@ -10,7 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from PySide6.QtGui import QIcon, QPixmap
-from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout
+from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QDialog
 from PySide6.QtCore import Qt, QEvent, QObject, QThread, Signal, Slot
 from keri import help
 
@@ -29,8 +29,10 @@ from locksmith.plugins.kerifoundation.onboarding.service import (
     KFVaultDeletionService,
 )
 from locksmith.ui.vault.menu import MenuButton, MenuSpacer
+from locksmith.ui.vault.identifiers.rotate import RotateIdentifierDialog
 from locksmith.ui.toolkit.widgets.buttons import BackButton
 
+from locksmith.plugins.kerifoundation.identifiers.list import IdentifierListPage
 from locksmith.plugins.kerifoundation.witnesses.list import WitnessOverviewPage
 from locksmith.plugins.kerifoundation.witnesses.provision import WitnessProvisionPage
 from locksmith.plugins.kerifoundation.watchers.list import WatcherListPage
@@ -133,6 +135,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._app = app
         self._db = None
         self._wit_btn = None
+        self._id_btn = None
         self._wat_btn = None
         self._boot_client = KFBootClient(app)
         self._onboarding_worker = None
@@ -144,6 +147,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_page = KFOnboardingPage(app)
         self._onboarding_page.set_boot_client(self._boot_client)
         self._witness_overview = WitnessOverviewPage(app)
+        self._identifiers_page = IdentifierListPage(app)
         self._witness_provision = WitnessProvisionPage(app)
         self._watcher_list = WatcherListPage(app)
         self._watcher_register = WatcherRegisterPage(app)
@@ -158,7 +162,8 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_page.confirm_requested.connect(self._on_onboarding_confirm)
         self._onboarding_page.open_account_requested.connect(self._show_witnesses)
 
-        self._witness_overview.add_witnesses_requested.connect(self._on_add_witnesses)
+        self._witness_overview.add_witnesses_requested.connect(self._show_identifiers)
+        self._identifiers_page.add_witnesses_requested.connect(self._on_add_witnesses)
         self._witness_provision.completed.connect(self._on_provision_completed)
         self._witness_provision.cancelled.connect(self._on_provision_cancelled)
 
@@ -174,17 +179,34 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._navigate("kf_provision")
         self._witness_provision.on_show()
 
-    def _on_provision_completed(self):
-        """Return to witness overview after successful provisioning."""
-        self._show_witnesses()
+    def _on_provision_completed(self, hab_pre: str, created_witnesses: list[dict]):
+        """Open rotation for the selected identifier after successful provisioning."""
+        hab = self._app.vault.hby.habByPre(hab_pre) if self._app and self._app.vault else None
+        if hab is None:
+            self._show_witnesses()
+            return
+
+        dialog = RotateIdentifierDialog(
+            identifier_alias=hab.name,
+            icon_path=":/assets/material-icons/witness1.svg",
+            app=self._app,
+            parent=self._witness_overview,
+            prepopulate_witnesses=created_witnesses,
+        )
+        dialog.finished.connect(self._on_rotation_dialog_finished)
+        dialog.open()
 
     def _on_provision_cancelled(self):
         """Return to witness overview on cancel."""
         self._show_witnesses()
 
+    def _on_rotation_dialog_finished(self, result):
+        if result == QDialog.DialogCode.Accepted:
+            self._show_witnesses()
+
     def _set_active_nav(self, active_btn):
         """Highlight the active nav button and deactivate the others."""
-        for btn in (self._wit_btn, self._wat_btn):
+        for btn in (self._wit_btn, self._id_btn, self._wat_btn):
             if btn is not None:
                 btn.set_active(btn is active_btn)
 
@@ -201,7 +223,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_page.set_db(self._db)
         self._onboarding_page.set_boot_client(self._boot_client)
         self._witness_overview.set_db(self._db)
-        self._witness_overview.set_boot_client(self._boot_client)
+        self._identifiers_page.set_db(self._db)
         self._witness_provision.set_db(self._db)
         self._watcher_list.set_db(self._db)
         self._watcher_list.set_boot_client(self._boot_client)
@@ -230,7 +252,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._onboarding_page.set_db(None)
         self._onboarding_page.set_boot_client(None)
         self._witness_overview.set_db(None)
-        self._witness_overview.set_boot_client(None)
+        self._identifiers_page.set_db(None)
         self._witness_provision.set_db(None)
         self._watcher_list.set_db(None)
         self._watcher_list.set_boot_client(None)
@@ -337,6 +359,13 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         # Spacer
         items.append(MenuSpacer(15))
 
+        self._id_btn = MenuButton(
+            icon=QIcon(":/assets/custom/identifiers.png"),
+            label="Identifiers",
+        )
+        self._id_btn.clicked.connect(self._show_identifiers)
+        items.append(self._id_btn)
+
         # Witnesses nav button
         self._wit_btn = MenuButton(
             icon=QIcon(":/assets/material-icons/witness1.svg"),
@@ -372,6 +401,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         return {
             "kf_onboarding": self._onboarding_page,
             "kf_witnesses": self._witness_overview,
+            "kf_identifiers": self._identifiers_page,
             "kf_provision": self._witness_provision,
             "kf_watchers": self._watcher_list,
             "kf_watcher_register": self._watcher_register,
@@ -532,6 +562,19 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._navigate("kf_witnesses")
         self._witness_overview.on_show()
         self._set_active_nav(self._wit_btn)
+
+    def _show_identifiers(self, checked=False):
+        if not self._has_onboarded_account():
+            self._show_onboarding(reason="identifier navigation blocked by local KF account status")
+            return
+
+        logger.info(
+            f"KF plugin gated destination: page='kf_identifiers' "
+            f"account_lookup={self._describe_account_record(self._get_account_record())}"
+        )
+        self._navigate("kf_identifiers")
+        self._identifiers_page.on_show()
+        self._set_active_nav(self._id_btn)
 
     def _show_watchers(self, checked=False):
         if not self._has_onboarded_account():

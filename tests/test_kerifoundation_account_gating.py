@@ -151,6 +151,49 @@ def test_kf_plugin_allows_normal_menu_after_onboarding(qapp, tmp_path, monkeypat
         plugin.on_vault_closed(app.vault)
 
 
+def test_kf_plugin_opens_rotate_dialog_after_provision(qapp, monkeypatch):
+    app = FakeApp()
+    app.vault.hby = SimpleNamespace(
+        name="test-vault",
+        habByPre=lambda pre: SimpleNamespace(name="shared-aid") if pre == "AID_SHARED" else None,
+    )
+    plugin = KeriFoundationPlugin()
+    plugin.initialize(app)
+
+    opened = {}
+
+    class FakeSignal:
+        def connect(self, callback):
+            opened["finished_callback"] = callback
+
+    class FakeDialog:
+        def __init__(self, **kwa):
+            opened["kwargs"] = kwa
+            self.finished = FakeSignal()
+
+        def open(self):
+            opened["opened"] = True
+
+    monkeypatch.setattr(
+        "locksmith.plugins.kerifoundation.plugin.RotateIdentifierDialog",
+        FakeDialog,
+    )
+
+    plugin._on_provision_completed("AID_SHARED", [{"eid": "WIT_1"}])
+
+    assert opened == {
+        "kwargs": {
+            "identifier_alias": "shared-aid",
+            "icon_path": ":/assets/material-icons/witness1.svg",
+            "app": app,
+            "parent": plugin._witness_overview,
+            "prepopulate_witnesses": [{"eid": "WIT_1"}],
+        },
+        "finished_callback": plugin._on_rotation_dialog_finished,
+        "opened": True,
+    }
+
+
 def test_kf_plugin_runs_onboarding_in_background_thread(qapp, tmp_path, monkeypatch):
     app = FakeApp()
     emitted_events = []

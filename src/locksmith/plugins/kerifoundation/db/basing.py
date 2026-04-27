@@ -76,6 +76,13 @@ class WatcherRecord:
     oobi: str = ""
 
 
+@dataclass
+class AttachedIdentifierRecord:
+    """Local identifier intentionally attached to this provider."""
+    prefix: str = ""
+    attached_at: str = ""
+
+
 class KFBaser(dbing.LMDBer):
     """LMDB database for KERI Foundation plugin."""
 
@@ -89,6 +96,7 @@ class KFBaser(dbing.LMDBer):
         self.witBatches = None
         self.provisionedWitnesses = None
         self.watchers = None
+        self.attachedIdentifiers = None
 
         super(KFBaser, self).__init__(name=name, headDirPath=headDirPath, reopen=reopen, **kwa)
 
@@ -102,6 +110,9 @@ class KFBaser(dbing.LMDBer):
             db=self, subkey='pwit.', schema=ProvisionedWitnessRecord
         )
         self.watchers = koming.Komer(db=self, subkey='wat.', schema=WatcherRecord)
+        self.attachedIdentifiers = koming.Komer(
+            db=self, subkey='idn.', schema=AttachedIdentifierRecord
+        )
 
         return self.env
 
@@ -122,3 +133,18 @@ class KFBaser(dbing.LMDBer):
         record = KFAccountRecord(created_at=datetime.now(timezone.utc).isoformat())
         self.pin_account(record)
         return record, True
+
+    def list_attached_identifier_prefixes(self) -> list[str]:
+        return [prefix for (prefix,), _ in self.attachedIdentifiers.getItemIter(keys=())]
+
+    def is_identifier_attached(self, prefix: str) -> bool:
+        return self.attachedIdentifiers.get(keys=(prefix,)) is not None
+
+    def attach_identifier(self, prefix: str) -> None:
+        self.attachedIdentifiers.pin(
+            keys=(prefix,),
+            val=AttachedIdentifierRecord(
+                prefix=prefix,
+                attached_at=datetime.now(timezone.utc).isoformat(),
+            ),
+        )
