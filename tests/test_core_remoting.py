@@ -172,7 +172,10 @@ def test_introduce_watcher_observed_aid_sends_kel_and_add_reply(monkeypatch):
         hab=hab,
         watcher_eid="WAT_1",
         observed_aid="AID_ACCOUNT",
-        observed_oobi="https://wit.example/oobi/AID_ACCOUNT/controller",
+        observed_oobis=[
+            "https://wit-1.example/oobi/AID_ACCOUNT/witness/WIT_1",
+            "https://wit-2.example/oobi/AID_ACCOUNT/witness/WIT_2",
+        ],
     )
 
     assert replies == [
@@ -182,12 +185,21 @@ def test_introduce_watcher_observed_aid_sends_kel_and_add_reply(monkeypatch):
             {
                 "cid": "AID_ACCOUNT",
                 "oid": "AID_ACCOUNT",
-                "oobi": "https://wit.example/oobi/AID_ACCOUNT/controller",
+                "oobi": "https://wit-1.example/oobi/AID_ACCOUNT/witness/WIT_1",
+            },
+        ),
+        (
+            "/watcher/WAT_1/add",
+            {
+                "cid": "AID_ACCOUNT",
+                "oid": "AID_ACCOUNT",
+                "oobi": "https://wit-2.example/oobi/AID_ACCOUNT/witness/WIT_2",
             },
         ),
     ]
     assert parsed == [
         b"reply:/end/role/add",
+        b"reply:/watcher/WAT_1/add",
         b"reply:/watcher/WAT_1/add",
     ]
     assert sent == [
@@ -195,6 +207,7 @@ def test_introduce_watcher_observed_aid_sends_kel_and_add_reply(monkeypatch):
         (b"delegation", b""),
         (b"icp", b""),
         (b"rot", b""),
+        (b"reply:/watcher/WAT_1/add", b""),
         (b"reply:/watcher/WAT_1/add", b""),
     ]
     assert delivered
@@ -268,7 +281,10 @@ def test_introduce_watcher_observed_aid_skips_role_add_when_already_allowed(monk
         hab=hab,
         watcher_eid="WAT_1",
         observed_aid="AID_ACCOUNT",
-        observed_oobi="https://wit.example/oobi/AID_ACCOUNT/controller",
+        observed_oobis=[
+            "https://wit-1.example/oobi/AID_ACCOUNT/witness/WIT_1",
+            "https://wit-2.example/oobi/AID_ACCOUNT/witness/WIT_2",
+        ],
     )
 
     assert replies == [
@@ -277,14 +293,26 @@ def test_introduce_watcher_observed_aid_skips_role_add_when_already_allowed(monk
             {
                 "cid": "AID_ACCOUNT",
                 "oid": "AID_ACCOUNT",
-                "oobi": "https://wit.example/oobi/AID_ACCOUNT/controller",
+                "oobi": "https://wit-1.example/oobi/AID_ACCOUNT/witness/WIT_1",
+            },
+        ),
+        (
+            "/watcher/WAT_1/add",
+            {
+                "cid": "AID_ACCOUNT",
+                "oid": "AID_ACCOUNT",
+                "oobi": "https://wit-2.example/oobi/AID_ACCOUNT/witness/WIT_2",
             },
         ),
     ]
-    assert parsed == [b"reply:/watcher/WAT_1/add"]
+    assert parsed == [
+        b"reply:/watcher/WAT_1/add",
+        b"reply:/watcher/WAT_1/add",
+    ]
     assert sent == [
         ("init", "WAT_1", "reply"),
         (b"icp", b""),
+        (b"reply:/watcher/WAT_1/add", b""),
         (b"reply:/watcher/WAT_1/add", b""),
     ]
 
@@ -345,7 +373,7 @@ def test_introduce_watcher_observed_aid_wraps_delivery_failures(monkeypatch):
             hab=hab,
             watcher_eid="WAT_1",
             observed_aid="AID_ACCOUNT",
-            observed_oobi="https://wit.example/oobi/AID_ACCOUNT/controller",
+            observed_oobis=["https://wit-1.example/oobi/AID_ACCOUNT/witness/WIT_1"],
         )
 
 

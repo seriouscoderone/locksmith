@@ -598,7 +598,12 @@ def test_onboarding_service_runs_step_4_5_6_flow(tmp_path, monkeypatch):
                 "hab": app.vault.hby.habByPre("AID_MY ACCOUNT"),
                 "watcher_eid": "WAT_1",
                 "observed_aid": "AID_MY ACCOUNT",
-                "observed_oobi": "https://wit-1.example/oobi/AID_MY ACCOUNT/controller",
+                "observed_oobis": [
+                    "https://wit-1.example/oobi/AID_MY ACCOUNT/witness/WIT_1",
+                    "https://wit-2.example/oobi/AID_MY ACCOUNT/witness/WIT_2",
+                    "https://wit-3.example/oobi/AID_MY ACCOUNT/witness/WIT_3",
+                    "https://wit-4.example/oobi/AID_MY ACCOUNT/witness/WIT_4",
+                ],
             }
         ]
         assert boot_client.calls == [
