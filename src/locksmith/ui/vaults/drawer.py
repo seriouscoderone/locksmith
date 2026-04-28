@@ -14,6 +14,7 @@ from keri import help
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import load_scaled_pixmap, create_spacer
+from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 from locksmith.ui.vaults.create import CreateVaultDialog
 from locksmith.ui.vaults.open import OpenVaultDialog
 
@@ -162,6 +163,18 @@ class VaultDrawer(QWidget):
         new_vault_button_container.clicked.connect(self.show_create_vault_dialog)
         drawer_layout.addWidget(new_vault_button_container)
 
+        # Search field for filtering vaults
+        search_container = QWidget()
+        search_layout = QHBoxLayout(search_container)
+        search_layout.setContentsMargins(12, 6, 12, 6)
+        self.search_field = LocksmithLineEdit(
+            placeholder_text="Search vaults",
+            leading_icon=":/assets/material-icons/search.svg",
+        )
+        self.search_field.setClearButtonEnabled(True)
+        self.search_field.textChanged.connect(self._filter_vaults)
+        search_layout.addWidget(self.search_field)
+        drawer_layout.addWidget(search_container)
 
         # Create vault list widget (store as instance variable for refreshing)
         self.vault_list = QListWidget()
@@ -348,9 +361,13 @@ class VaultDrawer(QWidget):
         Show the drawer widgets (but keep drawer closed).
         Used when navigating to pages that use the drawer.
         """
+        # Clear any leftover search query before refreshing
+        if hasattr(self, "search_field"):
+            self.search_field.clear()
+
         # Refresh the vault list to pick up any changes (e.g., deleted vaults)
         self._refresh_vault_list()
-        
+
         # Don't show overlay (it's only shown when drawer is toggled open)
         # But show the drawer frame (positioned off-screen, ready to slide in)
         self.vault_drawer.show()
@@ -366,6 +383,17 @@ class VaultDrawer(QWidget):
             vault_item = QListWidgetItem(QIcon(":/assets/custom/vault.png"), vault_name)
             vault_item.setFont(vault_font)
             self.vault_list.addItem(vault_item)
+
+        # Re-apply any active search filter to the refreshed list
+        if hasattr(self, "search_field"):
+            self._filter_vaults(self.search_field.text())
+
+    def _filter_vaults(self, query: str):
+        """Hide vault items whose names don't contain the query (case-insensitive)."""
+        needle = query.strip().lower()
+        for i in range(self.vault_list.count()):
+            item = self.vault_list.item(i)
+            item.setHidden(bool(needle) and needle not in item.text().lower())
 
 
     def show_create_vault_dialog(self):
