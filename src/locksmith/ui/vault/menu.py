@@ -240,6 +240,13 @@ class MenuButton(QPushButton):
         if self.text_label:
             self.text_label.setVisible(visible)
 
+    def set_icon(self, icon: QIcon):
+        """Replace the displayed icon."""
+        self.icon_obj = icon
+        pixmap = icon.pixmap(32, 32)
+        if not pixmap.isNull():
+            self.icon_label.setPixmap(pixmap)
+
 
 class MenuDivider(QFrame):
     """A horizontal divider line for the menu."""
@@ -385,12 +392,16 @@ class VaultNavMenu(QFrame):
         logger.info(f"VaultNavMenu initialized (collapsible={collapsible})")
 
 
-    def _create_lock_icon(self) -> QIcon:
-        """Create a lock/unlock icon."""
-        icon_path = ":/assets/material-icons/menu.svg"
+    def _create_lock_icon(self, locked: bool = False) -> QIcon:
+        """Create the sidebar pin icon for the given locked state."""
+        icon_path = (
+            ":/assets/material-icons/dock_to_left_on.svg"
+            if locked
+            else ":/assets/material-icons/dock_to_left_off.svg"
+        )
         icon = QIcon(icon_path)
         if icon.isNull():
-            logger.warning(f"Failed to load lock icon from {icon_path}")
+            logger.warning(f"Failed to load sidebar pin icon from {icon_path}")
         return icon
 
     def _create_icon(self, icon_name: str) -> QIcon:
@@ -513,11 +524,9 @@ class VaultNavMenu(QFrame):
 
     def _on_lock_button_clicked(self):
         """Handle lock button click with toggle behavior."""
-        # Toggle the lock button's active state
         self.lock_button.set_active(not self.lock_button.is_active)
-
-        # Call the existing toggle lock logic
         self._toggle_lock()
+        self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
 
     def _toggle_lock(self):
         """Toggle the locked open state."""
@@ -740,6 +749,7 @@ class VaultNavMenu(QFrame):
         self.is_locked_open = self._was_locked_before_credentials
         if self.collapsible:
             self.lock_button.set_active(self.is_locked_open)
+            self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
 
         # Update label visibility based on current state
         if self.collapsible and not self.is_locked_open:
@@ -913,6 +923,7 @@ class VaultNavMenu(QFrame):
             self.is_locked_open = self._was_locked_before_plugin
             if self.collapsible:
                 self.lock_button.set_active(self.is_locked_open)
+                self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
 
             # Update label visibility based on current state
             if self.collapsible and not self.is_locked_open:
