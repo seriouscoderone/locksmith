@@ -252,6 +252,7 @@ class VaultPage(BasePage):
             'show_lock_button': True,
             'show_notifications_button': True,
             'show_settings_button': True,
+            'show_dock_button': True,
         }
 
     def on_show(self, **params):

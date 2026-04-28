@@ -64,6 +64,12 @@ class HoverIconButton(QToolButton):
             }}
         """)
 
+    def set_icons(self, icon_normal: str, icon_hover: str):
+        """Replace the (normal, hover) icon pair and refresh the displayed icon."""
+        self.icon_normal = f":/{icon_normal}" if not icon_normal.startswith(":/") else icon_normal
+        self.icon_hover = f":/{icon_hover}" if not icon_hover.startswith(":/") else icon_hover
+        self.setIcon(QIcon(self.icon_hover if self.is_active else self.icon_normal))
+
     def set_active(self, active: bool):
         """
         Set the active state of the button.

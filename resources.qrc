@@ -3,6 +3,7 @@
         <file>assets/.DS_Store</file>
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
+        <file>assets/material-icons/settings_shield.svg</file>
         <file>assets/material-icons/out-badge.svg</file>
         <file>assets/material-icons/public.svg</file>
         <file>assets/material-icons/all_inbox.svg</file>
@@ -26,6 +27,7 @@
         <file>assets/material-icons/last_page.svg</file>
         <file>assets/material-icons/vault-drawer.svg</file>
         <file>assets/material-icons/mail.svg</file>
+        <file>assets/material-icons/shield.svg</file>
         <file>assets/material-icons/notifications_unread_hover.svg</file>
         <file>assets/material-icons/in-badge.svg</file>
         <file>assets/material-icons/chevron_right.svg</file>
@@ -51,6 +53,7 @@
         <file>assets/material-icons/inbox_active.svg</file>
         <file>assets/material-icons/refresh.svg</file>
         <file>assets/material-icons/chevron_up.svg</file>
+        <file>assets/material-icons/settings_video_camera.svg</file>
         <file>assets/material-icons/badge.svg</file>
         <file>assets/material-icons/browse.svg</file>
         <file>assets/material-icons/content_copy.svg</file>
@@ -64,6 +67,7 @@
         <file>assets/material-icons/visibility_off.svg</file>
         <file>assets/material-icons/edit.svg</file>
         <file>assets/material-icons/api.svg</file>
+        <file>assets/material-icons/dock_to_left_off-hover.svg</file>
         <file>assets/material-icons/chevron_down.svg</file>
         <file>assets/material-icons/step-check.svg</file>
         <file>assets/material-icons/big_notifications.svg</file>
@@ -74,6 +78,7 @@
         <file>assets/material-icons/profile.svg</file>
         <file>assets/material-icons/share.svg</file>
         <file>assets/material-icons/view.svg</file>
+        <file>assets/material-icons/settings_b_roll.svg</file>
         <file>assets/material-icons/tune.svg</file>
         <file>assets/material-icons/notifications.svg</file>
         <file>assets/material-icons/cloud.svg</file>
@@ -89,6 +94,7 @@
         <file>assets/material-icons/mail_shield.svg</file>
         <file>assets/material-icons/authenticate.svg</file>
         <file>assets/material-icons/person_add.svg</file>
+        <file>assets/material-icons/dock_to_left_on-hover.svg</file>
         <file>assets/material-icons/green_check_circle.svg</file>
         <file>assets/fonts/SourceCodePro-LightItalic.ttf</file>
         <file>assets/fonts/SourceCodePro-SemiBold.ttf</file>

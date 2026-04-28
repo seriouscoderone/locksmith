@@ -59,6 +59,7 @@ class LocksmithWindow(QMainWindow):
         self.toolbar.lock_clicked.connect(self.on_lock_vault)
         self.toolbar.home_clicked.connect(self.on_home)
         self.toolbar.notifications_clicked.connect(self.on_notifications)
+        self.toolbar.dock_clicked.connect(self.on_dock_clicked)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
 
         # Create central widget and main layout
@@ -80,6 +81,9 @@ class LocksmithWindow(QMainWindow):
         # Store VaultPage reference for plugin access
         vault_page = self.pages[Pages.VAULT]
         self.app._vault_page = vault_page
+
+        # Forward sidebar lock state to the toolbar's dock button
+        vault_page.nav_menu.lock_state_changed.connect(self.toolbar.set_dock_active)
 
         # Discover and initialize plugins (registers pages and menus)
         self.app.plugin_manager.discover_and_initialize(vault_page, vault_page.nav_menu)
@@ -349,6 +353,12 @@ class LocksmithWindow(QMainWindow):
             self.current_toast.deleteLater()
             self.current_toast = None
         logger.info("Toast closed")
+
+    def on_dock_clicked(self):
+        """Toggle the vault sidebar's pinned-open state from the toolbar."""
+        vault_page = self.pages.get(Pages.VAULT)
+        if vault_page is not None:
+            vault_page.nav_menu.toggle_lock()
 
     def on_notifications(self):
         """Handle notifications button click - show notifications page in vault."""

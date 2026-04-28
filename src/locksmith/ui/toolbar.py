@@ -30,6 +30,7 @@ class LocksmithToolbar(QToolBar):
     lock_clicked = Signal()
     home_clicked = Signal()
     notifications_clicked = Signal()
+    dock_clicked = Signal()
 
     def __init__(self, app, parent=None):
         """
@@ -109,6 +110,16 @@ class LocksmithToolbar(QToolBar):
 
         # Add spacer to push next items to the right
         self.addWidget(create_spacer(expanding=True))
+
+        # Sidebar dock-toggle button (pin sidebar open) - leftmost of the right cluster
+        self.dock_button = HoverIconButton(
+            icon_normal="assets/material-icons/dock_to_left_off.svg",
+            icon_hover="assets/material-icons/dock_to_left_off-hover.svg",
+            tooltip="Pin sidebar",
+        )
+        self.dock_button.clicked.connect(self.dock_clicked.emit)
+        self.dock_action = self.addWidget(self.dock_button)
+        self.dock_action.setVisible(False)  # Hidden by default (only shown on vault page)
 
         # Notifications button (with dropdown) - initially hidden
         self.notifications_button = NotificationsButton(self.app, self)
@@ -191,6 +202,26 @@ class LocksmithToolbar(QToolBar):
         # Update settings button visibility
         if hasattr(self, 'settings_action'):
             self.settings_action.setVisible(config.get('show_settings_button', True))
+
+        # Update dock button visibility
+        if hasattr(self, 'dock_action'):
+            self.dock_action.setVisible(config.get('show_dock_button', False))
+
+    def set_dock_active(self, locked: bool):
+        """Update the dock button's icon pair and active state to match the sidebar lock state."""
+        if not hasattr(self, 'dock_button'):
+            return
+        if locked:
+            self.dock_button.set_icons(
+                "assets/material-icons/dock_to_left_on.svg",
+                "assets/material-icons/dock_to_left_on-hover.svg",
+            )
+        else:
+            self.dock_button.set_icons(
+                "assets/material-icons/dock_to_left_off.svg",
+                "assets/material-icons/dock_to_left_off-hover.svg",
+            )
+        self.dock_button.set_active(locked)
 
 
     def show_settings_dialog(self):
