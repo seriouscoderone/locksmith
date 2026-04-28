@@ -7,7 +7,7 @@ Navigation menu for vault operations (left sidebar when vault is open).
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Signal, Qt, QPropertyAnimation, QEasingCurve, SignalInstance
-from PySide6.QtGui import QIcon, QEnterEvent
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QPushButton, QHBoxLayout, QLabel, QFrame
 from keri import help
 
@@ -102,6 +102,8 @@ class MenuButton(QPushButton):
             self.layout.addWidget(self.text_label, alignment=Qt.AlignmentFlag.AlignVCenter)
             if not is_lock_button:
                 self.layout.addStretch()
+            # Native tooltip so the label is still discoverable when collapsed.
+            self.setToolTip(label)
         else:
             self.text_label = None
 
@@ -295,6 +297,8 @@ class VaultNavMenu(QFrame):
     back_to_vault_clicked = Signal()  # When Back button is clicked
     # Plugin menu signal — emits plugin_id when a plugin entry button is clicked
     plugin_section_clicked = Signal(str)
+    # Emitted whenever is_locked_open changes (incl. forced True in submenus and restored on pop)
+    lock_state_changed = Signal(bool)
 
     def __init__(self, parent=None, collapsible: bool = True):
         """
@@ -350,21 +354,6 @@ class VaultNavMenu(QFrame):
         self.menu_items = []
         self.nav_buttons = []  # Store navigation buttons separately
 
-        # Lock/unlock button (only visible in collapsible mode)
-        if self.collapsible:
-            self.lock_button = MenuButton(
-                self._create_lock_icon(),
-                is_lock_button=True
-            )
-            self.lock_button.clicked.connect(self._on_lock_button_clicked)
-            self.layout.addWidget(self.lock_button)
-            self.menu_items.append(self.lock_button)
-
-            # Add spacing after lock button (track it so it gets hidden on menu switch)
-            self.lock_button_spacer = MenuSpacer(10)
-            self.layout.addWidget(self.lock_button_spacer)
-            self.menu_items.append(self.lock_button_spacer)
-
         # Menu items
         self._add_menu_items()
 
@@ -392,18 +381,6 @@ class VaultNavMenu(QFrame):
         logger.info(f"VaultNavMenu initialized (collapsible={collapsible})")
 
 
-    def _create_lock_icon(self, locked: bool = False) -> QIcon:
-        """Create the sidebar pin icon for the given locked state."""
-        icon_path = (
-            ":/assets/material-icons/dock_to_left_on.svg"
-            if locked
-            else ":/assets/material-icons/dock_to_left_off.svg"
-        )
-        icon = QIcon(icon_path)
-        if icon.isNull():
-            logger.warning(f"Failed to load sidebar pin icon from {icon_path}")
-        return icon
-
     def _create_icon(self, icon_name: str) -> QIcon:
         """
         Create an icon by name.
@@ -420,7 +397,7 @@ class VaultNavMenu(QFrame):
             "remote_identifiers": ":/assets/custom/remoteIds.png",
             "group_identifiers": ":/assets/material-icons/group.svg",
             "credentials": ":/assets/material-icons/badge.svg",
-            "settings": ":/assets/custom/settings.png",
+            "settings": ":/assets/material-icons/settings_shield.svg",
             # Credentials menu icons
             "credentials_issued": ":/assets/material-icons/out-badge.svg",
             "credentials_received": ":/assets/material-icons/in-badge.svg",
@@ -522,27 +499,23 @@ class VaultNavMenu(QFrame):
         # Emit the credentials signal (for VaultPage to handle)
         self.credentials_clicked.emit()
 
-    def _on_lock_button_clicked(self):
-        """Handle lock button click with toggle behavior."""
-        self.lock_button.set_active(not self.lock_button.is_active)
-        self._toggle_lock()
-        self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
+    def toggle_lock(self):
+        """Toggle whether the menu stays expanded. Driven externally by the toolbar dock button.
 
-    def _toggle_lock(self):
-        """Toggle the locked open state."""
+        No-ops when not collapsible or when a credentials/plugin submenu has forced the
+        menu open — those modes own the expansion state until the user backs out of them.
+        """
+        if not self.collapsible:
+            return
+        if self._in_credentials_menu or self._active_plugin_id is not None:
+            return
+
         self.is_locked_open = not self.is_locked_open
-
         if self.is_locked_open:
-            # Lock open
             self._expand()
-            logger.debug("Menu locked open")
         else:
-            # Unlock - collapse if not hovering
-            logger.debug("Menu unlocked")
-            if not self.is_expanded:
-                self._collapse()
-
-        # Update lock button appearance if needed
+            self._collapse()
+        self.lock_state_changed.emit(self.is_locked_open)
         logger.debug(f"Lock state: {'locked' if self.is_locked_open else 'unlocked'}")
 
     def _expand(self):
@@ -586,18 +559,6 @@ class VaultNavMenu(QFrame):
         for item in self.menu_items:
             if isinstance(item, MenuButton):
                 item.set_label_visible(visible)
-
-    def enterEvent(self, event: QEnterEvent):
-        """Handle mouse enter event."""
-        if self.collapsible and not self.is_locked_open:
-            self._expand()
-        super().enterEvent(event)
-
-    def leaveEvent(self, event):
-        """Handle mouse leave event."""
-        if self.collapsible and not self.is_locked_open:
-            self._collapse()
-        super().leaveEvent(event)
 
     def set_vault_name(self, vault_name: str):
         """
@@ -713,6 +674,7 @@ class VaultNavMenu(QFrame):
             self.is_expanded = True
             self._animate_width(self.expanded_width)
         self.is_locked_open = True
+        self.lock_state_changed.emit(True)
 
         # Select the first navigation button (Issued Credentials)
         if self.credentials_nav_buttons:
@@ -747,9 +709,7 @@ class VaultNavMenu(QFrame):
 
         # Restore lock state
         self.is_locked_open = self._was_locked_before_credentials
-        if self.collapsible:
-            self.lock_button.set_active(self.is_locked_open)
-            self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
+        self.lock_state_changed.emit(self.is_locked_open)
 
         # Update label visibility based on current state
         if self.collapsible and not self.is_locked_open:
@@ -883,6 +843,7 @@ class VaultNavMenu(QFrame):
             self.is_expanded = True
             self._animate_width(self.expanded_width)
         self.is_locked_open = True
+        self.lock_state_changed.emit(True)
 
         logger.info(f"Switched to plugin menu: {plugin_id}")
 
@@ -921,9 +882,7 @@ class VaultNavMenu(QFrame):
 
             # Restore lock state
             self.is_locked_open = self._was_locked_before_plugin
-            if self.collapsible:
-                self.lock_button.set_active(self.is_locked_open)
-                self.lock_button.set_icon(self._create_lock_icon(locked=self.is_locked_open))
+            self.lock_state_changed.emit(self.is_locked_open)
 
             # Update label visibility based on current state
             if self.collapsible and not self.is_locked_open:
