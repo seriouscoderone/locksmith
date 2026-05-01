@@ -2,7 +2,7 @@
 """
 locksmith.plugins.kerifoundation.witnesses.list module
 
-Boot-backed witness list for the single onboarded KF account.
+Provider-local witness list for the KF account and attached identifiers.
 """
 from __future__ import annotations
 
@@ -10,7 +10,6 @@ from PySide6.QtCore import Signal
 from PySide6.QtWidgets import QSizePolicy, QVBoxLayout, QWidget, QLabel
 from keri import help
 
-from locksmith.plugins.kerifoundation.db.basing import ACCOUNT_STATUS_ONBOARDED
 from locksmith.ui import colors
 from locksmith.ui.toolkit.tables.paginated import PaginatedTableWidget
 
@@ -30,16 +29,14 @@ def _shrink_empty_state_title(table: PaginatedTableWidget, font_size: int = 20):
 
 
 class WitnessOverviewPage(QWidget):
-    """Shows hosted witness rows for the permanent KF account AID."""
+    """Shows witnesses provisioned through this provider."""
 
-    add_witnesses_requested = Signal(str)
+    add_witnesses_requested = Signal()
 
     def __init__(self, app=None, parent=None):
         super().__init__(parent)
         self._app = app
         self._db = None
-        self._boot_client = None
-        self._current_rows = []
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
 
@@ -48,9 +45,12 @@ class WitnessOverviewPage(QWidget):
 
     def set_db(self, db):
         self._db = db
+        if db is None:
+            self._table.set_static_data([])
 
-    def set_boot_client(self, boot_client):
-        self._boot_client = boot_client
+    def shutdown(self) -> bool:
+        self._table.set_static_data([])
+        return True
 
     def _setup_ui(self):
         layout = QVBoxLayout(self)
@@ -58,75 +58,78 @@ class WitnessOverviewPage(QWidget):
         layout.setSpacing(0)
 
         self._table = PaginatedTableWidget(
-            columns=["Name", "Witness AID", "Region", "Auth", "Endpoint"],
+            columns=["Identifier", "Name", "Witness AID", "Auth", "Endpoint"],
             title="KERI Foundation Witnesses",
             icon_path=":/assets/material-icons/witness1.svg",
             show_search=True,
-            show_add_button=False,
+            show_add_button=True,
+            add_button_text="Add Witnesses",
             items_per_page=10,
             row_actions=[],
             row_actions_callback=self._get_row_actions,
             monospace_columns=["Witness AID"],
         )
         _shrink_empty_state_title(self._table)
+        self._table.add_clicked.connect(self._on_add_witnesses_clicked)
         self._table.row_action_triggered.connect(self._on_row_action)
         layout.addWidget(self._table)
 
     def on_show(self):
-        if not self._app or not self._db or not self._boot_client:
+        if not self._app or not self._db or not getattr(self._app, "vault", None):
             self._table.set_static_data([])
             return
-        self._refresh_table()
-
-    def _refresh_table(self):
-        try:
-            self._current_rows = self._build_rows()
-            self._table.set_static_data(self._current_rows)
-        except Exception as exc:
-            logger.exception("Failed loading boot-backed KF witness rows")
-            self._current_rows = []
-            self._table.load_error.emit(str(exc))
-            self._table._display_error()
+        self._table.set_static_data(self._build_rows())
 
     def _build_rows(self):
-        record = self._db.get_account() if self._db else None
-        if record is None or record.status != ACCOUNT_STATUS_ONBOARDED or not record.account_aid:
-            return []
-
-        hab = self._app.vault.hby.habByPre(record.account_aid) if self._app and self._app.vault else None
-        if hab is None:
-            logger.warning("Permanent KF account AID %s is missing from the local wallet", record.account_aid)
-            return []
-
         rows = []
-        for witness in self._boot_client.list_account_witnesses(
-            hab,
-            account_aid=record.account_aid,
-            destination=record.boot_server_aid,
-        ):
-            local_state = self._db.witnesses.get(keys=(record.account_aid, witness.eid))
-            if local_state is None:
-                auth = "Pending local auth"
-                auth_color = colors.WARNING_TEXT
-            elif local_state.batch_mode:
-                auth = "Batch TOTP configured"
-                auth_color = colors.SUCCESS_TEXT
-            else:
-                auth = "TOTP configured"
-                auth_color = colors.SUCCESS_TEXT
+        account_record = self._db.get_account() if self._db else None
+        account_aid = getattr(account_record, "account_aid", "")
+        attached_prefixes = set(self._db.list_attached_identifier_prefixes()) if self._db else set()
+        hby = self._app.vault.hby
+        org = self._app.vault.org
+
+        for (hab_pre, eid), record in self._db.witnesses.getItemIter(keys=()):
+            if hab_pre != account_aid and hab_pre not in attached_prefixes:
+                continue
+
+            hab = hby.habByPre(hab_pre)
+            if hab is None:
+                continue
+            hab_alias = getattr(hab, "name", hab_pre)
+            identifier_label = f"{hab_alias} (Account)" if hab_pre == account_aid else hab_alias
+
+            remote_id = org.get(eid) if org else None
+            witness_name = (
+                remote_id.get("alias")
+                if remote_id and remote_id.get("alias")
+                else f"KF Witness {eid[:12]}"
+            )
+            auth = "Batch TOTP configured" if record.batch_mode else "TOTP configured"
 
             rows.append(
                 {
-                    "Name": witness.name or f"KF Witness {witness.eid[:12]}",
-                    "Witness AID": witness.eid,
-                    "Region": witness.region_name or witness.region_id or "—",
+                    "Identifier": identifier_label,
+                    "Name": witness_name,
+                    "Witness AID": eid,
                     "Auth": auth,
-                    "Endpoint": witness.url or "—",
-                    "_Auth_color": auth_color,
+                    "Endpoint": record.url or "—",
+                    "_Auth_color": colors.SUCCESS_TEXT,
+                    "_sort_key": (
+                        0 if hab_pre == account_aid else 1,
+                        identifier_label.lower(),
+                        witness_name.lower(),
+                        eid,
+                    ),
                 }
             )
 
+        rows.sort(key=lambda row: row["_sort_key"])
+        for row in rows:
+            row.pop("_sort_key", None)
         return rows
+
+    def _on_add_witnesses_clicked(self):
+        self.add_witnesses_requested.emit()
 
     @staticmethod
     def _get_row_actions(_row_data):

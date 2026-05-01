@@ -21,7 +21,7 @@ import pyotp
 from PySide6.QtCore import Signal, Qt, QThread, QObject
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QButtonGroup, QFrame, QProgressBar,
+    QButtonGroup, QFrame,
 )
 from keri import help
 from keri.help import helping
@@ -483,7 +483,7 @@ class _ProvisionRegisterWorker(QObject):
 class WitnessProvisionPage(LocksmithFormPage):
     """Server selection → provision → register → QR code display."""
 
-    completed = Signal()
+    completed = Signal(str, list)
     cancelled = Signal()
 
     def __init__(self, app=None, parent=None):
@@ -503,6 +503,7 @@ class WitnessProvisionPage(LocksmithFormPage):
         self._provisioned_in_run: list[dict] = []   # for main-thread rollback
         self._resolved_eids: list[str] = []          # for Organizer rollback
         self._persisted_registration_state: dict | None = None
+        self._completed_witnesses: list[dict] = []
         self._setup_form()
 
     def set_app(self, app):
@@ -664,23 +665,6 @@ class WitnessProvisionPage(LocksmithFormPage):
 
         cl.addLayout(btn_layout)
 
-        # -- Progress (hidden) --
-        self._progress = QProgressBar()
-        self._progress.setVisible(False)
-        self._progress.setStyleSheet(f"""
-            QProgressBar {{
-                border: 1px solid {colors.BORDER};
-                border-radius: 4px;
-                text-align: center;
-                height: 20px;
-            }}
-            QProgressBar::chunk {{
-                background-color: {colors.PRIMARY};
-                border-radius: 3px;
-            }}
-        """)
-        cl.addWidget(self._progress)
-
         self._status_label = QLabel("")
         self._status_label.setWordWrap(True)
         self._status_label.setStyleSheet(
@@ -699,7 +683,7 @@ class WitnessProvisionPage(LocksmithFormPage):
         # -- Done button (hidden) --
         self._done_btn = LocksmithButton("I've Scanned the QR Code")
         self._done_btn.setVisible(False)
-        self._done_btn.clicked.connect(self.completed.emit)
+        self._done_btn.clicked.connect(self._emit_completed)
         cl.addWidget(self._done_btn, alignment=Qt.AlignmentFlag.AlignCenter)
 
         cl.addStretch()
@@ -718,15 +702,18 @@ class WitnessProvisionPage(LocksmithFormPage):
         self._back_btn.setEnabled(True)
         self._action_btn.setVisible(True)
         self._action_btn.setEnabled(True)
-        self._progress.setVisible(False)
         self._provisioned_in_run = []
         self._resolved_eids = []
         self._persisted_registration_state = None
+        self._completed_witnesses = []
 
         self._populate_identifier_card()
         self._populate_server_cards()
 
         self.scroll_area.verticalScrollBar().setValue(0)
+
+    def _emit_completed(self):
+        self.completed.emit(self._hab_pre or "", list(self._completed_witnesses))
 
     def _populate_identifier_card(self):
         if not self._app or not self._hab_pre:
@@ -848,10 +835,6 @@ class WitnessProvisionPage(LocksmithFormPage):
         self._batch_panel.setEnabled(False)
         self._individual_panel.setEnabled(False)
 
-        total = len(selected) * 2
-        self._progress.setMaximum(total)
-        self._progress.setValue(0)
-        self._progress.setVisible(True)
         self._status_label.setText("Starting...")
 
         self._reg_hab = hab
@@ -874,12 +857,9 @@ class WitnessProvisionPage(LocksmithFormPage):
             card.set_interactive(enabled)
 
     def _on_progress(self, label, current, total):
-        self._progress.setValue(current)
         self._status_label.setText(label)
 
     def _on_finished(self, results, error, rollback_failures):
-        self._progress.setVisible(False)
-
         if error:
             self._handle_error(error, results, rollback_failures)
             return
@@ -960,6 +940,7 @@ class WitnessProvisionPage(LocksmithFormPage):
                 self._reg_hab,
                 self._reg_batch_mode,
             )
+            self._completed_witnesses = [{"eid": res["eid"]} for res in results]
             self._show_qr_codes(results, self._reg_hab, self._reg_batch_mode)
 
         except Exception as exc:

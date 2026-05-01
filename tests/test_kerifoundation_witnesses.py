@@ -13,7 +13,6 @@ from locksmith.plugins.kerifoundation.db.basing import (
 )
 from locksmith.plugins.kerifoundation.onboarding.service import (
     AccountWatcherRow,
-    AccountWitnessRow,
 )
 from locksmith.plugins.kerifoundation.watchers.list import WatcherListPage
 from locksmith.plugins.kerifoundation.witnesses.list import WitnessOverviewPage
@@ -26,6 +25,9 @@ from locksmith.plugins.kerifoundation.witnesses.provision import (
 class FakeOrg:
     def __init__(self):
         self.data = {}
+
+    def get(self, pre):
+        return self.data.get(pre)
 
     def rem(self, pre):
         self.data.pop(pre, None)
@@ -80,56 +82,97 @@ def _make_db(tmp_path, name):
     return KFBaser(name=name, headDirPath=str(tmp_path), reopen=True)
 
 
-def test_witness_overview_page_uses_boot_rows_and_local_auth_overlay(qapp, tmp_path):
-    hab = make_hab("kf-account", "AID_ACCOUNT")
-    app = FakeApp([hab])
+def test_witness_overview_page_uses_local_provider_rows(qapp, tmp_path):
+    account_hab = make_hab("kf-account", "AID_ACCOUNT")
+    attached_hab = make_hab("shared-aid", "AID_SHARED")
+    unrelated_hab = make_hab("other-aid", "AID_OTHER")
+    app = FakeApp([account_hab, attached_hab, unrelated_hab])
+    app.vault.org.data["WIT_1"] = {"alias": "Witness One"}
+    app.vault.org.data["WIT_2"] = {"alias": "Witness Two"}
     db = _make_db(tmp_path, "kf-witness-overview")
-    boot_client = FakeBootClient(
-        witness_rows=[
-            AccountWitnessRow(
-                eid="WIT_1",
-                name="Witness One",
-                url="https://wit-1.example",
-                region_name="US West",
-            ),
-            AccountWitnessRow(
-                eid="WIT_2",
-                name="Witness Two",
-                url="https://wit-2.example",
-                region_name="US East",
-            ),
-        ]
-    )
 
     try:
         db.pin_account(
             KFAccountRecord(
-                account_aid=hab.pre,
-                account_alias=hab.name,
+                account_aid=account_hab.pre,
+                account_alias=account_hab.name,
                 status=ACCOUNT_STATUS_ONBOARDED,
                 boot_server_aid="BOOT_AID",
             )
         )
+        db.attach_identifier(attached_hab.pre)
         db.witnesses.pin(
-            keys=(hab.pre, "WIT_1"),
+            keys=(account_hab.pre, "WIT_1"),
             val=WitnessRecord(
                 eid="WIT_1",
-                hab_pre=hab.pre,
+                hab_pre=account_hab.pre,
                 oobi="https://wit-1.example/oobi/WIT_1/controller",
+                url="https://wit-1.example",
                 totp_seed="SEED1",
                 batch_mode=True,
+            ),
+        )
+        db.witnesses.pin(
+            keys=(attached_hab.pre, "WIT_2"),
+            val=WitnessRecord(
+                eid="WIT_2",
+                hab_pre=attached_hab.pre,
+                oobi="https://wit-2.example/oobi/WIT_2/controller",
+                url="https://wit-2.example",
+                totp_seed="SEED2",
+                batch_mode=False,
+            ),
+        )
+        db.witnesses.pin(
+            keys=(unrelated_hab.pre, "WIT_3"),
+            val=WitnessRecord(
+                eid="WIT_3",
+                hab_pre=unrelated_hab.pre,
+                url="https://wit-3.example",
             ),
         )
 
         page = WitnessOverviewPage(app=app)
         page.set_db(db)
-        page.set_boot_client(boot_client)
         page.on_show()
 
-        assert boot_client.calls == [("witnesses", hab.pre, hab.pre, "BOOT_AID")]
-        assert [row["Witness AID"] for row in page._current_rows] == ["WIT_1", "WIT_2"]
-        assert page._current_rows[0]["Auth"] == "Batch TOTP configured"
-        assert page._current_rows[1]["Auth"] == "Pending local auth"
+        rows = page._table._static_data
+        assert [row["Witness AID"] for row in rows] == ["WIT_1", "WIT_2"]
+        assert rows[0]["Identifier"] == "kf-account (Account)"
+        assert rows[0]["Name"] == "Witness One"
+        assert rows[0]["Auth"] == "Batch TOTP configured"
+        assert rows[1]["Identifier"] == "shared-aid"
+        assert rows[1]["Name"] == "Witness Two"
+        assert rows[1]["Auth"] == "TOTP configured"
+    finally:
+        db.close()
+
+
+def test_witness_overview_page_emits_add_witnesses_request(qapp, tmp_path):
+    account_hab = make_hab("kf-account", "AID_ACCOUNT")
+    app = FakeApp([account_hab])
+    db = _make_db(tmp_path, "kf-witness-add-target")
+
+    try:
+        db.pin_account(
+            KFAccountRecord(
+                account_aid=account_hab.pre,
+                account_alias=account_hab.name,
+                status=ACCOUNT_STATUS_ONBOARDED,
+                boot_server_aid="BOOT_AID",
+            )
+        )
+
+        page = WitnessOverviewPage(app=app)
+        page.set_db(db)
+        selected = []
+        page.add_witnesses_requested.connect(lambda: selected.append(True))
+
+        page.on_show()
+        page._table.add_clicked.emit()
+        qapp.processEvents()
+
+        assert selected == [True]
     finally:
         db.close()
 
