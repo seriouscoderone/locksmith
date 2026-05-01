@@ -78,7 +78,7 @@ class FilterRemoteIdentifiersDialog(LocksmithDialog):
         # Initialize parent dialog
         super().__init__(
             parent=parent,
-            title="Filter Remote Identifiers",
+            title="Filter Contacts",
             title_icon=":/assets/material-icons/tune.svg",
             show_close_button=True,
             content=content_widget,
