@@ -37,7 +37,7 @@ class DeleteRemoteIdDialog(LocksmithResourceDeletionDialog):
         # Initialize parent dialog with resource deletion
         super().__init__(
             parent=parent,
-            resource_type="remote identifier",
+            resource_type="contact",
             resource_name=remote_id_alias,
             title_icon=icon_path
         )

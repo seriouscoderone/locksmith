@@ -114,13 +114,13 @@ class AddRemoteIdentifierDialog(LocksmithDialog):
         # Create title content
         title_content_widget = QWidget()
         title_content = QHBoxLayout()
-        icon = QIcon(":/assets/custom/remoteIds.png")
+        icon = QIcon(":/assets/material-icons/remote_contact.svg")
         icon_label = QLabel()
         icon_label.setPixmap(icon.pixmap(32, 32))
         icon_label.setFixedSize(32, 32)
         title_content.addWidget(icon_label)
 
-        title_label = QLabel("  Connect a Remote Identifier")
+        title_label = QLabel("  Add Contact")
         title_label.setStyleSheet("font-size: 16px;")
         title_content.addWidget(title_label)
         title_content_widget.setLayout(title_content)
@@ -356,7 +356,7 @@ class AddRemoteIdentifierDialog(LocksmithDialog):
             if event_type == "remote_identifier_imported":
                 self._on_success(data)
             elif event_type == "import_failed":
-                error_msg = data.get('error', 'Failed to import remote identifier')
+                error_msg = data.get('error', 'Failed to import contact')
                 self._on_failure(error_msg)
 
     def _on_success(self, data):

@@ -75,7 +75,7 @@ class IssueCredentialDialog(LocksmithDialog):
 
         radio_layout = QHBoxLayout()
         self.local_radio = LocksmithRadioButton("Local Identifier")
-        self.remote_radio = LocksmithRadioButton("Remote Identifier")
+        self.remote_radio = LocksmithRadioButton("Contact")
         self.remote_radio.setChecked(True)
 
         radio_layout.addSpacing(10)

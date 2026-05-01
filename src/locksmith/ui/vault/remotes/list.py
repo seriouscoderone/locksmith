@@ -65,16 +65,16 @@ class RemoteIdentifierListPage(BaseListPage):
         self.setAutoFillBackground(True)
 
         # Create table widget
-        self.icon_path = ":/assets/custom/remoteIds.png"
+        self.icon_path = ":/assets/material-icons/remote_contact.svg"
         self.table = PaginatedTableWidget(
             columns=["Alias", "Prefix", "Seq No.", "Roles"],
             column_widths={"Alias": 250, "Seq No.": 150, "Roles": 150, "Actions": 50},
-            title="Remote Identifiers",
+            title="Contacts",
             icon_path=self.icon_path,
             items_per_page=10,
             show_search=True,
             show_add_button=True,
-            add_button_text="Add Remote Identifier",
+            add_button_text="Add Contact",
             row_actions=["View", "Challenge", "Delete"],
             row_action_icons = {"View": ":/assets/material-icons/view.svg",
                                 "Challenge": ":/assets/material-icons/swords.svg",

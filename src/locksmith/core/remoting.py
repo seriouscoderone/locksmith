@@ -651,14 +651,14 @@ def delete_remote_id(app, alias, rm_id):
         logger.info(f"Remote identifier '{alias}' deleted successfully")
         return {
             'success': True,
-            'message': f"Remote identifier '{alias}' deleted successfully"
+            'message': f"Contact '{alias}' deleted successfully"
         }
 
     except Exception as e:
         logger.exception(f"Error deleting remote identifier: {e}")
         return {
             'success': False,
-            'message': f'Error deleting remote identifier: {str(e)}'
+            'message': f'Error deleting contact: {str(e)}'
         }
 
 

@@ -564,7 +564,7 @@ class ViewRemoteIdentifierDialog(LocksmithDialog):
                     self.app.vault.signals.doer_event.connect(self._on_keystate_refreshed)
                 logger.info("Keystate refresh initiated")
             else:
-                self.show_error("No OOBI available for this remote identifier")
+                self.show_error("No OOBI available for this contact")
                 self.refresh_keystate_button.setEnabled(True)
 
         except Exception as e:

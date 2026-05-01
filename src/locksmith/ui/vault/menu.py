@@ -394,8 +394,8 @@ class VaultNavMenu(QFrame):
         # Map icon names to file paths
         icon_paths = {
             "identifiers": ":/assets/custom/identifiers.png",
-            "remote_identifiers": ":/assets/custom/remoteIds.png",
-            "group_identifiers": ":/assets/material-icons/group.svg",
+            "remote_identifiers": ":/assets/material-icons/remote_contact.svg",
+            "group_identifiers": ":/assets/material-icons/groups.svg",
             "credentials": ":/assets/material-icons/badge.svg",
             "settings": ":/assets/material-icons/settings_shield.svg",
             # Credentials menu icons
@@ -427,10 +427,10 @@ class VaultNavMenu(QFrame):
         self.menu_items.append(identifiers_btn)
         self.nav_buttons.append(identifiers_btn)
 
-        # Remote Identifiers
+        # Contacts
         remote_identifiers_btn = MenuButton(
             self._create_icon("remote_identifiers"),
-            "Remote Identifiers"
+            "Contacts"
         )
         remote_identifiers_btn.clicked.connect(lambda: self._on_nav_button_clicked(remote_identifiers_btn, self.remote_identifiers_clicked))
         self.layout.addWidget(remote_identifiers_btn)

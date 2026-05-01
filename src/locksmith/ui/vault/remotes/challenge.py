@@ -75,7 +75,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
         # Initialize parent dialog
         super().__init__(
             parent=parent,
-            title=f"Challenge Remote Identifier: {remote_identifier_alias or remote_identifier_prefix[:15]}",
+            title=f"Challenge Contact: {remote_identifier_alias or remote_identifier_prefix[:15]}",
             title_icon=icon_path,
             show_close_button=True,
             content=tab_container,
@@ -129,7 +129,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
 
         # Helper text
         helper_text = QLabel(
-            "Generate a 12-word challenge phrase to send to the remote identifier. "
+            "Generate a 12-word challenge phrase to send to the contact. "
             "They will use this challenge to prove control of their keys by signing it. "
             "Click the Generate Challenge button to create a new challenge phrase."
         )
@@ -187,7 +187,7 @@ class ChallengeRemoteIdentifierDialog(LocksmithDialog):
 
         # Helper text
         helper_text = QLabel(
-            "Enter the 12-word challenge response you received from the remote identifier. "
+            "Enter the 12-word challenge response you received from the contact. "
             "Select which of your local identifiers you want to use to verify their response. "
             "The response must match the challenge phrase to successfully verify."
         )
