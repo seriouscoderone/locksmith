@@ -41,6 +41,8 @@ class IssueCredentialDialog(LocksmithDialog):
         self._dynamic_fields_start_index = None
         self._const_fields_values = {}
         self._edge_dropdowns = {}  # Store edge credential dropdowns
+        self._auth_pending = False
+        self._auth_codes_connected = False
 
         # Create content widget
         content_widget = QWidget()
@@ -153,8 +155,21 @@ class IssueCredentialDialog(LocksmithDialog):
         # Connect to vault signal bridge for doer events
         if hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
-            self.app.vault.signals.auth_codes_entered.connect(self._on_auth_codes_entered)
             logger.info("IssueCredentialDialog: Connected to vault signal bridge")
+
+    def _disconnect_auth_codes_signal(self):
+        if not self._auth_codes_connected:
+            return
+
+        try:
+            self.app.vault.signals.auth_codes_entered.disconnect(self._on_auth_codes_entered)
+        except RuntimeError:
+            pass
+        self._auth_codes_connected = False
+
+    def closeEvent(self, event):
+        self._disconnect_auth_codes_signal()
+        super().closeEvent(event)
 
     def _populate_schema_dropdown(self):
         """Populate the schema dropdown with loaded schemas from the vault."""
@@ -925,6 +940,10 @@ class IssueCredentialDialog(LocksmithDialog):
 
         hab = registry.hab
         if hab.kever.wits:
+            self._auth_pending = True
+            self.app.vault.signals.auth_codes_entered.connect(self._on_auth_codes_entered)
+            self._auth_codes_connected = True
+
             # Launch witness authentication dialog
             auth_dialog = WitnessAuthenticationDialog(
                 app=self.app,
@@ -934,9 +953,19 @@ class IssueCredentialDialog(LocksmithDialog):
                 signals=self.app.vault.signals,
                 parent=self
             )
+            auth_dialog.finished.connect(self._on_auth_dialog_finished)
             auth_dialog.open()
         else:
             self._complete_issuance(codes=None)
+
+    def _on_auth_dialog_finished(self, _result):
+        if not self._auth_pending:
+            return
+
+        self._auth_pending = False
+        self._disconnect_auth_codes_signal()
+        self.issue_button.setEnabled(True)
+        self.issue_button.setText("Issue Credential")
 
     def _validate_fields(self):
         """
@@ -1066,6 +1095,11 @@ class IssueCredentialDialog(LocksmithDialog):
         Args:
             data: Dictionary containing 'codes' key with list of "witness_id:passcode" strings
         """
+        if not self._auth_pending:
+            return
+
+        self._auth_pending = False
+        self._disconnect_auth_codes_signal()
         codes = data.get('codes', [])
         logger.info(f"Received {len(codes)} auth codes from WitnessAuthenticationDialog")
 
