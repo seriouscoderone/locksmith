@@ -1,0 +1,143 @@
+{
+  "$id": "ECmEfS_FcGeVLduy-ym1qDx3usSL9J0wwfOlY8kTBg80",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "ProducerLicense",
+  "description": "An insurance producer license issued by a Department of Insurance, certifying authority to write insurance for specified lines of authority in a named state.",
+  "type": "object",
+  "credentialType": "ProducerLicenseV1",
+  "version": "1.1.0",
+  "properties": {
+    "v": {
+      "description": "Credential Version String",
+      "type": "string"
+    },
+    "d": {
+      "description": "Credential SAID",
+      "type": "string"
+    },
+    "u": {
+      "description": "One-time-use nonce",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID (the DOI Producer Licensing authority)",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Registry SAID",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attributes block SAID",
+          "type": "string"
+        },
+        {
+          "$id": "EFA5l4q7xI0VZ9gb7G0Gm8Nt4OOMxK8VwiDOA11n6H7M",
+          "description": "Attributes block",
+          "type": "object",
+          "required": [
+            "d",
+            "i",
+            "dt",
+            "licenseNumber",
+            "linesOfAuthority",
+            "state",
+            "issuedDate",
+            "expiresDate"
+          ],
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID",
+              "type": "string"
+            },
+            "i": {
+              "description": "Issuee AID (the licensed producer)",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance datetime",
+              "type": "string",
+              "format": "date-time"
+            },
+            "licenseNumber": {
+              "description": "Unique license number issued by the DOI",
+              "type": "string"
+            },
+            "linesOfAuthority": {
+              "description": "Lines of authority covered by this license",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "P&C",
+                  "Life",
+                  "Health",
+                  "Surplus Lines"
+                ]
+              },
+              "minItems": 1
+            },
+            "state": {
+              "description": "Two-letter US state code where the license is valid",
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 2
+            },
+            "issuedDate": {
+              "description": "Date the license was issued",
+              "type": "string",
+              "format": "date"
+            },
+            "expiresDate": {
+              "description": "Date the license expires",
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "e": {
+      "description": "Edges section (optional)",
+      "oneOf": [
+        {
+          "description": "Edges block SAID",
+          "type": "string"
+        },
+        {
+          "description": "Edges block",
+          "type": "object"
+        }
+      ]
+    },
+    "r": {
+      "description": "Rules section (optional)",
+      "oneOf": [
+        {
+          "description": "Rules block SAID",
+          "type": "string"
+        },
+        {
+          "description": "Rules block",
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a"
+  ]
+}

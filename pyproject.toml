@@ -49,6 +49,7 @@ dependencies = [
 
 [project.entry-points."locksmith.plugins"]
 kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
+producer_licensing = "locksmith.plugins.producer_licensing.plugin:ProducerLicensingPlugin"
 
 
 [tool.setuptools.packages.find]
