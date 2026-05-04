@@ -1,0 +1,190 @@
+{
+  "$id": "EO5AlJD8GH5oVs8UwTEC-dy5W4QRpMYAV7Tn-cZ3yiS5",
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "CarrierAppointment",
+  "description": "An appointment issued by an insurance carrier authorizing a licensed producer to write specified product lines on the carrier's paper. Chains to the producer's underlying license via an edge.",
+  "type": "object",
+  "credentialType": "CarrierAppointmentV1",
+  "version": "1.0.0",
+  "properties": {
+    "v": {
+      "description": "Credential Version String",
+      "type": "string"
+    },
+    "d": {
+      "description": "Credential SAID",
+      "type": "string"
+    },
+    "u": {
+      "description": "One-time-use nonce",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID (the carrier)",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Registry SAID",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attributes block SAID",
+          "type": "string"
+        },
+        {
+          "$id": "EPv8sUVX-P3gDKGBsETyoglgYAUhNAfk8fIvhBLEwEWB",
+          "description": "Attributes block",
+          "type": "object",
+          "required": [
+            "d",
+            "i",
+            "dt",
+            "carrierName",
+            "productLines",
+            "appointmentNumber",
+            "state",
+            "effectiveDate",
+            "expiresDate"
+          ],
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID",
+              "type": "string"
+            },
+            "i": {
+              "description": "Issuee AID (the appointed producer)",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance datetime",
+              "type": "string",
+              "format": "date-time"
+            },
+            "carrierName": {
+              "description": "Human-readable carrier name (e.g., 'Acme Insurance Co.')",
+              "type": "string"
+            },
+            "productLines": {
+              "description": "Specific product lines this appointment covers (e.g., 'GL' for general liability, 'PL' for product liability)",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "GL",
+                  "PL",
+                  "Auto",
+                  "Property",
+                  "Workers Comp",
+                  "Umbrella"
+                ]
+              },
+              "minItems": 1
+            },
+            "appointmentNumber": {
+              "description": "Carrier's internal appointment identifier",
+              "type": "string"
+            },
+            "state": {
+              "description": "Two-letter US state code where this appointment is valid (must match producer's license state)",
+              "type": "string",
+              "minLength": 2,
+              "maxLength": 2
+            },
+            "effectiveDate": {
+              "description": "Date the appointment becomes effective",
+              "type": "string",
+              "format": "date"
+            },
+            "expiresDate": {
+              "description": "Date the appointment expires",
+              "type": "string",
+              "format": "date"
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "e": {
+      "oneOf": [
+        {
+          "description": "Edges block SAID",
+          "type": "string"
+        },
+        {
+          "$id": "EBfzVEFkWuI4-JYPMn-hTjr_zkAbif1baDITvakH3Kyb",
+          "description": "Edges block",
+          "type": "object",
+          "required": [
+            "d",
+            "producerLicense"
+          ],
+          "properties": {
+            "d": {
+              "description": "Edges block SAID",
+              "type": "string"
+            },
+            "producerLicense": {
+              "description": "Chain to the producer's ProducerLicense; the appointment is conditional on the license being valid and not revoked",
+              "type": "object",
+              "required": [
+                "n",
+                "s"
+              ],
+              "properties": {
+                "n": {
+                  "description": "SAID of the chained ProducerLicense credential instance",
+                  "type": "string"
+                },
+                "s": {
+                  "description": "Schema SAID of ProducerLicense (locked)",
+                  "type": "string",
+                  "const": "ECmEfS_FcGeVLduy-ym1qDx3usSL9J0wwfOlY8kTBg80"
+                },
+                "o": {
+                  "description": "ACDC edge operator; MUST_NOT_REVOKED means the appointment is only valid while the license is",
+                  "type": "string",
+                  "enum": [
+                    "MUST",
+                    "MUST_NOT_REVOKED"
+                  ]
+                }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "r": {
+      "description": "Rules section (optional)",
+      "oneOf": [
+        {
+          "description": "Rules block SAID",
+          "type": "string"
+        },
+        {
+          "description": "Rules block",
+          "type": "object"
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a",
+    "e"
+  ]
+}
