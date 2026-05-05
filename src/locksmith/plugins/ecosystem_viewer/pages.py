@@ -47,6 +47,8 @@ class EcosystemViewerPage(QWidget):
     """List view: every schema + every known AID + their inspector classifications."""
 
     show_schema_detail_requested = Signal(str)  # emits schema SAID
+    show_ecosystem_detail_requested = Signal(str)  # emits ecosystem name (NEW)
+    create_ecosystem_clicked = Signal()             # NEW: from "Create" button
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -113,11 +115,14 @@ class EcosystemViewerPage(QWidget):
             self._content_layout.insertWidget(self._sections_anchor_index, empty)
             return
 
+        ecosystems_section = self._build_ecosystems_section()
+        self._content_layout.insertWidget(self._sections_anchor_index, ecosystems_section)
+
         schema_section = self._build_schema_section(vault)
-        self._content_layout.insertWidget(self._sections_anchor_index, schema_section)
+        self._content_layout.insertWidget(self._sections_anchor_index + 1, schema_section)
 
         contacts_section = self._build_contacts_section(vault)
-        self._content_layout.insertWidget(self._sections_anchor_index + 1, contacts_section)
+        self._content_layout.insertWidget(self._sections_anchor_index + 2, contacts_section)
 
     # ------------------------------------------------------------------
     # Static header
@@ -139,6 +144,83 @@ class EcosystemViewerPage(QWidget):
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
         self._content_layout.addWidget(intro)
+
+    # ------------------------------------------------------------------
+    # Ecosystems
+    # ------------------------------------------------------------------
+
+    def _build_ecosystems_section(self) -> QWidget:
+        section = self._build_card(title="My ecosystems")
+        layout: QVBoxLayout = section.layout()  # type: ignore[assignment]
+
+        # Top row: count + Create button
+        header_row = QWidget()
+        header_layout = QHBoxLayout(header_row)
+        header_layout.setContentsMargins(0, 0, 0, 0)
+
+        if self._db is None:
+            ecosystems = []
+        else:
+            try:
+                ecosystems = self._db.list_ecosystems()
+            except Exception:
+                logger.exception("Failed to list ecosystems")
+                ecosystems = []
+
+        count_label = QLabel(f"{len(ecosystems)} ecosystem(s) defined")
+        count_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        header_layout.addWidget(count_label)
+        header_layout.addStretch()
+
+        from locksmith.ui.toolkit.widgets import LocksmithButton
+        create_btn = LocksmithButton("Create ecosystem")
+        create_btn.clicked.connect(self.create_ecosystem_clicked.emit)
+        header_layout.addWidget(create_btn)
+
+        layout.addWidget(header_row)
+
+        if not ecosystems:
+            layout.addWidget(self._build_status_message(
+                "No ecosystems yet. Click 'Create ecosystem' to define a grouping of "
+                "schemas and issuer AIDs that work together."
+            ))
+            return section
+
+        for eco in sorted(ecosystems, key=lambda e: e.name):
+            layout.addWidget(self._build_ecosystem_row(eco))
+        return section
+
+    def _build_ecosystem_row(self, eco: Any) -> QWidget:
+        row = QFrame()
+        row.setStyleSheet(
+            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
+            "QFrame:hover { background-color: #F0F3FA; }"
+        )
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
+        rl = QVBoxLayout(row)
+        rl.setContentsMargins(14, 12, 14, 12)
+        rl.setSpacing(4)
+
+        title = QLabel(f"<b>{eco.name}</b>")
+        title.setStyleSheet("font-size: 14px;")
+        rl.addWidget(title)
+
+        if eco.description:
+            desc = QLabel(eco.description)
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+            rl.addWidget(desc)
+
+        counts = QLabel(
+            f"<span style='color:{colors.TEXT_SECONDARY}'>"
+            f"{len(eco.schema_saids)} schema(s) · {len(eco.issuer_aids)} AID(s)</span>"
+        )
+        counts.setStyleSheet("font-size: 11px;")
+        rl.addWidget(counts)
+
+        name = eco.name
+        row.mousePressEvent = lambda _e, n=name: self.show_ecosystem_detail_requested.emit(n)
+        return row
 
     # ------------------------------------------------------------------
     # Schemas

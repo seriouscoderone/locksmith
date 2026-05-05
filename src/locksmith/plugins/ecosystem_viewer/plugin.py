@@ -15,7 +15,8 @@ from PySide6.QtWidgets import QWidget
 from keri import help
 
 from locksmith.plugins.base import PluginBase
-from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
+from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser, EcosystemRecord
+from locksmith.plugins.ecosystem_viewer.dialogs import CreateEcosystemDialog
 from locksmith.plugins.ecosystem_viewer.pages import (
     EcosystemViewerPage,
     SchemaDetailPage,
@@ -44,6 +45,7 @@ class EcosystemViewerPlugin(PluginBase):
 
         # Wire intra-plugin navigation
         self._overview_page.show_schema_detail_requested.connect(self._show_schema_detail)
+        self._overview_page.create_ecosystem_clicked.connect(self._open_create_ecosystem_dialog)
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
 
@@ -112,3 +114,21 @@ class EcosystemViewerPlugin(PluginBase):
         vault_page._show_page(PAGE_KEY_SCHEMA_DETAIL)
         if self._schema_detail_page is not None:
             self._schema_detail_page.show_schema(schema_said)
+
+    def _open_create_ecosystem_dialog(self) -> None:
+        dialog = CreateEcosystemDialog(app=self._app, parent=self._overview_page)
+        dialog.ecosystem_create_requested.connect(self._on_create_ecosystem)
+        dialog.open()
+
+    def _on_create_ecosystem(self, name: str, description: str) -> None:
+        if self._db is None:
+            logger.warning("EcosystemViewerPlugin: no DB open; cannot create ecosystem")
+            return
+        try:
+            self._db.put_ecosystem(EcosystemRecord(name=name, description=description))
+            logger.info(f"Ecosystem '{name}' created")
+        except Exception:
+            logger.exception("Failed to create ecosystem")
+            return
+        if self._overview_page is not None:
+            self._overview_page.on_show()
