@@ -35,13 +35,15 @@ from keri import help
 
 from locksmith.acdc import inspect_acdc_schema
 from locksmith.ui import colors
-from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithIconButton
 
 logger = help.ogler.getLogger(__name__)
 
 # Page keys registered with VaultPage's content stack. Owned by this plugin.
 PAGE_KEY_OVERVIEW = "ecosystem_viewer"
 PAGE_KEY_SCHEMA_DETAIL = "ecosystem_viewer.schema_detail"
+PAGE_KEY_ECOSYSTEM_DETAIL = "ecosystem_viewer.ecosystem_detail"
 
 
 class EcosystemViewerPage(QWidget):
@@ -692,3 +694,213 @@ class SchemaDetailPage(QWidget):
         title_label.setStyleSheet("font-size: 14px; font-weight: 600;")
         layout.addWidget(title_label)
         return frame
+
+
+class EcosystemDetailPage(QWidget):
+    """View + edit a single ecosystem: members, annotations."""
+
+    back_requested = Signal()
+    add_schema_clicked = Signal(str)        # emits ecosystem name
+    add_aid_clicked = Signal(str)
+    remove_schema_clicked = Signal(str, str)  # (ecosystem name, schema_said)
+    remove_aid_clicked = Signal(str, str)
+    delete_ecosystem_clicked = Signal(str)
+    show_schema_detail_requested = Signal(str)
+
+    def __init__(self, app: Any, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.app = app
+        self._db: EcosystemBaser | None = None
+        self._current_name: str | None = None
+
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        bar = QHBoxLayout()
+        bar.setContentsMargins(20, 12, 20, 0)
+        back = QLabel('<a href="#back" style="color:#3a5fff;text-decoration:none;">‹ Back to overview</a>')
+        back.setOpenExternalLinks(False)
+        back.linkActivated.connect(lambda _: self.back_requested.emit())
+        back.setStyleSheet("font-size: 13px;")
+        bar.addWidget(back)
+        bar.addStretch()
+        outer.addLayout(bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT}; border: none;")
+        scroll.viewport().setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+
+        self._content = QWidget()
+        self._content.setObjectName("ecosystemDetailContent")
+        self._content.setStyleSheet(
+            f"#ecosystemDetailContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+        )
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(20, 16, 20, 30)
+        self._content_layout.setSpacing(16)
+        self._content_layout.addStretch()
+        scroll.setWidget(self._content)
+        outer.addWidget(scroll)
+
+    def set_db(self, db: "EcosystemBaser | None") -> None:
+        """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
+        self._db = db
+
+    def show_ecosystem(self, name: str) -> None:
+        self._current_name = name
+        self._refresh()
+
+    def _refresh(self) -> None:
+        # Clear all widgets in front of the layout's trailing stretch.
+        # __init__ leaves the stretch as the sole item; section widgets are
+        # then inserted at indices 0..N, pushing the stretch to last position.
+        # The `> 1` guard preserves the stretch.
+        while self._content_layout.count() > 1:
+            item = self._content_layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.deleteLater()
+
+        if self._db is None or self._current_name is None:
+            self._content_layout.insertWidget(0, QLabel("(no ecosystem loaded)"))
+            return
+
+        eco = self._db.get_ecosystem(self._current_name)
+        if eco is None:
+            self._content_layout.insertWidget(0, QLabel(
+                f"Ecosystem '{self._current_name}' not found."
+            ))
+            return
+
+        self._content_layout.insertWidget(0, self._build_header(eco))
+        self._content_layout.insertWidget(1, self._build_schemas_section(eco))
+        self._content_layout.insertWidget(2, self._build_aids_section(eco))
+        self._content_layout.insertWidget(3, self._build_actions_section(eco))
+
+    def _build_header(self, eco: Any) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        title = QLabel(f"<b>{eco.name}</b>")
+        title.setStyleSheet("font-size: 22px;")
+        layout.addWidget(title)
+        if eco.description:
+            desc = QLabel(eco.description)
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 13px;")
+            layout.addWidget(desc)
+        meta = QLabel(
+            f"<span style='color:{colors.TEXT_SECONDARY};font-size:11px;'>"
+            f"created {eco.created_at} · updated {eco.updated_at} · source {eco.source_kind}</span>"
+        )
+        layout.addWidget(meta)
+        return wrapper
+
+    def _build_schemas_section(self, eco: Any) -> QWidget:
+        section = QFrame()
+        section.setStyleSheet(
+            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+        )
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        head = QHBoxLayout()
+        title = QLabel(f"Schemas ({len(eco.schema_saids)})")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        head.addWidget(title)
+        head.addStretch()
+        add_btn = LocksmithInvertedButton("Add schema")
+        add_btn.clicked.connect(lambda: self.add_schema_clicked.emit(eco.name))
+        head.addWidget(add_btn)
+        head_w = QWidget()
+        head_w.setLayout(head)
+        layout.addWidget(head_w)
+
+        if not eco.schema_saids:
+            empty = QLabel("(no schemas yet)")
+            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
+            layout.addWidget(empty)
+            return section
+
+        for said in eco.schema_saids:
+            row = QFrame()
+            row.setStyleSheet("QFrame { background: #F8F9FF; border-radius: 4px; }")
+            r = QHBoxLayout(row)
+            r.setContentsMargins(10, 6, 10, 6)
+            link = QLabel(
+                f'<a href="#nav" style="color:#3a5fff;text-decoration:none;">'
+                f'<code>{said}</code></a>'
+            )
+            link.setOpenExternalLinks(False)
+            link.linkActivated.connect(lambda _l, s=said: self.show_schema_detail_requested.emit(s))
+            link.setStyleSheet("font-size: 12px;")
+            link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.TextSelectableByMouse)
+            r.addWidget(link, 1)
+            remove_btn = LocksmithIconButton(":/assets/material-icons/close.svg", tooltip="Remove from ecosystem", icon_size=16)
+            remove_btn.clicked.connect(lambda _c=False, n=eco.name, s=said: self.remove_schema_clicked.emit(n, s))
+            r.addWidget(remove_btn)
+            layout.addWidget(row)
+        return section
+
+    def _build_aids_section(self, eco: Any) -> QWidget:
+        section = QFrame()
+        section.setStyleSheet(
+            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+        )
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        head = QHBoxLayout()
+        title = QLabel(f"Issuer AIDs ({len(eco.issuer_aids)})")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        head.addWidget(title)
+        head.addStretch()
+        add_btn = LocksmithInvertedButton("Add AID")
+        add_btn.clicked.connect(lambda: self.add_aid_clicked.emit(eco.name))
+        head.addWidget(add_btn)
+        head_w = QWidget()
+        head_w.setLayout(head)
+        layout.addWidget(head_w)
+
+        if not eco.issuer_aids:
+            empty = QLabel("(no issuer AIDs yet)")
+            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
+            layout.addWidget(empty)
+            return section
+
+        for aid in eco.issuer_aids:
+            row = QFrame()
+            row.setStyleSheet("QFrame { background: #F8F9FF; border-radius: 4px; }")
+            r = QHBoxLayout(row)
+            r.setContentsMargins(10, 6, 10, 6)
+            label = QLabel(f"<code>{aid}</code>")
+            label.setStyleSheet("font-size: 12px;")
+            label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            r.addWidget(label, 1)
+            remove_btn = LocksmithIconButton(":/assets/material-icons/close.svg", tooltip="Remove from ecosystem", icon_size=16)
+            remove_btn.clicked.connect(lambda _c=False, n=eco.name, a=aid: self.remove_aid_clicked.emit(n, a))
+            r.addWidget(remove_btn)
+            layout.addWidget(row)
+        return section
+
+    def _build_actions_section(self, eco: Any) -> QWidget:
+        wrapper = QWidget()
+        layout = QHBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.addStretch()
+        delete_btn = LocksmithInvertedButton("Delete ecosystem")
+        delete_btn.clicked.connect(lambda: self.delete_ecosystem_clicked.emit(eco.name))
+        layout.addWidget(delete_btn)
+        return wrapper

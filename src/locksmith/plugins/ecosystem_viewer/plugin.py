@@ -16,12 +16,17 @@ from keri import help
 
 from locksmith.plugins.base import PluginBase
 from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser, EcosystemRecord
-from locksmith.plugins.ecosystem_viewer.dialogs import CreateEcosystemDialog
+from locksmith.plugins.ecosystem_viewer.dialogs import (
+    CreateEcosystemDialog,
+    AddMemberDialog,
+)
 from locksmith.plugins.ecosystem_viewer.pages import (
     EcosystemViewerPage,
     SchemaDetailPage,
+    EcosystemDetailPage,
     PAGE_KEY_OVERVIEW,
     PAGE_KEY_SCHEMA_DETAIL,
+    PAGE_KEY_ECOSYSTEM_DETAIL,
 )
 from locksmith.ui.toolkit.widgets.buttons import BackButton
 from locksmith.ui.vault.menu import MenuButton, MenuSpacer
@@ -41,6 +46,7 @@ class EcosystemViewerPlugin(PluginBase):
         self._db: EcosystemBaser | None = None
         self._overview_page: EcosystemViewerPage | None = EcosystemViewerPage(app=app)
         self._schema_detail_page: SchemaDetailPage | None = SchemaDetailPage(app=app)
+        self._ecosystem_detail_page: EcosystemDetailPage | None = EcosystemDetailPage(app=app)
         self._nav_button: MenuButton | None = None
 
         # Wire intra-plugin navigation
@@ -48,6 +54,16 @@ class EcosystemViewerPlugin(PluginBase):
         self._overview_page.create_ecosystem_clicked.connect(self._open_create_ecosystem_dialog)
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
+
+        # Ecosystem detail page wiring
+        self._overview_page.show_ecosystem_detail_requested.connect(self._show_ecosystem_detail)
+        self._ecosystem_detail_page.back_requested.connect(self._show_overview)
+        self._ecosystem_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
+        self._ecosystem_detail_page.add_schema_clicked.connect(self._open_add_schema_dialog)
+        self._ecosystem_detail_page.add_aid_clicked.connect(self._open_add_aid_dialog)
+        self._ecosystem_detail_page.remove_schema_clicked.connect(self._remove_schema_member)
+        self._ecosystem_detail_page.remove_aid_clicked.connect(self._remove_aid_member)
+        self._ecosystem_detail_page.delete_ecosystem_clicked.connect(self._delete_ecosystem)
 
         logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
 
@@ -60,6 +76,8 @@ class EcosystemViewerPlugin(PluginBase):
             self._overview_page.on_show()
         if self._schema_detail_page is not None:
             self._schema_detail_page.set_db(self._db)
+        if self._ecosystem_detail_page is not None:
+            self._ecosystem_detail_page.set_db(self._db)
 
     def on_vault_closed(self, vault: Any) -> None:
         # Close per-vault DB on vault close
@@ -70,6 +88,8 @@ class EcosystemViewerPlugin(PluginBase):
             self._overview_page.set_db(None)
         if self._schema_detail_page is not None:
             self._schema_detail_page.set_db(None)
+        if self._ecosystem_detail_page is not None:
+            self._ecosystem_detail_page.set_db(None)
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
@@ -95,6 +115,8 @@ class EcosystemViewerPlugin(PluginBase):
             pages[PAGE_KEY_OVERVIEW] = self._overview_page
         if self._schema_detail_page is not None:
             pages[PAGE_KEY_SCHEMA_DETAIL] = self._schema_detail_page
+        if self._ecosystem_detail_page is not None:
+            pages[PAGE_KEY_ECOSYSTEM_DETAIL] = self._ecosystem_detail_page
         return pages
 
     def _show_overview(self, *_args: Any) -> None:
@@ -132,3 +154,126 @@ class EcosystemViewerPlugin(PluginBase):
             return
         if self._overview_page is not None:
             self._overview_page.on_show()
+
+    def _show_ecosystem_detail(self, name: str) -> None:
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is None:
+            logger.warning(f"EcosystemViewerPlugin: vault_page not available; cannot show ecosystem {name}")
+            return
+        vault_page._show_page(PAGE_KEY_ECOSYSTEM_DETAIL)
+        if self._ecosystem_detail_page is not None:
+            self._ecosystem_detail_page.show_ecosystem(name)
+
+    def _open_add_schema_dialog(self, ecosystem_name: str) -> None:
+        if self._db is None:
+            return
+        vault = getattr(self._app, "vault", None)
+        if vault is None:
+            return
+        eco = self._db.get_ecosystem(ecosystem_name)
+        if eco is None:
+            return
+        # Candidate schemas: every schema in the wallet not already in this ecosystem
+        candidates: list[tuple[str, str]] = []
+        try:
+            for (said,), schemer in vault.hby.db.schema.getItemIter():
+                if said in eco.schema_saids:
+                    continue
+                title = schemer.sed.get("title", "(untitled)")
+                candidates.append((f"{title}  —  {said}", said))
+        except Exception:
+            logger.exception("Failed to enumerate schemas for member-add")
+
+        dialog = AddMemberDialog(
+            kind="schema",
+            candidates=candidates,
+            parent=self._ecosystem_detail_page,
+        )
+        dialog.member_picked.connect(
+            lambda said, n=ecosystem_name: self._add_schema_member(n, said)
+        )
+        dialog.open()
+
+    def _open_add_aid_dialog(self, ecosystem_name: str) -> None:
+        if self._db is None:
+            return
+        vault = getattr(self._app, "vault", None)
+        if vault is None:
+            return
+        eco = self._db.get_ecosystem(ecosystem_name)
+        if eco is None:
+            return
+        candidates: list[tuple[str, str]] = []
+        try:
+            for c in vault.org.list():
+                aid = c.get("id", "")
+                if not aid or aid in eco.issuer_aids:
+                    continue
+                alias = c.get("alias") or "(no alias)"
+                candidates.append((f"{alias}  —  {aid}", aid))
+        except Exception:
+            logger.exception("Failed to enumerate contacts for member-add")
+
+        dialog = AddMemberDialog(
+            kind="aid",
+            candidates=candidates,
+            parent=self._ecosystem_detail_page,
+        )
+        dialog.member_picked.connect(
+            lambda aid, n=ecosystem_name: self._add_aid_member(n, aid)
+        )
+        dialog.open()
+
+    def _add_schema_member(self, ecosystem_name: str, schema_said: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.add_schema_to_ecosystem(ecosystem_name, schema_said)
+        except Exception:
+            logger.exception("Failed to add schema to ecosystem")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _add_aid_member(self, ecosystem_name: str, aid: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.add_aid_to_ecosystem(ecosystem_name, aid)
+        except Exception:
+            logger.exception("Failed to add AID to ecosystem")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _remove_schema_member(self, ecosystem_name: str, schema_said: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.remove_schema_from_ecosystem(ecosystem_name, schema_said)
+        except Exception:
+            logger.exception("Failed to remove schema from ecosystem")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _remove_aid_member(self, ecosystem_name: str, aid: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.remove_aid_from_ecosystem(ecosystem_name, aid)
+        except Exception:
+            logger.exception("Failed to remove AID from ecosystem")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _delete_ecosystem(self, ecosystem_name: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.delete_ecosystem(ecosystem_name)
+        except Exception:
+            logger.exception("Failed to delete ecosystem")
+            return
+        self._show_overview()
+
+    def _refresh_ecosystem_detail(self) -> None:
+        if self._ecosystem_detail_page is not None and self._ecosystem_detail_page._current_name:
+            self._ecosystem_detail_page.show_ecosystem(self._ecosystem_detail_page._current_name)

@@ -12,6 +12,8 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
+    QListWidget,
+    QListWidgetItem,
     QVBoxLayout,
     QWidget,
 )
@@ -88,4 +90,78 @@ class CreateEcosystemDialog(LocksmithDialog):
             return
         desc = self._desc_field.text().strip()
         self.ecosystem_create_requested.emit(name, desc)
+        self.close()
+
+
+class AddMemberDialog(LocksmithDialog):
+    """Pick a schema (or AID) from the wallet and add it to the ecosystem.
+
+    `kind` is 'schema' or 'aid'. `candidates` is a list of (label, key)
+    tuples — label is shown to the user, key is what gets emitted.
+    """
+
+    member_picked = Signal(str)  # emits the selected key (SAID or AID)
+
+    def __init__(self, kind: str, candidates: list[tuple[str, str]],
+                 parent: QWidget | None = None):
+        self.kind = kind
+        self._candidates = candidates
+
+        content = QWidget()
+        content.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addSpacing(12)
+
+        intro = QLabel(
+            f"Pick a {kind} from this wallet to add to the ecosystem. "
+            f"Only items already in the wallet are eligible — resolve OOBIs / "
+            f"add schemas via the regular wallet flow first."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        layout.addWidget(intro)
+
+        layout.addSpacing(8)
+
+        self._list = QListWidget()
+        self._list.setStyleSheet(
+            "QListWidget { background: white; border: 1px solid #E0E3EA; border-radius: 4px; font-size: 12px; }"
+        )
+        for label, key in candidates:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, key)
+            self._list.addItem(item)
+        self._list.setMinimumHeight(200)
+        layout.addWidget(self._list)
+
+        layout.addSpacing(12)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        cancel = LocksmithInvertedButton("Cancel")
+        cancel.clicked.connect(self.close)
+        add = LocksmithButton("Add")
+        add.clicked.connect(self._on_add)
+        button_row.addStretch()
+        button_row.addWidget(cancel)
+        button_row.addWidget(add)
+
+        super().__init__(
+            parent=parent,
+            title=f"Add {kind} to ecosystem",
+            content=content,
+            buttons=button_row,
+            show_close_button=True,
+        )
+
+    def _on_add(self) -> None:
+        item = self._list.currentItem()
+        if item is None:
+            self.show_error(f"Select a {self.kind} first.")
+            return
+        key = item.data(Qt.ItemDataRole.UserRole)
+        self.member_picked.emit(key)
         self.close()
