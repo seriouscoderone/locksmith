@@ -91,17 +91,28 @@ CARRIER_APPOINTMENT = Application(
                 "producerLicense": EdgeDef(
                     target_credential_id="ProducerLicense",
                     cardinality="one",
-                    operator="MUST_NOT_REVOKED",
+                    # operator left as None — defaults to ACDC's I2I unary operator
+                    # for targeted ACDCs (spec-body.md:1099-1108). I2I requires the
+                    # chained credential's issuee to equal this credential's issuer
+                    # context. Revocation-aware invalidation is NOT an edge-operator
+                    # concern in ACDC (spec-body.md:1112 — EGF-dependent); see the
+                    # SubscriptionDef + PolicyDef pair below for the mechanism.
                 ),
             },
             rule=(
                 "This credential certifies that the bearer (the appointed producer) "
                 "is authorized by the issuing carrier to write the listed productLines "
                 "on the carrier's paper, in the named state, valid from effectiveDate "
-                "through expiresDate. Validity is cryptographically conditional on the "
-                "linked ProducerLicense remaining in good standing per the issuing "
-                "authority's TEL — revocation of the underlying license suspends this "
-                "appointment per the MUST_NOT_REVOKED edge operator."
+                "through expiresDate. The credential cryptographically commits to the "
+                "specific ProducerLicense it depends on via the producerLicense edge, "
+                "so verifiers can walk the chain and confirm the licensure context. "
+                "Revocation of the underlying license does not invalidate this "
+                "credential automatically (ACDC has no built-in operator for that — "
+                "revocation handling is ecosystem-governance-framework dependent per "
+                "spec-body.md:1112). Instead, the issuing carrier subscribes to "
+                "ProducerLicense lifecycle events and reacts to revocations via its "
+                "own SuspendDependentAppointments policy — see this manifest's "
+                "subscriptions and policies."
             ),
         ),
     ],

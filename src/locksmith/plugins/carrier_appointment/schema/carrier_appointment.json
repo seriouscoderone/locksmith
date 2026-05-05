@@ -1,5 +1,5 @@
 {
-  "$id": "EO5AlJD8GH5oVs8UwTEC-dy5W4QRpMYAV7Tn-cZ3yiS5",
+  "$id": "ELSeXqzFfDo0gn5Lhat_aj5c8Ohe49oU_DgNT3GnlM3r",
   "$schema": "http://json-schema.org/draft-07/schema#",
   "title": "CarrierAppointment",
   "description": "An appointment issued by an insurance carrier authorizing a licensed producer to write specified product lines on the carrier's paper. Chains to the producer's underlying license via an edge.",
@@ -118,7 +118,7 @@
           "type": "string"
         },
         {
-          "$id": "EBfzVEFkWuI4-JYPMn-hTjr_zkAbif1baDITvakH3Kyb",
+          "$id": "EAqDMkMWc1GOFZpfpeIOuusvde8OTjmWkq1QgXDzxHjM",
           "description": "Edges block",
           "type": "object",
           "required": [
@@ -131,7 +131,7 @@
               "type": "string"
             },
             "producerLicense": {
-              "description": "Chain to the producer's ProducerLicense; the appointment is conditional on the license being valid and not revoked",
+              "description": "Chain to the producer's ProducerLicense via a targeted-ACDC edge. The default ACDC unary operator (I2I) applies, requiring the chained ProducerLicense's issuee to equal the appointment's issuer-context principal at verification time per spec-body.md:1099-1108. Revocation-driven invalidation of dependent appointments is handled by the manifest's SubscriptionDef + PolicyDef pair, not by an edge operator (which is not how ACDC models revocation; see spec-body.md:1112).",
               "type": "object",
               "required": [
                 "n",
@@ -146,14 +146,6 @@
                   "description": "Schema SAID of ProducerLicense (locked)",
                   "type": "string",
                   "const": "ECmEfS_FcGeVLduy-ym1qDx3usSL9J0wwfOlY8kTBg80"
-                },
-                "o": {
-                  "description": "ACDC edge operator; MUST_NOT_REVOKED means the appointment is only valid while the license is",
-                  "type": "string",
-                  "enum": [
-                    "MUST",
-                    "MUST_NOT_REVOKED"
-                  ]
                 }
               },
               "additionalProperties": false

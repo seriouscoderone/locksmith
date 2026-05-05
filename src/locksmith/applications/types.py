@@ -42,11 +42,22 @@ class EdgeDef:
     """An edge linking a credential to another credential.
 
     `target_credential_id` references another CredentialDef in this manifest
-    (or in another loaded application). `operator` follows ACDC semantics.
+    (or in another loaded application).
+
+    `operator` is the per-edge unary operator from the ACDC spec
+    (spec-body.md:1099-1108). Governs the chain-of-authority relationship
+    between this credential's issuer and the chained credential's issuee.
+    Default (None) is `I2I` for targeted ACDCs — issuer of this credential
+    must equal the issuee of the chained credential. Edge-group m-ary
+    operators (AND, OR, NAND, NOR, AVG, WAVG) are not modeled here yet.
+
+    Revocation propagation is *not* an edge-operator concern — it is
+    EGF-dependent (spec-body.md:1112). For revocation-driven reactions,
+    use SubscriptionDef + PolicyDef instead.
     """
     target_credential_id: str
     cardinality: Literal["one", "many"] = "one"
-    operator: Literal["MUST", "MAY", "MUST_NOT_REVOKED"] | None = None
+    operator: Literal["I2I", "NI2I", "DI2I", "NOT"] | None = None
 
 
 @dataclass(frozen=True)
