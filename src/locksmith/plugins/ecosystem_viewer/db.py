@@ -1,0 +1,248 @@
+# -*- encoding: utf-8 -*-
+"""
+locksmith.plugins.ecosystem_viewer.db module
+
+Plugin-owned LMDB store for ecosystem-level concepts that the wallet's
+core stores don't track natively: named ecosystem groupings, user
+annotations, and discovery history. One database per vault, namespaced
+to keep plugin state isolated from KERI/ACDC core.
+
+Modeled on KFBaser (kerifoundation/db/basing.py): subclass of
+keri.db.dbing.LMDBer with koming.Komer sub-DBs for typed records.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from datetime import datetime, timezone
+from enum import Enum
+from typing import Iterable
+
+from keri.db import dbing, koming
+
+
+# ---------------------------------------------------------------------------
+# Records
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class EcosystemRecord:
+    """A user-defined grouping of schemas and issuer AIDs.
+
+    `name` is the unique key. `source_kind` is informational
+    ('manual', 'imported_oobi', 'imported_file'); `source_url` is
+    populated when the ecosystem was sourced from an OOBI or file.
+    """
+    name: str = ""
+    description: str = ""
+    schema_saids: list[str] = field(default_factory=list)
+    issuer_aids: list[str] = field(default_factory=list)
+    created_at: str = ""
+    updated_at: str = ""
+    source_kind: str = "manual"
+    source_url: str = ""
+
+
+class AnnotationKind(str, Enum):
+    SCHEMA = "schema"
+    AID = "aid"
+    CREDENTIAL = "credential"
+    ECOSYSTEM = "ecosystem"
+
+
+@dataclass
+class AnnotationRecord:
+    """A user note attached to a schema, AID, credential, or ecosystem.
+
+    Composite key: (kind.value, target). `target` is the SAID or AID
+    or ecosystem name being annotated.
+    """
+    kind: AnnotationKind = AnnotationKind.SCHEMA
+    target: str = ""
+    note: str = ""
+    tags: list[str] = field(default_factory=list)
+    updated_at: str = ""
+
+
+@dataclass
+class DiscoveryEvent:
+    """A timestamped event in the user's discovery history.
+
+    `kind` is a free-form label ('oobi_resolved', 'ecosystem_added',
+    'annotation_added'). Storage is keyed by ISO8601 timestamp so iteration
+    yields chronological order naturally.
+    """
+    kind: str = ""
+    payload: dict = field(default_factory=dict)
+    timestamp: str = ""
+
+
+@dataclass
+class _MembershipRecord:
+    """Reverse-lookup record: AID/SAID -> set of ecosystem names.
+
+    Stored as a list because LMDB Komer doesn't deal in sets natively;
+    we deduplicate on read/write.
+    """
+    ecosystem_names: list[str] = field(default_factory=list)
+
+
+# ---------------------------------------------------------------------------
+# EcosystemBaser
+# ---------------------------------------------------------------------------
+
+
+class EcosystemBaser(dbing.LMDBer):
+    """LMDB database for the ecosystem-viewer plugin."""
+
+    TailDirPath = "keri/ecosys"
+    AltTailDirPath = ".keri/ecosys"
+    TempPrefix = "ecosys"
+
+    def __init__(self, name: str = "ecosystem", headDirPath: str | None = None, reopen: bool = True, **kwa):
+        self.ecosystems = None
+        self.annotations = None
+        self.history = None
+        self.schema_membership = None
+        self.aid_membership = None
+        super(EcosystemBaser, self).__init__(name=name, headDirPath=headDirPath, reopen=reopen, **kwa)
+
+    def reopen(self, **kwa):
+        super(EcosystemBaser, self).reopen(**kwa)
+
+        self.ecosystems = koming.Komer(db=self, subkey='eco.', schema=EcosystemRecord)
+        self.annotations = koming.Komer(db=self, subkey='ann.', schema=AnnotationRecord)
+        self.history = koming.Komer(db=self, subkey='his.', schema=DiscoveryEvent)
+        self.schema_membership = koming.Komer(db=self, subkey='smbr.', schema=_MembershipRecord)
+        self.aid_membership = koming.Komer(db=self, subkey='ambr.', schema=_MembershipRecord)
+
+        return self.env
+
+    # --------------------------- Ecosystems ---------------------------
+
+    def put_ecosystem(self, rec: EcosystemRecord) -> None:
+        if not rec.name:
+            raise ValueError("EcosystemRecord.name is required")
+        now = datetime.now(timezone.utc).isoformat()
+        if not rec.created_at:
+            rec.created_at = now
+        rec.updated_at = now
+        # Dedupe member lists on save
+        rec.schema_saids = sorted(set(rec.schema_saids))
+        rec.issuer_aids = sorted(set(rec.issuer_aids))
+        self.ecosystems.pin(keys=(rec.name,), val=rec)
+        # Refresh reverse-membership indexes from this record's lists
+        for said in rec.schema_saids:
+            self._add_membership(self.schema_membership, said, rec.name)
+        for aid in rec.issuer_aids:
+            self._add_membership(self.aid_membership, aid, rec.name)
+
+    def get_ecosystem(self, name: str) -> EcosystemRecord | None:
+        return self.ecosystems.get(keys=(name,))
+
+    def list_ecosystems(self) -> list[EcosystemRecord]:
+        return [val for (_keys, val) in self.ecosystems.getItemIter()]
+
+    def delete_ecosystem(self, name: str) -> None:
+        rec = self.get_ecosystem(name)
+        if rec is None:
+            return
+        for said in rec.schema_saids:
+            self._remove_membership(self.schema_membership, said, name)
+        for aid in rec.issuer_aids:
+            self._remove_membership(self.aid_membership, aid, name)
+        self.ecosystems.rem(keys=(name,))
+
+    def add_schema_to_ecosystem(self, ecosystem_name: str, schema_said: str) -> None:
+        rec = self.get_ecosystem(ecosystem_name)
+        if rec is None:
+            raise KeyError(f"unknown ecosystem '{ecosystem_name}'")
+        if schema_said not in rec.schema_saids:
+            rec.schema_saids = sorted(set(rec.schema_saids) | {schema_said})
+            self.put_ecosystem(rec)
+
+    def remove_schema_from_ecosystem(self, ecosystem_name: str, schema_said: str) -> None:
+        rec = self.get_ecosystem(ecosystem_name)
+        if rec is None:
+            return
+        if schema_said in rec.schema_saids:
+            rec.schema_saids = [s for s in rec.schema_saids if s != schema_said]
+            # put_ecosystem also updates membership; for the removal we need
+            # to clear the reverse index ourselves first
+            self._remove_membership(self.schema_membership, schema_said, ecosystem_name)
+            self.ecosystems.pin(keys=(ecosystem_name,), val=rec)
+
+    def add_aid_to_ecosystem(self, ecosystem_name: str, aid: str) -> None:
+        rec = self.get_ecosystem(ecosystem_name)
+        if rec is None:
+            raise KeyError(f"unknown ecosystem '{ecosystem_name}'")
+        if aid not in rec.issuer_aids:
+            rec.issuer_aids = sorted(set(rec.issuer_aids) | {aid})
+            self.put_ecosystem(rec)
+
+    def remove_aid_from_ecosystem(self, ecosystem_name: str, aid: str) -> None:
+        rec = self.get_ecosystem(ecosystem_name)
+        if rec is None:
+            return
+        if aid in rec.issuer_aids:
+            rec.issuer_aids = [a for a in rec.issuer_aids if a != aid]
+            self._remove_membership(self.aid_membership, aid, ecosystem_name)
+            self.ecosystems.pin(keys=(ecosystem_name,), val=rec)
+
+    def ecosystems_for_schema(self, schema_said: str) -> list[str]:
+        rec = self.schema_membership.get(keys=(schema_said,))
+        return list(rec.ecosystem_names) if rec else []
+
+    def ecosystems_for_aid(self, aid: str) -> list[str]:
+        rec = self.aid_membership.get(keys=(aid,))
+        return list(rec.ecosystem_names) if rec else []
+
+    # --------------------------- Annotations ---------------------------
+
+    def put_annotation(self, ann: AnnotationRecord) -> None:
+        if not ann.target:
+            raise ValueError("AnnotationRecord.target is required")
+        ann.updated_at = datetime.now(timezone.utc).isoformat()
+        kind_value = ann.kind.value if isinstance(ann.kind, AnnotationKind) else ann.kind
+        self.annotations.pin(keys=(kind_value, ann.target), val=ann)
+
+    def get_annotation(self, kind: AnnotationKind | str, target: str) -> AnnotationRecord | None:
+        kind_value = kind.value if isinstance(kind, AnnotationKind) else kind
+        return self.annotations.get(keys=(kind_value, target))
+
+    def delete_annotation(self, kind: AnnotationKind | str, target: str) -> None:
+        kind_value = kind.value if isinstance(kind, AnnotationKind) else kind
+        self.annotations.rem(keys=(kind_value, target))
+
+    # --------------------------- History ---------------------------
+
+    def append_history(self, event: DiscoveryEvent) -> None:
+        if not event.timestamp:
+            event.timestamp = datetime.now(timezone.utc).isoformat()
+        self.history.pin(keys=(event.timestamp,), val=event)
+
+    def iter_history(self) -> Iterable[DiscoveryEvent]:
+        for _keys, val in self.history.getItemIter():
+            yield val
+
+    # --------------------------- Internal ---------------------------
+
+    def _add_membership(self, komer, key: str, ecosystem_name: str) -> None:
+        rec = komer.get(keys=(key,))
+        if rec is None:
+            komer.pin(keys=(key,), val=_MembershipRecord(ecosystem_names=[ecosystem_name]))
+            return
+        if ecosystem_name not in rec.ecosystem_names:
+            rec.ecosystem_names = sorted(set(rec.ecosystem_names) | {ecosystem_name})
+            komer.pin(keys=(key,), val=rec)
+
+    def _remove_membership(self, komer, key: str, ecosystem_name: str) -> None:
+        rec = komer.get(keys=(key,))
+        if rec is None:
+            return
+        if ecosystem_name in rec.ecosystem_names:
+            rec.ecosystem_names = [n for n in rec.ecosystem_names if n != ecosystem_name]
+            if not rec.ecosystem_names:
+                komer.rem(keys=(key,))
+            else:
+                komer.pin(keys=(key,), val=rec)
