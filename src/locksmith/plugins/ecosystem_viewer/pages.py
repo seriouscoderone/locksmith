@@ -35,6 +35,7 @@ from keri import help
 
 from locksmith.acdc import inspect_acdc_schema
 from locksmith.ui import colors
+from locksmith.ui.toolkit.widgets import LocksmithButton
 
 logger = help.ogler.getLogger(__name__)
 
@@ -172,7 +173,6 @@ class EcosystemViewerPage(QWidget):
         header_layout.addWidget(count_label)
         header_layout.addStretch()
 
-        from locksmith.ui.toolkit.widgets import LocksmithButton
         create_btn = LocksmithButton("Create ecosystem")
         create_btn.clicked.connect(self.create_ecosystem_clicked.emit)
         header_layout.addWidget(create_btn)
