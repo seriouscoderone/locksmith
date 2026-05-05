@@ -15,7 +15,10 @@ Subsequent commits add ecosystem grouping UI, the directed graph view, etc.
 from __future__ import annotations
 
 import json
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPalette, QColor
@@ -48,7 +51,7 @@ class EcosystemViewerPage(QWidget):
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
         self.app = app
-        self._db: Any = None
+        self._db: EcosystemBaser | None = None
 
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
@@ -87,7 +90,7 @@ class EcosystemViewerPage(QWidget):
     # Lifecycle
     # ------------------------------------------------------------------
 
-    def set_db(self, db: Any) -> None:
+    def set_db(self, db: "EcosystemBaser | None") -> None:
         """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
         self._db = db
 
@@ -357,7 +360,7 @@ class SchemaDetailPage(QWidget):
         super().__init__(parent)
         self.app = app
         self._current_said: str | None = None
-        self._db: Any = None
+        self._db: EcosystemBaser | None = None
 
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
@@ -398,7 +401,8 @@ class SchemaDetailPage(QWidget):
         scroll.setWidget(self._content)
         outer.addWidget(scroll)
 
-    def set_db(self, db: Any) -> None:
+    def set_db(self, db: "EcosystemBaser | None") -> None:
+        """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
         self._db = db
 
     def show_schema(self, schema_said: str) -> None:
