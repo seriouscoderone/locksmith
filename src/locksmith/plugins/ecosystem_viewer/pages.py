@@ -755,6 +755,11 @@ class EcosystemDetailPage(QWidget):
         """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
         self._db = db
 
+    @property
+    def current_name(self) -> str | None:
+        """The ecosystem name currently being shown, or None if nothing loaded."""
+        return self._current_name
+
     def show_ecosystem(self, name: str) -> None:
         self._current_name = name
         self._refresh()

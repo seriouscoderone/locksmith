@@ -184,6 +184,13 @@ class EcosystemViewerPlugin(PluginBase):
         except Exception:
             logger.exception("Failed to enumerate schemas for member-add")
 
+        if not candidates:
+            logger.info(
+                f"No eligible schemas to add to ecosystem '{ecosystem_name}' "
+                f"(every wallet schema is already a member, or the wallet has none yet)"
+            )
+            return
+
         dialog = AddMemberDialog(
             kind="schema",
             candidates=candidates,
@@ -213,6 +220,13 @@ class EcosystemViewerPlugin(PluginBase):
                 candidates.append((f"{alias}  —  {aid}", aid))
         except Exception:
             logger.exception("Failed to enumerate contacts for member-add")
+
+        if not candidates:
+            logger.info(
+                f"No eligible contacts to add to ecosystem '{ecosystem_name}' "
+                f"(every contact is already a member, or there are no contacts yet)"
+            )
+            return
 
         dialog = AddMemberDialog(
             kind="aid",
@@ -275,5 +289,5 @@ class EcosystemViewerPlugin(PluginBase):
         self._show_overview()
 
     def _refresh_ecosystem_detail(self) -> None:
-        if self._ecosystem_detail_page is not None and self._ecosystem_detail_page._current_name:
-            self._ecosystem_detail_page.show_ecosystem(self._ecosystem_detail_page._current_name)
+        if self._ecosystem_detail_page is not None and self._ecosystem_detail_page.current_name:
+            self._ecosystem_detail_page.show_ecosystem(self._ecosystem_detail_page.current_name)
