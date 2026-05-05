@@ -1,11 +1,20 @@
 # -*- encoding: utf-8 -*-
 """
-locksmith.plugins.producer_licensing.manifest module
+locksmith.applications.instances.usurance_proxy_doi_ca.manifest module
 
-The Application manifest for Producer Licensing — slice 1.
+Usurance's California-DOI-proxy deployment of the
+templates.insurance_regulation.doi_role exemplar.
 
-Hand-instantiated for now. A future Skill walks the 10-step modeling
-process and emits a structurally identical Python value.
+Customizations from the template:
+  - description and rule prose mention Usurance and California explicitly
+  - rule prose carries explicit proxy disclosure + migration plan citation
+  - schema_path points back to the template's canonical schema location
+    (schemas are content-addressed; same SAID across deployments)
+
+Issuer AID alias used by this deployment: `usurance-proxy-doi-ca`. Until
+the real California DOI bootstraps a KERI AID, this deployment is the
+authoritative proxy ledger for California producer licenses, with the
+proxy nature visible in alias, prose, and docs/usurance-proxy-doi.md.
 """
 from __future__ import annotations
 
@@ -24,16 +33,21 @@ from locksmith.applications import (
 )
 
 
-PRODUCER_LICENSING = Application(
-    id="producer-licensing",
-    name="Producer Licensing",
+# Issuer AID alias used by this deployment. Hardcoded; a real deployment
+# could load from config. Kept here so future plugins / Skills can find it.
+ISSUER_ALIAS = "usurance-proxy-doi-ca"
+
+
+USURANCE_PROXY_DOI_CA = Application(
+    id="usurance-proxy-doi-ca",
+    name="Usurance California DOI Proxy — Producer Licensing",
     description=(
         "Usurance, operating as an explicit proxy Department of Insurance "
         "authority for California, issues producer licenses with "
         "line-of-authority designations. The proxy ledger certifies licensure "
-        "under Usurance's parallel record-keeping until the real California DOI "
-        "bootstraps an AID on this substrate. See docs/usurance-proxy-doi.md "
-        "for the migration plan."
+        "under Usurance's parallel record-keeping until the real California "
+        "DOI bootstraps an AID on this substrate. See "
+        "docs/usurance-proxy-doi.md for the migration plan."
     ),
     registries=[
         RegistryDef(
@@ -45,7 +59,9 @@ PRODUCER_LICENSING = Application(
         CredentialDef(
             id="ProducerLicense",
             registry_id="producer-license-registry",
-            schema_path="schema/producer_license.json",
+            # Schema lives in the template (content-addressed; shared across
+            # all instances of insurance-regulation.doi-role).
+            schema_path="../../templates/insurance_regulation/schemas/producer_license.json",
             attributes={
                 "producerAID": AttributeDef(
                     type="aid",
@@ -78,17 +94,19 @@ PRODUCER_LICENSING = Application(
             },
             edges={},
             rule=(
-                "This credential is issued by Usurance acting as an explicit proxy "
-                "Department of Insurance authority for the named state. Until the real "
-                "DOI's AID is bootstrapped on this substrate, this credential certifies "
-                "licensure under Usurance's proxy ledger and is intended for relying "
-                "parties who explicitly accept the proxy. Reissuance under the real "
-                "DOI's AID, or delegation handoff to it, is intended once available; "
-                "see docs/usurance-proxy-doi.md. "
-                "Substantively: the credential certifies that the bearer (producerAID) "
-                "is licensed to act as an insurance producer in the named state for the "
-                "listed linesOfAuthority, valid from issuedDate through expiresDate, and "
-                "is currently in good standing per the issuer's TEL."
+                "This credential is issued by Usurance acting as an explicit "
+                "proxy Department of Insurance authority for the named state. "
+                "Until the real DOI's AID is bootstrapped on this substrate, "
+                "this credential certifies licensure under Usurance's proxy "
+                "ledger and is intended for relying parties who explicitly "
+                "accept the proxy. Reissuance under the real DOI's AID, or "
+                "delegation handoff to it, is intended once available; see "
+                "docs/usurance-proxy-doi.md. "
+                "Substantively: the credential certifies that the bearer "
+                "(producerAID) is licensed to act as an insurance producer "
+                "in the named state for the listed linesOfAuthority, valid "
+                "from issuedDate through expiresDate, and is currently in "
+                "good standing per the issuer's TEL."
             ),
         ),
     ],

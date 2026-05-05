@@ -1,13 +1,16 @@
 # -*- encoding: utf-8 -*-
 """
-locksmith.plugins.carrier_appointment.manifest module
+locksmith.applications.templates.insurance_regulation.carrier_role module
 
-The Application manifest for Carrier Appointment — slice 2.
+Application manifest exemplar for the Insurance Carrier role.
 
-Stresses the format on three axes slice 1 didn't touch:
-- EdgeDef with operator (MUST_NOT_REVOKED) chaining to ProducerLicense
-- SubscriptionDef referencing another udApp's event schema SAID
-- A different issuer role (carrier, not proxy DOI)
+This is the *template* form — generic prose, no specific carrier named.
+Deployments copy this value and customize per-org (carrier name in prose,
+state/jurisdictions, product lines actually offered, etc.).
+
+Cross-template dependency: the issued CarrierAppointment chains via an
+ACDC edge to the producer's ProducerLicense, locked to that schema's SAID
+(see PRODUCER_LICENSE_SCHEMA_SAID in the package __init__).
 """
 from __future__ import annotations
 
@@ -27,24 +30,19 @@ from locksmith.applications import (
     RegistryDef,
     SubscriptionDef,
 )
+from locksmith.applications.templates.insurance_regulation import (
+    PRODUCER_LICENSE_SCHEMA_SAID,
+)
 
 
-# Cross-application reference: the ProducerLicense schema SAID published by
-# the producer-licensing application. Locked in our schema's edge declaration
-# via `s.const` — bytes-level dependency. If producer-licensing's schema ever
-# rotates, this SAID + the schema's `const` both need updating.
-PRODUCER_LICENSE_SCHEMA_SAID = "ECmEfS_FcGeVLduy-ym1qDx3usSL9J0wwfOlY8kTBg80"
-
-
-CARRIER_APPOINTMENT = Application(
-    id="carrier-appointment",
-    name="Carrier Appointment",
+CARRIER_ROLE_TEMPLATE = Application(
+    id="insurance-regulation.carrier-role",
+    name="Insurance Carrier — Producer Appointment",
     description=(
         "An insurance carrier appoints licensed producers to write specific "
-        "product lines on the carrier's paper. Each appointment chains via an "
-        "edge to the producer's underlying ProducerLicense, making the "
-        "appointment cryptographically conditional on the license remaining "
-        "in good standing per the issuing authority's TEL."
+        "product lines on the carrier's paper. Each appointment chains via "
+        "an ACDC edge to the producer's underlying ProducerLicense, making "
+        "the appointment cryptographically conditional on the license."
     ),
     registries=[
         RegistryDef(
@@ -56,7 +54,7 @@ CARRIER_APPOINTMENT = Application(
         CredentialDef(
             id="CarrierAppointment",
             registry_id="carrier-appointment-registry",
-            schema_path="schema/carrier_appointment.json",
+            schema_path="schemas/carrier_appointment.json",
             attributes={
                 "carrierName": AttributeDef(
                     type="string",
@@ -92,27 +90,25 @@ CARRIER_APPOINTMENT = Application(
                     target_credential_id="ProducerLicense",
                     cardinality="one",
                     # operator left as None — defaults to ACDC's I2I unary operator
-                    # for targeted ACDCs (spec-body.md:1099-1108). I2I requires the
-                    # chained credential's issuee to equal this credential's issuer
-                    # context. Revocation-aware invalidation is NOT an edge-operator
-                    # concern in ACDC (spec-body.md:1112 — EGF-dependent); see the
-                    # SubscriptionDef + PolicyDef pair below for the mechanism.
+                    # for targeted ACDCs (spec-body.md:1099-1108). Revocation-aware
+                    # invalidation is handled by SubscriptionDef + PolicyDef below
+                    # (spec-body.md:1112 — EGF-dependent, not an edge concern).
                 ),
             },
             rule=(
-                "This credential certifies that the bearer (the appointed producer) "
-                "is authorized by the issuing carrier to write the listed productLines "
-                "on the carrier's paper, in the named state, valid from effectiveDate "
-                "through expiresDate. The credential cryptographically commits to the "
-                "specific ProducerLicense it depends on via the producerLicense edge, "
-                "so verifiers can walk the chain and confirm the licensure context. "
-                "Revocation of the underlying license does not invalidate this "
-                "credential automatically (ACDC has no built-in operator for that — "
-                "revocation handling is ecosystem-governance-framework dependent per "
-                "spec-body.md:1112). Instead, the issuing carrier subscribes to "
-                "ProducerLicense lifecycle events and reacts to revocations via its "
-                "own SuspendDependentAppointments policy — see this manifest's "
-                "subscriptions and policies."
+                "This credential certifies that the bearer (the appointed "
+                "producer) is authorized by the issuing carrier to write the "
+                "listed productLines on the carrier's paper, in the named "
+                "state, valid from effectiveDate through expiresDate. The "
+                "credential cryptographically commits to the specific "
+                "ProducerLicense it depends on via the producerLicense edge. "
+                "Revocation of the underlying license does not invalidate "
+                "this credential automatically (ACDC has no built-in operator "
+                "for that — revocation handling is ecosystem-governance-"
+                "framework dependent per spec-body.md:1112). Instead, the "
+                "issuing carrier subscribes to ProducerLicense lifecycle "
+                "events and reacts to revocations via its own "
+                "SuspendDependentAppointments policy."
             ),
         ),
     ],
@@ -130,10 +126,6 @@ CARRIER_APPOINTMENT = Application(
                 "expiresDate": "iso8601-date",
             },
             authorization=AuthorizationDef(
-                # Carrier's control of their own AID is the authority. The producer's
-                # license is *committed to* via the issued credential's edge, not
-                # *presented by* the carrier — this is the bytes-level commitment
-                # pattern, not the inbound-presentation pattern.
                 principal="control_of(issuer_aid)",
                 credential_pattern=None,
             ),
@@ -232,12 +224,6 @@ CARRIER_APPOINTMENT = Application(
     ],
     subscriptions=[
         SubscriptionDef(
-            # When ProducerLicense events surface in any subscribed-to TEL,
-            # the carrier reacts. Specifically: revocation of an underlying
-            # license should suspend any appointment whose edge chains to it.
-            # KERI-native: the subscription is keyed by schema SAID, not by
-            # source AID — any DOI (proxy or real) emitting this schema feeds
-            # the subscription.
             id="ProducerLicenseLifecycleFeed",
             schemas=[PRODUCER_LICENSE_SCHEMA_SAID],
             filter=None,
