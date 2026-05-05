@@ -2,15 +2,19 @@
 """
 locksmith.plugins.ecosystem_viewer.pages module
 
-Stage-1 viewer page: lists every schema and known issuer AID in the wallet
-with their domain-layer classifications from `locksmith.acdc.inspector`.
+Stages 1-2 viewer pages.
 
-This is the foundation page the rest of the roadmap builds on. Subsequent
-commits add per-schema detail, ecosystem grouping UI, the directed graph
-view, etc.
+EcosystemViewerPage (stage 1) lists every schema and known issuer AID in
+the wallet with their domain-layer classifications from `locksmith.acdc.inspector`.
+SchemaDetailPage (stage 2) renders the full inspector output for a single
+schema and supports intra-plugin navigation between linked schemas via the
+edge-target click-through.
+
+Subsequent commits add ecosystem grouping UI, the directed graph view, etc.
 """
 from __future__ import annotations
 
+import json
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -19,6 +23,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPlainTextEdit,
     QScrollArea,
     QVBoxLayout,
     QWidget,
@@ -393,7 +398,10 @@ class SchemaDetailPage(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        # Clear all widgets except the trailing stretch
+        # Clear all widgets in front of the layout's trailing stretch.
+        # __init__ leaves the stretch as the sole item; section widgets are
+        # then inserted at indices 0..N, pushing the stretch to last position.
+        # The `> 1` guard preserves the stretch.
         while self._content_layout.count() > 1:
             item = self._content_layout.takeAt(0)
             widget = item.widget() if item else None
@@ -421,7 +429,6 @@ class SchemaDetailPage(QWidget):
             self._content_layout.insertWidget(0, msg)
             return
 
-        from locksmith.acdc import inspect_acdc_schema
         inspection = inspect_acdc_schema(schemer.sed)
         # Render in the order: header, identity, requirements, sections, edges, raw JSON
         self._content_layout.insertWidget(0, self._build_header(inspection))
@@ -566,10 +573,8 @@ class SchemaDetailPage(QWidget):
         return frame
 
     def _build_raw_json_section(self, i: Any) -> QWidget:
-        import json
         frame = self._card("Raw schema (JSON)")
         layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
-        from PySide6.QtWidgets import QPlainTextEdit
         text = QPlainTextEdit()
         text.setPlainText(json.dumps(i.raw, indent=2))
         text.setReadOnly(True)

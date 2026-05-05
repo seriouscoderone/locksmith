@@ -83,6 +83,7 @@ class EcosystemViewerPlugin(PluginBase):
     def _show_overview(self, *_args: Any) -> None:
         vault_page = getattr(self._app, "_vault_page", None)
         if vault_page is None:
+            logger.warning("EcosystemViewerPlugin: vault_page not available; skipping overview navigation")
             return
         vault_page._show_page(PAGE_KEY_OVERVIEW)
         if self._overview_page is not None:
@@ -91,6 +92,7 @@ class EcosystemViewerPlugin(PluginBase):
     def _show_schema_detail(self, schema_said: str) -> None:
         vault_page = getattr(self._app, "_vault_page", None)
         if vault_page is None:
+            logger.warning(f"EcosystemViewerPlugin: vault_page not available; cannot show schema {schema_said}")
             return
         vault_page._show_page(PAGE_KEY_SCHEMA_DETAIL)
         if self._schema_detail_page is not None:
