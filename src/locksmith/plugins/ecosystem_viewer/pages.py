@@ -48,6 +48,7 @@ class EcosystemViewerPage(QWidget):
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
         self.app = app
+        self._db: Any = None
 
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
@@ -85,6 +86,10 @@ class EcosystemViewerPage(QWidget):
     # ------------------------------------------------------------------
     # Lifecycle
     # ------------------------------------------------------------------
+
+    def set_db(self, db: Any) -> None:
+        """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
+        self._db = db
 
     def on_show(self) -> None:
         """Called by VaultPage navigation; rebuild from current wallet state."""
@@ -352,6 +357,7 @@ class SchemaDetailPage(QWidget):
         super().__init__(parent)
         self.app = app
         self._current_said: str | None = None
+        self._db: Any = None
 
         palette = self.palette()
         palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
@@ -391,6 +397,9 @@ class SchemaDetailPage(QWidget):
         self._content_layout.addStretch()
         scroll.setWidget(self._content)
         outer.addWidget(scroll)
+
+    def set_db(self, db: Any) -> None:
+        self._db = db
 
     def show_schema(self, schema_said: str) -> None:
         """Load and render the schema with the given SAID. Called by the plugin."""

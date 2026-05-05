@@ -15,6 +15,7 @@ from PySide6.QtWidgets import QWidget
 from keri import help
 
 from locksmith.plugins.base import PluginBase
+from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 from locksmith.plugins.ecosystem_viewer.pages import (
     EcosystemViewerPage,
     SchemaDetailPage,
@@ -36,6 +37,7 @@ class EcosystemViewerPlugin(PluginBase):
 
     def initialize(self, app: Any) -> None:
         self._app = app
+        self._db: EcosystemBaser | None = None
         self._overview_page: EcosystemViewerPage | None = EcosystemViewerPage(app=app)
         self._schema_detail_page: SchemaDetailPage | None = SchemaDetailPage(app=app)
         self._nav_button: MenuButton | None = None
@@ -45,14 +47,27 @@ class EcosystemViewerPlugin(PluginBase):
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
 
-        logger.info("EcosystemViewerPlugin initialized (stages 1-2)")
+        logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
 
     def on_vault_opened(self, vault: Any) -> None:
+        # Open per-vault EcosystemBaser. Same pattern as KFBaser.
+        self._db = EcosystemBaser(name=f"ecosystem_{vault.hby.name}", reopen=True)
+        # Hand the DB reference to pages that need it
         if self._overview_page is not None:
+            self._overview_page.set_db(self._db)
             self._overview_page.on_show()
+        if self._schema_detail_page is not None:
+            self._schema_detail_page.set_db(self._db)
 
     def on_vault_closed(self, vault: Any) -> None:
-        pass
+        # Close per-vault DB on vault close
+        if self._db is not None:
+            self._db.close()
+            self._db = None
+        if self._overview_page is not None:
+            self._overview_page.set_db(None)
+        if self._schema_detail_page is not None:
+            self._schema_detail_page.set_db(None)
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
