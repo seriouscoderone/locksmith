@@ -130,11 +130,27 @@ class EcosystemBaser(dbing.LMDBer):
         # Dedupe member lists on save
         rec.schema_saids = sorted(set(rec.schema_saids))
         rec.issuer_aids = sorted(set(rec.issuer_aids))
+
+        # Diff against the previously stored record (if any) so reverse-membership
+        # indexes drop entries for members that were removed in this update.
+        # Without this, overwriting a record with a reduced member list silently
+        # corrupts the smbr./ambr. indexes.
+        old = self.ecosystems.get(keys=(rec.name,))
+        old_saids = set(old.schema_saids) if old is not None else set()
+        old_aids = set(old.issuer_aids) if old is not None else set()
+        new_saids = set(rec.schema_saids)
+        new_aids = set(rec.issuer_aids)
+
+        for said in old_saids - new_saids:
+            self._remove_membership(self.schema_membership, said, rec.name)
+        for aid in old_aids - new_aids:
+            self._remove_membership(self.aid_membership, aid, rec.name)
+
         self.ecosystems.pin(keys=(rec.name,), val=rec)
-        # Refresh reverse-membership indexes from this record's lists
-        for said in rec.schema_saids:
+
+        for said in new_saids:
             self._add_membership(self.schema_membership, said, rec.name)
-        for aid in rec.issuer_aids:
+        for aid in new_aids:
             self._add_membership(self.aid_membership, aid, rec.name)
 
     def get_ecosystem(self, name: str) -> EcosystemRecord | None:
@@ -167,10 +183,9 @@ class EcosystemBaser(dbing.LMDBer):
             return
         if schema_said in rec.schema_saids:
             rec.schema_saids = [s for s in rec.schema_saids if s != schema_said]
-            # put_ecosystem also updates membership; for the removal we need
-            # to clear the reverse index ourselves first
-            self._remove_membership(self.schema_membership, schema_said, ecosystem_name)
-            self.ecosystems.pin(keys=(ecosystem_name,), val=rec)
+            # put_ecosystem now diffs old vs new and updates the reverse index
+            # correctly, so we can delegate (which also refreshes updated_at).
+            self.put_ecosystem(rec)
 
     def add_aid_to_ecosystem(self, ecosystem_name: str, aid: str) -> None:
         rec = self.get_ecosystem(ecosystem_name)
@@ -186,8 +201,7 @@ class EcosystemBaser(dbing.LMDBer):
             return
         if aid in rec.issuer_aids:
             rec.issuer_aids = [a for a in rec.issuer_aids if a != aid]
-            self._remove_membership(self.aid_membership, aid, ecosystem_name)
-            self.ecosystems.pin(keys=(ecosystem_name,), val=rec)
+            self.put_ecosystem(rec)
 
     def ecosystems_for_schema(self, schema_said: str) -> list[str]:
         rec = self.schema_membership.get(keys=(schema_said,))

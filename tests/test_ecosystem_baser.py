@@ -60,7 +60,7 @@ def test_add_remove_schema_member(baser):
     assert "ESchemaX" in rec.schema_saids
     # Idempotent
     baser.add_schema_to_ecosystem("eco", "ESchemaX")
-    assert rec.schema_saids.count("ESchemaX") <= 1 or baser.get_ecosystem("eco").schema_saids.count("ESchemaX") == 1
+    assert baser.get_ecosystem("eco").schema_saids.count("ESchemaX") == 1
     baser.remove_schema_from_ecosystem("eco", "ESchemaX")
     rec2 = baser.get_ecosystem("eco")
     assert rec2 is not None
@@ -70,7 +70,9 @@ def test_add_remove_schema_member(baser):
 def test_add_remove_aid_member(baser):
     baser.put_ecosystem(EcosystemRecord(name="eco", description=""))
     baser.add_aid_to_ecosystem("eco", "EIssuerY")
-    assert "EIssuerY" in (baser.get_ecosystem("eco") or EcosystemRecord("","")).issuer_aids
+    rec = baser.get_ecosystem("eco")
+    assert rec is not None
+    assert "EIssuerY" in rec.issuer_aids
     baser.remove_aid_from_ecosystem("eco", "EIssuerY")
     rec = baser.get_ecosystem("eco")
     assert rec is not None
@@ -116,3 +118,33 @@ def test_history_append_and_iter(baser):
     assert len(events) == 2
     kinds = sorted(e.kind for e in events)
     assert kinds == ["ecosystem_added", "oobi_resolved"]
+
+
+def test_put_ecosystem_overwrite_removes_stale_reverse_index(baser):
+    """Regression test: overwriting an EcosystemRecord with a reduced member list
+    must drop the corresponding reverse-membership entries; otherwise
+    ecosystems_for_schema/ecosystems_for_aid reports stale memberships.
+    """
+    baser.put_ecosystem(EcosystemRecord(name="eco", schema_saids=["EA", "EB"]))
+    assert sorted(baser.ecosystems_for_schema("EB")) == ["eco"]
+
+    # Overwrite with EB removed
+    rec = baser.get_ecosystem("eco")
+    rec.schema_saids = ["EA"]
+    baser.put_ecosystem(rec)
+
+    assert sorted(baser.ecosystems_for_schema("EA")) == ["eco"]
+    assert baser.ecosystems_for_schema("EB") == []  # must be empty, not ["eco"]
+
+
+def test_put_ecosystem_overwrite_removes_stale_aid_reverse_index(baser):
+    """Same as above but for issuer_aids -> aid_membership."""
+    baser.put_ecosystem(EcosystemRecord(name="eco", issuer_aids=["EAID1", "EAID2"]))
+    assert sorted(baser.ecosystems_for_aid("EAID2")) == ["eco"]
+
+    rec = baser.get_ecosystem("eco")
+    rec.issuer_aids = ["EAID1"]
+    baser.put_ecosystem(rec)
+
+    assert sorted(baser.ecosystems_for_aid("EAID1")) == ["eco"]
+    assert baser.ecosystems_for_aid("EAID2") == []
