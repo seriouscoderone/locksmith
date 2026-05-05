@@ -122,7 +122,7 @@ def test_inspect_acdc_rules_flag_missing_legal_language():
 
 def test_inspect_acdc_missing_required_field_raises():
     with pytest.raises(ValueError, match="missing required spec field"):
-        inspect_acdc({"v": "x", "d": "y"})  # no i, no s
+        inspect_acdc({"v": "x", "d": "y"})  # i is the first missing field; raises on it
 
 
 def test_inspect_acdc_accepts_legacy_ri_or_spec_rd():
