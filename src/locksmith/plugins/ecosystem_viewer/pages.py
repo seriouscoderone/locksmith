@@ -13,7 +13,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import (
     QFrame,
@@ -30,9 +30,15 @@ from locksmith.ui import colors
 
 logger = help.ogler.getLogger(__name__)
 
+# Page keys registered with VaultPage's content stack. Owned by this plugin.
+PAGE_KEY_OVERVIEW = "ecosystem_viewer"
+PAGE_KEY_SCHEMA_DETAIL = "ecosystem_viewer.schema_detail"
+
 
 class EcosystemViewerPage(QWidget):
     """List view: every schema + every known AID + their inspector classifications."""
+
+    show_schema_detail_requested = Signal(str)  # emits schema SAID
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -158,7 +164,9 @@ class EcosystemViewerPage(QWidget):
         row = QFrame()
         row.setStyleSheet(
             "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
+            "QFrame:hover { background-color: #F0F3FA; }"
         )
+        row.setCursor(Qt.CursorShape.PointingHandCursor)
         rl = QVBoxLayout(row)
         rl.setContentsMargins(14, 12, 14, 12)
         rl.setSpacing(4)
@@ -184,7 +192,6 @@ class EcosystemViewerPage(QWidget):
         meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
         rl.addWidget(meta)
 
-        # Domain classifications row
         chips: list[str] = []
         if i.requires_targeted:
             chips.append("targeted")
@@ -215,6 +222,10 @@ class EcosystemViewerPage(QWidget):
             edge_label.setWordWrap(True)
             edge_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
             rl.addWidget(edge_label)
+
+        # Click anywhere on the row navigates to the detail page
+        said = i.schema_said
+        row.mousePressEvent = lambda _event, s=said: self.show_schema_detail_requested.emit(s)
 
         return row
 
@@ -324,3 +335,260 @@ class EcosystemViewerPage(QWidget):
         msg.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px; font-style: italic;")
         layout.addWidget(msg)
         return wrapper
+
+
+class SchemaDetailPage(QWidget):
+    """Per-schema deep-inspect view. Renders inspector output + linked schemas."""
+
+    back_requested = Signal()
+    show_schema_detail_requested = Signal(str)  # for clicking edge target schemas
+
+    def __init__(self, app: Any, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.app = app
+        self._current_said: str | None = None
+
+        palette = self.palette()
+        palette.setColor(QPalette.ColorRole.Window, QColor(colors.BACKGROUND_CONTENT))
+        self.setPalette(palette)
+        self.setAutoFillBackground(True)
+
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Top bar with back button
+        bar = QHBoxLayout()
+        bar.setContentsMargins(20, 12, 20, 0)
+        back = QLabel('<a href="#back" style="color:#3a5fff;text-decoration:none;">‹ Back to overview</a>')
+        back.setOpenExternalLinks(False)
+        back.linkActivated.connect(lambda _: self.back_requested.emit())
+        back.setStyleSheet("font-size: 13px;")
+        bar.addWidget(back)
+        bar.addStretch()
+        outer.addLayout(bar)
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT}; border: none;")
+        scroll.viewport().setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+
+        self._content = QWidget()
+        self._content.setObjectName("schemaDetailContent")
+        self._content.setStyleSheet(
+            f"#schemaDetailContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+        )
+        self._content_layout = QVBoxLayout(self._content)
+        self._content_layout.setContentsMargins(20, 16, 20, 30)
+        self._content_layout.setSpacing(16)
+        self._content_layout.addStretch()
+        scroll.setWidget(self._content)
+        outer.addWidget(scroll)
+
+    def show_schema(self, schema_said: str) -> None:
+        """Load and render the schema with the given SAID. Called by the plugin."""
+        self._current_said = schema_said
+        self._refresh()
+
+    def _refresh(self) -> None:
+        # Clear all widgets except the trailing stretch
+        while self._content_layout.count() > 1:
+            item = self._content_layout.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                widget.deleteLater()
+
+        if self._current_said is None:
+            self._content_layout.insertWidget(0, QLabel("(no schema selected)"))
+            return
+
+        vault = getattr(self.app, "vault", None)
+        if vault is None or vault.hby is None:
+            self._content_layout.insertWidget(0, QLabel("Vault not open."))
+            return
+
+        schemer = vault.hby.db.schema.get(keys=(self._current_said,))
+        if schemer is None:
+            msg = QLabel(
+                f"Schema <code>{self._current_said}</code> not found in this wallet. "
+                "It may have been deleted, or never resolved here. "
+                "Add it via Credentials → Schemas → Add."
+            )
+            msg.setWordWrap(True)
+            msg.setTextFormat(Qt.TextFormat.RichText)
+            self._content_layout.insertWidget(0, msg)
+            return
+
+        from locksmith.acdc import inspect_acdc_schema
+        inspection = inspect_acdc_schema(schemer.sed)
+        # Render in the order: header, identity, requirements, sections, edges, raw JSON
+        self._content_layout.insertWidget(0, self._build_header(inspection))
+        self._content_layout.insertWidget(1, self._build_identity_section(inspection))
+        self._content_layout.insertWidget(2, self._build_requirements_section(inspection))
+        self._content_layout.insertWidget(3, self._build_sections_section(inspection))
+        self._content_layout.insertWidget(4, self._build_edges_section(inspection, vault))
+        self._content_layout.insertWidget(5, self._build_raw_json_section(inspection))
+
+    def _build_header(self, i: Any) -> QWidget:
+        wrapper = QWidget()
+        layout = QVBoxLayout(wrapper)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        title = QLabel(
+            f"{i.title or '(untitled schema)'}"
+            + (f"  <span style='color:{colors.TEXT_SECONDARY};font-size:14px;'>v{i.schema_version}</span>"
+               if i.schema_version else "")
+        )
+        title.setStyleSheet("font-size: 22px; font-weight: 600;")
+        layout.addWidget(title)
+        if i.credential_type:
+            ct = QLabel(f"<span style='color:{colors.TEXT_SECONDARY};font-size:12px;'>credentialType: <code>{i.credential_type}</code></span>")
+            layout.addWidget(ct)
+        if i.description:
+            desc = QLabel(i.description)
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 13px; margin-top: 6px;")
+            layout.addWidget(desc)
+        return wrapper
+
+    def _build_identity_section(self, i: Any) -> QWidget:
+        frame = self._card("Identity")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+        meta = QLabel(
+            f"<span style='color:{colors.TEXT_SECONDARY}'>Schema SAID:</span> "
+            f"<code>{i.schema_said}</code>"
+        )
+        meta.setStyleSheet("font-size: 12px;")
+        meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+        layout.addWidget(meta)
+        return frame
+
+    def _build_requirements_section(self, i: Any) -> QWidget:
+        frame = self._card("Required ACDC variant")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+        rows = [
+            ("Targeted (a.i required)", i.requires_targeted),
+            ("Private (u required)", i.requires_nonce),
+            ("Has registry (rd/ri required)", i.requires_registry),
+            ("Has message type (t required)", i.requires_message_type),
+        ]
+        for label, value in rows:
+            txt = QLabel(f"<b>{'yes' if value else 'no':>4}</b> · {label}")
+            txt.setStyleSheet("font-size: 12px;")
+            layout.addWidget(txt)
+        return frame
+
+    def _build_sections_section(self, i: Any) -> QWidget:
+        frame = self._card("Declared sections")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+        sd = i.declared_sections
+        rows = [
+            ("a (attribute)", sd.declares_attribute, sd.attribute_required),
+            ("A (aggregate, selective disclosure)", sd.declares_aggregate, sd.aggregate_required),
+            ("e (edges)", sd.declares_edges, sd.edges_required),
+            ("r (rules)", sd.declares_rules, sd.rules_required),
+        ]
+        for name, declared, required in rows:
+            mark = "✓" if declared else "—"
+            req = " (required)" if required else ""
+            txt = QLabel(f"<code>{mark}</code> {name}{req}")
+            txt.setStyleSheet("font-size: 12px;")
+            layout.addWidget(txt)
+        if i.rule_keys_declared:
+            keys = QLabel(
+                f"<span style='color:{colors.TEXT_SECONDARY}'>rule keys:</span> "
+                + ", ".join(f"<code>{k}</code>" for k in i.rule_keys_declared)
+            )
+            keys.setStyleSheet("font-size: 12px; margin-top: 6px;")
+            layout.addWidget(keys)
+        return frame
+
+    def _build_edges_section(self, i: Any, vault: Any) -> QWidget:
+        frame = self._card("Edge requirements")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+        if not i.edge_requirements:
+            empty = QLabel("(no edges declared)")
+            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
+            layout.addWidget(empty)
+            return frame
+        for edge in i.edge_requirements:
+            row = QWidget()
+            row_layout = QVBoxLayout(row)
+            row_layout.setContentsMargins(10, 8, 10, 8)
+            row_layout.setSpacing(2)
+            row.setStyleSheet("QWidget { background: #F8F9FF; border-radius: 4px; }")
+            head = QLabel(f"<b>{edge.name}</b>")
+            head.setStyleSheet("font-size: 13px;")
+            row_layout.addWidget(head)
+            if edge.description and edge.description != edge.name:
+                desc = QLabel(edge.description)
+                desc.setWordWrap(True)
+                desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+                row_layout.addWidget(desc)
+            if edge.target_schema_said:
+                # Make the target schema link clickable if it's known to this wallet
+                known = vault.hby.db.schema.get(keys=(edge.target_schema_said,)) is not None
+                if known:
+                    link = QLabel(
+                        f"target schema: <a href=\"#nav\" style=\"color:#3a5fff;text-decoration:none;\">"
+                        f"<code>{edge.target_schema_said}</code></a>"
+                    )
+                    link.setOpenExternalLinks(False)
+                    link.linkActivated.connect(
+                        lambda _l, said=edge.target_schema_said: self.show_schema_detail_requested.emit(said)
+                    )
+                else:
+                    link = QLabel(
+                        f"target schema: <code>{edge.target_schema_said}</code> "
+                        f"<span style='color:{colors.TEXT_SECONDARY}'>(not in this wallet)</span>"
+                    )
+                link.setWordWrap(True)
+                link.setStyleSheet("font-size: 12px;")
+                link.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
+                row_layout.addWidget(link)
+            if edge.operator_locked:
+                op = QLabel(f"operator locked: <b>{edge.operator_locked}</b>")
+                op.setStyleSheet("font-size: 12px;")
+                row_layout.addWidget(op)
+            elif edge.operator_constraint:
+                op = QLabel(f"operator ∈ {{{', '.join(edge.operator_constraint)}}}")
+                op.setStyleSheet("font-size: 12px;")
+                row_layout.addWidget(op)
+            else:
+                op = QLabel(
+                    "operator: (none constrained — defaults to <b>I2I</b> for targeted ACDCs)"
+                )
+                op.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+                row_layout.addWidget(op)
+            layout.addWidget(row)
+        return frame
+
+    def _build_raw_json_section(self, i: Any) -> QWidget:
+        import json
+        frame = self._card("Raw schema (JSON)")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+        from PySide6.QtWidgets import QPlainTextEdit
+        text = QPlainTextEdit()
+        text.setPlainText(json.dumps(i.raw, indent=2))
+        text.setReadOnly(True)
+        text.setStyleSheet(
+            "QPlainTextEdit { font-family: monospace; font-size: 11px; background: #FAFAFA; border: 1px solid #E0E3EA; }"
+        )
+        text.setMaximumHeight(300)
+        layout.addWidget(text)
+        return frame
+
+    def _card(self, title: str) -> QFrame:
+        frame = QFrame()
+        frame.setStyleSheet(
+            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+        )
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+        title_label = QLabel(title)
+        title_label.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title_label)
+        return frame

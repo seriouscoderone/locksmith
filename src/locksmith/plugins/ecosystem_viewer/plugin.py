@@ -3,8 +3,8 @@
 locksmith.plugins.ecosystem_viewer.plugin module
 
 EcosystemViewerPlugin — registers a sidebar entry that opens a viewer
-into the wallet's known schemas, AIDs, and (planned) ecosystem
-groupings. See README.md for design rationale and roadmap.
+into the wallet's known schemas, AIDs, and (planned) ecosystem groupings.
+See README.md for design rationale and roadmap.
 """
 from __future__ import annotations
 
@@ -15,17 +15,20 @@ from PySide6.QtWidgets import QWidget
 from keri import help
 
 from locksmith.plugins.base import PluginBase
-from locksmith.plugins.ecosystem_viewer.pages import EcosystemViewerPage
+from locksmith.plugins.ecosystem_viewer.pages import (
+    EcosystemViewerPage,
+    SchemaDetailPage,
+    PAGE_KEY_OVERVIEW,
+    PAGE_KEY_SCHEMA_DETAIL,
+)
 from locksmith.ui.toolkit.widgets.buttons import BackButton
 from locksmith.ui.vault.menu import MenuButton, MenuSpacer
 
 logger = help.ogler.getLogger(__name__)
 
-PAGE_KEY = "ecosystem_viewer"
-
 
 class EcosystemViewerPlugin(PluginBase):
-    """Stage 1: domain-classified list of schemas + issuer AIDs in the wallet."""
+    """Stages 1-2: domain-classified browsing of the wallet's known schemas + AIDs."""
 
     @property
     def plugin_id(self) -> str:
@@ -33,18 +36,22 @@ class EcosystemViewerPlugin(PluginBase):
 
     def initialize(self, app: Any) -> None:
         self._app = app
-        self._page: EcosystemViewerPage | None = EcosystemViewerPage(app=app)
+        self._overview_page: EcosystemViewerPage | None = EcosystemViewerPage(app=app)
+        self._schema_detail_page: SchemaDetailPage | None = SchemaDetailPage(app=app)
         self._nav_button: MenuButton | None = None
-        logger.info("EcosystemViewerPlugin initialized")
+
+        # Wire intra-plugin navigation
+        self._overview_page.show_schema_detail_requested.connect(self._show_schema_detail)
+        self._schema_detail_page.back_requested.connect(self._show_overview)
+        self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
+
+        logger.info("EcosystemViewerPlugin initialized (stages 1-2)")
 
     def on_vault_opened(self, vault: Any) -> None:
-        # Stage 1 has no vault-specific setup. The page reads live from the
-        # vault's stores when shown. EcosystemBaser will hook in here.
-        if self._page is not None:
-            self._page.on_show()
+        if self._overview_page is not None:
+            self._overview_page.on_show()
 
     def on_vault_closed(self, vault: Any) -> None:
-        # No tear-down needed for stage 1.
         pass
 
     def get_menu_entry(self) -> MenuButton:
@@ -55,27 +62,36 @@ class EcosystemViewerPlugin(PluginBase):
 
     def get_menu_section(self) -> list[QWidget]:
         items: list[QWidget] = []
-
         items.append(BackButton(dark_mode=False))
         items.append(MenuSpacer(15))
-
         self._nav_button = MenuButton(
             icon=QIcon(":/assets/material-icons/schema.svg"),
             label="Overview",
         )
-        self._nav_button.clicked.connect(self._on_nav_clicked)
+        self._nav_button.clicked.connect(self._show_overview)
         items.append(self._nav_button)
-
         return items
 
     def get_pages(self) -> dict[str, QWidget]:
-        return {PAGE_KEY: self._page} if self._page is not None else {}
+        pages: dict[str, QWidget] = {}
+        if self._overview_page is not None:
+            pages[PAGE_KEY_OVERVIEW] = self._overview_page
+        if self._schema_detail_page is not None:
+            pages[PAGE_KEY_SCHEMA_DETAIL] = self._schema_detail_page
+        return pages
 
-    def _on_nav_clicked(self, checked: bool = False) -> None:
+    def _show_overview(self, *_args: Any) -> None:
         vault_page = getattr(self._app, "_vault_page", None)
         if vault_page is None:
-            logger.warning("EcosystemViewerPlugin: vault_page not available")
             return
-        vault_page._show_page(PAGE_KEY)
-        if self._page is not None:
-            self._page.on_show()
+        vault_page._show_page(PAGE_KEY_OVERVIEW)
+        if self._overview_page is not None:
+            self._overview_page.on_show()
+
+    def _show_schema_detail(self, schema_said: str) -> None:
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is None:
+            return
+        vault_page._show_page(PAGE_KEY_SCHEMA_DETAIL)
+        if self._schema_detail_page is not None:
+            self._schema_detail_page.show_schema(schema_said)
