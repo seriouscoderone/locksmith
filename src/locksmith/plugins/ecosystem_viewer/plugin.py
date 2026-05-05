@@ -15,10 +15,16 @@ from PySide6.QtWidgets import QWidget
 from keri import help
 
 from locksmith.plugins.base import PluginBase
-from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser, EcosystemRecord
+from locksmith.plugins.ecosystem_viewer.db import (
+    EcosystemBaser,
+    EcosystemRecord,
+    AnnotationKind,
+    AnnotationRecord,
+)
 from locksmith.plugins.ecosystem_viewer.dialogs import (
     CreateEcosystemDialog,
     AddMemberDialog,
+    EditAnnotationDialog,
 )
 from locksmith.plugins.ecosystem_viewer.pages import (
     EcosystemViewerPage,
@@ -54,6 +60,7 @@ class EcosystemViewerPlugin(PluginBase):
         self._overview_page.create_ecosystem_clicked.connect(self._open_create_ecosystem_dialog)
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
+        self._schema_detail_page.edit_annotation_clicked.connect(self._open_edit_annotation_dialog)
 
         # Ecosystem detail page wiring
         self._overview_page.show_ecosystem_detail_requested.connect(self._show_ecosystem_detail)
@@ -291,3 +298,56 @@ class EcosystemViewerPlugin(PluginBase):
     def _refresh_ecosystem_detail(self) -> None:
         if self._ecosystem_detail_page is not None and self._ecosystem_detail_page.current_name:
             self._ecosystem_detail_page.show_ecosystem(self._ecosystem_detail_page.current_name)
+
+    def _open_edit_annotation_dialog(self, kind: str, target: str, target_label: str) -> None:
+        if self._db is None:
+            return
+        try:
+            current = self._db.get_annotation(AnnotationKind(kind), target)
+        except Exception:
+            logger.exception("Failed to load annotation for edit")
+            current = None
+        note = current.note if current else ""
+        tags = list(current.tags) if current else []
+
+        dialog = EditAnnotationDialog(
+            target_label=target_label,
+            current_note=note,
+            current_tags=tags,
+            parent=self._schema_detail_page,
+        )
+        dialog.annotation_saved.connect(
+            lambda new_note, new_tags, k=kind, t=target: self._save_annotation(k, t, new_note, new_tags)
+        )
+        dialog.annotation_deleted.connect(
+            lambda k=kind, t=target: self._delete_annotation(k, t)
+        )
+        dialog.open()
+
+    def _save_annotation(self, kind: str, target: str, note: str, tags: list[str]) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.put_annotation(AnnotationRecord(
+                kind=AnnotationKind(kind),
+                target=target,
+                note=note,
+                tags=tags,
+            ))
+        except Exception:
+            logger.exception("Failed to save annotation")
+            return
+        # Refresh whichever page is showing this target
+        if self._schema_detail_page is not None and self._schema_detail_page.current_said == target:
+            self._schema_detail_page.show_schema(target)
+
+    def _delete_annotation(self, kind: str, target: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.delete_annotation(AnnotationKind(kind), target)
+        except Exception:
+            logger.exception("Failed to delete annotation")
+            return
+        if self._schema_detail_page is not None and self._schema_detail_page.current_said == target:
+            self._schema_detail_page.show_schema(target)

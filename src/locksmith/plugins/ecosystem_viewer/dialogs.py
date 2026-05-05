@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
     QLabel,
     QListWidget,
     QListWidgetItem,
+    QPlainTextEdit,
     QVBoxLayout,
     QWidget,
 )
@@ -164,4 +165,80 @@ class AddMemberDialog(LocksmithDialog):
             return
         key = item.data(Qt.ItemDataRole.UserRole)
         self.member_picked.emit(key)
+        self.close()
+
+
+class EditAnnotationDialog(LocksmithDialog):
+    """Edit a single annotation note. Tags input is comma-separated."""
+
+    annotation_saved = Signal(str, list)  # (note_text, tags)
+    annotation_deleted = Signal()
+
+    def __init__(self, target_label: str, current_note: str, current_tags: list[str],
+                 parent: QWidget | None = None):
+        content = QWidget()
+        content.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addSpacing(12)
+
+        target = QLabel(f"<b>Annotating:</b> {target_label}")
+        target.setWordWrap(True)
+        target.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
+        layout.addWidget(target)
+
+        layout.addSpacing(8)
+
+        note_label = QLabel("Note")
+        note_label.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
+        layout.addWidget(note_label)
+
+        self._note_field = QPlainTextEdit()
+        self._note_field.setPlainText(current_note)
+        self._note_field.setStyleSheet(
+            "QPlainTextEdit { background: white; border: 1px solid #E0E3EA; border-radius: 4px; font-size: 12px; padding: 6px; }"
+        )
+        self._note_field.setFixedHeight(120)
+        layout.addWidget(self._note_field)
+
+        layout.addSpacing(8)
+
+        self._tags_field = FloatingLabelLineEdit("Tags (comma-separated)")
+        self._tags_field.setText(", ".join(current_tags))
+        self._tags_field.setFixedWidth(360)
+        layout.addWidget(self._tags_field)
+
+        layout.addSpacing(12)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        delete_btn = LocksmithInvertedButton("Delete annotation")
+        delete_btn.clicked.connect(self._on_delete)
+        cancel_btn = LocksmithInvertedButton("Cancel")
+        cancel_btn.clicked.connect(self.close)
+        save_btn = LocksmithButton("Save")
+        save_btn.clicked.connect(self._on_save)
+        button_row.addWidget(delete_btn)
+        button_row.addStretch()
+        button_row.addWidget(cancel_btn)
+        button_row.addWidget(save_btn)
+
+        super().__init__(
+            parent=parent,
+            title="Edit annotation",
+            content=content,
+            buttons=button_row,
+            show_close_button=True,
+        )
+
+    def _on_save(self) -> None:
+        note = self._note_field.toPlainText().strip()
+        tags = [t.strip() for t in self._tags_field.text().split(",") if t.strip()]
+        self.annotation_saved.emit(note, tags)
+        self.close()
+
+    def _on_delete(self) -> None:
+        self.annotation_deleted.emit()
         self.close()

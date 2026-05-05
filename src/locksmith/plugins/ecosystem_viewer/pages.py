@@ -17,6 +17,8 @@ from __future__ import annotations
 import json
 from typing import TYPE_CHECKING, Any
 
+from locksmith.plugins.ecosystem_viewer.db import AnnotationKind
+
 if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
@@ -439,6 +441,7 @@ class SchemaDetailPage(QWidget):
 
     back_requested = Signal()
     show_schema_detail_requested = Signal(str)  # for clicking edge target schemas
+    edit_annotation_clicked = Signal(str, str, str)  # (kind, target, target_label)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -489,6 +492,11 @@ class SchemaDetailPage(QWidget):
         """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
         self._db = db
 
+    @property
+    def current_said(self) -> str | None:
+        """The schema SAID currently being shown, or None if nothing loaded."""
+        return self._current_said
+
     def show_schema(self, schema_said: str) -> None:
         """Load and render the schema with the given SAID. Called by the plugin."""
         self._current_said = schema_said
@@ -533,7 +541,8 @@ class SchemaDetailPage(QWidget):
         self._content_layout.insertWidget(2, self._build_requirements_section(inspection))
         self._content_layout.insertWidget(3, self._build_sections_section(inspection))
         self._content_layout.insertWidget(4, self._build_edges_section(inspection, vault))
-        self._content_layout.insertWidget(5, self._build_raw_json_section(inspection))
+        self._content_layout.insertWidget(5, self._build_annotation_section(inspection))
+        self._content_layout.insertWidget(6, self._build_raw_json_section(inspection))
 
     def _build_header(self, i: Any) -> QWidget:
         wrapper = QWidget()
@@ -667,6 +676,42 @@ class SchemaDetailPage(QWidget):
                 op.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
                 row_layout.addWidget(op)
             layout.addWidget(row)
+        return frame
+
+    def _build_annotation_section(self, i: Any) -> QWidget:
+        frame = self._card("Annotation")
+        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
+
+        ann = None
+        if self._db is not None:
+            try:
+                ann = self._db.get_annotation(AnnotationKind.SCHEMA, i.schema_said)
+            except Exception:
+                logger.exception("Failed to load annotation")
+
+        if ann is None or not ann.note:
+            empty = QLabel("(no note yet)")
+            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
+            layout.addWidget(empty)
+        else:
+            note = QLabel(ann.note)
+            note.setWordWrap(True)
+            note.setStyleSheet("font-size: 13px;")
+            note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(note)
+            if ann.tags:
+                tags_label = QLabel(
+                    "Tags: " + " ".join(f"<code style='background:#EEF;padding:1px 4px;border-radius:3px;'>{t}</code>" for t in ann.tags)
+                )
+                tags_label.setStyleSheet("font-size: 12px; margin-top: 4px;")
+                layout.addWidget(tags_label)
+
+        edit_btn = LocksmithInvertedButton("Edit annotation")
+        target_label = i.title or i.schema_said[:24]
+        edit_btn.clicked.connect(
+            lambda: self.edit_annotation_clicked.emit("schema", i.schema_said, target_label)
+        )
+        layout.addWidget(edit_btn)
         return frame
 
     def _build_raw_json_section(self, i: Any) -> QWidget:
