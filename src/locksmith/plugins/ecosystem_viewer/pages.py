@@ -22,9 +22,11 @@ if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QPalette, QPixmap
+from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGraphicsScene,
+    QGraphicsView,
     QGridLayout,
     QHBoxLayout,
     QLabel,
@@ -39,6 +41,13 @@ from keri import help
 from locksmith.acdc import inspect_acdc_schema
 from locksmith.acdc import icons
 from locksmith.plugins.ecosystem_viewer.db import AnnotationKind
+from locksmith.plugins.ecosystem_viewer.graph_items import (
+    EdgeLine,
+    NODE_HEIGHT,
+    NODE_WIDTH,
+    NOTCH_DEPTH,
+    SchemaNode,
+)
 from locksmith.plugins.ecosystem_viewer.widgets import (
     DisclosureTierWidget,
     SectionFingerprintWidget,
@@ -1107,8 +1116,19 @@ class SchemaDetailPage(QWidget):
         return row
 
     # ------------------------------------------------------------------
-    # §4.4 Chain of authority card (stub for B3b)
+    # §4.4 Chain of authority card (Phase B3b — mini-graph)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _derive_tier(sd: Any) -> str:
+        """Derive disclosure tier string from a SectionsDeclared object."""
+        if sd.declares_aggregate:
+            return "selective"
+        if sd.declares_attribute and sd.declares_edges and sd.declares_rules:
+            return "full"
+        if sd.declares_attribute:
+            return "partial"
+        return "metadata"
 
     def _build_chain_of_authority_card(self, i: Any, vault: Any) -> QWidget:
         frame = QFrame()
@@ -1125,21 +1145,156 @@ class SchemaDetailPage(QWidget):
         title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
         layout.addWidget(title_lbl)
 
-        n = len(i.edge_requirements)
-        if n == 0:
-            status_lbl = QLabel("This schema declares no edges to other schemas.")
-        else:
-            status_lbl = QLabel(
-                f"This schema declares {n} edge requirement(s)."
+        # --- No edges: "untethered" callout ---
+        if not i.edge_requirements:
+            untethered_lbl = QLabel(
+                f"<b>{i.title or '(unnamed schema)'}</b> stands alone — "
+                "this schema declares no edges to other schemas."
             )
-        status_lbl.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_SECONDARY};")
-        layout.addWidget(status_lbl)
+            untethered_lbl.setWordWrap(True)
+            untethered_lbl.setTextFormat(Qt.TextFormat.RichText)
+            untethered_lbl.setAlignment(Qt.AlignmentFlag.AlignCenter)
+            untethered_lbl.setStyleSheet(
+                f"font-size: 13px; color: {colors.TEXT_SECONDARY}; font-style: italic; padding: 12px 0px;"
+            )
+            layout.addWidget(untethered_lbl)
+            return frame
 
-        # Render existing edge-requirement list (B3b will replace with mini-graph)
-        if i.edge_requirements:
-            for edge in i.edge_requirements:
-                layout.addWidget(self._build_edge_row(edge, vault))
+        # --- Mini-graph via QGraphicsView ---
+        sd = i.declared_sections
+        central_node = SchemaNode(
+            said=i.schema_said,
+            title=i.title or "(unnamed)",
+            version=i.schema_version,
+            is_targeted=i.requires_targeted,
+            is_private=i.requires_nonce,
+            disclosure_tier=self._derive_tier(sd),
+            has_attribute=sd.declares_attribute,
+            has_aggregate=sd.declares_aggregate,
+            has_edges=sd.declares_edges,
+            has_rules=sd.declares_rules,
+            ghost=False,
+        )
 
+        scene = QGraphicsScene()
+        scene.addItem(central_node)
+        central_node.setPos(0, 0)
+
+        # Column layout constants
+        x_offset = NODE_WIDTH + NOTCH_DEPTH + 80
+        vertical_step = NODE_HEIGHT + 20
+        n = len(i.edge_requirements)
+        # Center the column vertically with respect to the central node
+        total_height = n * NODE_HEIGHT + (n - 1) * 20
+        col_top_y = (NODE_HEIGHT - total_height) / 2
+
+        for idx, edge in enumerate(i.edge_requirements):
+            target_said = edge.target_schema_said
+            target_y = col_top_y + idx * vertical_step
+
+            # Determine if the target schema is in the wallet
+            target_schemer = None
+            if target_said:
+                try:
+                    target_schemer = vault.hby.db.schema.get(keys=(target_said,))
+                except Exception:
+                    target_schemer = None
+
+            if target_schemer is not None and target_said:
+                # Build full node from target schema inspection
+                try:
+                    ti = inspect_acdc_schema(target_schemer.sed)
+                    tsd = ti.declared_sections
+                    target_node = SchemaNode(
+                        said=target_said,
+                        title=ti.title or "(unnamed)",
+                        version=ti.schema_version,
+                        is_targeted=ti.requires_targeted,
+                        is_private=ti.requires_nonce,
+                        disclosure_tier=self._derive_tier(tsd),
+                        has_attribute=tsd.declares_attribute,
+                        has_aggregate=tsd.declares_aggregate,
+                        has_edges=tsd.declares_edges,
+                        has_rules=tsd.declares_rules,
+                        ghost=False,
+                    )
+                except Exception:
+                    logger.exception(f"Failed to inspect target schema {target_said}")
+                    # Fall through to ghost
+                    short_title = (target_said[:18] + "…") if len(target_said) > 20 else target_said
+                    target_node = SchemaNode(
+                        said=target_said,
+                        title=short_title,
+                        is_targeted=False,
+                        ghost=True,
+                    )
+            elif target_said:
+                # Not in wallet — ghost node
+                short_title = (target_said[:18] + "…") if len(target_said) > 20 else target_said
+                target_node = SchemaNode(
+                    said=target_said,
+                    title=short_title,
+                    is_targeted=False,
+                    ghost=True,
+                )
+            else:
+                # No target SAID known; generic ghost
+                target_node = SchemaNode(
+                    said="(unknown)",
+                    title=edge.name or "(unknown target)",
+                    is_targeted=False,
+                    ghost=True,
+                )
+
+            scene.addItem(target_node)
+            target_node.setPos(x_offset, target_y)
+
+            # Connect click to navigation
+            _tsaid = target_said or ""
+            if _tsaid:
+                target_node.clicked.connect(
+                    lambda _said=_tsaid: self.show_schema_detail_requested.emit(_said)
+                )
+
+            # Determine operator for the edge line
+            if edge.operator_locked:
+                op_str = edge.operator_locked
+            elif edge.operator_constraint and len(edge.operator_constraint) > 0:
+                op_str = edge.operator_constraint[0]
+            else:
+                op_str = "I2I"
+
+            # Normalise to EdgeOperatorVisual literals
+            if op_str not in ("I2I", "NI2I", "DI2I", "NOT"):
+                op_str = "I2I"
+
+            edge_line = EdgeLine(
+                source=central_node,
+                target=target_node,
+                operator=op_str,  # type: ignore[arg-type]
+                label=edge.name or None,
+            )
+            scene.addItem(edge_line)
+
+        # Build the view
+        view = QGraphicsView(scene)
+        view.setRenderHints(QPainter.RenderHint.Antialiasing | QPainter.RenderHint.SmoothPixmapTransform)
+        view.setDragMode(QGraphicsView.DragMode.ScrollHandDrag)
+        view.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        view.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        view.setFrameShape(QFrame.Shape.NoFrame)
+        view.setStyleSheet("background: transparent; border: none;")
+        view.setFixedHeight(220)
+        view.setMinimumWidth(300)
+
+        # Fit the scene content into the view
+        bounding = scene.itemsBoundingRect()
+        view.fitInView(
+            bounding.adjusted(-20, -20, 20, 20),
+            Qt.AspectRatioMode.KeepAspectRatio,
+        )
+
+        layout.addWidget(view)
         return frame
 
     def _build_edge_row(self, edge: Any, vault: Any) -> QWidget:
