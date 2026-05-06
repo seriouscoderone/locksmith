@@ -196,9 +196,10 @@ class EcosystemViewerPage(QWidget):
 
     def _build_ecosystem_row(self, eco: Any) -> QWidget:
         row = QFrame()
+        row.setObjectName("evEcosystemRow")
         row.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
-            "QFrame:hover { background-color: #F0F3FA; }"
+            "QFrame#evEcosystemRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
+            "QFrame#evEcosystemRow:hover { background-color: #F0F3FA; }"
         )
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         rl = QVBoxLayout(row)
@@ -261,9 +262,10 @@ class EcosystemViewerPage(QWidget):
 
     def _build_schema_row(self, i: Any) -> QWidget:
         row = QFrame()
+        row.setObjectName("evSchemaRow")
         row.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
-            "QFrame:hover { background-color: #F0F3FA; }"
+            "QFrame#evSchemaRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
+            "QFrame#evSchemaRow:hover { background-color: #F0F3FA; }"
         )
         row.setCursor(Qt.CursorShape.PointingHandCursor)
         rl = QVBoxLayout(row)
@@ -356,8 +358,9 @@ class EcosystemViewerPage(QWidget):
 
     def _build_contact_row(self, contact: dict[str, Any], vault: Any) -> QWidget:
         row = QFrame()
+        row.setObjectName("evContactRow")
         row.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
+            "QFrame#evContactRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
         )
         rl = QVBoxLayout(row)
         rl.setContentsMargins(14, 12, 14, 12)
@@ -413,8 +416,9 @@ class EcosystemViewerPage(QWidget):
 
     def _build_card(self, title: str) -> QWidget:
         frame = QFrame()
+        frame.setObjectName("evCard")
         frame.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#evCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
         )
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -628,10 +632,11 @@ class SchemaDetailPage(QWidget):
             return frame
         for edge in i.edge_requirements:
             row = QWidget()
+            row.setObjectName("sdEdgeRow")
             row_layout = QVBoxLayout(row)
             row_layout.setContentsMargins(10, 8, 10, 8)
             row_layout.setSpacing(2)
-            row.setStyleSheet("QWidget { background: #F8F9FF; border-radius: 4px; }")
+            row.setStyleSheet("QWidget#sdEdgeRow { background: #F8F9FF; border-radius: 4px; }")
             head = QLabel(f"<b>{edge.name}</b>")
             head.setStyleSheet("font-size: 13px;")
             row_layout.addWidget(head)
@@ -733,8 +738,9 @@ class SchemaDetailPage(QWidget):
 
     def _card(self, title: str) -> QFrame:
         frame = QFrame()
+        frame.setObjectName("sdCard")
         frame.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
         )
         layout = QVBoxLayout(frame)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -862,8 +868,9 @@ class EcosystemDetailPage(QWidget):
 
     def _build_schemas_section(self, eco: Any) -> QWidget:
         section = QFrame()
+        section.setObjectName("edSchemasSection")
         section.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#edSchemasSection { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
         )
         layout = QVBoxLayout(section)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -889,7 +896,8 @@ class EcosystemDetailPage(QWidget):
 
         for said in eco.schema_saids:
             row = QFrame()
-            row.setStyleSheet("QFrame { background: #F8F9FF; border-radius: 4px; }")
+            row.setObjectName("edSchemaMemberRow")
+            row.setStyleSheet("QFrame#edSchemaMemberRow { background: #F8F9FF; border-radius: 4px; }")
             r = QHBoxLayout(row)
             r.setContentsMargins(10, 6, 10, 6)
             link = QLabel(
@@ -909,8 +917,9 @@ class EcosystemDetailPage(QWidget):
 
     def _build_aids_section(self, eco: Any) -> QWidget:
         section = QFrame()
+        section.setObjectName("edAidsSection")
         section.setStyleSheet(
-            "QFrame { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#edAidsSection { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
         )
         layout = QVBoxLayout(section)
         layout.setContentsMargins(20, 16, 20, 16)
@@ -936,7 +945,8 @@ class EcosystemDetailPage(QWidget):
 
         for aid in eco.issuer_aids:
             row = QFrame()
-            row.setStyleSheet("QFrame { background: #F8F9FF; border-radius: 4px; }")
+            row.setObjectName("edAidMemberRow")
+            row.setStyleSheet("QFrame#edAidMemberRow { background: #F8F9FF; border-radius: 4px; }")
             r = QHBoxLayout(row)
             r.setContentsMargins(10, 6, 10, 6)
             label = QLabel(f"<code>{aid}</code>")
