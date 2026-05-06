@@ -203,6 +203,38 @@ class SectionsDeclared:
 
 
 @dataclass(frozen=True)
+class AttributeField:
+    """A single declared attribute field in an ACDC schema's `a` block.
+
+    Captured by the inspector so display surfaces (the schema detail page)
+    can render the schema's actual data shape — `licenseNumber`, `state`,
+    etc. — rather than re-parsing JSON Schema themselves.
+
+    Fields:
+    - name: the property key (e.g. `"licenseNumber"`).
+    - type_label: human-readable type (e.g. `"string"`, `"array<string>"`,
+      `"date"`). Derived from `type` + `format` + array `items.type`.
+    - description: the schema's `description` for this property, if any.
+    - required: whether this name is in the attribute block's `required` list.
+    - enum_values: allowed values, if `enum` is constrained on the property
+      directly OR (for arrays) on the `items` schema.
+    - format: the `format` value if present (`date`, `date-time`, `uri`, ...).
+    - min_length / max_length: string-length bounds.
+    - min_items / max_items: array-length bounds.
+    """
+    name: str
+    type_label: str
+    description: str = ""
+    required: bool = False
+    enum_values: tuple[str, ...] | None = None
+    format: str | None = None
+    min_length: int | None = None
+    max_length: int | None = None
+    min_items: int | None = None
+    max_items: int | None = None
+
+
+@dataclass(frozen=True)
 class ACDCSchemaInspection:
     """Domain-layer classification of an ACDC schema document.
 
@@ -227,6 +259,7 @@ class ACDCSchemaInspection:
     requires_message_type: bool
     """Schema requires `t`."""
 
+    attribute_fields: tuple[AttributeField, ...]
     edge_requirements: tuple[SchemaEdgeRequirement, ...]
     rule_keys_declared: tuple[str, ...]
 
@@ -340,6 +373,7 @@ def inspect_acdc_schema(schema: dict[str, Any]) -> ACDCSchemaInspection:
     requires_registry = "rd" in required or "ri" in required
     requires_targeted = _attribute_block_requires_issuee(properties.get("a"))
 
+    attribute_fields = _inspect_schema_attributes(properties.get("a"))
     edge_requirements = _inspect_schema_edges(properties.get("e"))
     rule_keys_declared = _inspect_schema_rules(properties.get("r"))
 
@@ -354,6 +388,7 @@ def inspect_acdc_schema(schema: dict[str, Any]) -> ACDCSchemaInspection:
         requires_targeted=requires_targeted,
         requires_registry=requires_registry,
         requires_message_type=requires_message_type,
+        attribute_fields=attribute_fields,
         edge_requirements=edge_requirements,
         rule_keys_declared=rule_keys_declared,
         raw=schema,
@@ -521,6 +556,90 @@ def _attribute_block_requires_issuee(a_property: Any) -> bool:
         if "i" in branch.get("required", []):
             return True
     return False
+
+
+def _inspect_schema_attributes(a_property: Any) -> tuple[AttributeField, ...]:
+    """Walk a schema's `a` property's full-form `oneOf` branch and extract
+    declared attribute fields.
+
+    The ACDC attribute block always carries the spec-protocol fields
+    `d` (block SAID), `i` (issuee AID), and `dt` (issuance datetime).
+    These are not user-meaningful schema fields, so we skip them; only
+    the credential-type-specific fields surface in the result.
+    """
+    if not isinstance(a_property, dict):
+        return ()
+    one_of = a_property.get("oneOf", [])
+    for branch in one_of:
+        if not isinstance(branch, dict) or branch.get("type") != "object":
+            continue
+        attr_props = branch.get("properties", {})
+        attr_required = set(branch.get("required", []))
+
+        out: list[AttributeField] = []
+        for name, prop in attr_props.items():
+            # Skip protocol fields — every ACDC attribute block has these
+            # and they aren't part of the credential's user-defined shape.
+            if name in ("d", "i", "dt"):
+                continue
+            if not isinstance(prop, dict):
+                continue
+            out.append(AttributeField(
+                name=name,
+                type_label=_derive_type_label(prop),
+                description=prop.get("description", ""),
+                required=name in attr_required,
+                enum_values=_extract_enum_values(prop),
+                format=prop.get("format"),
+                min_length=prop.get("minLength"),
+                max_length=prop.get("maxLength"),
+                min_items=prop.get("minItems"),
+                max_items=prop.get("maxItems"),
+            ))
+        return tuple(out)
+    return ()
+
+
+def _derive_type_label(prop: dict[str, Any]) -> str:
+    """Build a human-readable type label from a JSON Schema property def.
+
+    Handles the common ACDC cases: string (with optional `format` like
+    `date`, `date-time`, `uri`), array<T>, number, integer, boolean,
+    object. Falls back to `"unknown"` for property defs without a `type`.
+    """
+    t = prop.get("type", "")
+    fmt = prop.get("format")
+    if t == "string":
+        if fmt == "date":
+            return "date"
+        if fmt == "date-time":
+            return "datetime"
+        if fmt == "uri":
+            return "URL"
+        return "string"
+    if t == "array":
+        items = prop.get("items", {})
+        if isinstance(items, dict):
+            item_type = items.get("type", "")
+            if item_type:
+                return f"array<{item_type}>"
+        return "array"
+    if t in ("number", "integer", "boolean", "object"):
+        return t
+    return "unknown"
+
+
+def _extract_enum_values(prop: dict[str, Any]) -> tuple[str, ...] | None:
+    """Extract `enum` values from a property def. For arrays, looks at
+    `items.enum` when the `enum` constraint is on the item type rather
+    than the whole array."""
+    if "enum" in prop and isinstance(prop["enum"], list):
+        return tuple(str(v) for v in prop["enum"])
+    if prop.get("type") == "array":
+        items = prop.get("items", {})
+        if isinstance(items, dict) and "enum" in items and isinstance(items["enum"], list):
+            return tuple(str(v) for v in items["enum"])
+    return None
 
 
 def _inspect_schema_edges(e_property: Any) -> tuple[SchemaEdgeRequirement, ...]:

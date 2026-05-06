@@ -27,6 +27,7 @@ Citations in inspector docstrings reference the relevant spec sections.
 from locksmith.acdc.inspector import (
     ACDCInspection,
     ACDCSchemaInspection,
+    AttributeField,
     DisclosureTier,
     EdgeInspection,
     EdgeOperator,
@@ -42,6 +43,7 @@ from locksmith.acdc.inspector import (
 __all__ = [
     "ACDCInspection",
     "ACDCSchemaInspection",
+    "AttributeField",
     "DisclosureTier",
     "EdgeInspection",
     "EdgeOperator",
