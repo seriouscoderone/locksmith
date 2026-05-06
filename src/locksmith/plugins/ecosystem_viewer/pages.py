@@ -80,6 +80,7 @@ class EcosystemViewerPage(QWidget):
         self._content.setObjectName("ecosystemViewerContent")
         self._content.setStyleSheet(
             f"#ecosystemViewerContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#ecosystemViewerContent QLabel { background: transparent; }"
         )
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(30, 30, 30, 30)
@@ -467,7 +468,13 @@ class SchemaDetailPage(QWidget):
         outer.setSpacing(0)
 
         # Top bar with back button
-        bar = QHBoxLayout()
+        bar_widget = QWidget()
+        bar_widget.setObjectName("schemaDetailBackBar")
+        bar_widget.setStyleSheet(
+            f"#schemaDetailBackBar {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#schemaDetailBackBar QLabel { background: transparent; }"
+        )
+        bar = QHBoxLayout(bar_widget)
         bar.setContentsMargins(20, 12, 20, 0)
         back = QLabel('<a href="#back" style="color:#3a5fff;text-decoration:none;">‹ Back to overview</a>')
         back.setOpenExternalLinks(False)
@@ -475,7 +482,7 @@ class SchemaDetailPage(QWidget):
         back.setStyleSheet("font-size: 13px;")
         bar.addWidget(back)
         bar.addStretch()
-        outer.addLayout(bar)
+        outer.addWidget(bar_widget)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -488,6 +495,7 @@ class SchemaDetailPage(QWidget):
         self._content.setObjectName("schemaDetailContent")
         self._content.setStyleSheet(
             f"#schemaDetailContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#schemaDetailContent QLabel { background: transparent; }"
         )
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(20, 16, 20, 30)
@@ -785,7 +793,13 @@ class EcosystemDetailPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        bar = QHBoxLayout()
+        bar_widget = QWidget()
+        bar_widget.setObjectName("ecosystemDetailBackBar")
+        bar_widget.setStyleSheet(
+            f"#ecosystemDetailBackBar {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#ecosystemDetailBackBar QLabel { background: transparent; }"
+        )
+        bar = QHBoxLayout(bar_widget)
         bar.setContentsMargins(20, 12, 20, 0)
         back = QLabel('<a href="#back" style="color:#3a5fff;text-decoration:none;">‹ Back to overview</a>')
         back.setOpenExternalLinks(False)
@@ -793,7 +807,7 @@ class EcosystemDetailPage(QWidget):
         back.setStyleSheet("font-size: 13px;")
         bar.addWidget(back)
         bar.addStretch()
-        outer.addLayout(bar)
+        outer.addWidget(bar_widget)
 
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
@@ -806,6 +820,7 @@ class EcosystemDetailPage(QWidget):
         self._content.setObjectName("ecosystemDetailContent")
         self._content.setStyleSheet(
             f"#ecosystemDetailContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#ecosystemDetailContent QLabel { background: transparent; }"
         )
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(20, 16, 20, 30)

@@ -38,7 +38,11 @@ class CreateEcosystemDialog(LocksmithDialog):
         self.app = app
 
         content = QWidget()
-        content.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        content.setObjectName("createEcosystemContent")
+        content.setStyleSheet(
+            f"#createEcosystemContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#createEcosystemContent QLabel { background: transparent; }"
+        )
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -110,7 +114,11 @@ class AddMemberDialog(LocksmithDialog):
         self._candidates = candidates
 
         content = QWidget()
-        content.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        content.setObjectName("addMemberContent")
+        content.setStyleSheet(
+            f"#addMemberContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#addMemberContent QLabel { background: transparent; }"
+        )
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
@@ -178,7 +186,11 @@ class EditAnnotationDialog(LocksmithDialog):
     def __init__(self, target_label: str, current_note: str, current_tags: list[str],
                  parent: QWidget | None = None):
         content = QWidget()
-        content.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        content.setObjectName("editAnnotationContent")
+        content.setStyleSheet(
+            f"#editAnnotationContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#editAnnotationContent QLabel { background: transparent; }"
+        )
         layout = QVBoxLayout(content)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
