@@ -22,20 +22,27 @@ if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtGui import QColor, QGuiApplication, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QFrame,
+    QGridLayout,
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
     QScrollArea,
+    QToolButton,
     QVBoxLayout,
     QWidget,
 )
 from keri import help
 
 from locksmith.acdc import inspect_acdc_schema
+from locksmith.acdc import icons
 from locksmith.plugins.ecosystem_viewer.db import AnnotationKind
+from locksmith.plugins.ecosystem_viewer.widgets import (
+    DisclosureTierWidget,
+    SectionFingerprintWidget,
+)
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithIconButton
@@ -445,8 +452,60 @@ class EcosystemViewerPage(QWidget):
         return wrapper
 
 
+class _DeveloperDisclosure(QWidget):
+    """Collapsible disclosure widget that holds developer-detail sub-cards (§4.6).
+
+    Usage:
+        disc = _DeveloperDisclosure(parent, expanded=False)
+        disc.add_section(requirements_card)
+        disc.add_section(sections_card)
+        disc.add_section(raw_json_card)
+        disc.set_expanded(True)
+    """
+
+    def __init__(self, parent: QWidget | None = None, *, expanded: bool = False):
+        super().__init__(parent)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+
+        # Clickable header
+        self._header = QLabel()
+        self._header.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY}; padding: 6px 0px; cursor: pointer;"
+        )
+        self._header.setCursor(Qt.CursorShape.PointingHandCursor)
+        self._header.mousePressEvent = lambda _e: self.set_expanded(not self._expanded)
+        outer.addWidget(self._header)
+
+        # Container for the sub-cards
+        self._container = QWidget()
+        self._container_layout = QVBoxLayout(self._container)
+        self._container_layout.setContentsMargins(0, 8, 0, 0)
+        self._container_layout.setSpacing(12)
+        outer.addWidget(self._container)
+
+        self._expanded = False
+        self.set_expanded(expanded)
+
+    def set_expanded(self, expanded: bool) -> None:
+        self._expanded = expanded
+        arrow = "▲" if expanded else "▼"
+        self._header.setText(
+            f"{arrow} Developer details (raw schema, field-level structure, JSON)"
+        )
+        self._container.setVisible(expanded)
+
+    def add_section(self, widget: QWidget) -> None:
+        self._container_layout.addWidget(widget)
+
+
 class SchemaDetailPage(QWidget):
-    """Per-schema deep-inspect view. Renders inspector output + linked schemas."""
+    """Per-schema deep-inspect view — redesigned per design doc §4 (Phase B3a).
+
+    Public surface (signals + methods) is UNCHANGED from the prior implementation
+    so the plugin can connect/disconnect without modification.
+    """
 
     back_requested = Signal()
     show_schema_detail_requested = Signal(str)  # for clicking edge target schemas
@@ -467,7 +526,9 @@ class SchemaDetailPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
-        # Top bar with back button
+        # ------------------------------------------------------------------
+        # Top bar: Back link (left) + Developer-mode toggle (right)
+        # ------------------------------------------------------------------
         bar_widget = QWidget()
         bar_widget.setObjectName("schemaDetailBackBar")
         bar_widget.setStyleSheet(
@@ -475,15 +536,48 @@ class SchemaDetailPage(QWidget):
             "#schemaDetailBackBar QLabel { background: transparent; }"
         )
         bar = QHBoxLayout(bar_widget)
-        bar.setContentsMargins(20, 12, 20, 0)
+        bar.setContentsMargins(20, 12, 20, 8)
+
         back = QLabel('<a href="#back" style="color:#3a5fff;text-decoration:none;">‹ Back to overview</a>')
         back.setOpenExternalLinks(False)
         back.linkActivated.connect(lambda _: self.back_requested.emit())
         back.setStyleSheet("font-size: 13px;")
         bar.addWidget(back)
         bar.addStretch()
+
+        # Developer-mode toggle — checkable QToolButton with icon
+        self._dev_toggle = QToolButton()
+        self._dev_toggle.setCheckable(True)
+        self._dev_toggle.setToolTip("Toggle developer details")
+        self._dev_toggle.setCursor(Qt.CursorShape.PointingHandCursor)
+        _dev_px = QPixmap(icons.ICON_DEVELOPER_MODE)
+        if not _dev_px.isNull():
+            from PySide6.QtGui import QIcon
+            self._dev_toggle.setIcon(QIcon(_dev_px.scaled(
+                20, 20,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            )))
+            self._dev_toggle.setIconSize(
+                __import__("PySide6.QtCore", fromlist=["QSize"]).QSize(20, 20)
+            )
+        self._dev_toggle.setStyleSheet(
+            f"QToolButton {{ background: transparent; border: 1px solid {colors.BACKGROUND_NEUTRAL};"
+            f" border-radius: 4px; padding: 3px; }}"
+            f"QToolButton:checked {{ background: {colors.BACKGROUND_NEUTRAL}; }}"
+            f"QToolButton:hover {{ background: {colors.BACKGROUND_NEUTRAL}; }}"
+        )
+        # Read persisted state
+        dev_mode = self._read_dev_mode()
+        self._dev_toggle.setChecked(dev_mode)
+        self._dev_toggle.toggled.connect(self._on_developer_mode_toggled)
+        bar.addWidget(self._dev_toggle)
+
         outer.addWidget(bar_widget)
 
+        # ------------------------------------------------------------------
+        # Scroll area + content
+        # ------------------------------------------------------------------
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.Shape.NoFrame)
@@ -504,6 +598,10 @@ class SchemaDetailPage(QWidget):
         scroll.setWidget(self._content)
         outer.addWidget(scroll)
 
+    # ------------------------------------------------------------------
+    # Public interface (UNCHANGED)
+    # ------------------------------------------------------------------
+
     def set_db(self, db: "EcosystemBaser | None") -> None:
         """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
         self._db = db
@@ -518,6 +616,39 @@ class SchemaDetailPage(QWidget):
         self._current_said = schema_said
         self._refresh()
 
+    # ------------------------------------------------------------------
+    # Developer-mode persistence
+    # ------------------------------------------------------------------
+
+    def _read_dev_mode(self) -> bool:
+        try:
+            cfg = getattr(self.app, "config", None)
+            if cfg is None:
+                return False
+            plugin_cfg = cfg.plugin_configs.get("ecosystem_viewer", {})
+            return bool(plugin_cfg.get("developer_mode", False))
+        except Exception:
+            logger.warning("Could not read developer_mode from plugin_configs; defaulting to False")
+            return False
+
+    def _on_developer_mode_toggled(self, checked: bool) -> None:
+        try:
+            cfg = getattr(self.app, "config", None)
+            if cfg is None:
+                return
+            cur = dict(cfg.plugin_configs.get("ecosystem_viewer", {}))
+            cur["developer_mode"] = checked
+            cfg.plugin_configs["ecosystem_viewer"] = cur
+        except Exception:
+            logger.warning("Could not persist developer_mode to plugin_configs")
+        # Propagate to the disclosure widget if it exists
+        if hasattr(self, "_dev_disclosure") and self._dev_disclosure is not None:
+            self._dev_disclosure.set_expanded(checked)
+
+    # ------------------------------------------------------------------
+    # Refresh
+    # ------------------------------------------------------------------
+
     def _refresh(self) -> None:
         # Clear all widgets in front of the layout's trailing stretch.
         # __init__ leaves the stretch as the sole item; section widgets are
@@ -528,6 +659,8 @@ class SchemaDetailPage(QWidget):
             widget = item.widget() if item else None
             if widget is not None:
                 widget.deleteLater()
+
+        self._dev_disclosure: _DeveloperDisclosure | None = None
 
         if self._current_said is None:
             self._content_layout.insertWidget(0, QLabel("(no schema selected)"))
@@ -550,49 +683,589 @@ class SchemaDetailPage(QWidget):
             self._content_layout.insertWidget(0, msg)
             return
 
-        inspection = inspect_acdc_schema(schemer.sed)
-        # Render in the order: header, identity, requirements, sections, edges, raw JSON
-        self._content_layout.insertWidget(0, self._build_header(inspection))
-        self._content_layout.insertWidget(1, self._build_identity_section(inspection))
-        self._content_layout.insertWidget(2, self._build_requirements_section(inspection))
-        self._content_layout.insertWidget(3, self._build_sections_section(inspection))
-        self._content_layout.insertWidget(4, self._build_edges_section(inspection, vault))
-        self._content_layout.insertWidget(5, self._build_annotation_section(inspection))
-        self._content_layout.insertWidget(6, self._build_raw_json_section(inspection))
+        i = inspect_acdc_schema(schemer.sed)
+        dev_mode = self._dev_toggle.isChecked()
 
-    def _build_header(self, i: Any) -> QWidget:
-        wrapper = QWidget()
-        layout = QVBoxLayout(wrapper)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(4)
-        title = QLabel(
-            f"{i.title or '(untitled schema)'}"
-            + (f"  <span style='color:{colors.TEXT_SECONDARY};font-size:14px;'>v{i.schema_version}</span>"
-               if i.schema_version else "")
+        # Build developer disclosure first (added last; holds old cards)
+        self._dev_disclosure = _DeveloperDisclosure(expanded=dev_mode)
+        self._dev_disclosure.add_section(self._build_requirements_section(i))
+        self._dev_disclosure.add_section(self._build_sections_section(i))
+        self._dev_disclosure.add_section(self._build_raw_json_section(i))
+
+        # Insert cards in order: hero, at-a-glance, attributes, chain-of-auth,
+        # annotation, developer disclosure
+        idx = 0
+        self._content_layout.insertWidget(idx, self._build_hero_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_at_a_glance_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_attributes_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_chain_of_authority_card(i, vault)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_annotation_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._dev_disclosure); idx += 1
+
+    # ------------------------------------------------------------------
+    # §4.2 Hero header card
+    # ------------------------------------------------------------------
+
+    def _build_hero_card(self, i: Any) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sdHeroCard")
+        frame.setStyleSheet(
+            "QFrame#sdHeroCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdHeroCard QLabel { background: transparent; }"
         )
-        title.setStyleSheet("font-size: 22px; font-weight: 600;")
-        layout.addWidget(title)
-        if i.credential_type:
-            ct = QLabel(f"<span style='color:{colors.TEXT_SECONDARY};font-size:12px;'>credentialType: <code>{i.credential_type}</code></span>")
-            layout.addWidget(ct)
+        outer_layout = QHBoxLayout(frame)
+        outer_layout.setContentsMargins(20, 20, 20, 20)
+        outer_layout.setSpacing(16)
+        outer_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        # 56px variant glyph
+        icon_path = icons.ICON_VARIANT_PRIVATE if i.requires_nonce else icons.ICON_VARIANT_PUBLIC
+        glyph_label = QLabel()
+        px = QPixmap(icon_path)
+        if not px.isNull():
+            glyph_label.setPixmap(px.scaled(
+                56, 56,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        glyph_label.setFixedSize(56, 56)
+        glyph_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        outer_layout.addWidget(glyph_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        # Text block
+        text_layout = QVBoxLayout()
+        text_layout.setContentsMargins(0, 0, 0, 0)
+        text_layout.setSpacing(6)
+
+        # Title + version row
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(10)
+        title_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        title_lbl = QLabel(i.title or "(untitled schema)")
+        title_lbl.setStyleSheet("font-size: 32px; font-weight: 600;")
+        title_row.addWidget(title_lbl)
+
+        if i.schema_version:
+            ver_lbl = QLabel(f"v{i.schema_version}")
+            ver_lbl.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_SECONDARY};")
+            title_row.addWidget(ver_lbl)
+
+        title_row.addStretch()
+        text_layout.addLayout(title_row)
+
+        # Description
         if i.description:
-            desc = QLabel(i.description)
-            desc.setWordWrap(True)
-            desc.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 13px; margin-top: 6px;")
-            layout.addWidget(desc)
-        return wrapper
+            desc_lbl = QLabel(i.description)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_DARK};")
+            text_layout.addWidget(desc_lbl)
 
-    def _build_identity_section(self, i: Any) -> QWidget:
-        frame = self._card("Identity")
-        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
-        meta = QLabel(
-            f"<span style='color:{colors.TEXT_SECONDARY}'>Schema SAID:</span> "
-            f"<code>{i.schema_said}</code>"
+        # SAID chip row: fingerprint icon + SAID text + copy button
+        said_row = QHBoxLayout()
+        said_row.setContentsMargins(0, 4, 0, 0)
+        said_row.setSpacing(6)
+        said_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        fp_lbl = QLabel()
+        fp_px = QPixmap(icons.ICON_SAID_FINGERPRINT)
+        if not fp_px.isNull():
+            fp_lbl.setPixmap(fp_px.scaled(
+                16, 16,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+
+        said_lbl = QLabel(i.schema_said)
+        said_lbl.setStyleSheet(
+            "font-family: monospace; font-size: 12px;"
+            f" color: {colors.TEXT_SECONDARY};"
         )
-        meta.setStyleSheet("font-size: 12px;")
-        meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(meta)
+        said_lbl.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+
+        copy_btn = LocksmithIconButton(
+            icons.ICON_COPY, tooltip="Copy SAID to clipboard", icon_size=16
+        )
+        _said = i.schema_said
+        copy_btn.clicked.connect(
+            lambda _c=False, s=_said: QGuiApplication.clipboard().setText(s)
+        )
+
+        said_row.addWidget(fp_lbl)
+        said_row.addWidget(said_lbl)
+        said_row.addWidget(copy_btn)
+        said_row.addStretch()
+        text_layout.addLayout(said_row)
+
+        outer_layout.addLayout(text_layout, 1)
         return frame
+
+    # ------------------------------------------------------------------
+    # §4.3 At-a-glance card
+    # ------------------------------------------------------------------
+
+    def _build_at_a_glance_card(self, i: Any) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sdAtAGlanceCard")
+        frame.setStyleSheet(
+            "QFrame#sdAtAGlanceCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdAtAGlanceCard QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(12)
+
+        title_lbl = QLabel("At a glance")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title_lbl)
+
+        grid = QGridLayout()
+        grid.setContentsMargins(0, 0, 0, 0)
+        grid.setSpacing(16)
+        grid.setColumnStretch(0, 1)
+        grid.setColumnStretch(1, 1)
+
+        # --- Cell 1: Variant (top-left) ---
+        if i.requires_nonce:
+            variant_icon_path = icons.ICON_VARIANT_PRIVATE
+            variant_primary = "Private"
+            variant_secondary = "Non-correlatable across presentations"
+        else:
+            variant_icon_path = icons.ICON_VARIANT_PUBLIC
+            variant_primary = "Public"
+            variant_secondary = "Correlatable by SAID across presentations"
+
+        variant_px = QPixmap(variant_icon_path)
+        variant_icon_lbl = QLabel()
+        if not variant_px.isNull():
+            variant_icon_lbl.setPixmap(variant_px.scaled(
+                32, 32,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        grid.addWidget(
+            self._glance_cell(variant_icon_lbl, variant_primary, variant_secondary),
+            0, 0,
+        )
+
+        # --- Cell 2: Targeting (top-right) ---
+        if i.requires_targeted:
+            targeting_icon_path = icons.ICON_TARGETING_TARGETED
+            targeting_primary = "Targeted to a holder"
+            targeting_secondary = "Commits to a specific issuee AID"
+        else:
+            targeting_icon_path = icons.ICON_TARGETING_UNTARGETED
+            targeting_primary = "Untargeted attestation"
+            targeting_secondary = "Public attestation; no specific holder"
+
+        targeting_px = QPixmap(targeting_icon_path)
+        targeting_icon_lbl = QLabel()
+        if not targeting_px.isNull():
+            targeting_icon_lbl.setPixmap(targeting_px.scaled(
+                32, 32,
+                Qt.AspectRatioMode.KeepAspectRatio,
+                Qt.TransformationMode.SmoothTransformation,
+            ))
+        grid.addWidget(
+            self._glance_cell(targeting_icon_lbl, targeting_primary, targeting_secondary),
+            0, 1,
+        )
+
+        # --- Cell 3: Disclosure tier (bottom-left) ---
+        sd = i.declared_sections
+        if sd.declares_aggregate:
+            tier = "selective"
+        elif sd.declares_attribute and sd.declares_edges and sd.declares_rules:
+            tier = "full"
+        elif sd.declares_attribute:
+            tier = "partial"
+        else:
+            tier = "metadata"
+
+        tier_descriptions = {
+            "metadata": "Identity-only references",
+            "partial": "Some attributes redactable in presentations",
+            "selective": "Individual attributes can be disclosed independently",
+            "full": "Every section disclosed in full form",
+        }
+        tier_widget = DisclosureTierWidget(tier=tier)
+        grid.addWidget(
+            self._glance_cell(tier_widget, tier.capitalize() + " disclosure", tier_descriptions[tier]),
+            1, 0,
+        )
+
+        # --- Cell 4: Section fingerprint (bottom-right) ---
+        fp_widget = SectionFingerprintWidget(
+            has_attribute=sd.declares_attribute,
+            has_aggregate=sd.declares_aggregate,
+            has_edges=sd.declares_edges,
+            has_rules=sd.declares_rules,
+        )
+        # Build primary label (what's declared)
+        declared_parts = []
+        if sd.declares_attribute:
+            declared_parts.append("Attribute")
+        if sd.declares_aggregate:
+            declared_parts.append("Aggregate")
+        if sd.declares_edges:
+            declared_parts.append("Edges")
+        if sd.declares_rules:
+            declared_parts.append("Rules")
+        fp_primary = " + ".join(declared_parts) if declared_parts else "No sections declared"
+
+        # Build secondary label (what's missing)
+        missing_parts = []
+        if not sd.declares_attribute and not sd.declares_aggregate:
+            missing_parts.append("no attribute")
+        if not sd.declares_aggregate:
+            missing_parts.append("no aggregate")
+        if not sd.declares_edges:
+            missing_parts.append("no edges")
+        if not sd.declares_rules:
+            missing_parts.append("no rules")
+        if missing_parts:
+            fp_secondary = "; ".join(part.capitalize() for part in missing_parts)
+        else:
+            fp_secondary = "All sections declared"
+
+        grid.addWidget(
+            self._glance_cell(fp_widget, fp_primary, fp_secondary),
+            1, 1,
+        )
+
+        layout.addLayout(grid)
+        return frame
+
+    def _glance_cell(self, icon_widget: QWidget, primary: str, secondary: str) -> QWidget:
+        """Build a single at-a-glance cell: [icon][text_block]."""
+        cell = QWidget()
+        cell.setObjectName("sdGlanceCell")
+        cell.setStyleSheet("QWidget#sdGlanceCell QLabel { background: transparent; }")
+        row = QHBoxLayout(cell)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(10)
+        row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        row.addWidget(icon_widget, 0, Qt.AlignmentFlag.AlignTop)
+
+        text_block = QVBoxLayout()
+        text_block.setContentsMargins(0, 0, 0, 0)
+        text_block.setSpacing(2)
+
+        primary_lbl = QLabel(primary)
+        primary_lbl.setStyleSheet(f"font-size: 13px; font-weight: 600; color: {colors.TEXT_DARK};")
+        text_block.addWidget(primary_lbl)
+
+        secondary_lbl = QLabel(secondary)
+        secondary_lbl.setWordWrap(True)
+        secondary_lbl.setStyleSheet(f"font-size: 11px; color: {colors.TEXT_SECONDARY};")
+        text_block.addWidget(secondary_lbl)
+
+        row.addLayout(text_block, 1)
+        return cell
+
+    # ------------------------------------------------------------------
+    # Attributes card (NEW — user's correction)
+    # ------------------------------------------------------------------
+
+    def _build_attributes_card(self, i: Any) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sdAttributesCard")
+        frame.setStyleSheet(
+            "QFrame#sdAttributesCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdAttributesCard QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel("Attributes")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title_lbl)
+
+        if not i.attribute_fields:
+            empty = QLabel("This schema declares no attribute fields.")
+            empty.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_SECONDARY}; font-style: italic;")
+            layout.addWidget(empty)
+            return frame
+
+        for field in i.attribute_fields:
+            layout.addWidget(self._build_attribute_field_row(field))
+
+        return frame
+
+    def _build_attribute_field_row(self, field: Any) -> QWidget:
+        """Render a single attribute field row with name, type chip, required indicator,
+        description, enum pills, and constraint summary."""
+        row = QFrame()
+        row.setObjectName("sdAttrRow")
+        row.setStyleSheet(
+            "QFrame#sdAttrRow { background: #F8F9FF; border-radius: 6px; }"
+            "QFrame#sdAttrRow QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setSpacing(4)
+
+        # Top row: name + type chip + required indicator
+        top_row = QHBoxLayout()
+        top_row.setContentsMargins(0, 0, 0, 0)
+        top_row.setSpacing(6)
+        top_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        name_lbl = QLabel(field.name)
+        name_lbl.setStyleSheet(f"font-size: 14px; font-weight: 600; color: {colors.TEXT_DARK};")
+        top_row.addWidget(name_lbl)
+
+        # Type chip
+        type_chip = QLabel(field.type_label)
+        type_chip.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_DARK};"
+            f" background-color: {colors.BACKGROUND_NEUTRAL}; border-radius: 10px;"
+            f" padding: 1px 6px;"
+        )
+        top_row.addWidget(type_chip)
+
+        # Required indicator
+        if field.required:
+            req_chip = QLabel("required")
+            req_chip.setStyleSheet(
+                f"font-size: 11px; color: {colors.DANGER};"
+                f" background-color: transparent;"
+                f" font-weight: 600; padding: 0px 2px;"
+            )
+            top_row.addWidget(req_chip)
+
+        top_row.addStretch()
+        layout.addLayout(top_row)
+
+        # Description
+        if field.description:
+            desc_lbl = QLabel(field.description)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+            layout.addWidget(desc_lbl)
+
+        # Enum values as pills (max 6 visible; overflow shows "+N more")
+        if field.enum_values:
+            enum_row = QHBoxLayout()
+            enum_row.setContentsMargins(0, 2, 0, 0)
+            enum_row.setSpacing(4)
+            enum_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+            visible = field.enum_values[:6]
+            overflow = len(field.enum_values) - len(visible)
+            for val in visible:
+                chip = QLabel(html.escape(val))
+                chip.setStyleSheet(
+                    f"font-size: 11px; color: {colors.TEXT_DARK};"
+                    f" background-color: {colors.BACKGROUND_SELECTION}; border-radius: 8px;"
+                    f" padding: 1px 6px;"
+                )
+                enum_row.addWidget(chip)
+            if overflow > 0:
+                more_lbl = QLabel(f"+{overflow} more")
+                more_lbl.setStyleSheet(f"font-size: 11px; color: {colors.TEXT_SECONDARY};")
+                enum_row.addWidget(more_lbl)
+            enum_row.addStretch()
+            enum_wrapper = QWidget()
+            enum_wrapper.setLayout(enum_row)
+            layout.addWidget(enum_wrapper)
+
+        # Constraint summary
+        constraints: list[str] = []
+        if field.min_length is not None and field.max_length is not None and field.min_length == field.max_length:
+            constraints.append(f"{field.min_length} characters")
+        elif field.min_length is not None:
+            constraints.append(f"min {field.min_length} characters")
+        elif field.max_length is not None:
+            constraints.append(f"max {field.max_length} characters")
+        if field.min_items is not None:
+            constraints.append(f"at least {field.min_items} items")
+        if field.max_items is not None:
+            constraints.append(f"at most {field.max_items} items")
+        # Include format only if it didn't feed into type_label
+        fmt = field.format
+        if fmt and field.type_label not in ("date", "datetime", "URL"):
+            constraints.append(f"format: {fmt}")
+
+        if constraints:
+            constraint_lbl = QLabel(", ".join(constraints))
+            constraint_lbl.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            layout.addWidget(constraint_lbl)
+
+        return row
+
+    # ------------------------------------------------------------------
+    # §4.4 Chain of authority card (stub for B3b)
+    # ------------------------------------------------------------------
+
+    def _build_chain_of_authority_card(self, i: Any, vault: Any) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sdChainCard")
+        frame.setStyleSheet(
+            "QFrame#sdChainCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdChainCard QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        title_lbl = QLabel("Chain of authority")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        layout.addWidget(title_lbl)
+
+        n = len(i.edge_requirements)
+        if n == 0:
+            status_lbl = QLabel("This schema declares no edges to other schemas.")
+        else:
+            status_lbl = QLabel(
+                f"This schema declares {n} edge requirement(s)."
+            )
+        status_lbl.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_SECONDARY};")
+        layout.addWidget(status_lbl)
+
+        # Render existing edge-requirement list (B3b will replace with mini-graph)
+        if i.edge_requirements:
+            for edge in i.edge_requirements:
+                layout.addWidget(self._build_edge_row(edge, vault))
+
+        return frame
+
+    def _build_edge_row(self, edge: Any, vault: Any) -> QWidget:
+        """Render a single edge requirement row (shared between chain card and old edges section)."""
+        row = QWidget()
+        row.setObjectName("sdEdgeRow")
+        row_layout = QVBoxLayout(row)
+        row_layout.setContentsMargins(10, 8, 10, 8)
+        row_layout.setSpacing(2)
+        row.setStyleSheet(
+            "QWidget#sdEdgeRow { background: #F8F9FF; border-radius: 4px; }"
+            "QWidget#sdEdgeRow QLabel { background: transparent; }"
+        )
+        head = QLabel(f"<b>{edge.name}</b>")
+        head.setStyleSheet("font-size: 13px;")
+        row_layout.addWidget(head)
+        if edge.description and edge.description != edge.name:
+            desc = QLabel(edge.description)
+            desc.setWordWrap(True)
+            desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+            row_layout.addWidget(desc)
+        if edge.target_schema_said:
+            known = vault.hby.db.schema.get(keys=(edge.target_schema_said,)) is not None
+            if known:
+                link = QLabel(
+                    f"target schema: <a href=\"#nav\" style=\"color:#3a5fff;text-decoration:none;\">"
+                    f"<code>{edge.target_schema_said}</code></a>"
+                )
+                link.setOpenExternalLinks(False)
+                link.linkActivated.connect(
+                    lambda _l, said=edge.target_schema_said: self.show_schema_detail_requested.emit(said)
+                )
+            else:
+                link = QLabel(
+                    f"target schema: <code>{edge.target_schema_said}</code> "
+                    f"<span style='color:{colors.TEXT_SECONDARY}'>(not in this wallet)</span>"
+                )
+            link.setWordWrap(True)
+            link.setStyleSheet("font-size: 12px;")
+            link.setTextInteractionFlags(
+                Qt.TextInteractionFlag.TextSelectableByMouse
+                | Qt.TextInteractionFlag.LinksAccessibleByMouse
+            )
+            row_layout.addWidget(link)
+        if edge.operator_locked:
+            op = QLabel(f"operator locked: <b>{edge.operator_locked}</b>")
+            op.setStyleSheet("font-size: 12px;")
+            row_layout.addWidget(op)
+        elif edge.operator_constraint:
+            op = QLabel(f"operator ∈ {{{', '.join(edge.operator_constraint)}}}")
+            op.setStyleSheet("font-size: 12px;")
+            row_layout.addWidget(op)
+        else:
+            op = QLabel(
+                "operator: (none constrained — defaults to <b>I2I</b> for targeted ACDCs)"
+            )
+            op.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+            row_layout.addWidget(op)
+        return row
+
+    # ------------------------------------------------------------------
+    # §4.5 My note annotation card
+    # ------------------------------------------------------------------
+
+    def _build_annotation_card(self, i: Any) -> QWidget:
+        frame = QFrame()
+        frame.setObjectName("sdAnnotationCard")
+        frame.setStyleSheet(
+            "QFrame#sdAnnotationCard { background-color: white; border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdAnnotationCard QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(frame)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(10)
+
+        # Title row: "My note" on left, "Edit annotation" button on right
+        title_row = QHBoxLayout()
+        title_row.setContentsMargins(0, 0, 0, 0)
+        title_row.setSpacing(10)
+
+        title_lbl = QLabel("My note")
+        title_lbl.setStyleSheet("font-size: 14px; font-weight: 600;")
+        title_row.addWidget(title_lbl)
+        title_row.addStretch()
+
+        target_label = i.title or i.schema_said[:24]
+        edit_btn = LocksmithInvertedButton("Edit annotation")
+        edit_btn.clicked.connect(
+            lambda: self.edit_annotation_clicked.emit("schema", i.schema_said, target_label)
+        )
+        title_row.addWidget(edit_btn)
+        layout.addLayout(title_row)
+
+        # Load annotation
+        ann = None
+        if self._db is not None:
+            try:
+                ann = self._db.get_annotation(AnnotationKind.SCHEMA, i.schema_said)
+            except Exception:
+                logger.exception("Failed to load annotation")
+
+        if ann is None or not ann.note:
+            empty = QLabel("Add a note about how you use this schema")
+            empty.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_DARK};")
+            layout.addWidget(empty)
+        else:
+            note = QLabel(ann.note)
+            note.setTextFormat(Qt.TextFormat.PlainText)
+            note.setWordWrap(True)
+            note.setStyleSheet("font-size: 13px;")
+            note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
+            layout.addWidget(note)
+            if ann.tags:
+                tags_row = QHBoxLayout()
+                tags_row.setContentsMargins(0, 2, 0, 0)
+                tags_row.setSpacing(4)
+                tags_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
+                for tag in ann.tags:
+                    chip = QLabel(html.escape(tag))
+                    chip.setStyleSheet(
+                        f"font-size: 11px; color: {colors.TEXT_DARK};"
+                        f" background-color: {colors.BACKGROUND_SELECTION}; border-radius: 8px;"
+                        f" padding: 1px 6px;"
+                    )
+                    tags_row.addWidget(chip)
+                tags_row.addStretch()
+                tags_wrapper = QWidget()
+                tags_wrapper.setLayout(tags_row)
+                layout.addWidget(tags_wrapper)
+
+        return frame
+
+    # ------------------------------------------------------------------
+    # §4.6 Developer details — old section builders (used inside disclosure)
+    # ------------------------------------------------------------------
 
     def _build_requirements_section(self, i: Any) -> QWidget:
         frame = self._card("Required ACDC variant")
@@ -632,110 +1305,6 @@ class SchemaDetailPage(QWidget):
             )
             keys.setStyleSheet("font-size: 12px; margin-top: 6px;")
             layout.addWidget(keys)
-        return frame
-
-    def _build_edges_section(self, i: Any, vault: Any) -> QWidget:
-        frame = self._card("Edge requirements")
-        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
-        if not i.edge_requirements:
-            empty = QLabel("(no edges declared)")
-            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
-            layout.addWidget(empty)
-            return frame
-        for edge in i.edge_requirements:
-            row = QWidget()
-            row.setObjectName("sdEdgeRow")
-            row_layout = QVBoxLayout(row)
-            row_layout.setContentsMargins(10, 8, 10, 8)
-            row_layout.setSpacing(2)
-            row.setStyleSheet(
-                "QWidget#sdEdgeRow { background: #F8F9FF; border-radius: 4px; }"
-                "QWidget#sdEdgeRow QLabel { background: transparent; }"
-            )
-            head = QLabel(f"<b>{edge.name}</b>")
-            head.setStyleSheet("font-size: 13px;")
-            row_layout.addWidget(head)
-            if edge.description and edge.description != edge.name:
-                desc = QLabel(edge.description)
-                desc.setWordWrap(True)
-                desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-                row_layout.addWidget(desc)
-            if edge.target_schema_said:
-                # Make the target schema link clickable if it's known to this wallet
-                known = vault.hby.db.schema.get(keys=(edge.target_schema_said,)) is not None
-                if known:
-                    link = QLabel(
-                        f"target schema: <a href=\"#nav\" style=\"color:#3a5fff;text-decoration:none;\">"
-                        f"<code>{edge.target_schema_said}</code></a>"
-                    )
-                    link.setOpenExternalLinks(False)
-                    link.linkActivated.connect(
-                        lambda _l, said=edge.target_schema_said: self.show_schema_detail_requested.emit(said)
-                    )
-                else:
-                    link = QLabel(
-                        f"target schema: <code>{edge.target_schema_said}</code> "
-                        f"<span style='color:{colors.TEXT_SECONDARY}'>(not in this wallet)</span>"
-                    )
-                link.setWordWrap(True)
-                link.setStyleSheet("font-size: 12px;")
-                link.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse | Qt.TextInteractionFlag.LinksAccessibleByMouse)
-                row_layout.addWidget(link)
-            if edge.operator_locked:
-                op = QLabel(f"operator locked: <b>{edge.operator_locked}</b>")
-                op.setStyleSheet("font-size: 12px;")
-                row_layout.addWidget(op)
-            elif edge.operator_constraint:
-                op = QLabel(f"operator ∈ {{{', '.join(edge.operator_constraint)}}}")
-                op.setStyleSheet("font-size: 12px;")
-                row_layout.addWidget(op)
-            else:
-                op = QLabel(
-                    "operator: (none constrained — defaults to <b>I2I</b> for targeted ACDCs)"
-                )
-                op.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-                row_layout.addWidget(op)
-            layout.addWidget(row)
-        return frame
-
-    def _build_annotation_section(self, i: Any) -> QWidget:
-        frame = self._card("Annotation")
-        layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
-
-        ann = None
-        if self._db is not None:
-            try:
-                ann = self._db.get_annotation(AnnotationKind.SCHEMA, i.schema_said)
-            except Exception:
-                logger.exception("Failed to load annotation")
-
-        if ann is None or not ann.note:
-            empty = QLabel("(no note yet)")
-            empty.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; font-style: italic;")
-            layout.addWidget(empty)
-        else:
-            note = QLabel(ann.note)
-            note.setTextFormat(Qt.TextFormat.PlainText)
-            note.setWordWrap(True)
-            note.setStyleSheet("font-size: 13px;")
-            note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            layout.addWidget(note)
-            if ann.tags:
-                tags_label = QLabel(
-                    "Tags: " + " ".join(
-                        f"<code style='background:#EEF;padding:1px 4px;border-radius:3px;'>{html.escape(t)}</code>"
-                        for t in ann.tags
-                    )
-                )
-                tags_label.setStyleSheet("font-size: 12px; margin-top: 4px;")
-                layout.addWidget(tags_label)
-
-        edit_btn = LocksmithInvertedButton("Edit annotation")
-        target_label = i.title or i.schema_said[:24]
-        edit_btn.clicked.connect(
-            lambda: self.edit_annotation_clicked.emit("schema", i.schema_said, target_label)
-        )
-        layout.addWidget(edit_btn)
         return frame
 
     def _build_raw_json_section(self, i: Any) -> QWidget:
