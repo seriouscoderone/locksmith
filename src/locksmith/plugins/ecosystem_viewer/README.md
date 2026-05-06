@@ -162,32 +162,38 @@ Each layer has one job:
 - **Plugin pages**: render everything the user wants to see, using all
   the layers below.
 
-## What's in this initial commit
-
-The smallest cohesive thing that establishes the architecture and is
-useful on its own:
+## What's in this codebase as of stage 3
 
 - `locksmith.acdc.inspector` — full domain classification for ACDC
   instances and schemas, spec-grounded (citations in module docstring).
-- The plugin scaffold — registers a sidebar entry and a basic page that
-  enumerates all schemas currently in the wallet and renders the
-  inspector's classification of each. Same for known issuer AIDs from
-  contacts.
-- This README documenting the design.
+  Tested via `tests/test_acdc_inspector.py`.
+- The plugin's overview page enumerates every schema and contact in
+  the wallet with their inspector classifications.
+- The schema detail page renders the full inspection result and
+  supports intra-plugin navigation between linked schemas via edges
+  whose target is also in the wallet.
+- `EcosystemBaser` (LMDB, per-vault, plugin-owned) stores user
+  ecosystem groupings, annotations, and discovery history. Tested
+  via `tests/test_ecosystem_baser.py`.
+- The overview adds a "My ecosystems" section with create + browse.
+- EcosystemDetailPage supports adding/removing schemas and AIDs as
+  members and deleting ecosystems entirely.
+- SchemaDetailPage supports per-schema annotations.
+- This README documents the design.
 
-What's deliberately deferred:
+## Stages remaining
 
-- `locksmith.acdc.builder` — the write-side companion. Useful when we
-  start authoring credentials programmatically (Skill output, automated
-  fixtures); not needed for the viewer's read path.
-- `EcosystemBaser` — the plugin's LMDB store for groupings,
-  annotations, discovery history. Useful once the viewer has multiple
-  pages that benefit from cross-page state.
-- Ecosystem graph view — directed-graph visualization of edge
-  relationships between schemas. Most valuable feature; non-trivial UI
-  work.
-- Ecosystem editing UI — assigning schemas/AIDs to user-named
-  ecosystems, annotating them, browsing by ecosystem.
+- **Stage 4: Ecosystem graph view** — directed graph of edge
+  relationships between schemas (and optionally between issuer AIDs).
+  See the appendix in `docs/superpowers/plans/2026-05-05-ecosystem-viewer-stages-2-3.md`
+  for the outline approach.
+- **Stage 5: Cross-issuer view** — "everyone who issues schema X."
+- **Stage 6: First-person view** — given my held credentials, what
+  can I do in this ecosystem.
+- **Stage 7: ACDC builder** — `locksmith.acdc.builder` for authoring
+  credentials in domain language.
+- **Stage 8: Ecosystem export/import** — share ecosystem definitions
+  across wallets.
 
 ## Roadmap
 
