@@ -1000,11 +1000,11 @@ class SchemaDetailPage(QWidget):
         row = QFrame()
         row.setObjectName("sdAttrRow")
         row.setStyleSheet(
-            "QFrame#sdAttrRow { background: #F8F9FF; border-radius: 6px; }"
+            "QFrame#sdAttrRow { background: transparent; }"
             "QFrame#sdAttrRow QLabel { background: transparent; }"
         )
         layout = QVBoxLayout(row)
-        layout.setContentsMargins(12, 10, 12, 10)
+        layout.setContentsMargins(0, 6, 0, 6)
         layout.setSpacing(4)
 
         # Top row: name + type chip + required indicator
@@ -1147,10 +1147,10 @@ class SchemaDetailPage(QWidget):
         row = QWidget()
         row.setObjectName("sdEdgeRow")
         row_layout = QVBoxLayout(row)
-        row_layout.setContentsMargins(10, 8, 10, 8)
+        row_layout.setContentsMargins(0, 6, 0, 6)
         row_layout.setSpacing(2)
         row.setStyleSheet(
-            "QWidget#sdEdgeRow { background: #F8F9FF; border-radius: 4px; }"
+            "QWidget#sdEdgeRow { background: transparent; }"
             "QWidget#sdEdgeRow QLabel { background: transparent; }"
         )
         head = QLabel(f"<b>{edge.name}</b>")
