@@ -14,10 +14,9 @@ Subsequent commits add ecosystem grouping UI, the directed graph view, etc.
 """
 from __future__ import annotations
 
+import html
 import json
 from typing import TYPE_CHECKING, Any
-
-from locksmith.plugins.ecosystem_viewer.db import AnnotationKind
 
 if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
@@ -36,6 +35,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.acdc import inspect_acdc_schema
+from locksmith.plugins.ecosystem_viewer.db import AnnotationKind
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithIconButton
@@ -695,13 +695,17 @@ class SchemaDetailPage(QWidget):
             layout.addWidget(empty)
         else:
             note = QLabel(ann.note)
+            note.setTextFormat(Qt.TextFormat.PlainText)
             note.setWordWrap(True)
             note.setStyleSheet("font-size: 13px;")
             note.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
             layout.addWidget(note)
             if ann.tags:
                 tags_label = QLabel(
-                    "Tags: " + " ".join(f"<code style='background:#EEF;padding:1px 4px;border-radius:3px;'>{t}</code>" for t in ann.tags)
+                    "Tags: " + " ".join(
+                        f"<code style='background:#EEF;padding:1px 4px;border-radius:3px;'>{html.escape(t)}</code>"
+                        for t in ann.tags
+                    )
                 )
                 tags_label.setStyleSheet("font-size: 12px; margin-top: 4px;")
                 layout.addWidget(tags_label)

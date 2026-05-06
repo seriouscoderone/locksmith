@@ -6,6 +6,7 @@ Modal dialogs used by the ecosystem viewer pages.
 """
 from __future__ import annotations
 
+import html
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
@@ -184,7 +185,7 @@ class EditAnnotationDialog(LocksmithDialog):
 
         layout.addSpacing(12)
 
-        target = QLabel(f"<b>Annotating:</b> {target_label}")
+        target = QLabel(f"<b>Annotating:</b> {html.escape(target_label)}")
         target.setWordWrap(True)
         target.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
         layout.addWidget(target)
