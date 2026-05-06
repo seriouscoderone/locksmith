@@ -718,17 +718,17 @@ class SchemaDetailPage(QWidget):
         outer_layout.setSpacing(16)
         outer_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # 56px variant glyph
+        # 72px variant glyph (sized for hero presence per design §4.2)
         icon_path = icons.ICON_VARIANT_PRIVATE if i.requires_nonce else icons.ICON_VARIANT_PUBLIC
         glyph_label = QLabel()
         px = QPixmap(icon_path)
         if not px.isNull():
             glyph_label.setPixmap(px.scaled(
-                56, 56,
+                72, 72,
                 Qt.AspectRatioMode.KeepAspectRatio,
                 Qt.TransformationMode.SmoothTransformation,
             ))
-        glyph_label.setFixedSize(56, 56)
+        glyph_label.setFixedSize(72, 72)
         glyph_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
         outer_layout.addWidget(glyph_label, 0, Qt.AlignmentFlag.AlignTop)
 
@@ -1055,7 +1055,8 @@ class SchemaDetailPage(QWidget):
             visible = field.enum_values[:6]
             overflow = len(field.enum_values) - len(visible)
             for val in visible:
-                chip = QLabel(html.escape(val))
+                chip = QLabel(val)
+                chip.setTextFormat(Qt.TextFormat.PlainText)
                 chip.setStyleSheet(
                     f"font-size: 11px; color: {colors.TEXT_DARK};"
                     f" background-color: {colors.BACKGROUND_SELECTION}; border-radius: 8px;"
@@ -1071,18 +1072,26 @@ class SchemaDetailPage(QWidget):
             enum_wrapper.setLayout(enum_row)
             layout.addWidget(enum_wrapper)
 
-        # Constraint summary
+        # Constraint summary (with pluralization)
+        def _plural(n: int, singular: str, plural: str) -> str:
+            return singular if n == 1 else plural
+
         constraints: list[str] = []
         if field.min_length is not None and field.max_length is not None and field.min_length == field.max_length:
-            constraints.append(f"{field.min_length} characters")
+            n = field.min_length
+            constraints.append(f"{n} {_plural(n, 'character', 'characters')}")
         elif field.min_length is not None:
-            constraints.append(f"min {field.min_length} characters")
+            n = field.min_length
+            constraints.append(f"min {n} {_plural(n, 'character', 'characters')}")
         elif field.max_length is not None:
-            constraints.append(f"max {field.max_length} characters")
+            n = field.max_length
+            constraints.append(f"max {n} {_plural(n, 'character', 'characters')}")
         if field.min_items is not None:
-            constraints.append(f"at least {field.min_items} items")
+            n = field.min_items
+            constraints.append(f"at least {n} {_plural(n, 'item', 'items')}")
         if field.max_items is not None:
-            constraints.append(f"at most {field.max_items} items")
+            n = field.max_items
+            constraints.append(f"at most {n} {_plural(n, 'item', 'items')}")
         # Include format only if it didn't feed into type_label
         fmt = field.format
         if fmt and field.type_label not in ("date", "datetime", "URL"):
@@ -1249,7 +1258,8 @@ class SchemaDetailPage(QWidget):
                 tags_row.setSpacing(4)
                 tags_row.setAlignment(Qt.AlignmentFlag.AlignLeft)
                 for tag in ann.tags:
-                    chip = QLabel(html.escape(tag))
+                    chip = QLabel(tag)
+                    chip.setTextFormat(Qt.TextFormat.PlainText)
                     chip.setStyleSheet(
                         f"font-size: 11px; color: {colors.TEXT_DARK};"
                         f" background-color: {colors.BACKGROUND_SELECTION}; border-radius: 8px;"
