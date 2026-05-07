@@ -32,8 +32,11 @@ from PySide6.QtGui import (
     QPainter,
     QPainterPath,
     QPen,
+    QPixmap,
     QPolygonF,
 )
+
+from locksmith.acdc import icons as acdc_icons
 from PySide6.QtWidgets import (
     QGraphicsItem,
     QGraphicsObject,
@@ -347,11 +350,15 @@ class SchemaNode(QGraphicsObject):
     def mousePressEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.clicked.emit(self.said)
+            event.accept()  # prevent the view's ScrollHandDrag from claiming this
+            return
         super().mousePressEvent(event)
 
     def mouseDoubleClickEvent(self, event):
         if event.button() == Qt.MouseButton.LeftButton:
             self.double_clicked.emit(self.said)
+            event.accept()
+            return
         super().mouseDoubleClickEvent(event)
 
     def set_selected(self, selected: bool) -> None:
@@ -373,6 +380,12 @@ class SchemaNode(QGraphicsObject):
         """
         x = NODE_WIDTH + NOTCH_DEPTH if self.is_targeted else NODE_WIDTH
         return self.mapToScene(QPointF(x, NODE_HEIGHT / 2))
+
+    def top_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(NODE_WIDTH / 2, 0))
+
+    def bottom_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(NODE_WIDTH / 2, NODE_HEIGHT))
 
 
 # ---------------------------------------------------------------------------
@@ -508,3 +521,246 @@ class EdgeLine(QGraphicsPathItem):
         painter.setPen(QPen(QColor(colors.TEXT_DARK)))
         painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, text)
         painter.restore()
+
+
+# ---------------------------------------------------------------------------
+# IssuerNode
+# ---------------------------------------------------------------------------
+
+ISSUER_NODE_DIAMETER = 56
+ISSUER_LABEL_HEIGHT = 18    # space below the circle for the alias label
+ISSUER_LABEL_GAP = 4        # gap between circle and alias
+ISSUER_TOTAL_HEIGHT = ISSUER_NODE_DIAMETER + ISSUER_LABEL_GAP + ISSUER_LABEL_HEIGHT
+
+
+def _tint_pixmap(path: str, size: int, color: str) -> QPixmap:
+    """Load an SVG resource at `size`×`size` and tint it via SourceIn."""
+    px = QPixmap(path)
+    if px.isNull():
+        return px
+    px = px.scaled(
+        size, size,
+        Qt.AspectRatioMode.KeepAspectRatio,
+        Qt.TransformationMode.SmoothTransformation,
+    )
+    out = QPixmap(px.size())
+    out.fill(Qt.GlobalColor.transparent)
+    p = QPainter(out)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
+    p.drawPixmap(0, 0, px)
+    p.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
+    p.fillRect(out.rect(), QColor(color))
+    p.end()
+    return out
+
+
+class IssuerNode(QGraphicsObject):
+    """An issuer-AID node: 56px circle with sigil glyph, alias label below,
+    'sn N' badge bottom-right of the circle. Per design §5.3.
+
+    Self-AIDs (the wallet's own habs) render with PRIMARY-orange sigil
+    and ring; remote AIDs use TEXT_DARK sigil and BORDER ring.
+    """
+
+    from PySide6.QtCore import Signal
+    clicked = Signal(str)         # emits AID
+    double_clicked = Signal(str)  # emits AID
+
+    def __init__(
+        self,
+        *,
+        aid: str,
+        alias: str,
+        sn: int | None = None,
+        is_self: bool = False,
+        parent: QGraphicsItem | None = None,
+    ):
+        super().__init__(parent)
+        self.aid = aid
+        self.alias = alias
+        self.sn = sn
+        self.is_self = is_self
+
+        self._hovered = False
+        self._selected = False
+
+        self.setAcceptHoverEvents(True)
+        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.setToolTip(f"{alias}\n{aid[:20]}…" if len(aid) > 22 else f"{alias}\n{aid}")
+
+        sigil_color = colors.PRIMARY if is_self else colors.TEXT_DARK
+        # Sigil sized to inner circle area (~60% of diameter).
+        self._sigil_px = _tint_pixmap(
+            acdc_icons.ICON_ISSUER_SIGIL,
+            int(ISSUER_NODE_DIAMETER * 0.6),
+            sigil_color,
+        )
+
+    def boundingRect(self) -> QRectF:
+        margin = 2
+        return QRectF(
+            -margin,
+            -margin,
+            ISSUER_NODE_DIAMETER + 2 * margin,
+            ISSUER_TOTAL_HEIGHT + 2 * margin,
+        )
+
+    def shape(self) -> QPainterPath:
+        # Hit area = the circle; alias label is decorative.
+        path = QPainterPath()
+        path.addEllipse(0, 0, ISSUER_NODE_DIAMETER, ISSUER_NODE_DIAMETER)
+        return path
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        ring_color = QColor(colors.PRIMARY) if self.is_self else QColor(colors.BORDER)
+        if self._selected:
+            ring_color = QColor(colors.BLUE_BORDER)
+            ring_width = 2.5
+        elif self._hovered:
+            ring_color = QColor(colors.PRIMARY)
+            ring_width = 1.5
+        else:
+            ring_width = 1.5
+
+        # Outer ring
+        painter.setPen(QPen(ring_color, ring_width))
+        painter.setBrush(QColor(colors.BACKGROUND_CONTENT))
+        d = ISSUER_NODE_DIAMETER
+        painter.drawEllipse(QRectF(0, 0, d, d))
+
+        # Sigil centered
+        if not self._sigil_px.isNull():
+            sx = (d - self._sigil_px.width()) / 2
+            sy = (d - self._sigil_px.height()) / 2
+            painter.drawPixmap(QPointF(sx, sy), self._sigil_px)
+
+        # 'sn N' badge (bottom-right of circle)
+        if self.sn is not None:
+            badge_text = f"sn {self.sn}"
+            font = QFont()
+            font.setPointSize(8)
+            font.setBold(True)
+            painter.setFont(font)
+            fm = QFontMetrics(font)
+            tw = fm.horizontalAdvance(badge_text)
+            th = fm.height()
+            pad_x, pad_y = 4, 1
+            badge_rect = QRectF(
+                d - tw - 2 * pad_x,
+                d - th - 2 * pad_y,
+                tw + 2 * pad_x,
+                th + 2 * pad_y,
+            )
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(QColor(colors.TEXT_DARK))
+            painter.drawRoundedRect(badge_rect, th / 2, th / 2)
+            painter.setPen(QPen(QColor("white")))
+            painter.drawText(badge_rect, Qt.AlignmentFlag.AlignCenter, badge_text)
+
+        # Alias label below the circle, centered, ellipsized to fit
+        font = QFont()
+        font.setPointSize(10)
+        font.setBold(True)
+        painter.setFont(font)
+        fm = QFontMetrics(font)
+        max_chars_w = ISSUER_NODE_DIAMETER + 16
+        text = fm.elidedText(self.alias or "", Qt.TextElideMode.ElideRight, max_chars_w)
+        label_rect = QRectF(
+            -8,  # allow slight overflow
+            d + ISSUER_LABEL_GAP,
+            d + 16,
+            ISSUER_LABEL_HEIGHT,
+        )
+        painter.setPen(QPen(QColor(colors.TEXT_DARK)))
+        painter.drawText(label_rect, Qt.AlignmentFlag.AlignCenter, text)
+
+    # --- Interaction ------------------------------------------------------
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit(self.aid)
+            event.accept()
+            return
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit(self.aid)
+            event.accept()
+            return
+        super().mouseDoubleClickEvent(event)
+
+    def set_selected(self, selected: bool) -> None:
+        if self._selected != selected:
+            self._selected = selected
+            self.update()
+
+    # --- Anchors -----------------------------------------------------------
+
+    def top_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(ISSUER_NODE_DIAMETER / 2, 0))
+
+    def bottom_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(ISSUER_NODE_DIAMETER / 2, ISSUER_NODE_DIAMETER))
+
+    def left_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(0, ISSUER_NODE_DIAMETER / 2))
+
+    def right_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(ISSUER_NODE_DIAMETER, ISSUER_NODE_DIAMETER / 2))
+
+
+# ---------------------------------------------------------------------------
+# MembershipEdge — schema → issuer (or vice versa) dotted line
+# ---------------------------------------------------------------------------
+
+
+class MembershipEdge(QGraphicsPathItem):
+    """A dotted line representing 'this issuer is a member of an ecosystem
+    that uses this schema'. Visually distinct from chain-of-authority edges
+    (§5.4): dotted, no arrowhead, lighter color.
+
+    Connects schema.bottom_anchor() → issuer.top_anchor() by default.
+    """
+
+    def __init__(
+        self,
+        source: Any,  # SchemaNode or IssuerNode
+        target: Any,  # opposite of source
+        parent: QGraphicsItem | None = None,
+    ):
+        super().__init__(parent)
+        self.source = source
+        self.target = target
+        self.setZValue(-2)  # behind chain edges
+        self.setAcceptHoverEvents(False)
+        self.refresh()
+
+    def refresh(self) -> None:
+        path = QPainterPath()
+        # Use bottom of source, top of target if source is above target.
+        sp = self.source.bottom_anchor() if hasattr(self.source, "bottom_anchor") else self.source.right_anchor()
+        tp = self.target.top_anchor() if hasattr(self.target, "top_anchor") else self.target.left_anchor()
+        path.moveTo(sp)
+        path.lineTo(tp)
+        self.setPath(path)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor(colors.TEXT_SECONDARY), 1.0)
+        pen.setStyle(Qt.PenStyle.DotLine)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(self.path())

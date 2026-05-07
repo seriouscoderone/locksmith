@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
+    QButtonGroup,
     QFrame,
     QGraphicsScene,
     QGraphicsView,
@@ -31,7 +32,9 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QPlainTextEdit,
+    QPushButton,
     QScrollArea,
+    QStackedWidget,
     QToolButton,
     QVBoxLayout,
     QWidget,
@@ -47,6 +50,14 @@ from locksmith.plugins.ecosystem_viewer.graph_items import (
     NODE_WIDTH,
     NOTCH_DEPTH,
     SchemaNode,
+)
+from locksmith.plugins.ecosystem_viewer.graph_view import EcosystemGraphView
+from locksmith.plugins.ecosystem_viewer.overview_cards import (
+    CreateEcosystemTile,
+    EcosystemTile,
+    EmptyStateCard,
+    IssuerCard,
+    SchemaCard,
 )
 from locksmith.plugins.ecosystem_viewer.widgets import (
     DisclosureTierWidget,
@@ -68,8 +79,9 @@ class EcosystemViewerPage(QWidget):
     """List view: every schema + every known AID + their inspector classifications."""
 
     show_schema_detail_requested = Signal(str)  # emits schema SAID
-    show_ecosystem_detail_requested = Signal(str)  # emits ecosystem name (NEW)
-    create_ecosystem_clicked = Signal()             # NEW: from "Create" button
+    show_ecosystem_detail_requested = Signal(str)  # emits ecosystem name
+    show_issuer_requested = Signal(str, bool)   # emits (aid, is_self)
+    create_ecosystem_clicked = Signal()
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -128,23 +140,42 @@ class EcosystemViewerPage(QWidget):
         while self._content_layout.count() > self._sections_anchor_index + 1:
             item = self._content_layout.takeAt(self._sections_anchor_index)
             widget = item.widget() if item else None
+            layout = item.layout() if item else None
             if widget is not None:
                 widget.deleteLater()
+            elif layout is not None:
+                # Recursively delete child widgets, then drop the layout.
+                self._purge_layout(layout)
 
         vault = getattr(self.app, "vault", None)
         if vault is None or vault.hby is None:
-            empty = self._build_status_message("No vault open. Unlock a vault to begin exploring.")
+            empty = EmptyStateCard("Unlock a vault to see your map.")
             self._content_layout.insertWidget(self._sections_anchor_index, empty)
             return
 
+        # Region 1: hero ribbon (My ecosystems)
         ecosystems_section = self._build_ecosystems_section()
         self._content_layout.insertWidget(self._sections_anchor_index, ecosystems_section)
 
-        schema_section = self._build_schema_section(vault)
-        self._content_layout.insertWidget(self._sections_anchor_index + 1, schema_section)
+        # Region 2: two-column index (schemas | issuers)
+        index_row = QHBoxLayout()
+        index_row.setContentsMargins(0, 0, 0, 0)
+        index_row.setSpacing(18)
+        index_row.addWidget(self._build_schema_section(vault), 1)
+        index_row.addWidget(self._build_contacts_section(vault), 1)
+        self._content_layout.insertLayout(self._sections_anchor_index + 1, index_row)
 
-        contacts_section = self._build_contacts_section(vault)
-        self._content_layout.insertWidget(self._sections_anchor_index + 2, contacts_section)
+    @staticmethod
+    def _purge_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.deleteLater()
+            else:
+                child = item.layout() if item else None
+                if child is not None:
+                    EcosystemViewerPage._purge_layout(child)
 
     # ------------------------------------------------------------------
     # Static header
@@ -156,12 +187,7 @@ class EcosystemViewerPage(QWidget):
         self._content_layout.addWidget(title)
 
         intro = QLabel(
-            "Domain-layer view of everything this wallet currently knows. "
-            "Schemas come from `vault.hby.db.schema` (resolved via OOBI or imported). "
-            "Issuer AIDs come from contacts (`vault.org`). Each is classified using "
-            "the ACDC spec primitives — variant, targeting, disclosure tier, edge "
-            "requirements — via `locksmith.acdc.inspector`. See the plugin README for "
-            "the full vision and roadmap."
+            "Your map of schemas, issuers, and the credentials that flow between them."
         )
         intro.setWordWrap(True)
         intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
@@ -175,11 +201,6 @@ class EcosystemViewerPage(QWidget):
         section = self._build_card(title="My ecosystems")
         layout: QVBoxLayout = section.layout()  # type: ignore[assignment]
 
-        # Top row: count + Create button
-        header_row = QWidget()
-        header_layout = QHBoxLayout(header_row)
-        header_layout.setContentsMargins(0, 0, 0, 0)
-
         if self._db is None:
             ecosystems = []
         else:
@@ -189,61 +210,41 @@ class EcosystemViewerPage(QWidget):
                 logger.exception("Failed to list ecosystems")
                 ecosystems = []
 
-        count_label = QLabel(f"{len(ecosystems)} ecosystem(s) defined")
-        count_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-        header_layout.addWidget(count_label)
-        header_layout.addStretch()
+        # Hero ribbon: horizontally-scrolling row of tiles.
+        ribbon_scroll = QScrollArea()
+        ribbon_scroll.setWidgetResizable(True)
+        ribbon_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        ribbon_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        ribbon_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        ribbon_scroll.setStyleSheet("background: transparent; border: none;")
+        ribbon_scroll.viewport().setStyleSheet("background: transparent;")
+        ribbon_scroll.setFixedHeight(196)  # tile height + scrollbar room
 
-        create_btn = LocksmithButton("Create ecosystem")
-        create_btn.clicked.connect(self.create_ecosystem_clicked.emit)
-        header_layout.addWidget(create_btn)
-
-        layout.addWidget(header_row)
-
-        if not ecosystems:
-            layout.addWidget(self._build_status_message(
-                "No ecosystems yet. Click 'Create ecosystem' to define a grouping of "
-                "schemas and issuer AIDs that work together."
-            ))
-            return section
+        ribbon_inner = QWidget()
+        ribbon_inner.setObjectName("ecoRibbonInner")
+        ribbon_inner.setStyleSheet(
+            "QWidget#ecoRibbonInner { background: transparent; }"
+        )
+        ribbon_layout = QHBoxLayout(ribbon_inner)
+        ribbon_layout.setContentsMargins(0, 4, 0, 4)
+        ribbon_layout.setSpacing(12)
+        ribbon_layout.setAlignment(Qt.AlignmentFlag.AlignLeft | Qt.AlignmentFlag.AlignVCenter)
 
         for eco in sorted(ecosystems, key=lambda e: e.name):
-            layout.addWidget(self._build_ecosystem_row(eco))
+            tile = EcosystemTile(eco)
+            tile.clicked.connect(self.show_ecosystem_detail_requested.emit)
+            ribbon_layout.addWidget(tile)
+
+        # "+ Define a new ecosystem" tile — expanded when ribbon is otherwise empty.
+        create_tile = CreateEcosystemTile(expanded=not ecosystems)
+        create_tile.clicked.connect(self.create_ecosystem_clicked.emit)
+        ribbon_layout.addWidget(create_tile)
+
+        ribbon_layout.addStretch()
+        ribbon_scroll.setWidget(ribbon_inner)
+        layout.addWidget(ribbon_scroll)
+
         return section
-
-    def _build_ecosystem_row(self, eco: Any) -> QWidget:
-        row = QFrame()
-        row.setObjectName("evEcosystemRow")
-        row.setStyleSheet(
-            "QFrame#evEcosystemRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
-            "QFrame#evEcosystemRow:hover { background-color: #F0F3FA; }"
-            "QFrame#evEcosystemRow QLabel { background: transparent; }"
-        )
-        row.setCursor(Qt.CursorShape.PointingHandCursor)
-        rl = QVBoxLayout(row)
-        rl.setContentsMargins(14, 12, 14, 12)
-        rl.setSpacing(4)
-
-        title = QLabel(f"<b>{eco.name}</b>")
-        title.setStyleSheet("font-size: 14px;")
-        rl.addWidget(title)
-
-        if eco.description:
-            desc = QLabel(eco.description)
-            desc.setWordWrap(True)
-            desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-            rl.addWidget(desc)
-
-        counts = QLabel(
-            f"<span style='color:{colors.TEXT_SECONDARY}'>"
-            f"{len(eco.schema_saids)} schema(s) · {len(eco.issuer_aids)} AID(s)</span>"
-        )
-        counts.setStyleSheet("font-size: 11px;")
-        rl.addWidget(counts)
-
-        name = eco.name
-        row.mousePressEvent = lambda _e, n=name: self.show_ecosystem_detail_requested.emit(n)
-        return row
 
     # ------------------------------------------------------------------
     # Schemas
@@ -257,178 +258,92 @@ class EcosystemViewerPage(QWidget):
             schemas = list(vault.hby.db.schema.getItemIter())
         except Exception:
             logger.exception("Failed to enumerate schemas")
-            layout.addWidget(self._build_status_message("Error enumerating schemas (see logs)."))
+            layout.addWidget(EmptyStateCard("Error enumerating schemas (see logs)."))
             return section
 
         if not schemas:
-            layout.addWidget(self._build_status_message(
-                "No schemas in this wallet yet. Add one via Credentials → Schemas → Add."
+            layout.addWidget(EmptyStateCard(
+                "No schemas yet. Add one via Credentials → Schemas → Add."
             ))
             return section
 
         for (said,), schemer in schemas:
             try:
                 inspection = inspect_acdc_schema(schemer.sed)
-                layout.addWidget(self._build_schema_row(inspection))
+                card = SchemaCard(inspection)
+                card.clicked.connect(self.show_schema_detail_requested.emit)
+                layout.addWidget(card)
             except Exception:
                 logger.exception(f"Failed to inspect schema {said}")
-                layout.addWidget(self._build_status_message(
+                layout.addWidget(EmptyStateCard(
                     f"Failed to classify schema {said[:20]}… (see logs)."
                 ))
 
+        layout.addStretch()
         return section
-
-    def _build_schema_row(self, i: Any) -> QWidget:
-        row = QFrame()
-        row.setObjectName("evSchemaRow")
-        row.setStyleSheet(
-            "QFrame#evSchemaRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
-            "QFrame#evSchemaRow:hover { background-color: #F0F3FA; }"
-            "QFrame#evSchemaRow QLabel { background: transparent; }"
-        )
-        row.setCursor(Qt.CursorShape.PointingHandCursor)
-        rl = QVBoxLayout(row)
-        rl.setContentsMargins(14, 12, 14, 12)
-        rl.setSpacing(4)
-
-        title = QLabel(
-            f"<b>{i.title or '(untitled schema)'}</b>"
-            + (f" v{i.schema_version}" if i.schema_version else "")
-        )
-        title.setStyleSheet("font-size: 14px;")
-        rl.addWidget(title)
-
-        if i.description:
-            desc = QLabel(i.description)
-            desc.setWordWrap(True)
-            desc.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-            rl.addWidget(desc)
-
-        meta = QLabel(
-            f"<span style='color:{colors.TEXT_SECONDARY}'>SAID:</span> "
-            f"<code>{i.schema_said}</code>"
-        )
-        meta.setStyleSheet("font-size: 11px;")
-        meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        rl.addWidget(meta)
-
-        chips: list[str] = []
-        if i.requires_targeted:
-            chips.append("targeted")
-        if i.requires_nonce:
-            chips.append("private (requires u)")
-        if i.requires_registry:
-            chips.append("requires registry")
-        if i.declared_sections.declares_aggregate:
-            chips.append("supports selective disclosure")
-        if i.edge_requirements:
-            chips.append(f"{len(i.edge_requirements)} edge requirement(s)")
-
-        if chips:
-            class_label = QLabel(" · ".join(f"<b>{c}</b>" for c in chips))
-            class_label.setWordWrap(True)
-            class_label.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
-            rl.addWidget(class_label)
-
-        for edge in i.edge_requirements:
-            edge_text = f"&nbsp;&nbsp;↳ edge <b>{edge.name}</b>"
-            if edge.target_schema_said:
-                edge_text += f" → schema <code>{edge.target_schema_said[:20]}…</code>"
-            if edge.operator_locked:
-                edge_text += f" (op locked: {edge.operator_locked})"
-            elif edge.operator_constraint:
-                edge_text += f" (op ∈ {{{', '.join(edge.operator_constraint)}}})"
-            edge_label = QLabel(edge_text)
-            edge_label.setWordWrap(True)
-            edge_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-            rl.addWidget(edge_label)
-
-        # Click anywhere on the row navigates to the detail page
-        said = i.schema_said
-        row.mousePressEvent = lambda _event, s=said: self.show_schema_detail_requested.emit(s)
-
-        return row
 
     # ------------------------------------------------------------------
     # Contacts (issuer AIDs)
     # ------------------------------------------------------------------
 
     def _build_contacts_section(self, vault: Any) -> QWidget:
-        section = self._build_card(title="Known issuer AIDs (contacts)")
+        section = self._build_card(title="Known issuers")
         layout: QVBoxLayout = section.layout()  # type: ignore[assignment]
 
         try:
             contacts = list(vault.org.list())
         except Exception:
             logger.exception("Failed to enumerate contacts")
-            layout.addWidget(self._build_status_message("Error enumerating contacts (see logs)."))
+            layout.addWidget(EmptyStateCard("Error enumerating contacts (see logs)."))
             return section
 
-        if not contacts:
-            layout.addWidget(self._build_status_message(
-                "No remote contacts yet. Add one via Contacts → Add (OOBI or File)."
+        # Compute the set of self-AIDs once so the sigil ring can highlight them.
+        try:
+            self_aids = {hab.pre for hab in vault.hby.habs.values()}
+        except Exception:
+            self_aids = set()
+
+        contact_aids = {c.get("id", "") for c in contacts}
+        if not contacts and not (self_aids - contact_aids):
+            layout.addWidget(EmptyStateCard(
+                "No issuers yet. Add one via Contacts → Add (OOBI or File)."
             ))
             return section
 
-        for c in contacts:
-            layout.addWidget(self._build_contact_row(c, vault))
-
-        return section
-
-    def _build_contact_row(self, contact: dict[str, Any], vault: Any) -> QWidget:
-        row = QFrame()
-        row.setObjectName("evContactRow")
-        row.setStyleSheet(
-            "QFrame#evContactRow { background-color: white; border: 1px solid #E0E3EA; border-radius: 6px; }"
-            "QFrame#evContactRow QLabel { background: transparent; }"
-        )
-        rl = QVBoxLayout(row)
-        rl.setContentsMargins(14, 12, 14, 12)
-        rl.setSpacing(4)
-
-        alias = contact.get("alias") or "(no alias)"
-        pre = contact.get("id", "")
-
-        title = QLabel(f"<b>{alias}</b>")
-        title.setStyleSheet("font-size: 14px;")
-        rl.addWidget(title)
-
-        # Domain classification: transferable vs non-transferable (witness role hint)
-        kever = vault.hby.kevers.get(pre) if pre else None
-        chips: list[str] = []
-        if kever is not None:
-            chips.append("transferable" if kever.transferable else "non-transferable (witness-shaped)")
-            chips.append(f"sn {kever.sn}")
-            if kever.wits:
-                chips.append(f"{len(kever.wits)} witness(es) · TOAD {kever.toader.num}")
-        else:
-            chips.append("KEL not in kevers (legacy contact?)")
-
-        meta = QLabel(
-            f"<span style='color:{colors.TEXT_SECONDARY}'>AID:</span> <code>{pre}</code>"
-        )
-        meta.setStyleSheet("font-size: 11px;")
-        meta.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        rl.addWidget(meta)
-
-        if chips:
-            class_label = QLabel(" · ".join(f"<b>{c}</b>" for c in chips))
-            class_label.setWordWrap(True)
-            class_label.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
-            rl.addWidget(class_label)
-
-        oobi = contact.get("oobi")
-        if oobi:
-            oobi_label = QLabel(
-                f"<span style='color:{colors.TEXT_SECONDARY}'>OOBI:</span> "
-                f"<code>{oobi}</code>"
+        for contact in contacts:
+            pre = contact.get("id", "")
+            kever = vault.hby.kevers.get(pre) if pre else None
+            is_self = pre in self_aids
+            card = IssuerCard(
+                contact=contact,
+                kever=kever,
+                is_self=is_self,
             )
-            oobi_label.setWordWrap(True)
-            oobi_label.setStyleSheet("font-size: 11px;")
-            oobi_label.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-            rl.addWidget(oobi_label)
+            card.clicked.connect(
+                lambda aid, s=is_self: self.show_issuer_requested.emit(aid, s)
+            )
+            layout.addWidget(card)
 
-        return row
+        # Surface self-AIDs that aren't already in contacts (otherwise the
+        # user can't navigate to them from here). Most own-AIDs aren't
+        # registered as contacts; without this they'd be invisible on the
+        # overview.
+        for aid in sorted(self_aids - contact_aids):
+            kever = vault.hby.kevers.get(aid)
+            hab = vault.hby.habByPre(aid)
+            alias = hab.name if hab is not None else "(self)"
+            card = IssuerCard(
+                contact={"id": aid, "alias": f"{alias} (mine)"},
+                kever=kever,
+                is_self=True,
+            )
+            card.clicked.connect(
+                lambda emitted_aid: self.show_issuer_requested.emit(emitted_aid, True)
+            )
+            layout.addWidget(card)
+
+        layout.addStretch()
+        return section
 
     # ------------------------------------------------------------------
     # Helpers
@@ -862,11 +777,11 @@ class SchemaDetailPage(QWidget):
         if i.requires_targeted:
             targeting_icon_path = icons.ICON_TARGETING_TARGETED
             targeting_primary = "Targeted to a holder"
-            targeting_secondary = "Commits to a specific issuee AID"
+            targeting_secondary = "Each credential commits to an issuee AID"
         else:
             targeting_icon_path = icons.ICON_TARGETING_UNTARGETED
             targeting_primary = "Untargeted attestation"
-            targeting_secondary = "Public attestation; no specific holder"
+            targeting_secondary = "No issuee — public attestation"
 
         targeting_px = QPixmap(targeting_icon_path)
         targeting_icon_lbl = QLabel()
@@ -950,7 +865,11 @@ class SchemaDetailPage(QWidget):
         """Build a single at-a-glance cell: [icon][text_block]."""
         cell = QWidget()
         cell.setObjectName("sdGlanceCell")
-        cell.setStyleSheet("QWidget#sdGlanceCell QLabel { background: transparent; }")
+        cell.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        cell.setStyleSheet(
+            "QWidget#sdGlanceCell { background: transparent; }"
+            "QWidget#sdGlanceCell QLabel { background: transparent; }"
+        )
         row = QHBoxLayout(cell)
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(10)
@@ -1078,6 +997,9 @@ class SchemaDetailPage(QWidget):
                 enum_row.addWidget(more_lbl)
             enum_row.addStretch()
             enum_wrapper = QWidget()
+            enum_wrapper.setObjectName("sdEnumWrapper")
+            enum_wrapper.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            enum_wrapper.setStyleSheet("QWidget#sdEnumWrapper { background: transparent; }")
             enum_wrapper.setLayout(enum_row)
             layout.addWidget(enum_wrapper)
 
@@ -1511,6 +1433,7 @@ class EcosystemDetailPage(QWidget):
     remove_aid_clicked = Signal(str, str)
     delete_ecosystem_clicked = Signal(str)
     show_schema_detail_requested = Signal(str)
+    show_issuer_requested = Signal(str, bool)  # (aid, is_self)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1527,6 +1450,7 @@ class EcosystemDetailPage(QWidget):
         outer.setContentsMargins(0, 0, 0, 0)
         outer.setSpacing(0)
 
+        # Back bar
         bar_widget = QWidget()
         bar_widget.setObjectName("ecosystemDetailBackBar")
         bar_widget.setStyleSheet(
@@ -1543,12 +1467,88 @@ class EcosystemDetailPage(QWidget):
         bar.addStretch()
         outer.addWidget(bar_widget)
 
-        scroll = QScrollArea()
-        scroll.setWidgetResizable(True)
-        scroll.setFrameShape(QFrame.Shape.NoFrame)
-        scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        scroll.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT}; border: none;")
-        scroll.viewport().setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        # Header (rebuilt on refresh)
+        self._header_holder = QWidget()
+        self._header_holder.setObjectName("ecosystemDetailHeader")
+        self._header_holder.setStyleSheet(
+            f"#ecosystemDetailHeader {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#ecosystemDetailHeader QLabel { background: transparent; }"
+        )
+        self._header_layout = QVBoxLayout(self._header_holder)
+        self._header_layout.setContentsMargins(20, 8, 20, 8)
+        self._header_layout.setSpacing(6)
+        outer.addWidget(self._header_holder)
+
+        # Tab bar (Graph | List)
+        tabs_holder = QWidget()
+        tabs_holder.setObjectName("ecosystemDetailTabs")
+        tabs_holder.setStyleSheet(
+            f"#ecosystemDetailTabs {{ background-color: {colors.BACKGROUND_CONTENT};"
+            f" border-bottom: 1px solid {colors.BORDER}; }}"
+        )
+        tabs_layout = QHBoxLayout(tabs_holder)
+        tabs_layout.setContentsMargins(20, 0, 20, 0)
+        tabs_layout.setSpacing(2)
+
+        self._tab_btn_graph = QPushButton("Graph")
+        self._tab_btn_list = QPushButton("List")
+        for btn in (self._tab_btn_graph, self._tab_btn_list):
+            btn.setCheckable(True)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.setFixedHeight(34)
+            btn.setStyleSheet(
+                "QPushButton {"
+                f" background: transparent; border: none; padding: 0 14px;"
+                f" font-size: 13px; color: {colors.TEXT_SECONDARY};"
+                "}"
+                "QPushButton:checked {"
+                f" color: {colors.TEXT_DARK}; font-weight: 600;"
+                f" border-bottom: 2px solid {colors.PRIMARY};"
+                "}"
+                "QPushButton:hover { color: " + colors.TEXT_DARK + "; }"
+            )
+
+        tab_group = QButtonGroup(self)
+        tab_group.addButton(self._tab_btn_graph, 0)
+        tab_group.addButton(self._tab_btn_list, 1)
+        tab_group.setExclusive(True)
+        self._tab_btn_graph.setChecked(True)
+
+        tabs_layout.addWidget(self._tab_btn_graph)
+        tabs_layout.addWidget(self._tab_btn_list)
+        tabs_layout.addStretch()
+
+        # "+ Add..." action holder (rebuilt on refresh so it can know the
+        # current ecosystem name).
+        self._add_btn_holder = QWidget()
+        self._add_btn_holder_layout = QHBoxLayout(self._add_btn_holder)
+        self._add_btn_holder_layout.setContentsMargins(0, 0, 0, 0)
+        tabs_layout.addWidget(self._add_btn_holder)
+
+        outer.addWidget(tabs_holder)
+
+        # Content stack: graph view (index 0) | list scroll area (index 1)
+        self._content_stack = QStackedWidget()
+        outer.addWidget(self._content_stack, 1)
+
+        # Graph tab
+        self._graph_view = EcosystemGraphView()
+        # Double-click on a node navigates to its detail page (schemas);
+        # single-click opens the slide-in side panel (handled inside the
+        # graph view). The panel's "Open detail page" / "Open in Contacts"
+        # buttons emit these signals up the chain.
+        self._graph_view.schema_double_clicked.connect(self.show_schema_detail_requested.emit)
+        self._graph_view.open_schema_detail_requested.connect(self.show_schema_detail_requested.emit)
+        self._graph_view.open_issuer_requested.connect(self.show_issuer_requested.emit)
+        self._content_stack.addWidget(self._graph_view)
+
+        # List tab — wraps the previous scrollable layout.
+        list_scroll = QScrollArea()
+        list_scroll.setWidgetResizable(True)
+        list_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        list_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        list_scroll.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT}; border: none;")
+        list_scroll.viewport().setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
 
         self._content = QWidget()
         self._content.setObjectName("ecosystemDetailContent")
@@ -1560,8 +1560,12 @@ class EcosystemDetailPage(QWidget):
         self._content_layout.setContentsMargins(20, 16, 20, 30)
         self._content_layout.setSpacing(16)
         self._content_layout.addStretch()
-        scroll.setWidget(self._content)
-        outer.addWidget(scroll)
+        list_scroll.setWidget(self._content)
+        self._content_stack.addWidget(list_scroll)
+
+        # Tab switching
+        self._tab_btn_graph.clicked.connect(lambda: self._content_stack.setCurrentIndex(0))
+        self._tab_btn_list.clicked.connect(lambda: self._content_stack.setCurrentIndex(1))
 
     def set_db(self, db: "EcosystemBaser | None") -> None:
         """Receive (or release) the plugin's EcosystemBaser. Called by plugin lifecycle."""
@@ -1577,10 +1581,9 @@ class EcosystemDetailPage(QWidget):
         self._refresh()
 
     def _refresh(self) -> None:
-        # Clear all widgets in front of the layout's trailing stretch.
-        # __init__ leaves the stretch as the sole item; section widgets are
-        # then inserted at indices 0..N, pushing the stretch to last position.
-        # The `> 1` guard preserves the stretch.
+        # Clear header, add-button area, and the list tab's section widgets.
+        self._purge_layout(self._header_layout)
+        self._purge_layout(self._add_btn_holder_layout)
         while self._content_layout.count() > 1:
             item = self._content_layout.takeAt(0)
             w = item.widget() if item else None
@@ -1588,20 +1591,44 @@ class EcosystemDetailPage(QWidget):
                 w.deleteLater()
 
         if self._db is None or self._current_name is None:
-            self._content_layout.insertWidget(0, QLabel("(no ecosystem loaded)"))
+            self._header_layout.addWidget(QLabel("(no ecosystem loaded)"))
             return
 
         eco = self._db.get_ecosystem(self._current_name)
         if eco is None:
-            self._content_layout.insertWidget(0, QLabel(
-                f"Ecosystem '{self._current_name}' not found."
-            ))
+            self._header_layout.addWidget(
+                QLabel(f"Ecosystem '{self._current_name}' not found.")
+            )
             return
 
-        self._content_layout.insertWidget(0, self._build_header(eco))
-        self._content_layout.insertWidget(1, self._build_schemas_section(eco))
-        self._content_layout.insertWidget(2, self._build_aids_section(eco))
-        self._content_layout.insertWidget(3, self._build_actions_section(eco))
+        # Header
+        self._header_layout.addWidget(self._build_header(eco))
+
+        # "+ Add..." action button — for v1 just two simple buttons; can
+        # collapse into a dropdown menu later.
+        add_schema_btn = LocksmithInvertedButton("+ Add schema")
+        add_schema_btn.clicked.connect(lambda: self.add_schema_clicked.emit(eco.name))
+        add_aid_btn = LocksmithInvertedButton("+ Add AID")
+        add_aid_btn.clicked.connect(lambda: self.add_aid_clicked.emit(eco.name))
+        self._add_btn_holder_layout.addWidget(add_schema_btn)
+        self._add_btn_holder_layout.addWidget(add_aid_btn)
+
+        # Graph tab — render the graph for this ecosystem.
+        vault = getattr(self.app, "vault", None)
+        self._graph_view.render_ecosystem(eco, vault)
+
+        # List tab — keep the existing schemas/AIDs/actions sections.
+        self._content_layout.insertWidget(0, self._build_schemas_section(eco))
+        self._content_layout.insertWidget(1, self._build_aids_section(eco))
+        self._content_layout.insertWidget(2, self._build_actions_section(eco))
+
+    @staticmethod
+    def _purge_layout(layout) -> None:
+        while layout.count():
+            item = layout.takeAt(0)
+            w = item.widget() if item else None
+            if w is not None:
+                w.deleteLater()
 
     def _build_header(self, eco: Any) -> QWidget:
         wrapper = QWidget()

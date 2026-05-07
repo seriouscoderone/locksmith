@@ -58,6 +58,7 @@ class EcosystemViewerPlugin(PluginBase):
         # Wire intra-plugin navigation
         self._overview_page.show_schema_detail_requested.connect(self._show_schema_detail)
         self._overview_page.create_ecosystem_clicked.connect(self._open_create_ecosystem_dialog)
+        self._overview_page.show_issuer_requested.connect(self._show_issuer)
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
         self._schema_detail_page.edit_annotation_clicked.connect(self._open_edit_annotation_dialog)
@@ -71,6 +72,7 @@ class EcosystemViewerPlugin(PluginBase):
         self._ecosystem_detail_page.remove_schema_clicked.connect(self._remove_schema_member)
         self._ecosystem_detail_page.remove_aid_clicked.connect(self._remove_aid_member)
         self._ecosystem_detail_page.delete_ecosystem_clicked.connect(self._delete_ecosystem)
+        self._ecosystem_detail_page.show_issuer_requested.connect(self._show_issuer)
 
         logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
 
@@ -143,6 +145,19 @@ class EcosystemViewerPlugin(PluginBase):
         vault_page._show_page(PAGE_KEY_SCHEMA_DETAIL)
         if self._schema_detail_page is not None:
             self._schema_detail_page.show_schema(schema_said)
+
+    def _show_issuer(self, aid: str, is_self: bool) -> None:
+        """Navigate to the wallet's contacts list (for remote AIDs) or the
+        identifiers list (for self-AIDs). The list pages don't yet support
+        deep-linking to a specific row, so for now we just land the user on
+        the right surface; future work can scroll/highlight the AID."""
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is None:
+            logger.warning(f"EcosystemViewerPlugin: vault_page not available; cannot show issuer {aid}")
+            return
+        vault_page.nav_menu.pop_to_vault_menu()
+        target = "identifiers" if is_self else "remotes"
+        vault_page._show_page(target)
 
     def _open_create_ecosystem_dialog(self) -> None:
         dialog = CreateEcosystemDialog(app=self._app, parent=self._overview_page)
