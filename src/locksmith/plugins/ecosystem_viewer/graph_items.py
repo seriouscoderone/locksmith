@@ -285,6 +285,31 @@ class SchemaNode(QGraphicsObject):
             painter.setBrush(color)
             painter.drawEllipse(QRectF(cx - 1, cy - 1, 2, 2))
 
+        # Snap-target overlay (drag-to-create from an IssuerNode).
+        snap_state = getattr(self, "_snap_state", "off")
+        if snap_state == "eligible":
+            ring_color = QColor("#0D9488")  # teal
+            pen = QPen(ring_color, 2)
+            pen.setStyle(Qt.PenStyle.DashLine)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(self._build_outline_path())
+        elif snap_state == "already":
+            # Dimmed solid ring + small ✓ badge in top-right.
+            ring_color = QColor(colors.TEXT_SECONDARY)
+            pen = QPen(ring_color, 1.5)
+            painter.setPen(pen)
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawPath(self._build_outline_path())
+            painter.setPen(QPen(QColor("#0D9488")))
+            font = QFont("Helvetica", 12, QFont.Weight.Bold)
+            painter.setFont(font)
+            painter.drawText(
+                QRectF(NODE_WIDTH - 16, 2, 14, 14),
+                Qt.AlignmentFlag.AlignCenter,
+                "✓",
+            )
+
     def _paint_said_glyph(self, painter: QPainter, x: float, y: float) -> None:
         """Tiny three-arc rangefinder glyph, 16x16 at (x, y)."""
         painter.save()
@@ -398,6 +423,20 @@ class SchemaNode(QGraphicsObject):
     def set_selected(self, selected: bool) -> None:
         if self._selected != selected:
             self._selected = selected
+            self.update()
+
+    def set_snap_target_state(self, state: str) -> None:
+        """During drag-to-create-edge, paint a colored ring around the
+        node to signal whether it's a valid drop target.
+
+        state ∈ {'eligible', 'already', 'ineligible', 'off'}. 'eligible'
+        pulses teal; 'already' shows a static dim ring + ✓; 'ineligible'
+        and 'off' clear the overlay.
+        """
+        # Store as plain attribute; paint() reads it. Default 'off' if
+        # unset (back-compat for code paths that don't manage drag state).
+        if getattr(self, "_snap_state", "off") != state:
+            self._snap_state = state
             self.update()
 
     # --- Anchors for edge connections -------------------------------------
@@ -741,6 +780,14 @@ class IssuerNode(QGraphicsObject):
             self._selected = selected
             self.update()
 
+    def set_snap_target_state(self, state: str) -> None:
+        """Symmetric API with SchemaNode.set_snap_target_state. For an
+        issuer node, snap-target visual is a no-op for now — issuers
+        aren't drop targets in v1 (you drag FROM them, not TO them)."""
+        # Intentional no-op; method exists so callers can address all
+        # nodes uniformly when starting/ending a drag.
+        return
+
     # --- Anchors -----------------------------------------------------------
 
     def top_anchor(self) -> QPointF:
@@ -798,3 +845,144 @@ class MembershipEdge(QGraphicsPathItem):
         painter.setPen(pen)
         painter.setBrush(Qt.BrushStyle.NoBrush)
         painter.drawPath(self.path())
+
+
+# ---------------------------------------------------------------------------
+# PermittedIssuerEdge — issuer → schema solid teal line with hollow arrowhead
+# ---------------------------------------------------------------------------
+
+
+class PermittedIssuerEdge(QGraphicsPathItem):
+    """A solid teal line representing 'this AID is permitted to issue
+    this schema in this ecosystem' (EGF overlay; not an ACDC spec
+    primitive). Per design 2026-05-08-permitted-issuer-edges §2.2.
+
+    Connects issuer.top_anchor() → schema.bottom_anchor(). Hollow
+    triangular arrowhead at the schema end signals "capability"
+    rather than an actual past issuance event.
+    """
+
+    from PySide6.QtCore import QObject, Signal
+
+    LINE_COLOR = "#0D9488"         # teal — same as aggregate-section dot
+    LINE_COLOR_HOVER = "#0F766E"   # saturated teal on hover
+    LINE_WIDTH = 1.25
+    LINE_WIDTH_HOVER = 1.75
+    ARROW_LENGTH = 9
+    ARROW_WIDTH = 6
+    DEFAULT_OPACITY = 0.6
+
+    class _Emitter(QObject):
+        """Lightweight QObject for the remove signal — QGraphicsPathItem
+        is not a QObject and cannot define signals directly. Stored as
+        an instance attribute so the edge can `self.emitter.remove_requested.emit(...)`."""
+        from PySide6.QtCore import Signal
+        remove_requested = Signal(str, str)  # (issuer_aid, schema_said)
+
+    def __init__(
+        self,
+        source: "IssuerNode",
+        target: "SchemaNode",
+        parent: QGraphicsItem | None = None,
+    ):
+        super().__init__(parent)
+        self.source = source
+        self.target = target
+        self.emitter = self._Emitter()
+        self._hovered = False
+        self.setZValue(-1.5)  # between membership (-2) and chain (-1)
+        self.setOpacity(self.DEFAULT_OPACITY)
+        self.setAcceptHoverEvents(True)
+        self.setToolTip(self._build_tooltip())
+        self.refresh()
+
+    def _build_tooltip(self) -> str:
+        alias = getattr(self.source, "alias", None) or "(unknown issuer)"
+        title = getattr(self.target, "title", None) or "(unknown schema)"
+        return f"{alias}  issues  {title}  in this ecosystem"
+
+    def refresh(self) -> None:
+        """Recompute the path from issuer top → schema bottom."""
+        path = QPainterPath()
+        sp = self.source.top_anchor()
+        tp = self.target.bottom_anchor()
+        # Slight cubic Bézier so multiple edges from one issuer don't
+        # overlap straight on top of each other when the schema is in a
+        # higher layer.
+        ctrl1 = QPointF(sp.x(), sp.y() - 30)
+        ctrl2 = QPointF(tp.x(), tp.y() + 30)
+        path.moveTo(sp)
+        path.cubicTo(ctrl1, ctrl2, tp)
+        self.setPath(path)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        color = QColor(self.LINE_COLOR_HOVER if self._hovered else self.LINE_COLOR)
+        width = self.LINE_WIDTH_HOVER if self._hovered else self.LINE_WIDTH
+
+        pen = QPen(color, width)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)
+        painter.drawPath(self.path())
+
+        # Hollow open arrowhead at the schema end.
+        sp = self.source.top_anchor()
+        tp = self.target.bottom_anchor()
+        self._draw_hollow_arrowhead(painter, sp, tp, color, width)
+
+    def _draw_hollow_arrowhead(
+        self,
+        painter: QPainter,
+        p1: QPointF,
+        p2: QPointF,
+        color: QColor,
+        width: float,
+    ) -> None:
+        """Hollow triangular arrowhead at p2, oriented from p1→p2."""
+        dx = p2.x() - p1.x()
+        dy = p2.y() - p1.y()
+        length = math.hypot(dx, dy) or 1.0
+        ux, uy = dx / length, dy / length
+        px, py = -uy, ux  # perpendicular
+        tip = p2
+        base_x = p2.x() - ux * self.ARROW_LENGTH
+        base_y = p2.y() - uy * self.ARROW_LENGTH
+        left = QPointF(
+            base_x + px * (self.ARROW_WIDTH / 2),
+            base_y + py * (self.ARROW_WIDTH / 2),
+        )
+        right = QPointF(
+            base_x - px * (self.ARROW_WIDTH / 2),
+            base_y - py * (self.ARROW_WIDTH / 2),
+        )
+        polygon = QPolygonF([tip, left, right])
+        pen = QPen(color, width)
+        pen.setJoinStyle(Qt.PenJoinStyle.MiterJoin)
+        painter.setPen(pen)
+        painter.setBrush(Qt.BrushStyle.NoBrush)  # hollow
+        painter.drawPolygon(polygon)
+
+    def hoverEnterEvent(self, event):
+        self._hovered = True
+        self.setOpacity(1.0)
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._hovered = False
+        self.setOpacity(self.DEFAULT_OPACITY)
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def contextMenuEvent(self, event):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu()
+        alias = getattr(self.source, "alias", None) or "this issuer"
+        action = menu.addAction(f"Remove permitted-issuer ({alias})")
+        chosen = menu.exec(event.screenPos())
+        if chosen is action:
+            self.emitter.remove_requested.emit(
+                self.source.aid, self.target.said,
+            )
+        event.accept()
