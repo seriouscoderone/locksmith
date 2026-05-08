@@ -2155,14 +2155,74 @@ class EcosystemDetailPage(QWidget):
         )
         row.addWidget(prefix)
 
-        # "(via role: X)" indicator if a qualification rule is set.
+        # Qualification rule chip — interactive: shows current rule with
+        # remove-×, or a "+ Set role" affordance when no rule is set.
         rule_role = eco.issuer_qualification_rules.get(said)
         if rule_role:
-            role_lbl = QLabel(f"(via role: <b>{html.escape(rule_role)}</b>)")
-            role_lbl.setStyleSheet(
-                f"font-size: 11px; color: {colors.TEXT_DARK};"
+            role_chip = QFrame()
+            role_chip.setObjectName("edQualRuleChip")
+            role_chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            role_chip.setStyleSheet(
+                "QFrame#edQualRuleChip {"
+                f" background: {colors.BACKGROUND_SELECTION};"
+                " border-radius: 9px; padding: 1px 4px 1px 8px; min-height: 18px;"
+                "}"
+                "QFrame#edQualRuleChip QLabel { background: transparent; }"
             )
-            row.addWidget(role_lbl)
+            chip_l = QHBoxLayout(role_chip)
+            chip_l.setContentsMargins(0, 0, 0, 0)
+            chip_l.setSpacing(2)
+            chip_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+            label = QLabel(f"via role: <b>{html.escape(rule_role)}</b>")
+            label.setStyleSheet(f"font-size: 11px; color: {colors.TEXT_DARK};")
+            chip_l.addWidget(label)
+            rm = QToolButton()
+            rm.setText("×")
+            rm.setCursor(Qt.CursorShape.PointingHandCursor)
+            rm.setToolTip("Remove role qualification rule for this schema")
+            rm.setStyleSheet(
+                "QToolButton { background: transparent; border: none;"
+                f" padding: 0 4px; font-size: 13px; color: {colors.TEXT_SECONDARY}; "
+                "}"
+                f"QToolButton:hover {{ color: {colors.DANGER}; }}"
+            )
+            rm.clicked.connect(
+                lambda _c=False, n=eco.name, s=said:
+                    self.remove_qualification_rule_clicked.emit(n, s)
+            )
+            chip_l.addWidget(rm)
+            row.addWidget(role_chip)
+        else:
+            # "+ Set role" affordance — only enabled when the ecosystem
+            # has at least one role defined.
+            set_btn = QToolButton()
+            set_btn.setText("+ Set role")
+            set_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            if not eco.role_names:
+                set_btn.setEnabled(False)
+                set_btn.setToolTip(
+                    "Define a role first via the Roles section above"
+                )
+            else:
+                set_btn.setToolTip(
+                    "Set a role-based permitted-issuer rule for this schema"
+                )
+            set_btn.setStyleSheet(
+                "QToolButton {"
+                f" background: white; border: 1px dashed {colors.BORDER};"
+                " border-radius: 9px; padding: 0 6px; min-height: 18px;"
+                f" font-size: 11px; color: {colors.TEXT_SECONDARY};"
+                "}"
+                f"QToolButton:hover {{ border-color: {colors.PRIMARY};"
+                f" color: {colors.PRIMARY}; }}"
+                f"QToolButton:disabled {{ color: {colors.TEXT_MUTED};"
+                f" border-color: {colors.BORDER}; }}"
+            )
+            set_btn.clicked.connect(
+                lambda _c=False, e=eco, s=said:
+                    self._show_set_qualification_rule_menu(e, s)
+            )
+            row.addWidget(set_btn)
 
         permitted = eco.permitted_issuers.get(said, [])
         if not permitted:
@@ -2273,6 +2333,20 @@ class EcosystemDetailPage(QWidget):
             action.triggered.connect(
                 lambda _c=False, n=eco.name, s=said, a=aid:
                     self.add_permitted_issuer_clicked.emit(n, s, a)
+            )
+        menu.exec(QCursor.pos())
+
+    def _show_set_qualification_rule_menu(self, eco: Any, schema_said: str) -> None:
+        """Pop a menu of available roles in this ecosystem; on selection
+        emit set_qualification_rule_clicked."""
+        if not eco.role_names:
+            return
+        menu = QMenu(self)
+        for role_name in eco.role_names:
+            action = menu.addAction(role_name)
+            action.triggered.connect(
+                lambda _c=False, n=eco.name, s=schema_said, r=role_name:
+                    self.set_qualification_rule_clicked.emit(n, s, r)
             )
         menu.exec(QCursor.pos())
 
