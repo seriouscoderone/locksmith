@@ -25,7 +25,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import QRectF, QSize, Qt, Signal
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt, Signal
 from PySide6.QtGui import (
     QColor,
     QFont,
@@ -546,14 +546,31 @@ class SchemaCard(QFrame):
 
 
 class IssuerSigilCircle(QWidget):
-    """Painted 48px circular avatar containing the §2.8 issuer sigil glyph."""
+    """Painted 48px circular avatar containing the §2.8 issuer sigil glyph.
+
+    Optional `role` decoration paints small directional ribbons on the
+    circle to indicate the AID's role in a specific credential context:
+      - "from": ribbon on bottom-right pointing right (issuer / outflow)
+      - "to":   ribbon on bottom-left pointing left (issuee / inflow)
+      - "both": both ribbons (self-issued — single AID is both parties)
+      - None:   no decoration (used in directories where role is undefined)
+    Per design 2026-05-07-acdc-parties-lifecycle.md §3.1.
+    """
 
     DIAMETER = ISSUER_AVATAR_DIAMETER
 
-    def __init__(self, is_self: bool = False, parent: QWidget | None = None):
+    def __init__(
+        self,
+        is_self: bool = False,
+        role: str | None = None,  # None | "from" | "to" | "both"
+        parent: QWidget | None = None,
+    ):
         super().__init__(parent)
         self._is_self = is_self
-        self.setFixedSize(self.DIAMETER, self.DIAMETER)
+        self._role = role
+        # Slightly wider hit area when ribbons attach so they're not clipped.
+        extra = 8 if role else 0
+        self.setFixedSize(self.DIAMETER + extra, self.DIAMETER)
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
         sigil_color = colors.PRIMARY if is_self else colors.TEXT_DARK
         self._sigil_px = _load_tinted_pixmap(
@@ -567,13 +584,51 @@ class IssuerSigilCircle(QWidget):
         ring_color = QColor(colors.PRIMARY) if self._is_self else QColor(colors.BORDER)
         p.setPen(QPen(ring_color, 1.5))
         p.setBrush(QColor(colors.BACKGROUND_CONTENT))
-        p.drawEllipse(1, 1, self.DIAMETER - 2, self.DIAMETER - 2)
-        # Sigil centered
+        # Center the circle when ribbons add horizontal padding.
+        circle_x = (self.width() - self.DIAMETER) / 2
+        p.drawEllipse(QRectF(circle_x + 1, 1, self.DIAMETER - 2, self.DIAMETER - 2))
+        # Sigil centered in circle
         if not self._sigil_px.isNull():
-            x = (self.DIAMETER - self._sigil_px.width()) / 2
-            y = (self.DIAMETER - self._sigil_px.height()) / 2
-            p.drawPixmap(int(x), int(y), self._sigil_px)
+            sx = circle_x + (self.DIAMETER - self._sigil_px.width()) / 2
+            sy = (self.DIAMETER - self._sigil_px.height()) / 2
+            p.drawPixmap(QPointF(sx, sy), self._sigil_px)
+
+        # Role ribbons (small triangles attached to the bottom of the circle)
+        if self._role in ("from", "both"):
+            self._draw_ribbon(p, side="from", circle_x=circle_x, color=ring_color)
+        if self._role in ("to", "both"):
+            self._draw_ribbon(p, side="to", circle_x=circle_x, color=ring_color)
+
         p.end()
+
+    def _draw_ribbon(self, p: QPainter, *, side: str, circle_x: float, color: QColor) -> None:
+        """Paint a 6×8 directional triangle ribbon at the bottom of the circle.
+
+        side="from" → right-pointing triangle on bottom-right (outflow).
+        side="to"   → left-pointing triangle on bottom-left (inflow).
+        """
+        from PySide6.QtGui import QPolygonF
+        d = self.DIAMETER
+        # Anchor near the bottom of the circle.
+        anchor_y = d - 6
+        if side == "from":
+            # Triangle just outside the right edge of the circle, pointing right.
+            base_x = circle_x + d - 2
+            points = [
+                QPointF(base_x, anchor_y),         # base top
+                QPointF(base_x, anchor_y + 8),     # base bottom
+                QPointF(base_x + 6, anchor_y + 4), # tip pointing right
+            ]
+        else:  # "to"
+            base_x = circle_x + 2
+            points = [
+                QPointF(base_x, anchor_y),         # base top
+                QPointF(base_x, anchor_y + 8),     # base bottom
+                QPointF(base_x - 6, anchor_y + 4), # tip pointing left
+            ]
+        p.setPen(Qt.PenStyle.NoPen)
+        p.setBrush(color)
+        p.drawPolygon(QPolygonF(points))
 
 
 class IssuerCard(QFrame):
