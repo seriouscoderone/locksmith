@@ -10,6 +10,7 @@ from locksmith.plugins.ecosystem_viewer.db import (
     DiscoveryEvent,
     EcosystemBaser,
     EcosystemRecord,
+    RoleRecord,
 )
 
 
@@ -303,3 +304,161 @@ def test_legacy_record_constructor_without_new_fields_still_works(baser):
     assert fresh.role_names == []
     assert fresh.schema_version == 1
     assert fresh.governance_url == ""
+
+
+# ---------------------------------------------------------------------------
+# Stage 12: RoleRecord CRUD
+# ---------------------------------------------------------------------------
+
+
+def _seed_eco_with_schema_and_aid(baser, name="eco", schema="ES1", aid="EA1"):
+    baser.put_ecosystem(EcosystemRecord(
+        name=name, schema_saids=[schema], issuer_aids=[aid],
+    ))
+
+
+def test_put_and_get_root_role(baser):
+    """A root role enumerates its trust-root AIDs and has no issuer_role."""
+    _seed_eco_with_schema_and_aid(baser)
+    role = RoleRecord(
+        ecosystem_name="eco",
+        name="state-doi",
+        description="State Department of Insurance issuers",
+        qualification_schema_said="ES1",
+        issuer_role_name="",
+        root_issuer_aids=["EA1"],
+    )
+    baser.put_role(role)
+    fetched = baser.get_role("eco", "state-doi")
+    assert fetched is not None
+    assert fetched.name == "state-doi"
+    assert fetched.qualification_schema_said == "ES1"
+    assert fetched.root_issuer_aids == ["EA1"]
+    assert fetched.issuer_role_name == ""
+
+
+def test_put_role_appends_to_ecosystem_role_names(baser):
+    """Putting a role updates the parent ecosystem's role_names cache."""
+    _seed_eco_with_schema_and_aid(baser)
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES1",
+    ))
+    eco = baser.get_ecosystem("eco")
+    assert "state-doi" in eco.role_names
+
+
+def test_put_role_rejects_unknown_ecosystem(baser):
+    with pytest.raises(KeyError):
+        baser.put_role(RoleRecord(
+            ecosystem_name="nope", name="whatever",
+            qualification_schema_said="ES1",
+        ))
+
+
+def test_put_role_rejects_qualification_schema_not_in_ecosystem(baser):
+    _seed_eco_with_schema_and_aid(baser)
+    with pytest.raises(ValueError, match="qualification_schema"):
+        baser.put_role(RoleRecord(
+            ecosystem_name="eco", name="rogue",
+            qualification_schema_said="ES_NOT_HERE",
+        ))
+
+
+def test_put_role_rejects_unknown_issuer_role(baser):
+    _seed_eco_with_schema_and_aid(baser)
+    with pytest.raises(ValueError, match="issuer_role"):
+        baser.put_role(RoleRecord(
+            ecosystem_name="eco", name="downstream",
+            qualification_schema_said="ES1",
+            issuer_role_name="missing-parent",
+        ))
+
+
+def test_chained_role_references_known_parent(baser):
+    """A non-root role references an existing role; both round-trip."""
+    _seed_eco_with_schema_and_aid(baser)
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EA1"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="qualified-producer",
+        qualification_schema_said="ES1",
+        issuer_role_name="state-doi",
+    ))
+    roles = baser.list_roles("eco")
+    by_name = {r.name: r for r in roles}
+    assert set(by_name) == {"state-doi", "qualified-producer"}
+    assert by_name["qualified-producer"].issuer_role_name == "state-doi"
+
+
+def test_delete_role_removes_record_and_cascades_qualification_rules(baser):
+    """Deleting a role removes the RoleRecord, drops its name from
+    role_names, and removes any issuer_qualification_rules pointing
+    at it. Other rules are untouched."""
+    _seed_eco_with_schema_and_aid(baser, schema="ES1", aid="EA1")
+    # Add a second schema to the ecosystem so we can test selective cleanup.
+    rec = baser.get_ecosystem("eco")
+    rec.schema_saids = ["ES1", "ES2"]
+    baser.put_ecosystem(rec)
+
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EA1"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="qualified-producer",
+        qualification_schema_said="ES2",
+    ))
+    rec = baser.get_ecosystem("eco")
+    rec.issuer_qualification_rules = {
+        "ES1": "state-doi",
+        "ES2": "qualified-producer",
+    }
+    baser.put_ecosystem(rec)
+
+    baser.delete_role("eco", "state-doi")
+
+    assert baser.get_role("eco", "state-doi") is None
+    fresh = baser.get_ecosystem("eco")
+    assert "state-doi" not in fresh.role_names
+    assert "qualified-producer" in fresh.role_names
+    assert fresh.issuer_qualification_rules == {"ES2": "qualified-producer"}
+
+
+def test_delete_ecosystem_cascades_role_cleanup(baser):
+    """Deleting an ecosystem also removes all its roles."""
+    _seed_eco_with_schema_and_aid(baser)
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES1",
+    ))
+    baser.delete_ecosystem("eco")
+    assert baser.get_role("eco", "state-doi") is None
+    assert baser.list_roles("eco") == []
+
+
+def test_delete_role_idempotent_on_unknown_role(baser):
+    _seed_eco_with_schema_and_aid(baser)
+    baser.delete_role("eco", "never-existed")  # no exception
+
+
+def test_list_roles_empty_for_ecosystem_with_no_roles(baser):
+    _seed_eco_with_schema_and_aid(baser)
+    assert baser.list_roles("eco") == []
+
+
+def test_put_role_updates_role_names_idempotently(baser):
+    """Putting the same role twice doesn't duplicate it in role_names."""
+    _seed_eco_with_schema_and_aid(baser)
+    role = RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES1",
+    )
+    baser.put_role(role)
+    baser.put_role(role)
+    eco = baser.get_ecosystem("eco")
+    assert eco.role_names.count("state-doi") == 1

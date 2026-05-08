@@ -117,6 +117,41 @@ class DiscoveryEvent:
 
 
 @dataclass
+class RoleRecord:
+    """A credential-qualified class of AID within an ecosystem.
+
+    "Role" is a wallet-level convention overlay; the ACDC spec has no
+    such primitive. The vLEI ecosystem implements equivalent structure
+    via credential-chain-rooted hierarchies. See
+    docs/superpowers/designs/2026-05-08-ecosystem-governance-roadmap.md
+    for the conceptual model and §1.5 for the framework-vs-trust-registry
+    scope discussion.
+
+    Membership is determined dynamically by the resolver: an AID is *in*
+    this role iff it holds a valid credential of `qualification_schema_said`
+    issued by an AID that is itself in `issuer_role_name` (recursively,
+    with `root_issuer_aids` as the base case).
+
+    Composite key: (ecosystem_name, name).
+    """
+    ecosystem_name: str = ""
+    name: str = ""
+    description: str = ""
+    qualification_schema_said: str = ""
+    """SAID of the schema whose holders qualify for this role."""
+    issuer_role_name: str = ""
+    """Name of the role whose members are the authorized issuers of the
+    qualification credential. Empty string means 'root role' — see
+    root_issuer_aids."""
+    root_issuer_aids: list[str] = field(default_factory=list)
+    """When this is a root role (issuer_role_name=""), the enumerated
+    AIDs that bootstrap the chain. Otherwise empty (or treated as
+    empty)."""
+    created_at: str = ""
+    updated_at: str = ""
+
+
+@dataclass
 class _MembershipRecord:
     """Reverse-lookup record: AID/SAID -> set of ecosystem names.
 
@@ -144,6 +179,7 @@ class EcosystemBaser(dbing.LMDBer):
         self.history = None
         self.schema_membership = None
         self.aid_membership = None
+        self.roles = None
         super(EcosystemBaser, self).__init__(name=name, headDirPath=headDirPath, reopen=reopen, **kwa)
 
     def reopen(self, **kwa):
@@ -154,6 +190,7 @@ class EcosystemBaser(dbing.LMDBer):
         self.history = koming.Komer(db=self, subkey='his.', schema=DiscoveryEvent)
         self.schema_membership = koming.Komer(db=self, subkey='smbr.', schema=_MembershipRecord)
         self.aid_membership = koming.Komer(db=self, subkey='ambr.', schema=_MembershipRecord)
+        self.roles = koming.Komer(db=self, subkey='rle.', schema=RoleRecord)
 
         return self.env
 
@@ -212,6 +249,9 @@ class EcosystemBaser(dbing.LMDBer):
             self._remove_membership(self.schema_membership, said, name)
         for aid in rec.issuer_aids:
             self._remove_membership(self.aid_membership, aid, name)
+        # Cascade role cleanup — every role under this ecosystem.
+        for role in self.list_roles(name):
+            self.roles.rem(keys=(name, role.name))
         self.ecosystems.rem(keys=(name,))
 
     def add_schema_to_ecosystem(self, ecosystem_name: str, schema_said: str) -> None:
@@ -326,6 +366,71 @@ class EcosystemBaser(dbing.LMDBer):
     def ecosystems_for_aid(self, aid: str) -> list[str]:
         rec = self.aid_membership.get(keys=(aid,))
         return list(rec.ecosystem_names) if rec else []
+
+    # --------------------------- Roles ---------------------------
+
+    def put_role(self, rec: RoleRecord) -> None:
+        """Insert or update a role record. Validates ecosystem membership
+        of qualification_schema_said and issuer_role_name."""
+        if not rec.ecosystem_name or not rec.name:
+            raise ValueError("RoleRecord requires ecosystem_name and name")
+        eco = self.get_ecosystem(rec.ecosystem_name)
+        if eco is None:
+            raise KeyError(f"unknown ecosystem '{rec.ecosystem_name}'")
+        if rec.qualification_schema_said and rec.qualification_schema_said not in eco.schema_saids:
+            raise ValueError(
+                f"qualification_schema_said '{rec.qualification_schema_said}' "
+                f"is not a member of ecosystem '{rec.ecosystem_name}'"
+            )
+        if rec.issuer_role_name:
+            parent = self.get_role(rec.ecosystem_name, rec.issuer_role_name)
+            if parent is None:
+                raise ValueError(
+                    f"issuer_role '{rec.issuer_role_name}' is not a known "
+                    f"role in ecosystem '{rec.ecosystem_name}'"
+                )
+        now = datetime.now(timezone.utc).isoformat()
+        if not rec.created_at:
+            rec.created_at = now
+        rec.updated_at = now
+        rec.root_issuer_aids = sorted(set(rec.root_issuer_aids))
+        self.roles.pin(keys=(rec.ecosystem_name, rec.name), val=rec)
+
+        # Update the parent ecosystem's role_names cache (idempotent).
+        if rec.name not in eco.role_names:
+            eco.role_names = sorted(set(eco.role_names) | {rec.name})
+            self.put_ecosystem(eco)
+
+    def get_role(self, ecosystem_name: str, role_name: str) -> RoleRecord | None:
+        return self.roles.get(keys=(ecosystem_name, role_name))
+
+    def list_roles(self, ecosystem_name: str) -> list[RoleRecord]:
+        prefix = (ecosystem_name,)
+        out: list[RoleRecord] = []
+        for keys, val in self.roles.getItemIter(keys=prefix):
+            # getItemIter returns all roles whose key tuple starts with
+            # (ecosystem_name,) — exactly what we want.
+            out.append(val)
+        return out
+
+    def delete_role(self, ecosystem_name: str, role_name: str) -> None:
+        """Remove a role record. Cascades cleanup: drops role_name from
+        the ecosystem's role_names list and removes any
+        issuer_qualification_rules entries pointing at this role."""
+        rec = self.get_role(ecosystem_name, role_name)
+        if rec is None:
+            return  # idempotent
+        self.roles.rem(keys=(ecosystem_name, role_name))
+
+        eco = self.get_ecosystem(ecosystem_name)
+        if eco is None:
+            return
+        eco.role_names = [n for n in eco.role_names if n != role_name]
+        eco.issuer_qualification_rules = {
+            said: r for said, r in eco.issuer_qualification_rules.items()
+            if r != role_name
+        }
+        self.put_ecosystem(eco)
 
     # --------------------------- Annotations ---------------------------
 
