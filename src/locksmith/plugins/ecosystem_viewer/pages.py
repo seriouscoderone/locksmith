@@ -436,6 +436,7 @@ class SchemaDetailPage(QWidget):
     back_requested = Signal()
     show_schema_detail_requested = Signal(str)  # for clicking edge target schemas
     edit_annotation_clicked = Signal(str, str, str)  # (kind, target, target_label)
+    show_issuer_requested = Signal(str, bool)  # (aid, is_self)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -623,7 +624,7 @@ class SchemaDetailPage(QWidget):
         idx = 0
         self._content_layout.insertWidget(idx, self._build_hero_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_at_a_glance_card(i)); idx += 1
-        self._content_layout.insertWidget(idx, self._build_parties_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_parties_card(i, vault)); idx += 1
         self._content_layout.insertWidget(idx, self._build_lifecycle_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_attributes_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_chain_of_authority_card(i, vault)); idx += 1
@@ -920,7 +921,7 @@ class SchemaDetailPage(QWidget):
     # Parties card + Lifecycle card (Stage 10 — split per design §4.2)
     # ------------------------------------------------------------------
 
-    def _build_parties_card(self, i: Any) -> QWidget:
+    def _build_parties_card(self, i: Any, vault: Any) -> QWidget:
         """Schema-level Parties card: the people axis.
 
         Issuer is always present; issuee depends on whether the schema
@@ -999,6 +1000,12 @@ class SchemaDetailPage(QWidget):
             )
             outer.addWidget(note)
 
+        # Known-issuers chip row (design §7.1) — bridges schema-detail to
+        # the ecosystem-graph "who issues" question without requiring a
+        # separate page navigation.
+        known_aids = self._collect_known_issuer_aids_for_schema(i.schema_said, vault)
+        outer.addWidget(self._build_known_issuers_row(known_aids, vault))
+
         return frame
 
     def _build_party_column(
@@ -1055,6 +1062,135 @@ class SchemaDetailPage(QWidget):
         layout.addWidget(body_lbl)
 
         return col
+
+    def _collect_known_issuer_aids_for_schema(
+        self, schema_said: str, vault: Any,
+    ) -> list[str]:
+        """Return the union of AIDs marked as authoritative issuers of
+        `schema_said` across every ecosystem that contains this schema.
+        Returns at most a handful of AIDs in practice (one schema is
+        typically a member of one or two ecosystems)."""
+        if self._db is None:
+            return []
+        try:
+            eco_names = self._db.ecosystems_for_schema(schema_said)
+        except Exception:
+            return []
+        aids: list[str] = []
+        seen: set[str] = set()
+        for name in eco_names:
+            try:
+                rec = self._db.get_ecosystem(name)
+            except Exception:
+                continue
+            if rec is None:
+                continue
+            for aid in rec.authoritative_issuers.get(schema_said, []):
+                if aid not in seen:
+                    seen.add(aid)
+                    aids.append(aid)
+        return aids
+
+    def _build_known_issuers_row(
+        self, aids: list[str], vault: Any,
+    ) -> QWidget:
+        from locksmith.plugins.ecosystem_viewer.overview_cards import (
+            IssuerSigilCircle,
+        )
+        wrap = QFrame()
+        wrap.setObjectName("sdKnownIssuersRow")
+        wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        wrap.setStyleSheet(
+            "QFrame#sdKnownIssuersRow { background: transparent;"
+            f" border-top: 1px solid {colors.BORDER}; padding-top: 8px; }}"
+            "QFrame#sdKnownIssuersRow QLabel { background: transparent; }"
+        )
+        layout = QHBoxLayout(wrap)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        prefix = QLabel("Known issuers in your wallet:")
+        prefix.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(prefix)
+
+        if not aids:
+            empty = QLabel("none yet")
+            empty.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            layout.addWidget(empty)
+            layout.addStretch()
+            return wrap
+
+        # Build a small chip per AID — sigil-circle + alias.
+        try:
+            self_aids = {hab.pre for hab in vault.hby.habs.values()} if vault else set()
+        except Exception:
+            self_aids = set()
+
+        for aid in aids:
+            chip = QFrame()
+            chip.setObjectName("sdKnownIssuerChip")
+            chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+            chip.setCursor(Qt.CursorShape.PointingHandCursor)
+            chip.setStyleSheet(
+                "QFrame#sdKnownIssuerChip {"
+                f" background: {colors.BACKGROUND_SELECTION};"
+                " border-radius: 12px; padding: 2px 8px 2px 4px;"
+                "}"
+                "QFrame#sdKnownIssuerChip QLabel { background: transparent; }"
+            )
+            chip_l = QHBoxLayout(chip)
+            chip_l.setContentsMargins(0, 0, 0, 0)
+            chip_l.setSpacing(4)
+            chip_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+            is_self = aid in self_aids
+            sigil = IssuerSigilCircle(is_self=is_self, role="from")
+            # Shrink to chip scale.
+            sigil.setFixedSize(20, 20)
+            chip_l.addWidget(sigil)
+
+            alias = self._alias_for_aid(aid, vault)
+            label = QLabel(alias + (" ★" if is_self else ""))
+            label.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_DARK};"
+                + (f" font-weight: 600;" if is_self else "")
+            )
+            label.setToolTip(aid)
+            chip_l.addWidget(label)
+
+            chip.mousePressEvent = (
+                lambda _ev, a=aid, s=is_self:
+                    self.show_issuer_requested.emit(a, s)
+            )
+            layout.addWidget(chip)
+
+        layout.addStretch()
+        return wrap
+
+    def _alias_for_aid(self, aid: str, vault: Any) -> str:
+        if vault is None or not aid:
+            return aid[:14] + "…" if len(aid) > 16 else aid
+        try:
+            for c in vault.org.list():
+                if c.get("id") == aid:
+                    a = c.get("alias")
+                    if a:
+                        return a
+        except Exception:
+            pass
+        try:
+            hab = vault.hby.habByPre(aid)
+            if hab is not None and hab.name:
+                return hab.name
+        except Exception:
+            pass
+        return aid[:14] + "…" if len(aid) > 16 else aid
 
     def _build_lifecycle_card(self, i: Any) -> QWidget:
         """Schema-level Lifecycle card: the time axis. Single fact —

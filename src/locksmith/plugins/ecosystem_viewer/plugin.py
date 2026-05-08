@@ -63,6 +63,7 @@ class EcosystemViewerPlugin(PluginBase):
         self._schema_detail_page.back_requested.connect(self._show_overview)
         self._schema_detail_page.show_schema_detail_requested.connect(self._show_schema_detail)
         self._schema_detail_page.edit_annotation_clicked.connect(self._open_edit_annotation_dialog)
+        self._schema_detail_page.show_issuer_requested.connect(self._show_issuer)
 
         # Ecosystem detail page wiring
         self._overview_page.show_ecosystem_detail_requested.connect(self._show_ecosystem_detail)
