@@ -1135,3 +1135,87 @@ class PermittedIssuerEdge(QGraphicsPathItem):
                 self.source.aid, self.target.said,
             )
         event.accept()
+
+
+# ---------------------------------------------------------------------------
+# QualificationEdge — schema → role dashed teal Bézier with "if" badge
+# ---------------------------------------------------------------------------
+
+
+class QualificationEdge(QGraphicsPathItem):
+    """Schema → role: 'members of this role qualify by holding this schema'."""
+
+    EDGE_COLOR = QColor("#0ABFB0")
+    BADGE_BG = QColor("#FFFFFF")
+    BADGE_TEXT = QColor("#0ABFB0")
+    STROKE_WIDTH = 1.6
+
+    def __init__(
+        self,
+        source_schema: "SchemaNode",
+        target_role: "RoleNode",
+        parent: QGraphicsItem | None = None,
+    ):
+        super().__init__(parent)
+        self.source_schema = source_schema
+        self.target_role = target_role
+        self.schema_said = source_schema.said
+        self.role_name = target_role.role_name
+
+        pen = QPen(self.EDGE_COLOR, self.STROKE_WIDTH)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        pen.setDashPattern([4, 3])
+        self.setPen(pen)
+        self.setBrush(Qt.BrushStyle.NoBrush)
+        self.setZValue(-1)
+        self.setAcceptHoverEvents(True)
+        self._emitter = _QualificationEdgeEmitter(self)
+        self.refresh()
+
+    def refresh(self) -> None:
+        src = self.source_schema.bottom_anchor()
+        tgt = self.target_role.top_anchor()
+        path = QPainterPath()
+        path.moveTo(src)
+        ctrl1 = QPointF(src.x(), src.y() + (tgt.y() - src.y()) * 0.4)
+        ctrl2 = QPointF(tgt.x(), src.y() + (tgt.y() - src.y()) * 0.6)
+        path.cubicTo(ctrl1, ctrl2, tgt)
+        self.setPath(path)
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        super().paint(painter, option, widget)
+        if self.path().isEmpty():
+            return
+        mid = self.path().pointAtPercent(0.5)
+        badge_w, badge_h = 22, 14
+        rect = QRectF(mid.x() - badge_w / 2, mid.y() - badge_h / 2, badge_w, badge_h)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setBrush(self.BADGE_BG)
+        painter.setPen(QPen(self.EDGE_COLOR, 1))
+        painter.drawRoundedRect(rect, 4, 4)
+        font = QFont()
+        font.setPointSize(8)
+        font.setItalic(True)
+        painter.setFont(font)
+        painter.setPen(QPen(self.BADGE_TEXT))
+        painter.drawText(rect, Qt.AlignmentFlag.AlignCenter, "if")
+
+    def contextMenuEvent(self, event):
+        from PySide6.QtWidgets import QMenu
+        menu = QMenu()
+        action = menu.addAction("Remove qualification rule")
+        chosen = menu.exec(event.screenPos())
+        if chosen is action:
+            self._emitter.remove_requested.emit(self.schema_said, self.role_name)
+        event.accept()
+
+
+from PySide6.QtCore import QObject as _QObject, Signal as _Signal
+
+
+class _QualificationEdgeEmitter(_QObject):
+    remove_requested = _Signal(str, str)  # (schema_said, role_name)
+
+    def __init__(self, parent):
+        super().__init__()
+        self._parent = parent
