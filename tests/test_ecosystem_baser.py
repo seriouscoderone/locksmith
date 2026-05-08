@@ -257,3 +257,49 @@ def test_legacy_record_with_no_permitted_field_still_round_trips(baser):
     baser.put_ecosystem(rec)
     fresh = baser.get_ecosystem("legacy")
     assert fresh.permitted_issuers == {}
+
+
+# ---------------------------------------------------------------------------
+# Stage 12: EcosystemRecord field additions
+# ---------------------------------------------------------------------------
+
+
+def test_new_ecosystem_record_has_default_role_fields(baser):
+    """A freshly-created EcosystemRecord initializes the four new fields
+    with safe defaults — empty dict / list / 1 / empty string."""
+    rec = EcosystemRecord(name="eco")
+    assert rec.issuer_qualification_rules == {}
+    assert rec.role_names == []
+    assert rec.schema_version == 1
+    assert rec.governance_url == ""
+
+
+def test_ecosystem_record_round_trips_new_fields(baser):
+    """Setting the new fields persists across put/get."""
+    rec = EcosystemRecord(
+        name="eco",
+        schema_saids=["ES1"],
+        issuer_qualification_rules={"ES1": "state-doi"},
+        role_names=["state-doi"],
+        schema_version=1,
+        governance_url="https://example.com/charter",
+    )
+    baser.put_ecosystem(rec)
+    fresh = baser.get_ecosystem("eco")
+    assert fresh.issuer_qualification_rules == {"ES1": "state-doi"}
+    assert fresh.role_names == ["state-doi"]
+    assert fresh.schema_version == 1
+    assert fresh.governance_url == "https://example.com/charter"
+
+
+def test_legacy_record_constructor_without_new_fields_still_works(baser):
+    """An EcosystemRecord built without the new fields (the way every
+    pre-Stage-12 caller does it) round-trips cleanly with defaulted
+    new fields. Validates the non-breaking-change discipline."""
+    rec = EcosystemRecord(name="legacy", schema_saids=["ES1"], issuer_aids=["EA1"])
+    baser.put_ecosystem(rec)
+    fresh = baser.get_ecosystem("legacy")
+    assert fresh.issuer_qualification_rules == {}
+    assert fresh.role_names == []
+    assert fresh.schema_version == 1
+    assert fresh.governance_url == ""

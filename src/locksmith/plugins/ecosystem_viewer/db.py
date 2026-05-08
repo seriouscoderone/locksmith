@@ -54,6 +54,33 @@ class EcosystemRecord:
     permitted_issuers: dict = field(default_factory=dict)
     """schema_said -> list[AID]. See class docstring."""
 
+    # --- Stage 12 (role-based qualification) — all optional with defaults
+    # so on-disk records pre-dating this stage read cleanly. See
+    # docs/superpowers/designs/2026-05-08-ecosystem-governance-roadmap.md §2.
+
+    issuer_qualification_rules: dict = field(default_factory=dict)
+    """schema_said -> role_name. When set, ANY AID that is a member of
+    role_name is a permitted issuer of that schema — in addition to (or
+    instead of) AIDs enumerated in `permitted_issuers[schema_said]`.
+    Convention overlay: spec defines no such rule; this is the wallet-
+    level expression of an EGF membership policy."""
+
+    role_names: list[str] = field(default_factory=list)
+    """Names of roles defined in this ecosystem. The actual RoleRecords
+    live in the rle. Komer subkey; this list is a convenience cache for
+    iteration without scanning the role-Komer."""
+
+    schema_version: int = 1
+    """Wallet-internal version tag for forward-compatibility. Bumped
+    when the record's schema changes in a way that needs migration
+    detection. Pre-Stage-12 records read as version 1 by default."""
+
+    governance_url: str = ""
+    """Optional URL or OOBI to the ecosystem's human-readable charter
+    / governance framework document. The wallet does not model framework
+    artifacts (Risk Register, Liability, Audit, etc — see roadmap §1.5);
+    this link surfaces the framework's existence to the user."""
+
 
 class AnnotationKind(str, Enum):
     SCHEMA = "schema"
