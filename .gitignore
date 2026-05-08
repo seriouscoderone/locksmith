@@ -39,6 +39,9 @@ MANIFEST
 pip-log.txt
 pip-delete-this-directory.txt
 
+# Visual-test screenshots (regenerated on every test run; debugging artifact only)
+tests/_screenshots/
+
 # Unit test / coverage reports
 htmlcov/
 .tox/

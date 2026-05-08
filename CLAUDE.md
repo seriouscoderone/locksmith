@@ -23,8 +23,23 @@ python -m pip install -e .
 - **Regenerate Qt resources after asset changes:** `python ./scripts/generate_qrc.py && pyside6-rcc resources.qrc -o resources_rc.py && mv resources_rc.py ./src/locksmith/`
 - **Build Sphinx docs:** `python -m pip install -r docs/requirements.txt && sphinx-build -b html docs docs/_build/html`
 - **macOS sign + notarize a built `.app`:** `./scripts/sign.sh` (requires `DEVELOPER_ID_APP_CERT` and `LOCKSMITH_ENVIRONMENT` env vars; `APP_IDENTIFIER`/`KC_PROFILE` in the script are placeholders that must be set per deployment)
+- **Run tests:** `QT_QPA_PLATFORM=offscreen pytest` (the `offscreen` platform plugin is also set in `tests/conftest.py`, but exporting it explicitly avoids spurious window pop-ups during long runs)
 
-There is no test suite at the moment — `pyproject.toml` configures a pytest pythonpath but no `tests/` exists. The CI workflow in `.github/workflows/release.ci.yml` is a release-only pipeline, and its build step is intentionally broken (was Flet, needs to be replaced with PySide6 packaging — see TODO in the workflow).
+The CI workflow in `.github/workflows/release.ci.yml` is a release-only pipeline, and its build step is intentionally broken (was Flet, needs to be replaced with PySide6 packaging — see TODO in the workflow).
+
+## Testing
+
+`tests/conftest.py` provides a session-scoped `qapp` fixture (and an autouse cleanup) that boots a headless `QApplication` under `QT_QPA_PLATFORM=offscreen`. Most existing tests are pure-logic; UI tests that need a `QApplication` should depend on `qapp`.
+
+### Visual smoke tests for UI
+
+Pattern: render a widget, run structural assertions on its state, save a `widget.grab()` PNG to `tests/_screenshots/`, and let a human (or vision LLM) eyeball the image. Combines cheap-and-fast asserts with the only thing that catches actual visual regressions. See `tests/test_create_role_dialog_visual.py` as the reference.
+
+Gotchas to repeat for any new visual test:
+- **Resize parentless dialogs explicitly.** `LocksmithDialog` clips its content to a `QScrollArea` whose max height is computed from the parent. With `parent=None` (the test default) it sizes to ~540px and the lower half of long forms scrolls off the screenshot. Call `dlg.resize(W, H)` before `grab()`.
+- **Wait for animations.** Toolkit widgets use `QPropertyAnimation`s for floating labels (~200ms), error/success banners (~300ms), and similar effects. Without `QTest.qWait(250–500)` after each interactive event you'll grab mid-animation frames where labels overlap text and banners are half-open — these *look like* real bugs. Always wait, then `qapp.processEvents()`, then grab.
+- **Screenshots go to `tests/_screenshots/` and are git-ignored.** They're a debugging artifact, not a baseline. If you want pixel-diff regression baselines, that's a separate dir (we don't have one yet).
+- **Structural asserts catch state correctness; the screenshot catches visual correctness.** Use both. The asserts will green-light a dialog whose text is white-on-white; the screenshot will green-light a dialog whose buttons are wired to the wrong handler. You need both passes.
 
 ## Architecture
 
