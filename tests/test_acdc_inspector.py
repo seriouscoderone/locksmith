@@ -132,6 +132,44 @@ def test_inspect_acdc_accepts_legacy_ri_or_spec_rd():
     assert i_spec.registry_said == "ERegistrySpecRdRdRdRdRdRdRdRdRdRdRdRd"
 
 
+def test_self_issued_when_targeted_and_issuer_equals_issuee():
+    aid = "EAliceAliceAliceAliceAliceAliceAliceAliceAlice"
+    a = {
+        "d": "EAttribAttribAttribAttribAttribAttribAttrib",
+        "i": aid,
+        "name": "self",
+    }
+    i = inspect_acdc(_minimal_acdc(i=aid, a=a))
+    assert i.is_self_issued is True
+    assert i.is_self_attested is False  # mutually exclusive with self_issued for targeted
+
+
+def test_targeted_with_distinct_issuer_and_issuee_is_neither():
+    a = {
+        "d": "EAttribAttribAttribAttribAttribAttribAttrib",
+        "i": "EIssueeIssueeIssueeIssueeIssueeIssueeIssuee",
+        "name": "Alice",
+    }
+    i = inspect_acdc(_minimal_acdc(a=a))
+    assert i.is_self_issued is False
+    assert i.is_self_attested is False
+
+
+def test_untargeted_acdc_is_self_attested_not_self_issued():
+    i = inspect_acdc(_minimal_acdc())
+    assert i.is_self_issued is False
+    assert i.is_self_attested is True
+
+
+def test_untargeted_with_compact_attribute_is_still_self_attested():
+    i = inspect_acdc(_minimal_acdc(
+        a="EAttribSAIDAttribSAIDAttribSAIDAttribSAIDAttribSAID",
+    ))
+    assert i.is_targeted is False
+    assert i.is_self_attested is True
+    assert i.is_self_issued is False
+
+
 # ---------------------------------------------------------------------------
 # Schema inspection
 # ---------------------------------------------------------------------------

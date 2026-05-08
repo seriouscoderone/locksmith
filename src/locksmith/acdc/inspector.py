@@ -146,6 +146,20 @@ class ACDCInspection:
     issuee_aid: str | None
     """Issuee AID if targeted; None otherwise."""
 
+    # --- Self-attestation classification (convention overlay; spec defines
+    # neither term as a primitive — both are derived from AID equality and
+    # targeting). See docs/superpowers/designs/2026-05-07-acdc-parties-lifecycle.md
+    # §2.3 for spec rationale.
+    is_self_issued: bool
+    """True iff `is_targeted` and `issuer_aid == issuee_aid`. Spec leaves
+    this implicit; we name it because the trust posture differs from a
+    credential bestowed by another AID."""
+    is_self_attested: bool
+    """True iff `not is_targeted` (every untargeted ACDC is by construction
+    a self-attestation by its issuer — spec §"Untargeted Attribute Section"
+    lines 332-334 calls this an undirected verifiable attestation by the
+    Issuer). Mutually exclusive with `is_self_issued` for targeted ACDCs."""
+
     # --- Per-section form
     sections: SectionsPresent
 
@@ -317,6 +331,10 @@ def inspect_acdc(parsed: dict[str, Any]) -> ACDCInspection:
     # --- Disclosure tier (derived from per-section forms)
     disclosure_tier = _derive_disclosure_tier(sections)
 
+    is_targeted = sections.attribute != "absent" and issuee_aid is not None
+    is_self_issued = is_targeted and issuee_aid == issuer_aid
+    is_self_attested = not is_targeted
+
     return ACDCInspection(
         version_string=version_string,
         said=said,
@@ -326,8 +344,10 @@ def inspect_acdc(parsed: dict[str, Any]) -> ACDCInspection:
         nonce=nonce,
         registry_said=registry_said,
         is_private=is_private,
-        is_targeted=sections.attribute != "absent" and issuee_aid is not None,
+        is_targeted=is_targeted,
         issuee_aid=issuee_aid,
+        is_self_issued=is_self_issued,
+        is_self_attested=is_self_attested,
         sections=sections,
         disclosure_tier=disclosure_tier,
         edges=edges,
