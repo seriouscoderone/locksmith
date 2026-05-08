@@ -26,7 +26,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QPainter, QWheelEvent
+from PySide6.QtGui import QColor, QPainter, QPen, QWheelEvent
 from PySide6.QtWidgets import (
     QFrame,
     QGraphicsScene,
@@ -740,6 +740,14 @@ class _GraphView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None):
         super().__init__(scene, parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
+        # Drag-to-create-edge state (Stage 11). Initialized lazily in
+        # mousePressEvent when a press lands on an IssuerNode.
+        self._drag_origin_aid: str | None = None
+        self._drag_origin_pos = None  # QPointF in scene coords
+        self._drag_press_view_pos = None  # QPoint in view coords (for threshold)
+        self._drag_rubber_band = None  # QGraphicsLineItem during drag
+        self._drag_active = False
+        self._current_snap_target_said: str | None = None
 
     def wheelEvent(self, event: QWheelEvent) -> None:
         if event.modifiers() & Qt.KeyboardModifier.ControlModifier:
@@ -755,9 +763,175 @@ class _GraphView(QGraphicsView):
         super().wheelEvent(event)
 
     def mousePressEvent(self, event):
-        # If the press lands on empty scene area (no item under cursor),
-        # treat it as a background click after the standard pan handling.
+        # If the press lands on an IssuerNode, capture the press for a
+        # potential drag-to-create-edge gesture. Don't enter drag mode
+        # until movement exceeds the threshold (Qt's startDragDistance,
+        # default 4px on macOS), so a click without move still selects
+        # the issuer and opens the side panel.
         item = self.itemAt(event.position().toPoint())
+        if (
+            event.button() == Qt.MouseButton.LeftButton
+            and isinstance(item, IssuerNode)
+        ):
+            self._drag_origin_aid = item.aid
+            self._drag_origin_pos = item.top_anchor()
+            self._drag_press_view_pos = event.position().toPoint()
+            # Don't call super here — let the issuer node's own
+            # mousePressEvent fire (which emits clicked + accepts).
+            super().mousePressEvent(event)
+            return
+
+        # Reset any stale drag state and proceed with default behavior.
+        self._drag_origin_aid = None
+        self._drag_origin_pos = None
+        self._drag_press_view_pos = None
+
         super().mousePressEvent(event)
         if item is None and event.button() == Qt.MouseButton.LeftButton:
             self.background_clicked.emit()
+
+    def mouseMoveEvent(self, event):
+        # Entering drag mode: cross the 4px movement threshold while a
+        # press is active on an IssuerNode.
+        if (
+            self._drag_origin_aid is not None
+            and not self._drag_active
+            and self._drag_press_view_pos is not None
+        ):
+            delta = (event.position().toPoint() - self._drag_press_view_pos)
+            if delta.manhattanLength() >= self._start_drag_distance():
+                self._begin_drag()
+
+        if self._drag_active:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            self._update_rubber_band(scene_pos)
+            self._update_snap_targets(scene_pos)
+            event.accept()
+            return  # don't pan while drawing
+
+        super().mouseMoveEvent(event)
+
+    @staticmethod
+    def _start_drag_distance() -> int:
+        from PySide6.QtWidgets import QApplication
+        return QApplication.startDragDistance() if QApplication.instance() else 4
+
+    def mouseReleaseEvent(self, event):
+        if self._drag_active and event.button() == Qt.MouseButton.LeftButton:
+            scene_pos = self.mapToScene(event.position().toPoint())
+            target = self._snap_target_at(scene_pos)
+            self._end_drag(target)
+            event.accept()
+            return
+        # Reset stale press capture (no drag was started).
+        self._drag_origin_aid = None
+        self._drag_origin_pos = None
+        self._drag_press_view_pos = None
+        super().mouseReleaseEvent(event)
+
+    def _begin_drag(self) -> None:
+        from PySide6.QtWidgets import QGraphicsLineItem
+        from PySide6.QtCore import QLineF
+        self._drag_active = True
+        self.viewport().setCursor(Qt.CursorShape.CrossCursor)
+        # Create rubber band from origin to current scene pos (will be
+        # immediately updated on next mouseMoveEvent).
+        line = QGraphicsLineItem(QLineF(self._drag_origin_pos, self._drag_origin_pos))
+        pen = QPen(QColor("#0D9488"), 1.25)
+        pen.setCapStyle(Qt.PenCapStyle.RoundCap)
+        line.setPen(pen)
+        line.setZValue(10)  # above everything during drag
+        line.setEnabled(False)  # don't let it intercept hit-tests
+        self.scene().addItem(line)
+        self._drag_rubber_band = line
+
+    def _update_rubber_band(self, scene_pos) -> None:
+        from PySide6.QtCore import QLineF
+        if self._drag_rubber_band is None or self._drag_origin_pos is None:
+            return
+        # If currently snapped to a schema, terminate at its bottom_anchor.
+        if self._current_snap_target_said is not None:
+            owner = self.parent()
+            if isinstance(owner, EcosystemGraphView) and owner._build_result is not None:
+                schema_node = owner._build_result.schema_nodes.get(
+                    self._current_snap_target_said
+                )
+                if schema_node is not None:
+                    end = schema_node.bottom_anchor()
+                    self._drag_rubber_band.setLine(QLineF(self._drag_origin_pos, end))
+                    return
+        self._drag_rubber_band.setLine(QLineF(self._drag_origin_pos, scene_pos))
+
+    def _update_snap_targets(self, scene_pos) -> None:
+        owner = self.parent()
+        if not isinstance(owner, EcosystemGraphView):
+            return
+        if owner._build_result is None or owner._eco is None:
+            return
+
+        target = self._snap_target_at(scene_pos)
+        target_said = target.said if target is not None else None
+
+        # Update per-schema snap states.
+        for said, schema in owner._build_result.schema_nodes.items():
+            if schema.ghost:
+                schema.set_snap_target_state("ineligible")
+                continue
+            issued_by = owner._eco.permitted_issuers.get(said, [])
+            if self._drag_origin_aid in issued_by:
+                # Already issued by the dragging issuer → 'already'
+                schema.set_snap_target_state("already")
+            else:
+                # All non-ghost, not-already-issued schemas glow as 'eligible'
+                # during drag (the actual snap target is the one the cursor
+                # is currently over, but we want all eligible ones to pulse
+                # so the user sees the full target set).
+                schema.set_snap_target_state("eligible")
+
+        self._current_snap_target_said = target_said
+
+    def _snap_target_at(self, scene_pos):
+        """Return the SchemaNode at scene_pos that's an eligible drop
+        target, or None. Filters out ghost nodes and the rubber-band
+        item itself."""
+        items = self.scene().items(scene_pos)
+        for item in items:
+            if isinstance(item, SchemaNode) and not item.ghost:
+                # Even already-issued schemas can be 'snap targets'; the
+                # release-time logic short-circuits with a no-op for them.
+                return item
+        return None
+
+    def _end_drag(self, target) -> None:
+        owner = self.parent()
+        # Remove rubber band.
+        if self._drag_rubber_band is not None:
+            self.scene().removeItem(self._drag_rubber_band)
+            self._drag_rubber_band = None
+        # Restore cursor.
+        self.viewport().unsetCursor()
+        # Clear snap-target overlays.
+        if isinstance(owner, EcosystemGraphView) and owner._build_result is not None:
+            for schema in owner._build_result.schema_nodes.values():
+                schema.set_snap_target_state("off")
+
+        # Commit if release on an eligible schema.
+        if (
+            target is not None
+            and self._drag_origin_aid is not None
+            and isinstance(owner, EcosystemGraphView)
+            and owner._eco is not None
+        ):
+            said = target.said
+            already = self._drag_origin_aid in owner._eco.permitted_issuers.get(said, [])
+            if not already:
+                owner.add_permitted_issuer_requested.emit(self._drag_origin_aid, said)
+            # else: silent no-op (already-issued case). Future polish:
+            # show a toast.
+
+        # Reset state.
+        self._drag_active = False
+        self._drag_origin_aid = None
+        self._drag_origin_pos = None
+        self._drag_press_view_pos = None
+        self._current_snap_target_said = None
