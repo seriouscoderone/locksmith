@@ -40,7 +40,7 @@ def test_role_node_renders_hexagon_with_label_and_member_count(qapp):
 
     assert node.role_name == "state-doi"
     assert node.member_count == 3
-    assert node.boundingRect().width() == 64
+    assert node.boundingRect().width() == RoleNode.NODE_DIAMETER
     items = scene.items()
     assert len(items) == 2
 

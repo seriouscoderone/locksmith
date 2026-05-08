@@ -824,9 +824,10 @@ class IssuerNode(QGraphicsObject):
 class RoleNode(QGraphicsObject):
     """A role: a credential-qualified class of AIDs rendered as a hexagon."""
 
-    NODE_DIAMETER = 64
-    LABEL_FONT_PT = 9
-    BADGE_FONT_PT = 8
+    NODE_DIAMETER = 56
+    LABEL_FONT_PT = 10
+    BADGE_FONT_PT = 9
+    GLYPH_FONT_PT = 14
     OUTLINE_COLOR = QColor("#0ABFB0")
     OUTLINE_WIDTH = 2.0
     FILL_COLOR = QColor("#FFFFFF")
@@ -852,7 +853,8 @@ class RoleNode(QGraphicsObject):
 
     def boundingRect(self) -> QRectF:
         d = self.NODE_DIAMETER
-        return QRectF(0, 0, d, d + 22)
+        # Hex + role-name row + member-count row
+        return QRectF(0, 0, d, d + 36)
 
     def _hexagon_path(self) -> QPainterPath:
         d = self.NODE_DIAMETER
@@ -880,16 +882,26 @@ class RoleNode(QGraphicsObject):
         painter.setBrush(self.FILL_COLOR)
         painter.drawPath(self._hexagon_path())
 
-        font = QFont()
-        font.setPointSize(self.LABEL_FONT_PT)
-        font.setBold(True)
-        painter.setFont(font)
-        painter.setPen(QPen(QColor("#1A1C20")))
-        label = self.role_name if len(self.role_name) <= 12 else self.role_name[:11] + "…"
+        glyph_font = QFont()
+        glyph_font.setPointSize(self.GLYPH_FONT_PT)
+        glyph_font.setBold(True)
+        painter.setFont(glyph_font)
+        painter.setPen(QPen(self.OUTLINE_COLOR))
         painter.drawText(
             QRectF(0, 0, self.NODE_DIAMETER, self.NODE_DIAMETER),
-            Qt.AlignmentFlag.AlignCenter,
-            label,
+            Qt.AlignmentFlag.AlignCenter, "R",
+        )
+
+        label_font = QFont()
+        label_font.setPointSize(self.LABEL_FONT_PT)
+        label_font.setBold(True)
+        painter.setFont(label_font)
+        painter.setPen(QPen(QColor("#1A1C20")))
+        label = self.role_name if len(self.role_name) <= 14 else self.role_name[:13] + "…"
+        # Role name below the hex; full bounding-rect width so longer names render fine.
+        painter.drawText(
+            QRectF(-20, self.NODE_DIAMETER + 2, self.NODE_DIAMETER + 40, 16),
+            Qt.AlignmentFlag.AlignCenter, label,
         )
 
         badge_font = QFont()
@@ -898,9 +910,8 @@ class RoleNode(QGraphicsObject):
         painter.setPen(QPen(QColor("#666")))
         badge_text = f"{self.member_count} member{'s' if self.member_count != 1 else ''}"
         painter.drawText(
-            QRectF(0, self.NODE_DIAMETER + 2, self.NODE_DIAMETER, 18),
-            Qt.AlignmentFlag.AlignCenter,
-            badge_text,
+            QRectF(-20, self.NODE_DIAMETER + 18, self.NODE_DIAMETER + 40, 16),
+            Qt.AlignmentFlag.AlignCenter, badge_text,
         )
 
     def top_anchor(self) -> QPointF:
