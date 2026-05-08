@@ -305,7 +305,7 @@ class LifecycleWidget(QWidget):
         painter = QPainter(self)
         painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
 
-        size = self._SIZE
+        size = min(self.width(), self.height())
         margin = 2
         rect = QRectF(margin, margin, size - 2 * margin, size - 2 * margin)
 

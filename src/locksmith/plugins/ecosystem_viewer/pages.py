@@ -1094,9 +1094,6 @@ class SchemaDetailPage(QWidget):
     def _build_known_issuers_row(
         self, aids: list[str], vault: Any,
     ) -> QWidget:
-        from locksmith.plugins.ecosystem_viewer.overview_cards import (
-            IssuerSigilCircle,
-        )
         wrap = QFrame()
         wrap.setObjectName("sdKnownIssuersRow")
         wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -1150,10 +1147,21 @@ class SchemaDetailPage(QWidget):
             chip_l.setAlignment(Qt.AlignmentFlag.AlignVCenter)
 
             is_self = aid in self_aids
-            sigil = IssuerSigilCircle(is_self=is_self, role="from")
-            # Shrink to chip scale.
-            sigil.setFixedSize(20, 20)
-            chip_l.addWidget(sigil)
+            # Small tinted sigil pixmap — IssuerSigilCircle's role
+            # decoration isn't readable at chip scale (and its 48px paint
+            # rect doesn't fit in a 20px chip), so we render the bare
+            # sigil glyph at 14px tinted by self/remote color.
+            from locksmith.plugins.ecosystem_viewer.overview_cards import (
+                _load_tinted_pixmap,
+            )
+            from locksmith.acdc import icons as acdc_icons
+            sigil_color = colors.PRIMARY if is_self else colors.TEXT_DARK
+            sigil_lbl = QLabel()
+            sigil_lbl.setPixmap(
+                _load_tinted_pixmap(acdc_icons.ICON_ISSUER_SIGIL, 14, sigil_color)
+            )
+            sigil_lbl.setFixedSize(14, 14)
+            chip_l.addWidget(sigil_lbl)
 
             alias = self._alias_for_aid(aid, vault)
             label = QLabel(alias + (" ★" if is_self else ""))
@@ -1467,6 +1475,7 @@ class SchemaDetailPage(QWidget):
             has_aggregate=sd.declares_aggregate,
             has_edges=sd.declares_edges,
             has_rules=sd.declares_rules,
+            requires_registry=i.requires_registry,
             ghost=False,
         )
 
@@ -1510,6 +1519,7 @@ class SchemaDetailPage(QWidget):
                         has_aggregate=tsd.declares_aggregate,
                         has_edges=tsd.declares_edges,
                         has_rules=tsd.declares_rules,
+                        requires_registry=ti.requires_registry,
                         ghost=False,
                     )
                 except Exception:
