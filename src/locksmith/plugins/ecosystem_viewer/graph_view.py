@@ -409,6 +409,7 @@ class EcosystemGraphView(QWidget):
                 has_aggregate=sd.declares_aggregate,
                 has_edges=sd.declares_edges,
                 has_rules=sd.declares_rules,
+                requires_registry=insp.requires_registry,
                 ghost=False,
             )
             node.clicked.connect(self._on_schema_clicked)

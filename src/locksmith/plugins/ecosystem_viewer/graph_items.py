@@ -96,6 +96,7 @@ class SchemaNode(QGraphicsObject):
         has_aggregate: bool = False,
         has_edges: bool = False,
         has_rules: bool = False,
+        requires_registry: bool = False,
         ghost: bool = False,
         parent: QGraphicsItem | None = None,
     ):
@@ -110,6 +111,7 @@ class SchemaNode(QGraphicsObject):
         self.has_aggregate = has_aggregate
         self.has_edges = has_edges
         self.has_rules = has_rules
+        self.requires_registry = requires_registry
         self.ghost = ghost
 
         self._hovered = False
@@ -250,6 +252,33 @@ class SchemaNode(QGraphicsObject):
 
         # Section fingerprint (bottom-right, 24x24)
         self._paint_section_fingerprint(painter, NODE_WIDTH - 30, NODE_HEIGHT - 30)
+
+        # Lifecycle glyph (design 2026-05-07 §4.3) — bottom-left corner,
+        # 12px. Skipped in ghost mode (which already returned early above).
+        lifecycle_size = 12
+        lx = 8
+        ly = NODE_HEIGHT - lifecycle_size - 8
+        lifecycle_rect = QRectF(lx, ly, lifecycle_size, lifecycle_size)
+        if self.requires_registry:
+            color = QColor("#0D9488")
+            painter.setPen(QPen(color, 1.2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(lifecycle_rect)
+            # Single hand at 12 o'clock.
+            cx = lifecycle_rect.center().x()
+            cy = lifecycle_rect.center().y()
+            painter.setPen(QPen(color, 1.2))
+            painter.drawLine(QPointF(cx, cy), QPointF(cx, lifecycle_rect.top() + 1.5))
+        else:
+            color = QColor(colors.TEXT_SECONDARY)
+            painter.setPen(QPen(color, 1.2))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawArc(lifecycle_rect, -45 * 16, 270 * 16)
+            cx = lifecycle_rect.center().x()
+            cy = lifecycle_rect.center().y()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(cx - 1, cy - 1, 2, 2))
 
     def _paint_said_glyph(self, painter: QPainter, x: float, y: float) -> None:
         """Tiny three-arc rangefinder glyph, 16x16 at (x, y)."""
