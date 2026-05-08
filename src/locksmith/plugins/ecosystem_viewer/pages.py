@@ -1924,6 +1924,16 @@ class EcosystemDetailPage(QWidget):
         self._graph_view.schema_double_clicked.connect(self.show_schema_detail_requested.emit)
         self._graph_view.open_schema_detail_requested.connect(self.show_schema_detail_requested.emit)
         self._graph_view.open_issuer_requested.connect(self.show_issuer_requested.emit)
+        # Forward graph-canvas drag/right-click events to the same
+        # signals the List-tab chip row already drives (Stage 11). The
+        # graph view emits with (aid, schema_said); page-level signals
+        # take (eco_name, schema_said, aid) — fold the eco_name in.
+        self._graph_view.add_permitted_issuer_requested.connect(
+            self._on_graph_add_permitted_issuer
+        )
+        self._graph_view.remove_permitted_issuer_requested.connect(
+            self._on_graph_remove_permitted_issuer
+        )
         self._content_stack.addWidget(self._graph_view)
 
         # List tab — wraps the previous scrollable layout.
@@ -1963,6 +1973,16 @@ class EcosystemDetailPage(QWidget):
     def show_ecosystem(self, name: str) -> None:
         self._current_name = name
         self._refresh()
+
+    def _on_graph_add_permitted_issuer(self, aid: str, said: str) -> None:
+        if self._current_name is None:
+            return
+        self.add_permitted_issuer_clicked.emit(self._current_name, said, aid)
+
+    def _on_graph_remove_permitted_issuer(self, aid: str, said: str) -> None:
+        if self._current_name is None:
+            return
+        self.remove_permitted_issuer_clicked.emit(self._current_name, said, aid)
 
     def _refresh(self) -> None:
         # Clear header, add-button area, and the list tab's section widgets.
