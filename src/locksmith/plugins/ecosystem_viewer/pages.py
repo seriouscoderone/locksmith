@@ -622,6 +622,7 @@ class SchemaDetailPage(QWidget):
         idx = 0
         self._content_layout.insertWidget(idx, self._build_hero_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_at_a_glance_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_parties_lifecycle_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_attributes_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_chain_of_authority_card(i, vault)); idx += 1
         self._content_layout.insertWidget(idx, self._build_annotation_card(i)); idx += 1
@@ -892,6 +893,139 @@ class SchemaDetailPage(QWidget):
 
         row.addLayout(text_block, 1)
         return cell
+
+    # ------------------------------------------------------------------
+    # Parties + lifecycle card (Stage 10 — surfaces issuer/issuee/registry)
+    # ------------------------------------------------------------------
+
+    def _build_parties_lifecycle_card(self, i: Any) -> QWidget:
+        """Render the issuer (always present) / issuee (a.i) / registry
+        (rd or ri) axes of an ACDC. The at-a-glance card focuses on
+        intrinsic schema properties; this card focuses on the parties
+        involved in any credential of this schema and its revocation
+        lifecycle. See user-reported gap discussion in commit message."""
+        frame = QFrame()
+        frame.setObjectName("sdPartiesCard")
+        frame.setStyleSheet(
+            "QFrame#sdPartiesCard { background-color: white;"
+            " border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdPartiesCard QLabel { background: transparent; }"
+        )
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(10)
+
+        title = QLabel("Parties & lifecycle")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        outer.addWidget(title)
+
+        outer.addWidget(self._build_party_row(
+            label="Issuer (i)",
+            primary="Always present",
+            secondary=(
+                "Every credential identifies its issuer at the top-level "
+                "i field. The schema cannot constrain who that is — that's "
+                "the ecosystem's governance concern (see authoritative issuers)."
+            ),
+            accent_color=colors.PRIMARY,
+        ))
+
+        if i.requires_targeted:
+            outer.addWidget(self._build_party_row(
+                label="Issuee (a.i)",
+                primary="Required",
+                secondary=(
+                    "Credentials commit to a specific holder via a.i. "
+                    "When the issuer's AID matches the issuee's AID, the "
+                    "credential is self-issued (a self-attested claim)."
+                ),
+                accent_color=colors.TEXT_DARK,
+            ))
+        else:
+            outer.addWidget(self._build_party_row(
+                label="Issuee (a.i)",
+                primary="Not committed",
+                secondary=(
+                    "Untargeted attestation — the credential does not bind "
+                    "to a specific holder. The issuer makes a claim that "
+                    "anyone can verify by SAID."
+                ),
+                accent_color=colors.TEXT_SECONDARY,
+            ))
+
+        if i.requires_registry:
+            outer.addWidget(self._build_party_row(
+                label="Registry (rd/ri)",
+                primary="Registry-backed — revocable",
+                secondary=(
+                    "Credentials must be anchored in a TEL (transaction "
+                    "event log). The issuer can revoke a credential by "
+                    "appending a revocation event to its registry."
+                ),
+                accent_color="#0D9488",  # teal — same as aggregate-section dot
+            ))
+        else:
+            outer.addWidget(self._build_party_row(
+                label="Registry (rd/ri)",
+                primary="One-shot — no revocation",
+                secondary=(
+                    "Credentials are issuance-only: there is no TEL anchor "
+                    "and no revocation surface. Verifying party trusts the "
+                    "credential as-issued, with no later state change."
+                ),
+                accent_color=colors.TEXT_SECONDARY,
+            ))
+
+        return frame
+
+    def _build_party_row(
+        self, label: str, primary: str, secondary: str, accent_color: str,
+    ) -> QWidget:
+        """One row of the Parties & lifecycle card. A small accent bar on
+        the left lets the eye scan rows quickly without making each row
+        feel like its own card."""
+        row = QFrame()
+        row.setObjectName("sdPartyRow")
+        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        row.setStyleSheet(
+            "QFrame#sdPartyRow { background: transparent;"
+            f" border-left: 3px solid {accent_color};"
+            " border-radius: 0px; }"
+            "QFrame#sdPartyRow QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(10, 4, 0, 4)
+        layout.setSpacing(2)
+
+        head_row = QHBoxLayout()
+        head_row.setContentsMargins(0, 0, 0, 0)
+        head_row.setSpacing(10)
+        head_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        label_lbl = QLabel(label)
+        label_lbl.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        head_row.addWidget(label_lbl)
+
+        primary_lbl = QLabel(primary)
+        primary_lbl.setStyleSheet(
+            f"font-size: 13px; font-weight: 600; color: {colors.TEXT_DARK};"
+        )
+        head_row.addWidget(primary_lbl)
+        head_row.addStretch()
+
+        head_w = QWidget()
+        head_w.setLayout(head_row)
+        layout.addWidget(head_w)
+
+        secondary_lbl = QLabel(secondary)
+        secondary_lbl.setWordWrap(True)
+        secondary_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        layout.addWidget(secondary_lbl)
+
+        return row
 
     # ------------------------------------------------------------------
     # Attributes card (NEW — user's correction)

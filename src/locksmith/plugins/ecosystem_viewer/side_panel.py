@@ -220,6 +220,21 @@ class SidePanel(QFrame):
             self._build_classification_row(inspection),
         )
 
+        # Lifecycle one-liner (Stage 10) — registry-backed = revocable; absent = one-shot.
+        if getattr(inspection, "requires_registry", False):
+            lifecycle_text = "Lifecycle: registry-backed (revocable via TEL)"
+            lifecycle_color = "#0D9488"  # teal — matches aggregate dot
+        else:
+            lifecycle_text = "Lifecycle: one-shot (no revocation surface)"
+            lifecycle_color = colors.TEXT_SECONDARY
+        lifecycle_lbl = QLabel(lifecycle_text)
+        lifecycle_lbl.setStyleSheet(
+            f"font-size: 11px; color: {lifecycle_color}; font-weight: 600;"
+        )
+        self._inner_layout.insertWidget(
+            self._inner_layout.count() - 1, lifecycle_lbl,
+        )
+
         # Outgoing edges
         if edges_out:
             self._inner_layout.insertWidget(
