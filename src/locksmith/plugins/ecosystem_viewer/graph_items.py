@@ -269,6 +269,11 @@ class SchemaNode(QGraphicsObject):
             cy = lifecycle_rect.center().y()
             painter.setPen(QPen(color, 1.2))
             painter.drawLine(QPointF(cx, cy), QPointF(cx, lifecycle_rect.top() + 1.5))
+            # Center pivot dot — visually anchors the hand. Matches
+            # LifecycleWidget paintEvent.
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(cx - 1, cy - 1, 2, 2))
         else:
             color = QColor(colors.TEXT_SECONDARY)
             painter.setPen(QPen(color, 1.2))
