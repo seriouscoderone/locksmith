@@ -105,6 +105,8 @@ def layout_hierarchical(
     *,
     bottom_row_nodes: Iterable[Hashable] = (),
     bottom_row_ordering_edges: Iterable[tuple[Hashable, Hashable]] = (),
+    role_row_nodes: Iterable[Hashable] | None = None,
+    role_row_ordering_edges: Iterable[tuple[Hashable, Hashable]] | None = None,
     options: LayoutOptions | None = None,
 ) -> LayoutResult:
     """Compute (x, y) positions for `nodes` connected by `edges`.
@@ -126,6 +128,16 @@ def layout_hierarchical(
         the bottom row by barycenter (mean x-position of connected upper
         neighbors). Per design §2.5 mitigation 3. Empty default preserves
         prior alphabetical ordering.
+    role_row_nodes : iterable of hashable, optional
+        Subset of `nodes` to pin in a dedicated row sitting between the
+        deepest schema layer and the bottom row. Intended for role nodes
+        (Stage 14) which qualify against schemas but should not compete
+        with them for layering. None/empty means no role row is created.
+    role_row_ordering_edges : iterable of (src, dst), optional
+        (schema_node_id, role_node_id) pairs that drive barycenter
+        ordering of the role row by mean x-position of qualifying schemas.
+        Roles without an ordering edge fall back to alphabetical at the
+        end (mirrors bottom-row behaviour).
     options : LayoutOptions
         Spacing + orientation tunables.
 
@@ -136,6 +148,10 @@ def layout_hierarchical(
     opts = options or LayoutOptions()
     node_set = set(nodes)
     bottom_set = set(bottom_row_nodes) & node_set
+    role_set = set(role_row_nodes or ()) & node_set
+    # Roles never overlap the bottom row; bottom-row pinning wins if both
+    # are specified for the same id.
+    role_set -= bottom_set
 
     # Filter edges to those within the node set; defensively dedupe.
     edge_set: set[tuple[Hashable, Hashable]] = set()
@@ -143,11 +159,11 @@ def layout_hierarchical(
         if src in node_set and dst in node_set and src != dst:
             edge_set.add((src, dst))
 
-    # Bottom-row nodes are excluded from chain layering — they're placed
-    # last regardless. Their incoming/outgoing edges are kept (the caller
-    # uses them to draw membership lines), but they don't influence layer
-    # depth of other nodes.
-    chain_nodes = node_set - bottom_set
+    # Bottom-row and role-row nodes are excluded from chain layering —
+    # they're placed in dedicated rows regardless. Their incoming/outgoing
+    # edges are kept (the caller uses them to draw membership lines), but
+    # they don't influence layer depth of other nodes.
+    chain_nodes = node_set - bottom_set - role_set
     chain_edges = {(s, d) for (s, d) in edge_set if s in chain_nodes and d in chain_nodes}
 
     # 1. Cycle removal — peel off feedback edges until acyclic.
@@ -162,7 +178,17 @@ def layout_hierarchical(
         _barycentric_pass(layers, chain_edges, downward=True)
         _barycentric_pass(layers, chain_edges, downward=False)
 
-    # 4. Bottom-row nodes get a dedicated final layer.
+    # 4. Role-row nodes get a dedicated layer between the schema chain
+    # and the bottom row, ordered by barycenter of their qualifying
+    # schemas' positions.
+    if role_set:
+        layers.append(_order_role_row(
+            role_set,
+            list(role_row_ordering_edges or ()),
+            chain_layers=layers,
+        ))
+
+    # 5. Bottom-row nodes get a dedicated final layer.
     if bottom_set:
         layers.append(_order_bottom_row(
             bottom_set,
@@ -170,7 +196,7 @@ def layout_hierarchical(
             chain_layers=layers,
         ))
 
-    # 5. Coordinate assignment.
+    # 6. Coordinate assignment.
     positions = _assign_coordinates(layers, opts)
 
     return LayoutResult(positions=positions, feedback_edges=feedback, layers=layers)
@@ -387,6 +413,40 @@ def _order_bottom_row(
     )
     without_bary = sorted(
         (n for n in bottom_set if barycenters[n] is None),
+        key=str,
+    )
+    return list(with_bary) + list(without_bary)
+
+
+def _order_role_row(
+    role_set: set[Hashable],
+    ordering_edges: list[tuple[Hashable, Hashable]],
+    chain_layers: list[list[Hashable]],
+) -> list[Hashable]:
+    """Order role-row nodes by barycenter of their qualifying-schema x-positions."""
+    chain_pos: dict[Hashable, float] = {}
+    for layer in chain_layers:
+        for i, node in enumerate(layer):
+            chain_pos[node] = float(i)
+
+    contributions: dict[Hashable, list[float]] = {n: [] for n in role_set}
+    for src, dst in ordering_edges:
+        if src in role_set and dst in chain_pos:
+            contributions[src].append(chain_pos[dst])
+        if dst in role_set and src in chain_pos:
+            contributions[dst].append(chain_pos[src])
+
+    barycenters: dict[Hashable, float | None] = {
+        n: (sum(cs) / len(cs)) if (cs := contributions[n]) else None
+        for n in role_set
+    }
+
+    with_bary = sorted(
+        (n for n in role_set if barycenters[n] is not None),
+        key=lambda n: (barycenters[n], str(n)),
+    )
+    without_bary = sorted(
+        (n for n in role_set if barycenters[n] is None),
         key=str,
     )
     return list(with_bary) + list(without_bary)
