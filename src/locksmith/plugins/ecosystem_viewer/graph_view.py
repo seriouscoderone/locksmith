@@ -59,6 +59,7 @@ from locksmith.plugins.ecosystem_viewer.graph_items import (
     NODE_HEIGHT,
     NODE_WIDTH,
     NOTCH_DEPTH,
+    PermittedIssuerEdge,
     SchemaNode,
 )
 from locksmith.plugins.ecosystem_viewer.layout import (
@@ -85,6 +86,7 @@ class GraphBuildResult:
     issuer_nodes: dict = field(default_factory=dict)   # aid -> IssuerNode
     chain_edges: list = field(default_factory=list)    # EdgeLine instances
     membership_edges: list = field(default_factory=list)
+    permitted_issuer_edges: list = field(default_factory=list)  # PermittedIssuerEdge instances
     unresolved_count: int = 0
     feedback_edge_count: int = 0
     # Cached domain data so the side panel can render without re-inspecting.
@@ -112,6 +114,8 @@ class EcosystemGraphView(QWidget):
     relayout_requested = Signal()       # surfaced in case the page wants to react
     open_schema_detail_requested = Signal(str)   # emits SAID — from side panel
     open_issuer_requested = Signal(str, bool)    # emits (aid, is_self) — from side panel
+    add_permitted_issuer_requested = Signal(str, str)     # (aid, schema_said)
+    remove_permitted_issuer_requested = Signal(str, str)  # (aid, schema_said)
 
     MIN_ZOOM = 0.25
     MAX_ZOOM = 4.0
@@ -463,13 +467,24 @@ class EcosystemGraphView(QWidget):
             }
 
         # Step 5: layout. Schema nodes participate in chain-of-authority
-        # layering; issuer nodes get pinned to the bottom row.
+        # layering; issuer nodes get pinned to the bottom row, ordered
+        # by barycenter of their permitted-issuer edges (design §2.5).
         all_node_ids: list[str] = list(result.schema_nodes.keys()) + list(
             result.issuer_nodes.keys()
         )
         layout_edges: list[tuple[str, str]] = [
             (src, dst) for (src, dst, _op) in chain_edges
         ]
+        # Permitted-issuer pairs (issuer_aid, schema_said) drive both the
+        # bottom-row ordering AND the runtime PermittedIssuerEdge instances.
+        permitted_pairs: list[tuple[str, str]] = []
+        for said, aids in (eco.permitted_issuers or {}).items():
+            if said not in result.schema_nodes:
+                continue
+            for aid in aids:
+                if aid in result.issuer_nodes:
+                    permitted_pairs.append((aid, said))
+
         layout_opts = LayoutOptions(
             node_width=NODE_WIDTH + NOTCH_DEPTH,
             node_height=NODE_HEIGHT,
@@ -480,6 +495,7 @@ class EcosystemGraphView(QWidget):
             nodes=all_node_ids,
             edges=layout_edges,
             bottom_row_nodes=list(result.issuer_nodes.keys()),
+            bottom_row_ordering_edges=permitted_pairs,
             options=layout_opts,
         )
         result.feedback_edge_count = len(layout_result.feedback_edges)
@@ -514,14 +530,30 @@ class EcosystemGraphView(QWidget):
             self._scene.addItem(edge)
             result.chain_edges.append(edge)
 
-        # Step 8: membership edges (schema → issuer). For v1 we don't have
-        # per-schema permitted-issuer mapping (that's stage 9); draw a
-        # membership line from each issuer to every schema in the ecosystem
-        # so the user can see the cluster. This will become more meaningful
-        # once the EGF overlay lands.
-        # NOTE: deliberately commented out — until we have the EGF overlay,
-        # all-pairs membership lines turn the canvas into a hairball. Better
-        # to omit them entirely and let issuer nodes float as a row.
+        # Step 7b: draw permitted-issuer edges (Stage 11).
+        # Each (issuer_aid, schema_said) pair in eco.permitted_issuers
+        # becomes a teal solid line with a hollow arrowhead, issuer→schema.
+        # Per design 2026-05-08-permitted-issuer-edges §2.2.
+        for aid, said in permitted_pairs:
+            issuer_node = result.issuer_nodes.get(aid)
+            schema_node = result.schema_nodes.get(said)
+            if issuer_node is None or schema_node is None:
+                continue
+            edge = PermittedIssuerEdge(
+                source=issuer_node, target=schema_node,
+            )
+            edge.emitter.remove_requested.connect(
+                self._on_permitted_issuer_edge_remove_requested
+            )
+            self._scene.addItem(edge)
+            result.permitted_issuer_edges.append(edge)
+
+        # Step 8: membership edges (schema ↔ issuer). With Stage 11's
+        # PermittedIssuerEdge instantiation above, mere membership is
+        # already conveyed by the issuer node's presence on the canvas
+        # (see design 2026-05-08-permitted-issuer-edges §2.4). We keep
+        # MembershipEdge as a class for future ecosystems where issuance
+        # isn't fully captured, but we no longer instantiate it here.
         # for issuer in result.issuer_nodes.values():
         #     for schema in result.schema_nodes.values():
         #         if schema.ghost:
@@ -586,6 +618,11 @@ class EcosystemGraphView(QWidget):
         self._set_selected_node(None)
         self._side_panel.close()
         self.selection_cleared.emit()
+
+    def _on_permitted_issuer_edge_remove_requested(self, aid: str, said: str) -> None:
+        """Forward right-click 'Remove permitted-issuer' from a graph
+        edge to the surrounding page via signal."""
+        self.remove_permitted_issuer_requested.emit(aid, said)
 
     def _on_panel_schema_link(self, said: str) -> None:
         """Side panel surfaced an in-graph link to another schema —
