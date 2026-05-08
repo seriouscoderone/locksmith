@@ -1818,6 +1818,10 @@ class EcosystemDetailPage(QWidget):
     show_issuer_requested = Signal(str, bool)  # (aid, is_self)
     add_permitted_issuer_clicked = Signal(str, str, str)     # (eco, said, aid)
     remove_permitted_issuer_clicked = Signal(str, str, str)  # (eco, said, aid)
+    create_role_clicked = Signal(str)                         # ecosystem name
+    delete_role_clicked = Signal(str, str)                    # (eco_name, role_name)
+    set_qualification_rule_clicked = Signal(str, str, str)    # (eco, schema, role)
+    remove_qualification_rule_clicked = Signal(str, str)      # (eco, schema)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2023,8 +2027,9 @@ class EcosystemDetailPage(QWidget):
 
         # List tab — keep the existing schemas/AIDs/actions sections.
         self._content_layout.insertWidget(0, self._build_schemas_section(eco))
-        self._content_layout.insertWidget(1, self._build_aids_section(eco))
-        self._content_layout.insertWidget(2, self._build_actions_section(eco))
+        self._content_layout.insertWidget(1, self._build_roles_section(eco))
+        self._content_layout.insertWidget(2, self._build_aids_section(eco))
+        self._content_layout.insertWidget(3, self._build_actions_section(eco))
 
     @staticmethod
     def _purge_layout(layout) -> None:
@@ -2149,6 +2154,15 @@ class EcosystemDetailPage(QWidget):
             " letter-spacing: 0.02em;"
         )
         row.addWidget(prefix)
+
+        # "(via role: X)" indicator if a qualification rule is set.
+        rule_role = eco.issuer_qualification_rules.get(said)
+        if rule_role:
+            role_lbl = QLabel(f"(via role: <b>{html.escape(rule_role)}</b>)")
+            role_lbl.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_DARK};"
+            )
+            row.addWidget(role_lbl)
 
         permitted = eco.permitted_issuers.get(said, [])
         if not permitted:
@@ -2338,6 +2352,177 @@ class EcosystemDetailPage(QWidget):
             r.addWidget(remove_btn)
             layout.addWidget(row)
         return section
+
+    def _build_roles_section(self, eco: Any) -> QWidget:
+        section = QFrame()
+        section.setObjectName("edRolesSection")
+        section.setStyleSheet(
+            "QFrame#edRolesSection { background-color: white;"
+            " border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#edRolesSection QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(20, 16, 20, 16)
+        layout.setSpacing(8)
+
+        # Header row.
+        head = QHBoxLayout()
+        title = QLabel(f"Roles ({len(eco.role_names)})")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        head.addWidget(title)
+        head.addStretch()
+        add_btn = LocksmithInvertedButton("Add role")
+        add_btn.clicked.connect(lambda: self.create_role_clicked.emit(eco.name))
+        head.addWidget(add_btn)
+        head_w = QWidget()
+        head_w.setLayout(head)
+        layout.addWidget(head_w)
+
+        # Brief explainer for first-time users.
+        explainer = QLabel(
+            "A role is a credential-qualified class of AID — anyone holding "
+            "the qualification credential automatically qualifies. Roles "
+            "replace AID-by-AID enumeration for permitted-issuer policies."
+        )
+        explainer.setWordWrap(True)
+        explainer.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 12px;"
+            " font-style: italic;"
+        )
+        layout.addWidget(explainer)
+
+        if not eco.role_names:
+            layout.addWidget(EmptyStateCard(
+                "No roles defined yet. Click 'Add role' to define a "
+                "credential-qualified class of AID."
+            ))
+            return section
+
+        # Role cards. The DB stores roles individually; pull each by name.
+        for role_name in eco.role_names:
+            if self._db is None:
+                continue
+            role = self._db.get_role(eco.name, role_name)
+            if role is None:
+                continue
+            layout.addWidget(self._build_role_card(eco, role))
+        return section
+
+    def _build_role_card(self, eco: Any, role: Any) -> QWidget:
+        """One card per role: name, qualification schema (linked),
+        issuer role (linked or "(root)"), root AIDs count, resolved
+        member count."""
+        card = QFrame()
+        card.setObjectName("edRoleCard")
+        card.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        card.setStyleSheet(
+            "QFrame#edRoleCard {"
+            f" background: {colors.BACKGROUND_SELECTION};"
+            " border-radius: 6px; padding: 10px 12px;"
+            "}"
+            "QFrame#edRoleCard QLabel { background: transparent; }"
+        )
+        # Right-click context menu wired in Task 3.
+        card.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
+        card.customContextMenuRequested.connect(
+            lambda pos, n=eco.name, r=role.name: self._show_role_context_menu(n, r, pos, card)
+        )
+
+        layout = QVBoxLayout(card)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+
+        # Top row: name
+        head = QHBoxLayout()
+        head.setContentsMargins(0, 0, 0, 0)
+        name_lbl = QLabel(f"<b>{html.escape(role.name)}</b>")
+        name_lbl.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_DARK};")
+        head.addWidget(name_lbl)
+        head.addStretch()
+        head_w = QWidget()
+        head_w.setLayout(head)
+        layout.addWidget(head_w)
+
+        if role.description:
+            desc = QLabel(html.escape(role.description))
+            desc.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+            desc.setWordWrap(True)
+            layout.addWidget(desc)
+
+        # Qualification schema (clickable to schema detail).
+        if role.qualification_schema_said:
+            qual_html = (
+                f"<span style='color:{colors.TEXT_SECONDARY}'>"
+                f"Qualification credential:</span> "
+                f"<a href='#nav' style='color:{colors.BLUE_BORDER};"
+                "text-decoration:none;'>"
+                f"{html.escape(role.qualification_schema_said[:20])}…</a>"
+            )
+            qual = QLabel(qual_html)
+            qual.setOpenExternalLinks(False)
+            qual.setStyleSheet("font-size: 11px;")
+            qual.linkActivated.connect(
+                lambda _l, s=role.qualification_schema_said:
+                    self.show_schema_detail_requested.emit(s)
+            )
+            layout.addWidget(qual)
+
+        # Issuer role.
+        if role.issuer_role_name:
+            issuer = QLabel(
+                f"<span style='color:{colors.TEXT_SECONDARY}'>"
+                f"Issued by role:</span> <b>{html.escape(role.issuer_role_name)}</b>"
+            )
+        else:
+            issuer = QLabel(
+                f"<span style='color:{colors.TEXT_SECONDARY}'>"
+                f"Trust root:</span> "
+                f"<b>{len(role.root_issuer_aids)} AID(s)</b>"
+            )
+        issuer.setStyleSheet("font-size: 11px;")
+        layout.addWidget(issuer)
+
+        # Resolved member count (computes via resolver — vault-dependent).
+        member_count = self._resolve_role_member_count(eco.name, role.name)
+        if member_count is None:
+            count_text = "Members: (vault unavailable)"
+        else:
+            count_text = f"<b>{member_count}</b> current member{'s' if member_count != 1 else ''}"
+        count_lbl = QLabel(count_text)
+        count_lbl.setStyleSheet(f"font-size: 11px; color: {colors.TEXT_SECONDARY};")
+        layout.addWidget(count_lbl)
+
+        return card
+
+    def _resolve_role_member_count(self, eco_name: str, role_name: str) -> int | None:
+        """Resolve current role membership and return the count. Returns
+        None if vault is unavailable. Tolerates resolver errors (e.g.,
+        cycle detection) by returning 0 with a logged warning."""
+        if self._db is None:
+            return None
+        vault = getattr(self.app, "vault", None)
+        if vault is None:
+            return None
+        try:
+            from locksmith.plugins.ecosystem_viewer.plugin import vault_credential_finder
+            finder = vault_credential_finder(vault)
+            members = self._db.resolve_role_members(eco_name, role_name, finder)
+            return len(members)
+        except ValueError:
+            # Cycle detected — show 0 rather than crashing the page render.
+            logger.exception(
+                f"Role-chain cycle in '{eco_name}/{role_name}'; rendering 0 members"
+            )
+            return 0
+        except Exception:
+            logger.exception("Unexpected resolver error")
+            return 0
+
+    def _show_role_context_menu(self, eco_name: str, role_name: str,
+                                pos: Any, anchor: QWidget) -> None:
+        """Stub — populated in Task 3 with Edit / Delete entries."""
+        # Intentionally empty until Task 3.
+        return
 
     def _build_actions_section(self, eco: Any) -> QWidget:
         wrapper = QWidget()
