@@ -1906,13 +1906,6 @@ class EcosystemDetailPage(QWidget):
         tabs_layout.addWidget(self._tab_btn_list)
         tabs_layout.addStretch()
 
-        # "+ Add..." action holder (rebuilt on refresh so it can know the
-        # current ecosystem name).
-        self._add_btn_holder = QWidget()
-        self._add_btn_holder_layout = QHBoxLayout(self._add_btn_holder)
-        self._add_btn_holder_layout.setContentsMargins(0, 0, 0, 0)
-        tabs_layout.addWidget(self._add_btn_holder)
-
         outer.addWidget(tabs_holder)
 
         # Content stack: graph view (index 0) | list scroll area (index 1)
@@ -1947,6 +1940,10 @@ class EcosystemDetailPage(QWidget):
         self._graph_view.remove_qualification_rule_requested.connect(
             self._on_graph_remove_qualification_rule
         )
+        # Floating canvas toolbar replaces the old top-of-tabs add buttons.
+        self._graph_view.add_schema_clicked.connect(self._on_graph_toolbar_add_schema)
+        self._graph_view.add_aid_clicked.connect(self._on_graph_toolbar_add_aid)
+        self._graph_view.add_role_clicked.connect(self._on_graph_toolbar_add_role)
         self._content_stack.addWidget(self._graph_view)
 
         # List tab — wraps the previous scrollable layout.
@@ -2009,6 +2006,21 @@ class EcosystemDetailPage(QWidget):
         # remove path (one rule per schema).
         self.remove_qualification_rule_clicked.emit(self._current_name, said)
 
+    def _on_graph_toolbar_add_schema(self) -> None:
+        if self._current_name is None:
+            return
+        self.add_schema_clicked.emit(self._current_name)
+
+    def _on_graph_toolbar_add_aid(self) -> None:
+        if self._current_name is None:
+            return
+        self.add_aid_clicked.emit(self._current_name)
+
+    def _on_graph_toolbar_add_role(self) -> None:
+        if self._current_name is None:
+            return
+        self.create_role_clicked.emit(self._current_name)
+
     def _refresh(self) -> None:
         # Clear header, add-button area, and the list tab's section widgets.
         self._purge_layout(self._header_layout)
@@ -2032,15 +2044,6 @@ class EcosystemDetailPage(QWidget):
 
         # Header
         self._header_layout.addWidget(self._build_header(eco))
-
-        # "+ Add..." action button — for v1 just two simple buttons; can
-        # collapse into a dropdown menu later.
-        add_schema_btn = LocksmithInvertedButton("+ Add schema")
-        add_schema_btn.clicked.connect(lambda: self.add_schema_clicked.emit(eco.name))
-        add_aid_btn = LocksmithInvertedButton("+ Add AID")
-        add_aid_btn.clicked.connect(lambda: self.add_aid_clicked.emit(eco.name))
-        self._add_btn_holder_layout.addWidget(add_schema_btn)
-        self._add_btn_holder_layout.addWidget(add_aid_btn)
 
         # Graph tab — render the graph for this ecosystem.
         vault = getattr(self.app, "vault", None)

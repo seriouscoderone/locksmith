@@ -33,6 +33,7 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -105,6 +106,56 @@ class GraphBuildResult:
 # ---------------------------------------------------------------------------
 
 
+class GraphCanvasToolbar(QFrame):
+    """Floating toolbar overlaid on the graph canvas (top-left).
+
+    Compact pill-shaped buttons for adding ecosystem members directly
+    from the graph view: schema, issuer AID, role.
+    """
+
+    add_schema_clicked = Signal()
+    add_aid_clicked = Signal()
+    add_role_clicked = Signal()
+
+    def __init__(self, parent: QWidget | None = None):
+        super().__init__(parent)
+        self.setObjectName("graphCanvasToolbar")
+        self.setStyleSheet(
+            "QFrame#graphCanvasToolbar {"
+            f" background-color: {colors.BACKGROUND_CONTENT};"
+            f" border: 1px solid {colors.BORDER_NEUTRAL};"
+            " border-radius: 18px;"
+            "}"
+            "QFrame#graphCanvasToolbar QPushButton {"
+            " border: none;"
+            " border-radius: 14px;"
+            " padding: 4px 12px;"
+            " font-size: 12px;"
+            f" color: {colors.TEXT_DARK};"
+            " background: transparent;"
+            "}"
+            "QFrame#graphCanvasToolbar QPushButton:hover {"
+            f" background-color: {colors.BACKGROUND_HIGHLIGHT};"
+            "}"
+            "QFrame#graphCanvasToolbar QPushButton:pressed {"
+            f" background-color: {colors.BACKGROUND_SELECTION};"
+            "}"
+        )
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(4, 4, 4, 4)
+        layout.setSpacing(2)
+
+        for label, signal in (
+            ("+ Schema", self.add_schema_clicked),
+            ("+ AID", self.add_aid_clicked),
+            ("+ Role", self.add_role_clicked),
+        ):
+            btn = QPushButton(label)
+            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn.clicked.connect(signal.emit)
+            layout.addWidget(btn)
+
+
 class EcosystemGraphView(QWidget):
     """Top-level widget holding a QGraphicsView (graph canvas) above a
     bottom toolbar (zoom controls + stats). Signals selection and
@@ -124,6 +175,11 @@ class EcosystemGraphView(QWidget):
     role_selected = Signal(str)                           # role_name
     add_qualification_rule_requested = Signal(str, str)   # (schema_said, role_name) — T5 will emit
     remove_qualification_rule_requested = Signal(str, str)  # (schema_said, role_name)
+    # Floating canvas toolbar — surface "+ Schema" / "+ AID" / "+ Role"
+    # entry points so the page can show no top-of-tabs add buttons.
+    add_schema_clicked = Signal()
+    add_aid_clicked = Signal()
+    add_role_clicked = Signal()
 
     MIN_ZOOM = 0.25
     MAX_ZOOM = 4.0
@@ -240,6 +296,13 @@ class EcosystemGraphView(QWidget):
         self._side_panel.open_issuer.connect(self.open_issuer_requested.emit)
         self._side_panel.schema_link_clicked.connect(self._on_panel_schema_link)
 
+        # Floating canvas toolbar — top-left overlay, parented to self
+        # so it sits above the canvas without affecting layout.
+        self._canvas_toolbar = GraphCanvasToolbar(parent=self)
+        self._canvas_toolbar.add_schema_clicked.connect(self.add_schema_clicked.emit)
+        self._canvas_toolbar.add_aid_clicked.connect(self.add_aid_clicked.emit)
+        self._canvas_toolbar.add_role_clicked.connect(self.add_role_clicked.emit)
+
         # Centered overlay hint (empty / sparse states).
         self._hint_label = QLabel("", parent=self)
         self._hint_label.setObjectName("egvHintLabel")
@@ -301,6 +364,7 @@ class EcosystemGraphView(QWidget):
         # before the widget has been shown the fitInView is a no-op.
         self.fit_to_content()
         self._reposition_panel()
+        self._reposition_canvas_toolbar()
         return result
 
     def _update_hint(self, result: GraphBuildResult) -> None:
@@ -343,6 +407,17 @@ class EcosystemGraphView(QWidget):
         super().resizeEvent(event)
         self._reposition_panel()
         self._reposition_hint()
+        self._reposition_canvas_toolbar()
+
+    def _reposition_canvas_toolbar(self) -> None:
+        if not hasattr(self, "_canvas_toolbar"):
+            return
+        margin = 12
+        size = self._canvas_toolbar.sizeHint()
+        self._canvas_toolbar.setGeometry(
+            margin, margin, size.width(), size.height()
+        )
+        self._canvas_toolbar.raise_()
 
     def _reposition_hint(self) -> None:
         if not hasattr(self, "_hint_label"):
