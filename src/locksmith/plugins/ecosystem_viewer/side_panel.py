@@ -48,6 +48,7 @@ logger = help.ogler.getLogger(__name__)
 from locksmith.acdc import icons
 from locksmith.plugins.ecosystem_viewer.widgets import (
     DisclosureTierWidget,
+    LifecycleWidget,
     SectionFingerprintWidget,
 )
 from locksmith.ui import colors
@@ -220,19 +221,31 @@ class SidePanel(QFrame):
             self._build_classification_row(inspection),
         )
 
-        # Lifecycle one-liner (Stage 10) — registry-backed = revocable; absent = one-shot.
-        if getattr(inspection, "requires_registry", False):
-            lifecycle_text = "Lifecycle: registry-backed (revocable via TEL)"
-            lifecycle_color = "#0D9488"  # teal — matches aggregate dot
-        else:
-            lifecycle_text = "Lifecycle: one-shot (no revocation surface)"
-            lifecycle_color = colors.TEXT_SECONDARY
-        lifecycle_lbl = QLabel(lifecycle_text)
-        lifecycle_lbl.setStyleSheet(
-            f"font-size: 11px; color: {lifecycle_color}; font-weight: 600;"
+        # Lifecycle glyph cell — registry-backed (revocable) vs one-shot.
+        # Same visual register as the classification glyph row; tooltip
+        # carries the prose. Per design §3.2 / §4.3.
+        revocable = bool(getattr(inspection, "requires_registry", False))
+        lifecycle_row = QHBoxLayout()
+        lifecycle_row.setContentsMargins(0, 4, 0, 0)
+        lifecycle_row.setSpacing(8)
+        lifecycle_row.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        glyph = LifecycleWidget(revocable=revocable)
+        # Use the default 18px size for chip-scale.
+        lifecycle_row.addWidget(glyph)
+
+        lifecycle_text_lbl = QLabel("Revocable" if revocable else "One-shot")
+        lifecycle_text_lbl.setStyleSheet(
+            f"font-size: 11px; font-weight: 600; color: "
+            f"{'#0D9488' if revocable else colors.TEXT_SECONDARY};"
         )
+        lifecycle_row.addWidget(lifecycle_text_lbl)
+        lifecycle_row.addStretch()
+
+        lifecycle_w = QWidget()
+        lifecycle_w.setLayout(lifecycle_row)
         self._inner_layout.insertWidget(
-            self._inner_layout.count() - 1, lifecycle_lbl,
+            self._inner_layout.count() - 1, lifecycle_w,
         )
 
         # Outgoing edges
