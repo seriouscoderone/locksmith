@@ -11,7 +11,6 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -23,6 +22,7 @@ from PySide6.QtWidgets import (
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import (
+    FloatingLabelComboBox,
     FloatingLabelLineEdit,
     LocksmithButton,
     LocksmithDialog,
@@ -393,36 +393,44 @@ class CreateRoleDialog(LocksmithDialog):
         layout.addSpacing(12)
 
         # Qualification schema picker
-        layout.addWidget(QLabel("Qualification credential schema:"))
-        self._schema_combo = QComboBox()
+        self._schema_combo = FloatingLabelComboBox("Qualification credential schema")
         self._schema_combo.setFixedWidth(420)
         if not schemas:
             self._schema_combo.addItem("(no schemas in this ecosystem)", "")
-            self._schema_combo.setEnabled(False)
+            self._schema_combo.combo_box.setEnabled(False)
         else:
             for label, said in schemas:
                 self._schema_combo.addItem(label, said)
+            self._schema_combo.setCurrentIndex(0)
         layout.addWidget(self._schema_combo)
 
-        layout.addSpacing(12)
+        layout.addSpacing(8)
 
         # Issuer role picker
-        layout.addWidget(QLabel("Issuer role:"))
-        self._issuer_role_combo = QComboBox()
+        self._issuer_role_combo = FloatingLabelComboBox("Issuer role")
         self._issuer_role_combo.setFixedWidth(420)
         self._issuer_role_combo.addItem("(root role — pick AIDs below)", "")
         for r in existing_roles:
             self._issuer_role_combo.addItem(r, r)
+        self._issuer_role_combo.setCurrentIndex(0)
         layout.addWidget(self._issuer_role_combo)
 
         layout.addSpacing(8)
 
         # Root issuer AIDs picker (only relevant for root role)
-        self._root_aids_label = QLabel("Trust-root AIDs (only for root role):")
+        self._root_aids_label = QLabel("Trust-root AIDs (multi-select; only for root role):")
+        self._root_aids_label.setStyleSheet(f"color: {colors.TEXT_DARK}; font-size: 12px;")
         layout.addWidget(self._root_aids_label)
         self._root_aids_list = QListWidget()
         self._root_aids_list.setFixedWidth(420)
-        self._root_aids_list.setFixedHeight(100)
+        self._root_aids_list.setMinimumHeight(160)
+        self._root_aids_list.setStyleSheet(
+            f"QListWidget {{ background: white; border: 1px solid {colors.BORDER_NEUTRAL};"
+            f" border-radius: 4px; font-size: 12px; color: {colors.TEXT_MENU}; }}"
+            f"QListWidget::item {{ padding: 6px 8px; }}"
+            f"QListWidget::item:selected {{ background: {colors.BACKGROUND_SELECTION};"
+            f" color: {colors.TEXT_MENU}; }}"
+        )
         self._root_aids_list.setSelectionMode(
             QListWidget.SelectionMode.MultiSelection
         )
@@ -434,7 +442,7 @@ class CreateRoleDialog(LocksmithDialog):
 
         # Toggle the AIDs list enabled-state based on issuer role choice.
         def _on_issuer_role_changed(idx: int) -> None:
-            is_root = self._issuer_role_combo.itemData(idx) == ""
+            is_root = self._issuer_role_combo.combo_box.itemData(idx) == ""
             self._root_aids_label.setVisible(is_root)
             self._root_aids_list.setVisible(is_root)
         self._issuer_role_combo.currentIndexChanged.connect(_on_issuer_role_changed)
