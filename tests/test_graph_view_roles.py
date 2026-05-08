@@ -274,6 +274,62 @@ def test_drag_from_role_to_schema_emits_add_qualification_rule(qapp):
     assert captured == [(said, "state-doi")]
 
 
+def test_graph_view_role_click_populates_side_panel_via_show_role(qapp, monkeypatch):
+    said = "ECmEfS_Producer"
+    eco = EcosystemRecord(
+        name="Insurance",
+        schema_saids=[said],
+        issuer_aids=[],
+        role_names=["state-doi"],
+        issuer_qualification_rules={},
+    )
+    role = RoleRecord(
+        ecosystem_name="Insurance",
+        name="state-doi",
+        qualification_schema_said=said,
+        root_issuer_aids=["EBOG_AID_root"],
+    )
+    vault = _VaultStub({said: _Schemer(_producer_schema_sed(said))})
+
+    view = EcosystemGraphView()
+    view.resize(800, 500)
+    view.show()
+    QTest.qWait(50)
+    qapp.processEvents()
+    view.render_ecosystem(
+        eco,
+        vault,
+        get_role=lambda n: role if n == "state-doi" else None,
+        list_roles=lambda en: [role] if en == "Insurance" else [],
+        find_credentials_of_schema=lambda s: [],
+    )
+    QTest.qWait(200)
+    qapp.processEvents()
+
+    captured = {}
+    real_show_role = view._side_panel.show_role
+
+    def spy(*args, **kwargs):
+        captured["args"] = args
+        captured["kwargs"] = kwargs
+        return real_show_role(*args, **kwargs)
+
+    monkeypatch.setattr(view._side_panel, "show_role", spy)
+
+    role_node = next(i for i in view._scene.items() if isinstance(i, RoleNode))
+    role_node.clicked.emit()
+    qapp.processEvents()
+
+    assert "args" in captured or "kwargs" in captured
+    passed_role = captured["kwargs"].get("role")
+    if passed_role is None and captured.get("args"):
+        passed_role = captured["args"][0]
+    assert passed_role is not None
+    assert passed_role.name == "state-doi"
+    # Root role: no issuer_role_label.
+    assert captured["kwargs"].get("issuer_role_label") is None
+
+
 def test_drag_from_role_to_already_qualifying_schema_does_not_emit(qapp):
     said = "ECmEfS_Producer"
     eco = EcosystemRecord(

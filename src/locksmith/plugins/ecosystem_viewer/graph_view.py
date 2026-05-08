@@ -134,6 +134,12 @@ class EcosystemGraphView(QWidget):
         self._build_result: GraphBuildResult | None = None
         self._selected_node: Any | None = None  # SchemaNode | IssuerNode | None
         self._eco: Any | None = None  # last-rendered EcosystemRecord
+        # Stage 14: cached resolver callables from the most recent
+        # render_ecosystem call. _populate_panel_for_role uses them to
+        # recompute role membership without a stored EcosystemBaser ref.
+        self._get_role: Callable[[str], Any] | None = None
+        self._list_roles: Callable[[str], list] | None = None
+        self._find_credentials_of_schema: Callable[[str], list] | None = None
 
         # Snap-target pulse phase (Stage 11). Animated 0.0↔1.0 during
         # drag-to-create; consumed by SchemaNode.paint() to modulate the
@@ -277,6 +283,10 @@ class EcosystemGraphView(QWidget):
         # Cache the ecosystem record so the side panel can render
         # permitted-issuer info for selected schemas (Stage 9).
         self._eco = eco
+        # Cache role resolvers for _populate_panel_for_role (Stage 14 T6).
+        self._get_role = get_role
+        self._list_roles = list_roles
+        self._find_credentials_of_schema = find_credentials_of_schema
         result = self._build_scene(
             eco,
             vault,
@@ -741,10 +751,15 @@ class EcosystemGraphView(QWidget):
         self.remove_permitted_issuer_requested.emit(aid, said)
 
     def _on_role_clicked(self, role_name: str) -> None:
-        """Stage 14: forward a role-node click upward.
-
-        Side-panel population for roles is wired in T6; for now we just
-        emit the selection event so the surrounding page can react."""
+        """Stage 14 T6: select role node, populate the side panel, emit selection."""
+        if self._build_result is None:
+            return
+        node = self._build_result.role_nodes.get(role_name)
+        if node is None:
+            return
+        self._set_selected_node(node)
+        self._populate_panel_for_role(role_name)
+        self._reposition_panel()
         self.role_selected.emit(role_name)
 
     def _on_qualification_edge_remove_requested(
@@ -755,13 +770,13 @@ class EcosystemGraphView(QWidget):
         self.remove_qualification_rule_requested.emit(schema_said, role_name)
 
     @staticmethod
-    def _count_role_members(
+    def _resolve_role_members_in_view(
         eco: Any,
         role: Any,
         get_role: Callable[[str], Any],
         find_credentials_of_schema: Callable[[str], list],
-    ) -> int:
-        """Compute the size of `role`'s current membership.
+    ) -> set[str]:
+        """Resolve `role`'s current membership as a set of AIDs.
 
         Mirrors EcosystemBaser.resolve_role_members but uses the
         provided ``get_role`` callable rather than holding an
@@ -788,9 +803,24 @@ class EcosystemGraphView(QWidget):
             return members
 
         try:
-            return len(_resolve(role.name))
+            return _resolve(role.name)
         except Exception:
-            return len(role.root_issuer_aids or [])
+            return set(role.root_issuer_aids or [])
+
+    @classmethod
+    def _count_role_members(
+        cls,
+        eco: Any,
+        role: Any,
+        get_role: Callable[[str], Any],
+        find_credentials_of_schema: Callable[[str], list],
+    ) -> int:
+        """Size of `role`'s current membership — thin wrapper around the resolver."""
+        return len(
+            cls._resolve_role_members_in_view(
+                eco, role, get_role, find_credentials_of_schema,
+            )
+        )
 
     def _on_panel_schema_link(self, said: str) -> None:
         """Side panel surfaced an in-graph link to another schema —
@@ -848,6 +878,47 @@ class EcosystemGraphView(QWidget):
             self._side_panel.close()
             return
         self._side_panel.show_issuer(aid=aid, meta=meta)
+
+    def _populate_panel_for_role(self, role_name: str) -> None:
+        """Stage 14 T6: render the role-detail mode of the side panel."""
+        if self._build_result is None or self._get_role is None:
+            return
+        role = self._get_role(role_name)
+        if role is None:
+            self._side_panel.close()
+            return
+
+        # Resolve current members (set → list, in stable order).
+        if (
+            self._eco is not None
+            and self._find_credentials_of_schema is not None
+        ):
+            members_set = self._resolve_role_members_in_view(
+                self._eco, role, self._get_role, self._find_credentials_of_schema,
+            )
+        else:
+            members_set = set(role.root_issuer_aids or [])
+        members = sorted(members_set)
+
+        # Look up the qualification-schema title from the inspections cache
+        # (the same map _populate_panel_for_schema relies on).
+        qual_title: str | None = None
+        if role.qualification_schema_said:
+            insp = self._build_result.inspections.get(role.qualification_schema_said)
+            if insp is not None and insp.title:
+                qual_title = insp.title
+
+        # Issuer-role label: None for root role, the parent role name otherwise.
+        issuer_role_label: str | None = (
+            role.issuer_role_name if role.issuer_role_name else None
+        )
+
+        self._side_panel.show_role(
+            role=role,
+            members=members,
+            qualification_schema_title=qual_title,
+            issuer_role_label=issuer_role_label,
+        )
 
     def _set_selected_node(self, node: Any | None) -> None:
         if self._selected_node is node:

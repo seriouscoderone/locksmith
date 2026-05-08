@@ -71,6 +71,8 @@ class SidePanel(QFrame):
     open_schema_detail = Signal(str)         # emits schema SAID
     open_issuer = Signal(str, bool)          # emits (aid, is_self)
     schema_link_clicked = Signal(str)        # emits SAID — caller selects node
+    issuer_link_clicked = Signal(str)        # emits AID — caller selects node
+    role_link_clicked = Signal(str)          # emits role_name — caller selects node
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -389,6 +391,73 @@ class SidePanel(QFrame):
         self.open()
 
     # ------------------------------------------------------------------
+    # Role content (Stage 14 T6)
+    # ------------------------------------------------------------------
+
+    def show_role(
+        self,
+        role: Any,
+        members: list[str],
+        qualification_schema_title: str | None,
+        issuer_role_label: str | None,
+    ) -> None:
+        """Render a RoleNode's detail panel — see Stage 14 T6 spec."""
+        self._clear_inner()
+
+        # Header
+        header_lbl = QLabel(f"Role: {role.name}")
+        header_lbl.setStyleSheet(
+            f"font-size: 16px; font-weight: 600; color: {colors.TEXT_DARK};"
+        )
+        header_lbl.setWordWrap(True)
+        self._inner_layout.insertWidget(self._inner_layout.count() - 1, header_lbl)
+
+        # Description
+        if getattr(role, "description", ""):
+            desc_lbl = QLabel(role.description)
+            desc_lbl.setWordWrap(True)
+            desc_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_DARK};")
+            self._inner_layout.insertWidget(
+                self._inner_layout.count() - 1, desc_lbl,
+            )
+
+        # Qualification credential — clickable link to the schema node.
+        qual_said = getattr(role, "qualification_schema_said", "") or ""
+        qual_text = qualification_schema_title or (
+            f"{qual_said[:18]}…" if len(qual_said) > 18 else (qual_said or "(none)")
+        )
+        self._inner_layout.insertWidget(
+            self._inner_layout.count() - 1,
+            self._build_schema_link_row(
+                "Qualification credential", qual_text, qual_said,
+            ),
+        )
+
+        # Trust source: chained role link OR root-issuer list.
+        if issuer_role_label is not None:
+            self._inner_layout.insertWidget(
+                self._inner_layout.count() - 1,
+                self._build_role_link_row(
+                    "Issuer role", issuer_role_label, role.issuer_role_name,
+                ),
+            )
+        else:
+            self._inner_layout.insertWidget(
+                self._inner_layout.count() - 1,
+                self._build_trust_roots_section(
+                    list(role.root_issuer_aids or [])
+                ),
+            )
+
+        # Resolved members section.
+        self._inner_layout.insertWidget(
+            self._inner_layout.count() - 1,
+            self._build_members_section(list(members)),
+        )
+
+        self.open()
+
+    # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
 
@@ -629,6 +698,163 @@ class SidePanel(QFrame):
             row_w.setLayout(row)
             layout.addWidget(row_w)
 
+        return section
+
+
+    def _build_schema_link_row(
+        self, label: str, link_text: str, schema_said: str,
+    ) -> QWidget:
+        """Labelled row with a clickable link that emits schema_link_clicked."""
+        row = QWidget()
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(2)
+
+        label_lbl = QLabel(f"{label}:")
+        label_lbl.setStyleSheet(
+            f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(label_lbl)
+
+        link_lbl = QLabel(
+            f'<a href="#nav" style="color:{colors.BLUE_BORDER};text-decoration:none;">'
+            f'{link_text}</a>'
+        )
+        link_lbl.setStyleSheet("font-size: 12px;")
+        link_lbl.setToolTip(schema_said or link_text)
+        link_lbl.setOpenExternalLinks(False)
+        link_lbl.setWordWrap(True)
+        captured = schema_said
+        link_lbl.linkActivated.connect(
+            lambda _l, s=captured: self.schema_link_clicked.emit(s)
+        )
+        layout.addWidget(link_lbl)
+        return row
+
+    def _build_role_link_row(
+        self, label: str, link_text: str, role_name: str,
+    ) -> QWidget:
+        """Labelled row with a clickable link that emits role_link_clicked."""
+        row = QWidget()
+        layout = QVBoxLayout(row)
+        layout.setContentsMargins(0, 4, 0, 0)
+        layout.setSpacing(2)
+
+        label_lbl = QLabel(f"{label}:")
+        label_lbl.setStyleSheet(
+            f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(label_lbl)
+
+        link_lbl = QLabel(
+            f'<a href="#nav" style="color:{colors.BLUE_BORDER};text-decoration:none;">'
+            f'{link_text}</a>'
+        )
+        link_lbl.setStyleSheet("font-size: 12px;")
+        link_lbl.setToolTip(role_name or link_text)
+        link_lbl.setOpenExternalLinks(False)
+        link_lbl.setWordWrap(True)
+        captured = role_name
+        link_lbl.linkActivated.connect(
+            lambda _l, n=captured: self.role_link_clicked.emit(n)
+        )
+        layout.addWidget(link_lbl)
+        return row
+
+    def _build_trust_roots_section(self, aids: list[str]) -> QWidget:
+        """Labelled list of clickable trust-root AIDs (root role only)."""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(2)
+
+        head = QLabel("Trust roots:")
+        head.setStyleSheet(
+            f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(head)
+
+        if not aids:
+            empty = QLabel("No trust roots configured.")
+            empty.setWordWrap(True)
+            empty.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            layout.addWidget(empty)
+            return section
+
+        for aid in aids:
+            text = _truncate(aid, head=12, tail=6)
+            link_lbl = QLabel(
+                f'<a href="#nav" style="color:{colors.BLUE_BORDER};text-decoration:none;'
+                f'font-family:monospace;">{text}</a>'
+            )
+            link_lbl.setStyleSheet("font-size: 11px;")
+            link_lbl.setToolTip(aid)
+            link_lbl.setOpenExternalLinks(False)
+            captured = aid
+            link_lbl.linkActivated.connect(
+                lambda _l, a=captured: self.issuer_link_clicked.emit(a)
+            )
+            layout.addWidget(link_lbl)
+
+        return section
+
+    def _build_members_section(self, members: list[str]) -> QWidget:
+        """Labelled scrollable list of resolved-member AIDs."""
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(2)
+
+        head = QLabel(f"Resolved members ({len(members)}):")
+        head.setStyleSheet(
+            f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(head)
+
+        if not members:
+            empty = QLabel("No qualifying credentials found in this wallet.")
+            empty.setWordWrap(True)
+            empty.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            layout.addWidget(empty)
+            return section
+
+        # Wrap the AID rows in a scroll area so long lists don't push the
+        # rest of the panel off-screen.
+        list_inner = QWidget()
+        list_inner_layout = QVBoxLayout(list_inner)
+        list_inner_layout.setContentsMargins(0, 0, 0, 0)
+        list_inner_layout.setSpacing(2)
+        for aid in members:
+            text = _truncate(aid, head=12, tail=6)
+            link_lbl = QLabel(
+                f'<a href="#nav" style="color:{colors.BLUE_BORDER};text-decoration:none;'
+                f'font-family:monospace;">{text}</a>'
+            )
+            link_lbl.setStyleSheet("font-size: 11px;")
+            link_lbl.setToolTip(aid)
+            link_lbl.setOpenExternalLinks(False)
+            captured = aid
+            link_lbl.linkActivated.connect(
+                lambda _l, a=captured: self.issuer_link_clicked.emit(a)
+            )
+            list_inner_layout.addWidget(link_lbl)
+        list_inner_layout.addStretch()
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        scroll.setWidget(list_inner)
+        scroll.setMaximumHeight(180)
+        layout.addWidget(scroll)
         return section
 
 
