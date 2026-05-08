@@ -23,7 +23,7 @@ Out of scope here (handled in their own Phase D tasks):
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
 from PySide6.QtCore import Property, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QWheelEvent
@@ -60,6 +60,8 @@ from locksmith.plugins.ecosystem_viewer.graph_items import (
     NODE_WIDTH,
     NOTCH_DEPTH,
     PermittedIssuerEdge,
+    QualificationEdge,
+    RoleNode,
     SchemaNode,
 )
 from locksmith.plugins.ecosystem_viewer.layout import (
@@ -84,9 +86,11 @@ class GraphBuildResult:
 
     schema_nodes: dict = field(default_factory=dict)   # said -> SchemaNode
     issuer_nodes: dict = field(default_factory=dict)   # aid -> IssuerNode
+    role_nodes: dict = field(default_factory=dict)     # role_name -> RoleNode (Stage 14)
     chain_edges: list = field(default_factory=list)    # EdgeLine instances
     membership_edges: list = field(default_factory=list)
     permitted_issuer_edges: list = field(default_factory=list)  # PermittedIssuerEdge instances
+    qualification_edges: list = field(default_factory=list)  # QualificationEdge instances (Stage 14)
     unresolved_count: int = 0
     feedback_edge_count: int = 0
     # Cached domain data so the side panel can render without re-inspecting.
@@ -116,6 +120,10 @@ class EcosystemGraphView(QWidget):
     open_issuer_requested = Signal(str, bool)    # emits (aid, is_self) — from side panel
     add_permitted_issuer_requested = Signal(str, str)     # (aid, schema_said)
     remove_permitted_issuer_requested = Signal(str, str)  # (aid, schema_said)
+    # Stage 14: role + qualification rule signals.
+    role_selected = Signal(str)                           # role_name
+    add_qualification_rule_requested = Signal(str, str)   # (schema_said, role_name) — T5 will emit
+    remove_qualification_rule_requested = Signal(str, str)  # (schema_said, role_name)
 
     MIN_ZOOM = 0.25
     MAX_ZOOM = 4.0
@@ -244,8 +252,23 @@ class EcosystemGraphView(QWidget):
     # Public API
     # ------------------------------------------------------------------
 
-    def render_ecosystem(self, eco: Any, vault: Any) -> GraphBuildResult:
-        """Rebuild the scene for the given ecosystem record + vault."""
+    def render_ecosystem(
+        self,
+        eco: Any,
+        vault: Any,
+        *,
+        get_role: Callable[[str], Any] | None = None,
+        list_roles: Callable[[str], list] | None = None,
+        find_credentials_of_schema: Callable[[str], list] | None = None,
+    ) -> GraphBuildResult:
+        """Rebuild the scene for the given ecosystem record + vault.
+
+        When ``get_role``/``list_roles``/``find_credentials_of_schema``
+        are all provided AND the ecosystem has ``role_names`` /
+        ``issuer_qualification_rules``, role nodes and qualification
+        edges (Stage 14) are rendered in a dedicated row between the
+        deepest schema layer and the bottom issuer row.
+        """
         self._scene.clear()
         self._selected_node = None
         # Close any open side panel — the previously selected node no
@@ -254,7 +277,13 @@ class EcosystemGraphView(QWidget):
         # Cache the ecosystem record so the side panel can render
         # permitted-issuer info for selected schemas (Stage 9).
         self._eco = eco
-        result = self._build_scene(eco, vault)
+        result = self._build_scene(
+            eco,
+            vault,
+            get_role=get_role,
+            list_roles=list_roles,
+            find_credentials_of_schema=find_credentials_of_schema,
+        )
         self._build_result = result
         self._update_stats(result)
         self._update_hint(result)
@@ -365,7 +394,15 @@ class EcosystemGraphView(QWidget):
     # Scene construction
     # ------------------------------------------------------------------
 
-    def _build_scene(self, eco: Any, vault: Any) -> GraphBuildResult:
+    def _build_scene(
+        self,
+        eco: Any,
+        vault: Any,
+        *,
+        get_role: Callable[[str], Any] | None = None,
+        list_roles: Callable[[str], list] | None = None,
+        find_credentials_of_schema: Callable[[str], list] | None = None,
+    ) -> GraphBuildResult:
         result = GraphBuildResult()
 
         # Step 1: enumerate member schemas (resolved + ghost) and member AIDs.
@@ -479,11 +516,42 @@ class EcosystemGraphView(QWidget):
                 "is_self": is_self,
             }
 
+        # Step 4b: build RoleNodes for ecosystem-defined roles (Stage 14).
+        # Only when all three callables are wired AND the record exposes
+        # role_names. The graph view doesn't hold an EcosystemBaser
+        # reference, so the resolver behaviour is delegated to the
+        # callables provided by the caller (typically the plugin layer).
+        if (
+            list_roles is not None
+            and get_role is not None
+            and getattr(eco, "role_names", None)
+        ):
+            for role in list_roles(eco.name) or []:
+                if find_credentials_of_schema is not None:
+                    member_count = self._count_role_members(
+                        eco, role, get_role, find_credentials_of_schema,
+                    )
+                else:
+                    member_count = len(role.root_issuer_aids or [])
+                role_node = RoleNode(
+                    role_name=role.name,
+                    member_count=member_count,
+                )
+                role_node.clicked.connect(
+                    lambda r=role.name: self._on_role_clicked(r)
+                )
+                self._scene.addItem(role_node)
+                result.role_nodes[role.name] = role_node
+
         # Step 5: layout. Schema nodes participate in chain-of-authority
-        # layering; issuer nodes get pinned to the bottom row, ordered
-        # by barycenter of their permitted-issuer edges (design §2.5).
-        all_node_ids: list[str] = list(result.schema_nodes.keys()) + list(
-            result.issuer_nodes.keys()
+        # layering; role nodes (Stage 14) sit in their own row between
+        # the deepest schema layer and the bottom issuer row; issuer
+        # nodes get pinned to the bottom row, ordered by barycenter of
+        # their permitted-issuer edges (design §2.5).
+        all_node_ids: list[str] = (
+            list(result.schema_nodes.keys())
+            + list(result.role_nodes.keys())
+            + list(result.issuer_nodes.keys())
         )
         layout_edges: list[tuple[str, str]] = [
             (src, dst) for (src, dst, _op) in chain_edges
@@ -498,6 +566,13 @@ class EcosystemGraphView(QWidget):
                 if aid in result.issuer_nodes:
                     permitted_pairs.append((aid, said))
 
+        # Stage 14: role-row pinning. Only entries pointing at a real
+        # role + a real schema in this scene drive barycenter ordering.
+        qualification_pairs: list[tuple[str, str]] = []
+        for said, role_name in (eco.issuer_qualification_rules or {}).items():
+            if said in result.schema_nodes and role_name in result.role_nodes:
+                qualification_pairs.append((said, role_name))
+
         layout_opts = LayoutOptions(
             node_width=NODE_WIDTH + NOTCH_DEPTH,
             node_height=NODE_HEIGHT,
@@ -509,6 +584,8 @@ class EcosystemGraphView(QWidget):
             edges=layout_edges,
             bottom_row_nodes=list(result.issuer_nodes.keys()),
             bottom_row_ordering_edges=permitted_pairs,
+            role_row_nodes=list(result.role_nodes.keys()) or None,
+            role_row_ordering_edges=qualification_pairs or None,
             options=layout_opts,
         )
         result.feedback_edge_count = len(layout_result.feedback_edges)
@@ -526,6 +603,13 @@ class EcosystemGraphView(QWidget):
             # within the slot so the bottom-row alignment looks tidy.
             offset = (NODE_WIDTH + NOTCH_DEPTH - ISSUER_NODE_DIAMETER) / 2
             issuer.setPos(x + offset, y)
+
+        # Stage 14: role nodes (RoleNode) are 56px hexagons; centre them
+        # within the schema-sized slot the layout reserves.
+        for role_name, role_node in result.role_nodes.items():
+            x, y = layout_result.positions.get(role_name, (0, 0))
+            offset = (NODE_WIDTH + NOTCH_DEPTH - RoleNode.NODE_DIAMETER) / 2
+            role_node.setPos(x + offset, y)
 
         # Step 7: draw chain-of-authority edges.
         for src, dst, op in chain_edges:
@@ -560,6 +644,25 @@ class EcosystemGraphView(QWidget):
             )
             self._scene.addItem(edge)
             result.permitted_issuer_edges.append(edge)
+
+        # Step 7c: qualification edges (Stage 14) — schema → role dashed
+        # teal Bézier with an "if" badge. One per
+        # eco.issuer_qualification_rules entry whose schema + role both
+        # made it onto the canvas.
+        for said, role_name in qualification_pairs:
+            schema_node = result.schema_nodes.get(said)
+            role_node = result.role_nodes.get(role_name)
+            if schema_node is None or role_node is None:
+                continue
+            qual_edge = QualificationEdge(
+                source_schema=schema_node, target_role=role_node,
+            )
+            qual_edge._emitter.remove_requested.connect(
+                self._on_qualification_edge_remove_requested
+            )
+            self._scene.addItem(qual_edge)
+            qual_edge.refresh()
+            result.qualification_edges.append(qual_edge)
 
         # Step 8: membership edges (schema ↔ issuer). With Stage 11's
         # PermittedIssuerEdge instantiation above, mere membership is
@@ -636,6 +739,58 @@ class EcosystemGraphView(QWidget):
         """Forward right-click 'Remove permitted-issuer' from a graph
         edge to the surrounding page via signal."""
         self.remove_permitted_issuer_requested.emit(aid, said)
+
+    def _on_role_clicked(self, role_name: str) -> None:
+        """Stage 14: forward a role-node click upward.
+
+        Side-panel population for roles is wired in T6; for now we just
+        emit the selection event so the surrounding page can react."""
+        self.role_selected.emit(role_name)
+
+    def _on_qualification_edge_remove_requested(
+        self, schema_said: str, role_name: str,
+    ) -> None:
+        """Forward right-click 'Remove qualification rule' from a
+        QualificationEdge to the surrounding page via signal."""
+        self.remove_qualification_rule_requested.emit(schema_said, role_name)
+
+    @staticmethod
+    def _count_role_members(
+        eco: Any,
+        role: Any,
+        get_role: Callable[[str], Any],
+        find_credentials_of_schema: Callable[[str], list],
+    ) -> int:
+        """Compute the size of `role`'s current membership.
+
+        Mirrors EcosystemBaser.resolve_role_members but uses the
+        provided ``get_role`` callable rather than holding an
+        EcosystemBaser reference (the graph view doesn't take one).
+        Cycle protection guards against tampered records."""
+        visited: set[str] = set()
+
+        def _resolve(rname: str) -> set[str]:
+            if rname in visited:
+                return set()
+            visited.add(rname)
+            r = get_role(rname)
+            if r is None:
+                return set()
+            if not r.issuer_role_name:
+                return set(r.root_issuer_aids or [])
+            parents = _resolve(r.issuer_role_name)
+            if not parents:
+                return set()
+            members: set[str] = set()
+            for cred in find_credentials_of_schema(r.qualification_schema_said) or []:
+                if cred.issuer_aid in parents:
+                    members.add(cred.holder_aid)
+            return members
+
+        try:
+            return len(_resolve(role.name))
+        except Exception:
+            return len(role.root_issuer_aids or [])
 
     def _on_panel_schema_link(self, said: str) -> None:
         """Side panel surfaced an in-graph link to another schema —
