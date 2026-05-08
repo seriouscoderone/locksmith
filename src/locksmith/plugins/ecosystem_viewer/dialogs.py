@@ -261,7 +261,7 @@ class ConfirmDeleteEcosystemDialog(LocksmithDialog):
     """'Are you sure?' confirmation before deleting an ecosystem record.
 
     The schemas and AIDs themselves stay in the wallet — only the user's
-    grouping (name, description, member lists, authoritative-issuer
+    grouping (name, description, member lists, permitted-issuer
     mapping, annotations) is removed. The dialog spells this out so a
     confirmation isn't ambiguous about what's destroyed.
     """
@@ -297,7 +297,7 @@ class ConfirmDeleteEcosystemDialog(LocksmithDialog):
         detail = QLabel(
             f"This ecosystem currently groups {member_text}. The schemas and "
             "AIDs themselves stay in your wallet — only the grouping, its "
-            "annotations, and any authoritative-issuer assignments are removed."
+            "annotations, and any permitted-issuer assignments are removed."
         )
         detail.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
         detail.setWordWrap(True)

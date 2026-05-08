@@ -137,7 +137,7 @@ Spec line 318: "The ACDC MUST be 'issued by' an Issuer and MUST be
 the role (function) an Issuee plays in using an ACDC."
 
 Spec line 320: "the presence of an Issuee, `i`, field means that the
-associated Issuee MAY make authoritative verifiable presentations or
+associated Issuee MAY make permitted verifiable presentations or
 disclosures of the ACDC." Spec line 324: "the Issuer MAY use the ACDC
 as a contractual vehicle for conveying authorization to the Issuee. This
 enables verifiable delegation chains of authority because the Issuee in
@@ -548,7 +548,7 @@ two-glyph row that follows the §3.2 vocabulary, drawn at 14px:
 ```
 ... existing classification glyph row (variant, targeting, disclosure)...
    ◯ revocable    [or]    ◔ one-shot
-... existing edges sections, authoritative issuers, ...
+... existing edges sections, permitted issuers, ...
 ```
 
 Same metaphor as the schema-detail lifecycle card, but at chip scale.
@@ -757,7 +757,7 @@ recommendation where one is available.
 The schema-detail page already has a chain-of-authority section
 (redesign §4.4). It does not currently surface "known issuers of this
 schema in this wallet." The graph view's side panel does (via the
-Stage 9 "Authoritative issuers" section).
+Stage 9 "Permitted issuers" section).
 
 Should the schema-detail Parties card include a section like "Known
 issuers in your wallet: [Acme Health] [GLEIF Root]"?

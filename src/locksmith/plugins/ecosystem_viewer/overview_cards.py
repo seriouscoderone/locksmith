@@ -383,8 +383,8 @@ class SchemaCard(QFrame):
 
         # Variant glyph (24px)
         variant_path = (
-            icons.ICON_VARIANT_PRIVATE if inspection.requires_nonce
-            else icons.ICON_VARIANT_PUBLIC
+            icons.ICON_PRIVACY_PRIVATE if inspection.requires_nonce
+            else icons.ICON_PRIVACY_PUBLIC
         )
         variant_lbl = QLabel()
         variant_lbl.setPixmap(_load_tinted_pixmap(variant_path, 24, None))

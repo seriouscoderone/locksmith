@@ -184,8 +184,8 @@ class SidePanel(QFrame):
         edges_out: list[tuple[str, str]],   # (dst_said, op)
         edges_in: list[tuple[str, str]],    # (src_said, op)
         schema_titles: dict[str, str],      # said -> title (for link labels)
-        authoritative_issuers: list[tuple[str, str, bool]] | None = None,
-        # ^ list of (aid, alias, is_self) for each authoritative issuer
+        permitted_issuers: list[tuple[str, str, bool]] | None = None,
+        # ^ list of (aid, alias, is_self) for each permitted issuer
         ecosystem_has_issuers: bool = True,
     ) -> None:
         self._clear_inner()
@@ -261,11 +261,11 @@ class SidePanel(QFrame):
                 self._build_edges_section("Chained from", edges_in, schema_titles),
             )
 
-        # Authoritative issuers section (Stage 9 EGF overlay).
+        # Permitted issuers section (Stage 9 EGF overlay).
         self._inner_layout.insertWidget(
             self._inner_layout.count() - 1,
-            self._build_authoritative_issuers_section(
-                authoritative_issuers or [], ecosystem_has_issuers,
+            self._build_permitted_issuers_section(
+                permitted_issuers or [], ecosystem_has_issuers,
             ),
         )
 
@@ -447,8 +447,8 @@ class SidePanel(QFrame):
 
         # Variant glyph
         var_path = (
-            icons.ICON_VARIANT_PRIVATE if inspection.requires_nonce
-            else icons.ICON_VARIANT_PUBLIC
+            icons.ICON_PRIVACY_PRIVATE if inspection.requires_nonce
+            else icons.ICON_PRIVACY_PUBLIC
         )
         var_lbl = QLabel()
         var_lbl.setPixmap(_load_pixmap(var_path, 22))
@@ -499,9 +499,9 @@ class SidePanel(QFrame):
         layout.addStretch()
         return row
 
-    def _build_authoritative_issuers_section(
+    def _build_permitted_issuers_section(
         self,
-        authoritative: list[tuple[str, str, bool]],
+        permitted: list[tuple[str, str, bool]],
         ecosystem_has_issuers: bool,
     ) -> QWidget:
         section = QWidget()
@@ -509,14 +509,14 @@ class SidePanel(QFrame):
         layout.setContentsMargins(0, 6, 0, 0)
         layout.setSpacing(4)
 
-        head = QLabel("Authoritative issuers")
+        head = QLabel("Permitted issuers")
         head.setStyleSheet(
             f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
             " font-weight: 600; letter-spacing: 0.04em;"
         )
         layout.addWidget(head)
 
-        if not authoritative:
+        if not permitted:
             body_text = (
                 "Any ecosystem issuer accepted"
                 if ecosystem_has_issuers
@@ -534,15 +534,15 @@ class SidePanel(QFrame):
         chips_row = QVBoxLayout()
         chips_row.setContentsMargins(0, 0, 0, 0)
         chips_row.setSpacing(3)
-        for aid, alias, is_self in authoritative:
-            chip = self._build_authoritative_chip(aid, alias, is_self)
+        for aid, alias, is_self in permitted:
+            chip = self._build_permitted_chip(aid, alias, is_self)
             chips_row.addWidget(chip)
         chips_w = QWidget()
         chips_w.setLayout(chips_row)
         layout.addWidget(chips_w)
         return section
 
-    def _build_authoritative_chip(
+    def _build_permitted_chip(
         self, aid: str, alias: str, is_self: bool,
     ) -> QWidget:
         chip = QFrame()

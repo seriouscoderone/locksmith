@@ -648,7 +648,7 @@ class SchemaDetailPage(QWidget):
         outer_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # 72px variant glyph + 32px lifecycle glyph (sized for hero presence per design §4.2)
-        icon_path = icons.ICON_VARIANT_PRIVATE if i.requires_nonce else icons.ICON_VARIANT_PUBLIC
+        icon_path = icons.ICON_PRIVACY_PRIVATE if i.requires_nonce else icons.ICON_PRIVACY_PUBLIC
         glyph_label = QLabel()
         px = QPixmap(icon_path)
         if not px.isNull():
@@ -777,11 +777,11 @@ class SchemaDetailPage(QWidget):
 
         # --- Cell 1: Variant (top-left) ---
         if i.requires_nonce:
-            variant_icon_path = icons.ICON_VARIANT_PRIVATE
+            variant_icon_path = icons.ICON_PRIVACY_PRIVATE
             variant_primary = "Private"
             variant_secondary = "Non-correlatable across presentations"
         else:
-            variant_icon_path = icons.ICON_VARIANT_PUBLIC
+            variant_icon_path = icons.ICON_PRIVACY_PUBLIC
             variant_primary = "Public"
             variant_secondary = "Correlatable by SAID across presentations"
 
@@ -956,7 +956,7 @@ class SchemaDetailPage(QWidget):
                 "Always present. Every credential of this schema names an "
                 "issuer AID. The schema cannot constrain who that is — "
                 "that's an ecosystem-governance concern (see "
-                "authoritative issuers)."
+                "permitted issuers)."
             ),
         ), 1)
 
@@ -1066,7 +1066,7 @@ class SchemaDetailPage(QWidget):
     def _collect_known_issuer_aids_for_schema(
         self, schema_said: str, vault: Any,
     ) -> list[str]:
-        """Return the union of AIDs marked as authoritative issuers of
+        """Return the union of AIDs marked as permitted issuers of
         `schema_said` across every ecosystem that contains this schema.
         Returns at most a handful of AIDs in practice (one schema is
         typically a member of one or two ecosystems)."""
@@ -1085,7 +1085,7 @@ class SchemaDetailPage(QWidget):
                 continue
             if rec is None:
                 continue
-            for aid in rec.authoritative_issuers.get(schema_said, []):
+            for aid in rec.permitted_issuers.get(schema_said, []):
                 if aid not in seen:
                     seen.add(aid)
                     aids.append(aid)
@@ -1816,8 +1816,8 @@ class EcosystemDetailPage(QWidget):
     delete_ecosystem_clicked = Signal(str)
     show_schema_detail_requested = Signal(str)
     show_issuer_requested = Signal(str, bool)  # (aid, is_self)
-    add_authoritative_issuer_clicked = Signal(str, str, str)     # (eco, said, aid)
-    remove_authoritative_issuer_clicked = Signal(str, str, str)  # (eco, said, aid)
+    add_permitted_issuer_clicked = Signal(str, str, str)     # (eco, said, aid)
+    remove_permitted_issuer_clicked = Signal(str, str, str)  # (eco, said, aid)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -2105,12 +2105,12 @@ class EcosystemDetailPage(QWidget):
         top_w.setLayout(top)
         rl.addWidget(top_w)
 
-        # Authoritative issuers sub-row (Stage 9)
-        rl.addWidget(self._build_authoritative_issuers_row(eco, said))
+        # Permitted issuers sub-row (Stage 9)
+        rl.addWidget(self._build_permitted_issuers_row(eco, said))
 
         return row
 
-    def _build_authoritative_issuers_row(self, eco: Any, said: str) -> QWidget:
+    def _build_permitted_issuers_row(self, eco: Any, said: str) -> QWidget:
         wrap = QWidget()
         wrap.setObjectName("edAuthRow")
         wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -2123,38 +2123,38 @@ class EcosystemDetailPage(QWidget):
         row.setSpacing(6)
         row.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
-        prefix = QLabel("Authoritative issuers:")
+        prefix = QLabel("Permitted issuers:")
         prefix.setStyleSheet(
             f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-weight: 600;"
             " letter-spacing: 0.02em;"
         )
         row.addWidget(prefix)
 
-        authoritative = eco.authoritative_issuers.get(said, [])
-        if not authoritative:
+        permitted = eco.permitted_issuers.get(said, [])
+        if not permitted:
             none_lbl = QLabel("any ecosystem issuer accepted")
             none_lbl.setStyleSheet(
                 f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
             )
             row.addWidget(none_lbl)
         else:
-            for aid in authoritative:
-                row.addWidget(self._build_authoritative_chip(eco, said, aid))
+            for aid in permitted:
+                row.addWidget(self._build_permitted_chip(eco, said, aid))
 
         # "+" add button — only enabled when there are eligible AIDs to add.
-        eligible = [a for a in eco.issuer_aids if a not in authoritative]
+        eligible = [a for a in eco.issuer_aids if a not in permitted]
         add_btn = QToolButton()
         add_btn.setText("+")
         add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
         if eligible:
-            tip = "Add an authoritative issuer for this schema in this ecosystem"
+            tip = "Add an permitted issuer for this schema in this ecosystem"
         elif not eco.issuer_aids:
             tip = (
                 "Add an issuer AID to this ecosystem first — "
                 "use the Issuer AIDs section below."
             )
         else:
-            tip = "All ecosystem issuers are already authoritative for this schema"
+            tip = "All ecosystem issuers are already permitted for this schema"
         add_btn.setToolTip(tip)
         add_btn.setEnabled(bool(eligible))
         add_btn.setStyleSheet(
@@ -2169,13 +2169,13 @@ class EcosystemDetailPage(QWidget):
             f" border-color: {colors.BORDER}; }}"
         )
         add_btn.clicked.connect(
-            lambda _c=False, e=eco, s=said: self._show_add_authoritative_menu(e, s)
+            lambda _c=False, e=eco, s=said: self._show_add_permitted_menu(e, s)
         )
         row.addWidget(add_btn)
         row.addStretch()
         return wrap
 
-    def _build_authoritative_chip(self, eco: Any, said: str, aid: str) -> QWidget:
+    def _build_permitted_chip(self, eco: Any, said: str, aid: str) -> QWidget:
         wrap = QFrame()
         wrap.setObjectName("edAuthChip")
         wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
@@ -2205,7 +2205,7 @@ class EcosystemDetailPage(QWidget):
         rm = QToolButton()
         rm.setText("×")
         rm.setCursor(Qt.CursorShape.PointingHandCursor)
-        rm.setToolTip("Remove as authoritative issuer for this schema")
+        rm.setToolTip("Remove as permitted issuer for this schema")
         rm.setStyleSheet(
             "QToolButton {"
             f" background: transparent; border: none; padding: 0px 4px;"
@@ -2215,7 +2215,7 @@ class EcosystemDetailPage(QWidget):
         )
         rm.clicked.connect(
             lambda _c=False, n=eco.name, s=said, a=aid:
-                self.remove_authoritative_issuer_clicked.emit(n, s, a)
+                self.remove_permitted_issuer_clicked.emit(n, s, a)
         )
         h.addWidget(rm)
 
@@ -2227,8 +2227,8 @@ class EcosystemDetailPage(QWidget):
         )
         return wrap
 
-    def _show_add_authoritative_menu(self, eco: Any, said: str) -> None:
-        already = set(eco.authoritative_issuers.get(said, []))
+    def _show_add_permitted_menu(self, eco: Any, said: str) -> None:
+        already = set(eco.permitted_issuers.get(said, []))
         eligible = [a for a in eco.issuer_aids if a not in already]
         if not eligible:
             return
@@ -2238,7 +2238,7 @@ class EcosystemDetailPage(QWidget):
             action = menu.addAction(f"{alias}  —  {aid[:14]}…")
             action.triggered.connect(
                 lambda _c=False, n=eco.name, s=said, a=aid:
-                    self.add_authoritative_issuer_clicked.emit(n, s, a)
+                    self.add_permitted_issuer_clicked.emit(n, s, a)
             )
         menu.exec(QCursor.pos())
 

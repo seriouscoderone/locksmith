@@ -242,7 +242,7 @@ class EcosystemGraphView(QWidget):
         # longer exists in the new scene.
         self._side_panel.close()
         # Cache the ecosystem record so the side panel can render
-        # authoritative-issuer info for selected schemas (Stage 9).
+        # permitted-issuer info for selected schemas (Stage 9).
         self._eco = eco
         result = self._build_scene(eco, vault)
         self._build_result = result
@@ -515,7 +515,7 @@ class EcosystemGraphView(QWidget):
             result.chain_edges.append(edge)
 
         # Step 8: membership edges (schema → issuer). For v1 we don't have
-        # per-schema authoritative-issuer mapping (that's stage 9); draw a
+        # per-schema permitted-issuer mapping (that's stage 9); draw a
         # membership line from each issuer to every schema in the ecosystem
         # so the user can see the cluster. This will become more meaningful
         # once the EGF overlay lands.
@@ -610,28 +610,28 @@ class EcosystemGraphView(QWidget):
             return
         edges_out = self._build_result.schema_edges_by_src.get(said, [])
 
-        # Authoritative issuers (Stage 9): pull from cached ecosystem record
+        # Permitted issuers (Stage 9): pull from cached ecosystem record
         # and resolve each AID's alias / is_self via cached issuer metadata.
         auth_aids: list[str] = []
         ecosystem_has_issuers = False
         if self._eco is not None:
             ecosystem_has_issuers = bool(self._eco.issuer_aids)
             auth_aids = list(
-                self._eco.authoritative_issuers.get(said, []) or []
+                self._eco.permitted_issuers.get(said, []) or []
             )
-        authoritative: list[tuple[str, str, bool]] = []
+        permitted: list[tuple[str, str, bool]] = []
         for aid in auth_aids:
             meta = self._build_result.issuer_meta.get(aid, {})
             alias = meta.get("alias") or _short_aid(aid)
             is_self = bool(meta.get("is_self"))
-            authoritative.append((aid, alias, is_self))
+            permitted.append((aid, alias, is_self))
 
         self._side_panel.show_schema(
             inspection=inspection,
             edges_out=edges_out,
             edges_in=edges_in,
             schema_titles=titles,
-            authoritative_issuers=authoritative,
+            permitted_issuers=permitted,
             ecosystem_has_issuers=ecosystem_has_issuers,
         )
 

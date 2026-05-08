@@ -18,14 +18,14 @@ from __future__ import annotations
 
 
 # ---------------------------------------------------------------------------
-# Variant — public vs private credential (§2.1)
+# Privacy — public vs private credential (§2.1)
 # ---------------------------------------------------------------------------
 
-ICON_VARIANT_PUBLIC = ":/assets/material-icons/variant_public.svg"
+ICON_PRIVACY_PUBLIC = ":/assets/material-icons/privacy_public.svg"
 """Open thin-stroke circle. Public credential (no `u` nonce); SAID is
 correlatable across presentations."""
 
-ICON_VARIANT_PRIVATE = ":/assets/material-icons/variant_private.svg"
+ICON_PRIVACY_PRIVATE = ":/assets/material-icons/privacy_private.svg"
 """Hatched-fill circle. Private credential (`u` UUID/nonce present);
 non-correlatable across presentations."""
 

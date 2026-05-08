@@ -33,8 +33,8 @@ class EcosystemRecord:
     ('manual', 'imported_oobi', 'imported_file'); `source_url` is
     populated when the ecosystem was sourced from an OOBI or file.
 
-    `authoritative_issuers` maps schema_said -> list of AIDs that are
-    considered authoritative issuers of that schema *within this
+    `permitted_issuers` maps schema_said -> list of AIDs that are
+    considered permitted issuers of that schema *within this
     ecosystem*. The ACDC spec doesn't define this — it's a wallet-level
     convention overlay (the spec's EGF concept made first-class), so
     the README's spec-vs-convention block calls it out as such.
@@ -51,7 +51,7 @@ class EcosystemRecord:
     updated_at: str = ""
     source_kind: str = "manual"
     source_url: str = ""
-    authoritative_issuers: dict = field(default_factory=dict)
+    permitted_issuers: dict = field(default_factory=dict)
     """schema_said -> list[AID]. See class docstring."""
 
 
@@ -158,10 +158,10 @@ class EcosystemBaser(dbing.LMDBer):
         for aid in old_aids - new_aids:
             self._remove_membership(self.aid_membership, aid, rec.name)
 
-        # Cascade authoritative_issuers cleanup so it can never reference
+        # Cascade permitted_issuers cleanup so it can never reference
         # schemas or AIDs that aren't members of the ecosystem.
-        rec.authoritative_issuers = self._cleanup_authoritative_issuers(
-            rec.authoritative_issuers, schema_set=new_saids, aid_set=new_aids,
+        rec.permitted_issuers = self._cleanup_permitted_issuers(
+            rec.permitted_issuers, schema_set=new_saids, aid_set=new_aids,
         )
 
         self.ecosystems.pin(keys=(rec.name,), val=rec)
@@ -221,23 +221,23 @@ class EcosystemBaser(dbing.LMDBer):
             rec.issuer_aids = [a for a in rec.issuer_aids if a != aid]
             self.put_ecosystem(rec)
 
-    # --------------------------- Authoritative issuers ---------------------------
+    # --------------------------- Permitted issuers ---------------------------
 
-    def authoritative_issuers_for(
+    def permitted_issuers_for(
         self, ecosystem_name: str, schema_said: str
     ) -> list[str]:
-        """Return the AIDs marked as authoritative issuers of `schema_said`
+        """Return the AIDs marked as permitted issuers of `schema_said`
         in `ecosystem_name`. Empty list if none are configured (which by
         convention means 'any ecosystem issuer is acceptable')."""
         rec = self.get_ecosystem(ecosystem_name)
         if rec is None:
             return []
-        return list(rec.authoritative_issuers.get(schema_said, []))
+        return list(rec.permitted_issuers.get(schema_said, []))
 
-    def set_authoritative_issuers(
+    def set_permitted_issuers(
         self, ecosystem_name: str, schema_said: str, aids: list[str],
     ) -> None:
-        """Replace the authoritative-issuer list for `schema_said`. The
+        """Replace the permitted-issuer list for `schema_said`. The
         schema and each AID must already be members of the ecosystem."""
         rec = self.get_ecosystem(ecosystem_name)
         if rec is None:
@@ -254,31 +254,31 @@ class EcosystemBaser(dbing.LMDBer):
             )
         deduped = sorted(set(aids))
         if deduped:
-            rec.authoritative_issuers[schema_said] = deduped
+            rec.permitted_issuers[schema_said] = deduped
         else:
-            rec.authoritative_issuers.pop(schema_said, None)
+            rec.permitted_issuers.pop(schema_said, None)
         self.put_ecosystem(rec)
 
-    def add_authoritative_issuer(
+    def add_permitted_issuer(
         self, ecosystem_name: str, schema_said: str, aid: str,
     ) -> None:
-        cur = self.authoritative_issuers_for(ecosystem_name, schema_said)
+        cur = self.permitted_issuers_for(ecosystem_name, schema_said)
         if aid in cur:
             return
-        self.set_authoritative_issuers(ecosystem_name, schema_said, cur + [aid])
+        self.set_permitted_issuers(ecosystem_name, schema_said, cur + [aid])
 
-    def remove_authoritative_issuer(
+    def remove_permitted_issuer(
         self, ecosystem_name: str, schema_said: str, aid: str,
     ) -> None:
-        cur = self.authoritative_issuers_for(ecosystem_name, schema_said)
+        cur = self.permitted_issuers_for(ecosystem_name, schema_said)
         if aid not in cur:
             return
-        self.set_authoritative_issuers(
+        self.set_permitted_issuers(
             ecosystem_name, schema_said, [a for a in cur if a != aid]
         )
 
     @staticmethod
-    def _cleanup_authoritative_issuers(
+    def _cleanup_permitted_issuers(
         mapping: dict, *, schema_set: set, aid_set: set,
     ) -> dict:
         """Drop entries for schemas not in `schema_set` and AIDs not in

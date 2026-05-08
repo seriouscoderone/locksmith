@@ -209,7 +209,7 @@ Roughly in priority order:
 | 6 | First-person view ("given my held credentials, what can I do in this ecosystem?") |
 | 7 | ACDC builder (`locksmith.acdc.builder`) for authoring credentials in domain language |
 | 8 | Ecosystem export/import — share ecosystem definitions across wallets |
-| 9 | Per-schema authoritative issuers (EGF overlay) |
+| 9 | Per-schema permitted issuers (EGF overlay) |
 | 10 | Parties + lifecycle vocabulary (issuer/issuee/registry-backed) |
 
 ## Spec-vs-convention discipline
@@ -236,7 +236,7 @@ local and obvious.
 
 ## Spec source of truth
 
-Authoritative reference: `kswg-acdc-specification/spec/spec-body.md`
+Permitted reference: `kswg-acdc-specification/spec/spec-body.md`
 (the ACDC spec body). Inspector docstrings cite specific spec sections
 where appropriate. When in doubt, also consult the `keri:chat` skill,
 which returns spec-grounded answers with line-number citations.

@@ -75,11 +75,11 @@ class EcosystemViewerPlugin(PluginBase):
         self._ecosystem_detail_page.remove_aid_clicked.connect(self._remove_aid_member)
         self._ecosystem_detail_page.delete_ecosystem_clicked.connect(self._delete_ecosystem)
         self._ecosystem_detail_page.show_issuer_requested.connect(self._show_issuer)
-        self._ecosystem_detail_page.add_authoritative_issuer_clicked.connect(
-            self._add_authoritative_issuer
+        self._ecosystem_detail_page.add_permitted_issuer_clicked.connect(
+            self._add_permitted_issuer
         )
-        self._ecosystem_detail_page.remove_authoritative_issuer_clicked.connect(
-            self._remove_authoritative_issuer
+        self._ecosystem_detail_page.remove_permitted_issuer_clicked.connect(
+            self._remove_permitted_issuer
         )
 
         logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
@@ -219,6 +219,15 @@ class EcosystemViewerPlugin(PluginBase):
                 f"No eligible schemas to add to ecosystem '{ecosystem_name}' "
                 f"(every wallet schema is already a member, or the wallet has none yet)"
             )
+            self._show_no_candidates_notice(
+                title="No schemas to add",
+                body=(
+                    "Every schema in your wallet is already a member of "
+                    "this ecosystem, or your wallet has none yet. Resolve a "
+                    "new schema via Credentials → Schemas → Add to bring "
+                    "more in."
+                ),
+            )
             return
 
         dialog = AddMemberDialog(
@@ -241,20 +250,44 @@ class EcosystemViewerPlugin(PluginBase):
         if eco is None:
             return
         candidates: list[tuple[str, str]] = []
+        seen: set[str] = set(eco.issuer_aids)
+        # Remote contacts.
         try:
             for c in vault.org.list():
                 aid = c.get("id", "")
-                if not aid or aid in eco.issuer_aids:
+                if not aid or aid in seen:
                     continue
+                seen.add(aid)
                 alias = c.get("alias") or "(no alias)"
                 candidates.append((f"{alias}  —  {aid}", aid))
         except Exception:
             logger.exception("Failed to enumerate contacts for member-add")
+        # Self-AIDs (the user's own habs) — they may want to add their own
+        # AID as an issuer of this ecosystem (e.g., acting as a proxy DOI).
+        try:
+            for hab in vault.hby.habs.values():
+                aid = hab.pre
+                if not aid or aid in seen:
+                    continue
+                seen.add(aid)
+                alias = hab.name or "(unnamed)"
+                candidates.append((f"{alias} (mine)  —  {aid}", aid))
+        except Exception:
+            logger.exception("Failed to enumerate self-AIDs for member-add")
 
         if not candidates:
             logger.info(
-                f"No eligible contacts to add to ecosystem '{ecosystem_name}' "
-                f"(every contact is already a member, or there are no contacts yet)"
+                f"No eligible AIDs to add to ecosystem '{ecosystem_name}' "
+                f"(every contact + own AID is already a member, or there are none)"
+            )
+            self._show_no_candidates_notice(
+                title="No AIDs to add",
+                body=(
+                    "Every AID in your wallet (contacts and your own "
+                    "identifiers) is already a member of this ecosystem, "
+                    "or your wallet has none yet. Add a contact via "
+                    "Contacts → Add or create your own identifier first."
+                ),
             )
             return
 
@@ -266,6 +299,43 @@ class EcosystemViewerPlugin(PluginBase):
         dialog.member_picked.connect(
             lambda aid, n=ecosystem_name: self._add_aid_member(n, aid)
         )
+        dialog.open()
+
+    def _show_no_candidates_notice(self, title: str, body: str) -> None:
+        """Tiny modal shown when the user clicks Add Schema / Add AID but
+        there's nothing left to add. Without this, the click silently
+        does nothing (real bug observed)."""
+        from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+        from locksmith.ui import colors as _colors
+        from locksmith.ui.toolkit.widgets import (
+            LocksmithButton,
+            LocksmithDialog,
+        )
+        content = QWidget()
+        content.setObjectName("ecoNoCandContent")
+        content.setStyleSheet(
+            f"#ecoNoCandContent {{ background-color: {_colors.BACKGROUND_CONTENT}; }}"
+            "#ecoNoCandContent QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(8)
+        body_lbl = QLabel(body)
+        body_lbl.setWordWrap(True)
+        body_lbl.setStyleSheet(f"font-size: 13px; color: {_colors.TEXT_DARK};")
+        layout.addWidget(body_lbl)
+        button_row = QHBoxLayout()
+        ok_btn = LocksmithButton("OK")
+        button_row.addStretch()
+        button_row.addWidget(ok_btn)
+        dialog = LocksmithDialog(
+            parent=self._ecosystem_detail_page,
+            title=title,
+            content=content,
+            buttons=button_row,
+            show_close_button=True,
+        )
+        ok_btn.clicked.connect(dialog.close)
         dialog.open()
 
     def _add_schema_member(self, ecosystem_name: str, schema_said: str) -> None:
@@ -308,27 +378,27 @@ class EcosystemViewerPlugin(PluginBase):
             return
         self._refresh_ecosystem_detail()
 
-    def _add_authoritative_issuer(
+    def _add_permitted_issuer(
         self, ecosystem_name: str, schema_said: str, aid: str,
     ) -> None:
         if self._db is None:
             return
         try:
-            self._db.add_authoritative_issuer(ecosystem_name, schema_said, aid)
+            self._db.add_permitted_issuer(ecosystem_name, schema_said, aid)
         except Exception:
-            logger.exception("Failed to add authoritative issuer")
+            logger.exception("Failed to add permitted issuer")
             return
         self._refresh_ecosystem_detail()
 
-    def _remove_authoritative_issuer(
+    def _remove_permitted_issuer(
         self, ecosystem_name: str, schema_said: str, aid: str,
     ) -> None:
         if self._db is None:
             return
         try:
-            self._db.remove_authoritative_issuer(ecosystem_name, schema_said, aid)
+            self._db.remove_permitted_issuer(ecosystem_name, schema_said, aid)
         except Exception:
-            logger.exception("Failed to remove authoritative issuer")
+            logger.exception("Failed to remove permitted issuer")
             return
         self._refresh_ecosystem_detail()
 

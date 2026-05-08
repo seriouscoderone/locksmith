@@ -887,8 +887,8 @@ encode runtime data.
 
 | # | Name | Metaphor | Format / Size | Source | Notes |
 |---|---|---|---|---|---|
-| 7.1 | `variant_public.svg` | Open thin-stroke circle | SVG 24×24 | New | §2.1 public variant glyph. |
-| 7.2 | `variant_private.svg` | Hatched-fill circle (diagonal lines) | SVG 24×24 | New | §2.1 private variant glyph. Hatch pattern as path lines, not as stroke pattern, so re-tinting works. |
+| 7.1 | `privacy_public.svg` | Open thin-stroke circle | SVG 24×24 | New | §2.1 public variant glyph. |
+| 7.2 | `privacy_private.svg` | Hatched-fill circle (diagonal lines) | SVG 24×24 | New | §2.1 private variant glyph. Hatch pattern as path lines, not as stroke pattern, so re-tinting works. |
 | 7.3 | `targeting_targeted.svg` | Two overlapping silhouettes | SVG 24×24 | New | §2.2 targeted badge. |
 | 7.4 | `targeting_untargeted.svg` | One silhouette, broadcasting waves | SVG 24×24 | New | §2.2 untargeted badge. |
 | 7.5 | `disclosure_tier.svg` | 4-bar ziggurat with 1/2/3/4 bars filled | Painted, not SVG | New helper widget | §2.3. Renders dynamically from inspection data; not an SVG. Subclass `QWidget` with custom paint, expose `tier: int` property. |
