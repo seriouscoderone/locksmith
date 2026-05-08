@@ -146,3 +146,50 @@ def test_empty_graph_returns_empty_result():
     assert result.positions == {}
     assert result.layers == []
     assert result.feedback_edges == []
+
+
+def test_bottom_row_reorders_by_barycenter_of_connecting_edges():
+    # Three schemas at top (after layout: A, B, C left-to-right at layer 0).
+    # Three issuers at bottom; without reordering they sort alphabetically.
+    # With bottom_row_ordering_edges = [(I1, A), (I2, C), (I3, B)], the
+    # bottom row should reorder to I1, I3, I2 (mean-x of neighbors: I1's
+    # only neighbor is A=leftmost, I3 connects to B=middle, I2 to
+    # C=rightmost).
+    result = layout_hierarchical(
+        nodes=["A", "B", "C", "I1", "I2", "I3"],
+        edges=[],  # no chain-of-authority edges in this test
+        bottom_row_nodes=["I1", "I2", "I3"],
+        bottom_row_ordering_edges=[("I1", "A"), ("I2", "C"), ("I3", "B")],
+    )
+    bottom = result.layers[-1]
+    assert bottom == ["I1", "I3", "I2"]
+
+
+def test_bottom_row_ordering_edges_default_no_reorder():
+    # Without the new param, behavior is unchanged: bottom row stays in
+    # the alphabetical order produced by _group_into_layers + the
+    # bottom-row append.
+    result = layout_hierarchical(
+        nodes=["A", "B", "C", "I1", "I2", "I3"],
+        edges=[("A", "B")],
+        bottom_row_nodes=["I1", "I2", "I3"],
+    )
+    bottom = result.layers[-1]
+    assert bottom == ["I1", "I2", "I3"]
+
+
+def test_bottom_row_node_with_no_ordering_edges_keeps_relative_position():
+    # If a bottom-row node has zero ordering edges, it should retain its
+    # original order relative to other unconnected siblings (stable sort).
+    result = layout_hierarchical(
+        nodes=["A", "B", "I1", "I2", "I3"],
+        edges=[],
+        bottom_row_nodes=["I1", "I2", "I3"],
+        bottom_row_ordering_edges=[("I2", "A")],
+    )
+    bottom = result.layers[-1]
+    # I2 should land near A (leftmost). I1 and I3 have no ordering edges
+    # — they retain their alphabetical order from each other but follow
+    # I2 since I2 has the lowest barycenter.
+    assert bottom[0] == "I2"
+    assert bottom[1:] == ["I1", "I3"]

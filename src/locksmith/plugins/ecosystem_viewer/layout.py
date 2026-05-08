@@ -104,6 +104,7 @@ def layout_hierarchical(
     edges: Iterable[tuple[Hashable, Hashable]],
     *,
     bottom_row_nodes: Iterable[Hashable] = (),
+    bottom_row_ordering_edges: Iterable[tuple[Hashable, Hashable]] = (),
     options: LayoutOptions | None = None,
 ) -> LayoutResult:
     """Compute (x, y) positions for `nodes` connected by `edges`.
@@ -120,6 +121,11 @@ def layout_hierarchical(
         their actual edge depth. Intended for issuer-AID nodes (per
         design §5.5) which should sit beneath the schema chain rather
         than competing with it for layer assignment.
+    bottom_row_ordering_edges : iterable of (src, dst)
+        Edges connecting bottom-row nodes to chain nodes, used to reorder
+        the bottom row by barycenter (mean x-position of connected upper
+        neighbors). Per design §2.5 mitigation 3. Empty default preserves
+        prior alphabetical ordering.
     options : LayoutOptions
         Spacing + orientation tunables.
 
@@ -158,7 +164,11 @@ def layout_hierarchical(
 
     # 4. Bottom-row nodes get a dedicated final layer.
     if bottom_set:
-        layers.append(sorted(bottom_set, key=str))
+        layers.append(_order_bottom_row(
+            bottom_set,
+            list(bottom_row_ordering_edges),
+            chain_layers=layers,
+        ))
 
     # 5. Coordinate assignment.
     positions = _assign_coordinates(layers, opts)
@@ -336,6 +346,50 @@ def _barycentric_pass(
                 return sum(positions_) / len(positions_)
 
             cur.sort(key=lambda n, _b=bary: (_b(n), str(n)))
+
+
+def _order_bottom_row(
+    bottom_set: set[Hashable],
+    ordering_edges: list[tuple[Hashable, Hashable]],
+    chain_layers: list[list[Hashable]],
+) -> list[Hashable]:
+    """Order bottom-row nodes by mean x-position of their neighbors in
+    the chain-layer hierarchy (per design §2.5 mitigation 3).
+
+    Each ordering edge (bottom_node, chain_node) contributes the chain
+    node's position-in-its-layer to bottom_node's barycenter. Nodes
+    with no ordering edges fall back to alphabetical and follow the
+    nodes that DO have edges (in their barycenter order).
+    """
+    # Build chain-node -> position-in-layer for barycenter lookup.
+    chain_pos: dict[Hashable, float] = {}
+    for layer in chain_layers:
+        for i, node in enumerate(layer):
+            chain_pos[node] = float(i)
+
+    # Compute barycenter per bottom-row node.
+    barycenters: dict[Hashable, float | None] = {}
+    contributions: dict[Hashable, list[float]] = {n: [] for n in bottom_set}
+    for src, dst in ordering_edges:
+        if src in bottom_set and dst in chain_pos:
+            contributions[src].append(chain_pos[dst])
+        if dst in bottom_set and src in chain_pos:
+            contributions[dst].append(chain_pos[src])
+    for n in bottom_set:
+        cs = contributions[n]
+        barycenters[n] = (sum(cs) / len(cs)) if cs else None
+
+    # Sort: nodes with barycenters first (by barycenter, then by str for
+    # deterministic ties); nodes without barycenters last (alphabetical).
+    with_bary = sorted(
+        (n for n in bottom_set if barycenters[n] is not None),
+        key=lambda n: (barycenters[n], str(n)),
+    )
+    without_bary = sorted(
+        (n for n in bottom_set if barycenters[n] is None),
+        key=str,
+    )
+    return list(with_bary) + list(without_bary)
 
 
 def _assign_coordinates(
