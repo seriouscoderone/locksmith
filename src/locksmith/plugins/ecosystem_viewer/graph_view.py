@@ -25,7 +25,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from typing import Any
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import Property, QPropertyAnimation, Qt, Signal
 from PySide6.QtGui import QColor, QPainter, QPen, QWheelEvent
 from PySide6.QtWidgets import (
     QFrame,
@@ -126,6 +126,12 @@ class EcosystemGraphView(QWidget):
         self._build_result: GraphBuildResult | None = None
         self._selected_node: Any | None = None  # SchemaNode | IssuerNode | None
         self._eco: Any | None = None  # last-rendered EcosystemRecord
+
+        # Snap-target pulse phase (Stage 11). Animated 0.0↔1.0 during
+        # drag-to-create; consumed by SchemaNode.paint() to modulate the
+        # eligible-ring alpha.
+        self._snap_pulse_phase = 0.0
+        self._snap_pulse_anim = None  # lazily created in _begin_snap_pulse
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -700,6 +706,40 @@ class EcosystemGraphView(QWidget):
         self._view.scale(factor, factor)
         self._sync_zoom_label()
 
+    # ------------------------------------------------------------------
+    # Snap-target pulse animation (Stage 11)
+    # ------------------------------------------------------------------
+
+    def _get_snap_pulse_phase(self) -> float:
+        return self._snap_pulse_phase
+
+    def _set_snap_pulse_phase(self, value: float) -> None:
+        self._snap_pulse_phase = value
+        if self._build_result is not None:
+            for schema in self._build_result.schema_nodes.values():
+                if getattr(schema, "_snap_state", "off") == "eligible":
+                    schema.update()
+
+    snap_pulse_phase = Property(float, _get_snap_pulse_phase, _set_snap_pulse_phase)
+
+    def _begin_snap_pulse(self) -> None:
+        if self._snap_pulse_anim is None:
+            self._snap_pulse_anim = QPropertyAnimation(self, b"snap_pulse_phase")
+            self._snap_pulse_anim.setDuration(1000)
+            self._snap_pulse_anim.setStartValue(0.0)
+            self._snap_pulse_anim.setKeyValueAt(0.5, 1.0)
+            self._snap_pulse_anim.setEndValue(0.0)
+            self._snap_pulse_anim.setLoopCount(-1)
+        self._snap_pulse_anim.start()
+
+    def _end_snap_pulse(self) -> None:
+        if self._snap_pulse_anim is not None:
+            self._snap_pulse_anim.stop()
+        self._snap_pulse_phase = 0.0
+        if self._build_result is not None:
+            for schema in self._build_result.schema_nodes.values():
+                schema.update()
+
     def _sync_zoom_label(self) -> None:
         cur = self._view.transform().m11()
         self._zoom_lbl.setText(f"{int(round(cur * 100))}%")
@@ -833,6 +873,9 @@ class _GraphView(QGraphicsView):
         from PySide6.QtWidgets import QGraphicsLineItem
         from PySide6.QtCore import QLineF
         self._drag_active = True
+        owner = self.parent()
+        if isinstance(owner, EcosystemGraphView):
+            owner._begin_snap_pulse()
         self.viewport().setCursor(Qt.CursorShape.CrossCursor)
         # Create rubber band from origin to current scene pos (will be
         # immediately updated on next mouseMoveEvent).
@@ -930,6 +973,8 @@ class _GraphView(QGraphicsView):
             # show a toast.
 
         # Reset state.
+        if isinstance(owner, EcosystemGraphView):
+            owner._end_snap_pulse()
         self._drag_active = False
         self._drag_origin_aid = None
         self._drag_origin_pos = None

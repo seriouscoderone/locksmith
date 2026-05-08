@@ -288,7 +288,20 @@ class SchemaNode(QGraphicsObject):
         # Snap-target overlay (drag-to-create from an IssuerNode).
         snap_state = getattr(self, "_snap_state", "off")
         if snap_state == "eligible":
-            ring_color = QColor("#0D9488")  # teal
+            # Modulate alpha with the owner-managed pulse phase so all
+            # eligible nodes pulse in sync; falls back to constant 1.0
+            # if no scene/owner pulse is running.
+            phase = 1.0
+            scene = self.scene()
+            if scene is not None:
+                views = scene.views()
+                for v in views:
+                    owner = v.parent()
+                    if hasattr(owner, "_snap_pulse_phase"):
+                        phase = 0.6 + 0.4 * owner._snap_pulse_phase
+                        break
+            ring_color = QColor("#0D9488")
+            ring_color.setAlphaF(phase)
             pen = QPen(ring_color, 2)
             pen.setStyle(Qt.PenStyle.DashLine)
             painter.setPen(pen)
