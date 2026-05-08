@@ -209,6 +209,8 @@ Roughly in priority order:
 | 6 | First-person view ("given my held credentials, what can I do in this ecosystem?") |
 | 7 | ACDC builder (`locksmith.acdc.builder`) for authoring credentials in domain language |
 | 8 | Ecosystem export/import — share ecosystem definitions across wallets |
+| 9 | Per-schema authoritative issuers (EGF overlay) |
+| 10 | Parties + lifecycle vocabulary (issuer/issuee/registry-backed) |
 
 ## Spec-vs-convention discipline
 
@@ -220,8 +222,13 @@ earlier work, this plugin's code is careful to distinguish:
   `a.i`, edge operators (I2I/NI2I/DI2I/NOT), edge-group operators
   (AND/OR/NAND/NOR/AVG/WAVG), section forms, disclosure tiers.
 - **Convention overlay** (called out as such): the names "ecosystem,"
-  "is_private," "disclosure_tier" as a single label, and the user
-  constructs in `EcosystemBaser`.
+  "is_private," "disclosure_tier" as a single label, the user
+  constructs in `EcosystemBaser`, and the parties + lifecycle vocabulary
+  introduced in `2026-05-07-acdc-parties-lifecycle.md` —
+  `is_self_issued` / `is_self_attested` flags on `ACDCInspection`, the
+  "revocable" / "one-shot" lifecycle naming, and the "from" / "to"
+  role labels on `IssuerSigilCircle`. None of these are spec-defined
+  variants; they are this wallet's framing of derived facts.
 
 If a future spec change moves a primitive from one column to the other
 — or invalidates one we're using — that distinction makes the rework
