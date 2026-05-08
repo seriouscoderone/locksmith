@@ -1730,10 +1730,10 @@ class SchemaDetailPage(QWidget):
         frame = self._card("Required ACDC variant")
         layout: QVBoxLayout = frame.layout()  # type: ignore[assignment]
         rows = [
-            ("Targeted (a.i required)", i.requires_targeted),
-            ("Private (u required)", i.requires_nonce),
-            ("Has registry (rd/ri required)", i.requires_registry),
-            ("Has message type (t required)", i.requires_message_type),
+            ("Targeted — requires a.i (issuee AID)", i.requires_targeted),
+            ("Private — requires u (nonce)", i.requires_nonce),
+            ("Registry-backed — requires rd (or legacy ri)", i.requires_registry),
+            ("Has message type — requires t", i.requires_message_type),
         ]
         for label, value in rows:
             txt = QLabel(f"<b>{'yes' if value else 'no':>4}</b> · {label}")
