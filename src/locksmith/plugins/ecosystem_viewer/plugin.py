@@ -41,6 +41,57 @@ from locksmith.ui.vault.menu import MenuButton, MenuSpacer
 logger = help.ogler.getLogger(__name__)
 
 
+from collections import namedtuple
+
+# Resolver-compatible credential shape: matches what
+# EcosystemBaser.resolve_role_members expects (.holder_aid, .issuer_aid,
+# .schema_said). Used by vault_credential_finder.
+_VaultCred = namedtuple("_VaultCred", ["holder_aid", "issuer_aid", "schema_said"])
+
+
+def vault_credential_finder(vault: Any):
+    """Return a find_credentials_of_schema(schema_said) callable backed
+    by `vault.rgy.reger.creds`. The callable yields a tuple per matching
+    credential with the three fields the resolver needs.
+
+    Pure function over vault state; no caching. The resolver is invoked
+    once per UI render that asks for role members, so for v1 we accept
+    the linear scan cost. (Tens to low hundreds of credentials in
+    realistic vaults; if this becomes hot, add a per-render cache.)
+    """
+    def find_credentials_of_schema(schema_said: str):
+        if vault is None:
+            return []
+        try:
+            creds_db = vault.rgy.reger.creds
+        except AttributeError:
+            return []
+        out: list = []
+        for _keys, serder in creds_db.getItemIter():
+            sad = getattr(serder, "sad", None)
+            if not isinstance(sad, dict):
+                continue
+            if sad.get("s") != schema_said:
+                continue
+            issuer = sad.get("i")
+            attr = sad.get("a")
+            holder = None
+            if isinstance(attr, dict):
+                holder = attr.get("i")
+            # Untargeted ACDCs have no holder; they cannot qualify role
+            # membership (which requires a specific AID to be the holder).
+            if not holder or not issuer:
+                continue
+            out.append(_VaultCred(
+                holder_aid=holder,
+                issuer_aid=issuer,
+                schema_said=schema_said,
+            ))
+        return out
+
+    return find_credentials_of_schema
+
+
 class EcosystemViewerPlugin(PluginBase):
     """Stages 1-2: domain-classified browsing of the wallet's known schemas + AIDs."""
 
