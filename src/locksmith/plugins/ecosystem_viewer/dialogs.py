@@ -11,6 +11,7 @@ from typing import Any
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QComboBox,
     QHBoxLayout,
     QLabel,
     QListWidget,
@@ -323,4 +324,163 @@ class ConfirmDeleteEcosystemDialog(LocksmithDialog):
 
     def _on_confirm(self) -> None:
         self.confirmed.emit()
+        self.close()
+
+
+class CreateRoleDialog(LocksmithDialog):
+    """Modal for defining a new role in an ecosystem.
+
+    A role is a credential-qualified class of AID. The user picks:
+    - A name for the role (free text)
+    - The qualification schema (a member schema of the ecosystem whose
+      holders qualify for this role)
+    - Either an issuer role (chained role — qualification must come from
+      a member of that role) OR a list of root issuer AIDs (root role —
+      enumerated trust roots)
+    """
+
+    role_create_requested = Signal(str, str, str, str, str, list)
+    """(ecosystem_name, role_name, description, qualification_schema_said,
+    issuer_role_name, root_issuer_aids). issuer_role_name is "" when the
+    role is a root role."""
+
+    def __init__(
+        self,
+        ecosystem_name: str,
+        schemas: list[tuple[str, str]],
+        existing_roles: list[str],
+        issuer_aids: list[tuple[str, str]],
+        parent: QWidget | None = None,
+    ):
+        self.ecosystem_name = ecosystem_name
+        self._schema_options = schemas
+        self._issuer_aids = issuer_aids
+
+        content = QWidget()
+        content.setObjectName("createRoleContent")
+        content.setStyleSheet(
+            f"#createRoleContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#createRoleContent QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(8)
+
+        layout.addSpacing(8)
+        intro = QLabel(
+            "A role is a credential-qualified class of AID. Pick a "
+            "qualification credential and define how role members are "
+            "issued credentials of that schema (root: enumerated AIDs, "
+            "or chained: from members of another role)."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        layout.addWidget(intro)
+
+        layout.addSpacing(8)
+
+        # Name
+        self._name_field = FloatingLabelLineEdit("Role name (e.g., 'state-doi')")
+        self._name_field.setFixedWidth(420)
+        layout.addWidget(self._name_field)
+
+        layout.addSpacing(8)
+
+        self._desc_field = FloatingLabelLineEdit("Description (optional)")
+        self._desc_field.setFixedWidth(420)
+        layout.addWidget(self._desc_field)
+
+        layout.addSpacing(12)
+
+        # Qualification schema picker
+        layout.addWidget(QLabel("Qualification credential schema:"))
+        self._schema_combo = QComboBox()
+        self._schema_combo.setFixedWidth(420)
+        if not schemas:
+            self._schema_combo.addItem("(no schemas in this ecosystem)", "")
+            self._schema_combo.setEnabled(False)
+        else:
+            for label, said in schemas:
+                self._schema_combo.addItem(label, said)
+        layout.addWidget(self._schema_combo)
+
+        layout.addSpacing(12)
+
+        # Issuer role picker
+        layout.addWidget(QLabel("Issuer role:"))
+        self._issuer_role_combo = QComboBox()
+        self._issuer_role_combo.setFixedWidth(420)
+        self._issuer_role_combo.addItem("(root role — pick AIDs below)", "")
+        for r in existing_roles:
+            self._issuer_role_combo.addItem(r, r)
+        layout.addWidget(self._issuer_role_combo)
+
+        layout.addSpacing(8)
+
+        # Root issuer AIDs picker (only relevant for root role)
+        self._root_aids_label = QLabel("Trust-root AIDs (only for root role):")
+        layout.addWidget(self._root_aids_label)
+        self._root_aids_list = QListWidget()
+        self._root_aids_list.setFixedWidth(420)
+        self._root_aids_list.setFixedHeight(100)
+        self._root_aids_list.setSelectionMode(
+            QListWidget.SelectionMode.MultiSelection
+        )
+        for label, aid in issuer_aids:
+            item = QListWidgetItem(label)
+            item.setData(Qt.ItemDataRole.UserRole, aid)
+            self._root_aids_list.addItem(item)
+        layout.addWidget(self._root_aids_list)
+
+        # Toggle the AIDs list enabled-state based on issuer role choice.
+        def _on_issuer_role_changed(idx: int) -> None:
+            is_root = self._issuer_role_combo.itemData(idx) == ""
+            self._root_aids_label.setVisible(is_root)
+            self._root_aids_list.setVisible(is_root)
+        self._issuer_role_combo.currentIndexChanged.connect(_on_issuer_role_changed)
+        _on_issuer_role_changed(0)
+
+        layout.addSpacing(8)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        self._cancel_button = LocksmithInvertedButton("Cancel")
+        self._cancel_button.clicked.connect(self.close)
+        self._create_button = LocksmithButton("Create")
+        self._create_button.clicked.connect(self._on_create)
+        button_row.addStretch()
+        button_row.addWidget(self._cancel_button)
+        button_row.addWidget(self._create_button)
+
+        super().__init__(
+            parent=parent,
+            title=f"Add role to '{ecosystem_name}'",
+            content=content,
+            buttons=button_row,
+            show_close_button=True,
+        )
+
+    def _on_create(self) -> None:
+        name = self._name_field.text().strip()
+        if not name:
+            self.show_error("Role name is required.")
+            return
+        desc = self._desc_field.text().strip()
+        schema_said = self._schema_combo.currentData() or ""
+        if not schema_said:
+            self.show_error("A qualification schema is required.")
+            return
+        issuer_role = self._issuer_role_combo.currentData() or ""
+        root_aids: list[str] = []
+        if not issuer_role:
+            for item in self._root_aids_list.selectedItems():
+                root_aids.append(item.data(Qt.ItemDataRole.UserRole))
+            if not root_aids:
+                self.show_error(
+                    "Root roles require at least one trust-root AID."
+                )
+                return
+        self.role_create_requested.emit(
+            self.ecosystem_name, name, desc, schema_said, issuer_role, root_aids,
+        )
         self.close()

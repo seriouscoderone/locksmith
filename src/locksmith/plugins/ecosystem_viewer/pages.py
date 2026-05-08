@@ -2520,9 +2520,11 @@ class EcosystemDetailPage(QWidget):
 
     def _show_role_context_menu(self, eco_name: str, role_name: str,
                                 pos: Any, anchor: QWidget) -> None:
-        """Stub — populated in Task 3 with Edit / Delete entries."""
-        # Intentionally empty until Task 3.
-        return
+        menu = QMenu(self)
+        delete_action = menu.addAction(f"Delete role '{role_name}'")
+        chosen = menu.exec(anchor.mapToGlobal(pos))
+        if chosen is delete_action:
+            self.delete_role_clicked.emit(eco_name, role_name)
 
     def _build_actions_section(self, eco: Any) -> QWidget:
         wrapper = QWidget()

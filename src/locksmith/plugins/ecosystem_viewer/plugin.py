@@ -20,11 +20,13 @@ from locksmith.plugins.ecosystem_viewer.db import (
     EcosystemRecord,
     AnnotationKind,
     AnnotationRecord,
+    RoleRecord,
 )
 from locksmith.plugins.ecosystem_viewer.dialogs import (
     AddMemberDialog,
     ConfirmDeleteEcosystemDialog,
     CreateEcosystemDialog,
+    CreateRoleDialog,
     EditAnnotationDialog,
 )
 from locksmith.plugins.ecosystem_viewer.pages import (
@@ -131,6 +133,18 @@ class EcosystemViewerPlugin(PluginBase):
         )
         self._ecosystem_detail_page.remove_permitted_issuer_clicked.connect(
             self._remove_permitted_issuer
+        )
+        self._ecosystem_detail_page.create_role_clicked.connect(
+            self._open_create_role_dialog
+        )
+        self._ecosystem_detail_page.delete_role_clicked.connect(
+            self._delete_role
+        )
+        self._ecosystem_detail_page.set_qualification_rule_clicked.connect(
+            self._set_qualification_rule
+        )
+        self._ecosystem_detail_page.remove_qualification_rule_clicked.connect(
+            self._remove_qualification_rule
         )
 
         logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
@@ -450,6 +464,127 @@ class EcosystemViewerPlugin(PluginBase):
             self._db.remove_permitted_issuer(ecosystem_name, schema_said, aid)
         except Exception:
             logger.exception("Failed to remove permitted issuer")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _open_create_role_dialog(self, ecosystem_name: str) -> None:
+        if self._db is None:
+            return
+        eco = self._db.get_ecosystem(ecosystem_name)
+        if eco is None:
+            return
+        vault = getattr(self._app, "vault", None)
+
+        # Build the schema picker options: (label, said) tuples for each
+        # schema in the ecosystem.
+        schemas: list[tuple[str, str]] = []
+        if vault is not None:
+            try:
+                for said in eco.schema_saids:
+                    schemer = vault.hby.db.schema.get(keys=(said,))
+                    title = (schemer.sed.get("title") if schemer else None) or "(untitled)"
+                    schemas.append((f"{title}  —  {said[:14]}…", said))
+            except Exception:
+                logger.exception("Failed to enumerate ecosystem schemas")
+
+        # Build the issuer-AID picker options (for the root-AIDs multi-select).
+        aids: list[tuple[str, str]] = []
+        if vault is not None:
+            try:
+                seen: set[str] = set()
+                for c in vault.org.list():
+                    aid = c.get("id", "")
+                    if aid in eco.issuer_aids and aid not in seen:
+                        seen.add(aid)
+                        alias = c.get("alias") or "(no alias)"
+                        aids.append((f"{alias}  —  {aid[:14]}…", aid))
+                # Self-AIDs that are members of the ecosystem.
+                self_aids = {hab.pre for hab in vault.hby.habs.values()}
+                for aid in eco.issuer_aids:
+                    if aid in self_aids and aid not in seen:
+                        seen.add(aid)
+                        hab = vault.hby.habByPre(aid)
+                        alias = hab.name if hab else "(self)"
+                        aids.append((f"{alias} (mine)  —  {aid[:14]}…", aid))
+            except Exception:
+                logger.exception("Failed to enumerate ecosystem AIDs")
+
+        dialog = CreateRoleDialog(
+            ecosystem_name=ecosystem_name,
+            schemas=schemas,
+            existing_roles=list(eco.role_names),
+            issuer_aids=aids,
+            parent=self._ecosystem_detail_page,
+        )
+        dialog.role_create_requested.connect(self._on_create_role)
+        dialog.open()
+
+    def _on_create_role(
+        self,
+        ecosystem_name: str,
+        role_name: str,
+        description: str,
+        qualification_schema_said: str,
+        issuer_role_name: str,
+        root_issuer_aids: list,
+    ) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.put_role(RoleRecord(
+                ecosystem_name=ecosystem_name,
+                name=role_name,
+                description=description,
+                qualification_schema_said=qualification_schema_said,
+                issuer_role_name=issuer_role_name,
+                root_issuer_aids=list(root_issuer_aids),
+            ))
+        except Exception:
+            logger.exception(f"Failed to create role '{role_name}'")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _delete_role(self, ecosystem_name: str, role_name: str) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.delete_role(ecosystem_name, role_name)
+        except Exception:
+            logger.exception(f"Failed to delete role '{role_name}'")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _set_qualification_rule(
+        self, ecosystem_name: str, schema_said: str, role_name: str,
+    ) -> None:
+        if self._db is None:
+            return
+        try:
+            eco = self._db.get_ecosystem(ecosystem_name)
+            if eco is None:
+                return
+            eco.issuer_qualification_rules = dict(eco.issuer_qualification_rules)
+            eco.issuer_qualification_rules[schema_said] = role_name
+            self._db.put_ecosystem(eco)
+        except Exception:
+            logger.exception("Failed to set qualification rule")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _remove_qualification_rule(
+        self, ecosystem_name: str, schema_said: str,
+    ) -> None:
+        if self._db is None:
+            return
+        try:
+            eco = self._db.get_ecosystem(ecosystem_name)
+            if eco is None:
+                return
+            eco.issuer_qualification_rules = dict(eco.issuer_qualification_rules)
+            eco.issuer_qualification_rules.pop(schema_said, None)
+            self._db.put_ecosystem(eco)
+        except Exception:
+            logger.exception("Failed to remove qualification rule")
             return
         self._refresh_ecosystem_detail()
 
