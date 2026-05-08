@@ -18,7 +18,7 @@ from __future__ import annotations
 
 from typing import Literal
 
-from PySide6.QtCore import QRectF, QSize, Qt
+from PySide6.QtCore import QPointF, QRectF, QSize, Qt
 from PySide6.QtGui import QColor, QPainter, QPen
 from PySide6.QtWidgets import QWidget
 
@@ -248,5 +248,96 @@ class SectionFingerprintWidget(QWidget):
                 painter.setPen(QPen(empty_color, 1))
                 painter.setBrush(Qt.BrushStyle.NoBrush)
                 painter.drawEllipse(rect)
+
+        painter.end()
+
+
+# ---------------------------------------------------------------------------
+# LifecycleWidget
+# ---------------------------------------------------------------------------
+
+
+class LifecycleWidget(QWidget):
+    """Painted glyph for the registry-backed (revocable) vs registryless
+    (one-shot) lifecycle axis (design 2026-05-07-acdc-parties-lifecycle §3.2).
+
+    - revocable=True : clockface — circle with a single hand at 12 o'clock.
+      Reads as "state can change after issuance." Color teal #0D9488 to
+      match the aggregate-section dot from redesign §2.4.
+    - revocable=False: open-bottom circle (270° arc) with a center dot.
+      Reads as "anchored point, no clockwork." Color TEXT_SECONDARY.
+
+    Painted (not SVG) for the same reason as DisclosureTierWidget — the
+    state encodes inspector data and re-tinting at runtime is cleaner via
+    QPainter than via QPixmap.SourceIn.
+    """
+
+    _SIZE = 18  # default pixel size; callers can resize
+
+    _REVOCABLE_COLOR = "#0D9488"
+
+    def __init__(self, revocable: bool = False, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._revocable = revocable
+        self.setFixedSize(self._SIZE, self._SIZE)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+        self.setToolTip(
+            "Revocable via TEL" if revocable else "One-shot — no revocation"
+        )
+
+    @property
+    def revocable(self) -> bool:
+        return self._revocable
+
+    @revocable.setter
+    def revocable(self, value: bool) -> None:
+        if self._revocable != value:
+            self._revocable = value
+            self.setToolTip(
+                "Revocable via TEL" if value else "One-shot — no revocation"
+            )
+            self.update()
+
+    def sizeHint(self) -> QSize:
+        return QSize(self._SIZE, self._SIZE)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+
+        size = self._SIZE
+        margin = 2
+        rect = QRectF(margin, margin, size - 2 * margin, size - 2 * margin)
+
+        if self._revocable:
+            color = QColor(self._REVOCABLE_COLOR)
+            # Clockface ring
+            painter.setPen(QPen(color, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            painter.drawEllipse(rect)
+            # Single hand at 12 (vertical from center to top)
+            cx = rect.center().x()
+            cy = rect.center().y()
+            painter.setPen(QPen(color, 1.5))
+            painter.drawLine(QPointF(cx, cy), QPointF(cx, rect.top() + 2))
+            # Center pivot dot
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(cx - 1, cy - 1, 2, 2))
+        else:
+            color = QColor(colors.TEXT_SECONDARY)
+            # Open-bottom 270° arc — start at -45° (bottom-right) sweeping
+            # 270° counter-clockwise to -45°+270° = 225° (bottom-left).
+            # QPainter uses 1/16-degree units and CCW positive.
+            painter.setPen(QPen(color, 1.5))
+            painter.setBrush(Qt.BrushStyle.NoBrush)
+            # Start angle -45° = -45*16, span 270° = 270*16
+            painter.drawArc(rect, -45 * 16, 270 * 16)
+            # Center anchor dot
+            cx = rect.center().x()
+            cy = rect.center().y()
+            painter.setPen(Qt.PenStyle.NoPen)
+            painter.setBrush(color)
+            painter.drawEllipse(QRectF(cx - 1.5, cy - 1.5, 3, 3))
 
         painter.end()
