@@ -62,6 +62,7 @@ from locksmith.plugins.ecosystem_viewer.overview_cards import (
 )
 from locksmith.plugins.ecosystem_viewer.widgets import (
     DisclosureTierWidget,
+    LifecycleWidget,
     SectionFingerprintWidget,
 )
 from locksmith.ui import colors
@@ -645,7 +646,7 @@ class SchemaDetailPage(QWidget):
         outer_layout.setSpacing(16)
         outer_layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
-        # 72px variant glyph (sized for hero presence per design §4.2)
+        # 72px variant glyph + 32px lifecycle glyph (sized for hero presence per design §4.2)
         icon_path = icons.ICON_VARIANT_PRIVATE if i.requires_nonce else icons.ICON_VARIANT_PUBLIC
         glyph_label = QLabel()
         px = QPixmap(icon_path)
@@ -657,7 +658,27 @@ class SchemaDetailPage(QWidget):
             ))
         glyph_label.setFixedSize(72, 72)
         glyph_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
-        outer_layout.addWidget(glyph_label, 0, Qt.AlignmentFlag.AlignTop)
+
+        # Stack variant glyph above lifecycle glyph
+        glyph_stack = QVBoxLayout()
+        glyph_stack.setContentsMargins(0, 0, 0, 0)
+        glyph_stack.setSpacing(8)
+        glyph_stack.setAlignment(Qt.AlignmentFlag.AlignHCenter)
+        glyph_stack.addWidget(glyph_label, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        lifecycle_glyph = LifecycleWidget(revocable=i.requires_registry)
+        lifecycle_glyph.setFixedSize(32, 32)
+        # Tooltip carries the prose; glyph alone reads at hero scale.
+        lifecycle_glyph.setToolTip(
+            "Revocable via TEL — registry-backed lifecycle"
+            if i.requires_registry
+            else "One-shot — no revocation surface"
+        )
+        glyph_stack.addWidget(lifecycle_glyph, 0, Qt.AlignmentFlag.AlignHCenter)
+
+        glyph_stack_w = QWidget()
+        glyph_stack_w.setLayout(glyph_stack)
+        outer_layout.addWidget(glyph_stack_w, 0, Qt.AlignmentFlag.AlignTop)
 
         # Text block
         text_layout = QVBoxLayout()
