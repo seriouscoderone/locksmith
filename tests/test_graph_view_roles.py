@@ -222,3 +222,103 @@ def test_graph_view_emits_remove_qualification_on_edge_signal(qapp):
     edge._emitter.remove_requested.emit(edge.schema_said, edge.role_name)
     qapp.processEvents()
     assert captured == [("ECmEfS_Producer", "state-doi")]
+
+
+def test_drag_from_role_to_schema_emits_add_qualification_rule(qapp):
+    said = "ECmEfS_Producer"
+    eco = EcosystemRecord(
+        name="Insurance",
+        schema_saids=[said],
+        issuer_aids=[],
+        role_names=["state-doi"],
+        issuer_qualification_rules={},  # rule not yet set
+    )
+    role = RoleRecord(
+        ecosystem_name="Insurance",
+        name="state-doi",
+        qualification_schema_said=said,
+    )
+    vault = _VaultStub({said: _Schemer(_producer_schema_sed(said))})
+
+    view = EcosystemGraphView()
+    view.resize(800, 500)
+    view.show()
+    QTest.qWait(50)
+    qapp.processEvents()
+    view.render_ecosystem(
+        eco,
+        vault,
+        get_role=lambda n: role if n == "state-doi" else None,
+        list_roles=lambda en: [role] if en == "Insurance" else [],
+        find_credentials_of_schema=lambda s: [],
+    )
+    QTest.qWait(200)
+    qapp.processEvents()
+
+    captured = []
+    view.add_qualification_rule_requested.connect(
+        lambda s, r: captured.append((s, r))
+    )
+
+    role_node = next(i for i in view._scene.items() if isinstance(i, RoleNode))
+    schema_node = next(
+        i for i in view._scene.items()
+        if hasattr(i, "said") and getattr(i, "said", None) == said
+    )
+
+    inner = view._view
+    inner._begin_drag_from(role_node)
+    inner._end_drag(schema_node)
+    qapp.processEvents()
+
+    assert captured == [(said, "state-doi")]
+
+
+def test_drag_from_role_to_already_qualifying_schema_does_not_emit(qapp):
+    said = "ECmEfS_Producer"
+    eco = EcosystemRecord(
+        name="Insurance",
+        schema_saids=[said],
+        issuer_aids=[],
+        role_names=["state-doi"],
+        issuer_qualification_rules={said: "state-doi"},  # already set
+    )
+    role = RoleRecord(
+        ecosystem_name="Insurance",
+        name="state-doi",
+        qualification_schema_said=said,
+    )
+    vault = _VaultStub({said: _Schemer(_producer_schema_sed(said))})
+
+    view = EcosystemGraphView()
+    view.resize(800, 500)
+    view.show()
+    QTest.qWait(50)
+    qapp.processEvents()
+    view.render_ecosystem(
+        eco,
+        vault,
+        get_role=lambda n: role,
+        list_roles=lambda en: [role],
+        find_credentials_of_schema=lambda s: [],
+    )
+    QTest.qWait(200)
+    qapp.processEvents()
+
+    captured = []
+    view.add_qualification_rule_requested.connect(
+        lambda s, r: captured.append((s, r))
+    )
+
+    role_node = next(i for i in view._scene.items() if isinstance(i, RoleNode))
+    schema_node = next(
+        i for i in view._scene.items()
+        if hasattr(i, "said") and getattr(i, "said", None) == said
+    )
+
+    inner = view._view
+    inner._begin_drag_from(role_node)
+    inner._end_drag(schema_node)
+    qapp.processEvents()
+
+    assert captured == [], "should not emit when rule already exists"

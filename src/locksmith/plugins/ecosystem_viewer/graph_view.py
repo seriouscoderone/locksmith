@@ -942,9 +942,12 @@ class _GraphView(QGraphicsView):
     def __init__(self, scene: QGraphicsScene, parent: QWidget | None = None):
         super().__init__(scene, parent)
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
-        # Drag-to-create-edge state (Stage 11). Initialized lazily in
-        # mousePressEvent when a press lands on an IssuerNode.
-        self._drag_origin_aid: str | None = None
+        # Drag-to-create-edge state. Initialized lazily in
+        # mousePressEvent when a press lands on an IssuerNode (Stage 11)
+        # or a RoleNode (Stage 14 T5).
+        # _drag_origin is a (kind, id) tuple where kind is "issuer" or
+        # "role"; id is the AID for issuers and the role_name for roles.
+        self._drag_origin: tuple[str, str] | None = None
         self._drag_origin_pos = None  # QPointF in scene coords
         self._drag_press_view_pos = None  # QPoint in view coords (for threshold)
         self._drag_rubber_band = None  # QGraphicsLineItem during drag
@@ -965,26 +968,28 @@ class _GraphView(QGraphicsView):
         super().wheelEvent(event)
 
     def mousePressEvent(self, event):
-        # If the press lands on an IssuerNode, capture the press for a
-        # potential drag-to-create-edge gesture. Don't enter drag mode
-        # until movement exceeds the threshold (Qt's startDragDistance,
-        # default 4px on macOS), so a click without move still selects
-        # the issuer and opens the side panel.
+        # If the press lands on an IssuerNode or RoleNode, capture the
+        # press for a potential drag-to-create-edge gesture. Don't enter
+        # drag mode until movement exceeds the threshold (Qt's
+        # startDragDistance, default 4px on macOS), so a click without
+        # move still selects the node and opens the side panel.
         item = self.itemAt(event.position().toPoint())
-        if (
-            event.button() == Qt.MouseButton.LeftButton
-            and isinstance(item, IssuerNode)
+        if event.button() == Qt.MouseButton.LeftButton and isinstance(
+            item, (IssuerNode, RoleNode)
         ):
-            self._drag_origin_aid = item.aid
+            if isinstance(item, IssuerNode):
+                self._drag_origin = ("issuer", item.aid)
+            else:
+                self._drag_origin = ("role", item.role_name)
             self._drag_origin_pos = item.top_anchor()
             self._drag_press_view_pos = event.position().toPoint()
-            # Don't call super here — let the issuer node's own
+            # Don't call super here — let the node's own
             # mousePressEvent fire (which emits clicked + accepts).
             super().mousePressEvent(event)
             return
 
         # Reset any stale drag state and proceed with default behavior.
-        self._drag_origin_aid = None
+        self._drag_origin = None
         self._drag_origin_pos = None
         self._drag_press_view_pos = None
 
@@ -994,9 +999,9 @@ class _GraphView(QGraphicsView):
 
     def mouseMoveEvent(self, event):
         # Entering drag mode: cross the 4px movement threshold while a
-        # press is active on an IssuerNode.
+        # press is active on an IssuerNode or RoleNode.
         if (
-            self._drag_origin_aid is not None
+            self._drag_origin is not None
             and not self._drag_active
             and self._drag_press_view_pos is not None
         ):
@@ -1026,7 +1031,7 @@ class _GraphView(QGraphicsView):
             event.accept()
             return
         # Reset stale press capture (no drag was started).
-        self._drag_origin_aid = None
+        self._drag_origin = None
         self._drag_origin_pos = None
         self._drag_press_view_pos = None
         super().mouseReleaseEvent(event)
@@ -1077,21 +1082,31 @@ class _GraphView(QGraphicsView):
         target = self._snap_target_at(scene_pos)
         target_said = target.said if target is not None else None
 
+        kind, origin_id = self._drag_origin if self._drag_origin else ("issuer", None)
+
         # Update per-schema snap states.
         for said, schema in owner._build_result.schema_nodes.items():
             if schema.ghost:
                 schema.set_snap_target_state("ineligible")
                 continue
-            issued_by = owner._eco.permitted_issuers.get(said, [])
-            if self._drag_origin_aid in issued_by:
-                # Already issued by the dragging issuer → 'already'
-                schema.set_snap_target_state("already")
+            if kind == "role":
+                # 'already' when this schema already qualifies into the
+                # dragging role.
+                if owner._eco.issuer_qualification_rules.get(said) == origin_id:
+                    schema.set_snap_target_state("already")
+                else:
+                    schema.set_snap_target_state("eligible")
             else:
-                # All non-ghost, not-already-issued schemas glow as 'eligible'
-                # during drag (the actual snap target is the one the cursor
-                # is currently over, but we want all eligible ones to pulse
-                # so the user sees the full target set).
-                schema.set_snap_target_state("eligible")
+                issued_by = owner._eco.permitted_issuers.get(said, [])
+                if origin_id in issued_by:
+                    # Already issued by the dragging issuer → 'already'
+                    schema.set_snap_target_state("already")
+                else:
+                    # All non-ghost, not-already-issued schemas glow as 'eligible'
+                    # during drag (the actual snap target is the one the cursor
+                    # is currently over, but we want all eligible ones to pulse
+                    # so the user sees the full target set).
+                    schema.set_snap_target_state("eligible")
 
         self._current_snap_target_said = target_said
 
@@ -1123,22 +1138,42 @@ class _GraphView(QGraphicsView):
         # Commit if release on an eligible schema.
         if (
             target is not None
-            and self._drag_origin_aid is not None
+            and self._drag_origin is not None
             and isinstance(owner, EcosystemGraphView)
             and owner._eco is not None
         ):
             said = target.said
-            already = self._drag_origin_aid in owner._eco.permitted_issuers.get(said, [])
-            if not already:
-                owner.add_permitted_issuer_requested.emit(self._drag_origin_aid, said)
-            # else: silent no-op (already-issued case). Future polish:
-            # show a toast.
+            kind, origin_id = self._drag_origin
+            if kind == "issuer":
+                already = origin_id in owner._eco.permitted_issuers.get(said, [])
+                if not already:
+                    owner.add_permitted_issuer_requested.emit(origin_id, said)
+                # else: silent no-op (already-issued case). Future polish:
+                # show a toast.
+            elif kind == "role":
+                already = owner._eco.issuer_qualification_rules.get(said) == origin_id
+                if not already:
+                    owner.add_qualification_rule_requested.emit(said, origin_id)
+                # else: silent no-op (already-qualifying case).
 
         # Reset state.
         if isinstance(owner, EcosystemGraphView):
             owner._end_snap_pulse()
         self._drag_active = False
-        self._drag_origin_aid = None
+        self._drag_origin = None
         self._drag_origin_pos = None
         self._drag_press_view_pos = None
         self._current_snap_target_said = None
+
+    def _begin_drag_from(self, node) -> None:
+        """Test hook: start a drag from an IssuerNode or RoleNode without
+        firing real Qt mouse events. Sets _drag_origin based on node type
+        and invokes _begin_drag()."""
+        if isinstance(node, IssuerNode):
+            self._drag_origin = ("issuer", node.aid)
+        elif isinstance(node, RoleNode):
+            self._drag_origin = ("role", node.role_name)
+        else:
+            raise TypeError(f"unsupported drag origin: {type(node).__name__}")
+        self._drag_origin_pos = node.top_anchor()
+        self._begin_drag()
