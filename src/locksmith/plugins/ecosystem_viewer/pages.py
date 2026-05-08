@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPalette, QPen, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -622,7 +622,8 @@ class SchemaDetailPage(QWidget):
         idx = 0
         self._content_layout.insertWidget(idx, self._build_hero_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_at_a_glance_card(i)); idx += 1
-        self._content_layout.insertWidget(idx, self._build_parties_lifecycle_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_parties_card(i)); idx += 1
+        self._content_layout.insertWidget(idx, self._build_lifecycle_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_attributes_card(i)); idx += 1
         self._content_layout.insertWidget(idx, self._build_chain_of_authority_card(i, vault)); idx += 1
         self._content_layout.insertWidget(idx, self._build_annotation_card(i)); idx += 1
@@ -895,15 +896,16 @@ class SchemaDetailPage(QWidget):
         return cell
 
     # ------------------------------------------------------------------
-    # Parties + lifecycle card (Stage 10 — surfaces issuer/issuee/registry)
+    # Parties card + Lifecycle card (Stage 10 — split per design §4.2)
     # ------------------------------------------------------------------
 
-    def _build_parties_lifecycle_card(self, i: Any) -> QWidget:
-        """Render the issuer (always present) / issuee (a.i) / registry
-        (rd or ri) axes of an ACDC. The at-a-glance card focuses on
-        intrinsic schema properties; this card focuses on the parties
-        involved in any credential of this schema and its revocation
-        lifecycle. See user-reported gap discussion in commit message."""
+    def _build_parties_card(self, i: Any) -> QWidget:
+        """Schema-level Parties card: the people axis.
+
+        Issuer is always present; issuee depends on whether the schema
+        requires targeting (a.i). Per design 2026-05-07-acdc-parties-lifecycle
+        §4.2. Sigils render as role placeholders (no specific AID), since
+        a schema describes potential credentials, not actual ones."""
         frame = QFrame()
         frame.setObjectName("sdPartiesCard")
         frame.setStyleSheet(
@@ -915,117 +917,195 @@ class SchemaDetailPage(QWidget):
         outer.setContentsMargins(20, 16, 20, 16)
         outer.setSpacing(10)
 
-        title = QLabel("Parties & lifecycle")
+        title = QLabel("Parties")
         title.setStyleSheet("font-size: 14px; font-weight: 600;")
         outer.addWidget(title)
 
-        outer.addWidget(self._build_party_row(
-            label="Issuer (i)",
-            primary="Always present",
-            secondary=(
-                "Every credential identifies its issuer at the top-level "
-                "i field. The schema cannot constrain who that is — that's "
-                "the ecosystem's governance concern (see authoritative issuers)."
+        # Two-column layout: [issuer] | [issuee]
+        cols = QHBoxLayout()
+        cols.setContentsMargins(0, 0, 0, 0)
+        cols.setSpacing(20)
+        cols.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        cols.addWidget(self._build_party_column(
+            role="from",
+            heading="Issuer",
+            body=(
+                "Always present. Every credential of this schema names an "
+                "issuer AID. The schema cannot constrain who that is — "
+                "that's an ecosystem-governance concern (see "
+                "authoritative issuers)."
             ),
-            accent_color=colors.PRIMARY,
-        ))
+        ), 1)
 
         if i.requires_targeted:
-            outer.addWidget(self._build_party_row(
-                label="Issuee (a.i)",
-                primary="Required",
-                secondary=(
-                    "Credentials commit to a specific holder via a.i. "
-                    "When the issuer's AID matches the issuee's AID, the "
-                    "credential is self-issued (a self-attested claim)."
+            cols.addWidget(self._build_party_column(
+                role="to",
+                heading="Issuee",
+                body=(
+                    "Required by this schema — credentials commit to a "
+                    "holder AID inside their attribute block. Untargeted "
+                    "credentials cannot conform to this schema."
                 ),
-                accent_color=colors.TEXT_DARK,
-            ))
+            ), 1)
         else:
-            outer.addWidget(self._build_party_row(
-                label="Issuee (a.i)",
-                primary="Not committed",
-                secondary=(
-                    "Untargeted attestation — the credential does not bind "
-                    "to a specific holder. The issuer makes a claim that "
-                    "anyone can verify by SAID."
+            cols.addWidget(self._build_party_column(
+                role=None,  # absent role
+                heading="No issuee",
+                body=(
+                    "This schema declares no issuee — credentials are "
+                    "untargeted attestations from the issuer. Any verifier "
+                    "can read them by SAID; no specific holder is bound. "
+                    "Also called self-attestations."
                 ),
-                accent_color=colors.TEXT_SECONDARY,
-            ))
+                placeholder=True,
+            ), 1)
 
-        if i.requires_registry:
-            outer.addWidget(self._build_party_row(
-                label="Registry (rd/ri)",
-                primary="Registry-backed — revocable",
-                secondary=(
-                    "Credentials must be anchored in a TEL (transaction "
-                    "event log). The issuer can revoke a credential by "
-                    "appending a revocation event to its registry."
-                ),
-                accent_color="#0D9488",  # teal — same as aggregate-section dot
-            ))
-        else:
-            outer.addWidget(self._build_party_row(
-                label="Registry (rd/ri)",
-                primary="One-shot — no revocation",
-                secondary=(
-                    "Credentials are issuance-only: there is no TEL anchor "
-                    "and no revocation surface. Verifying party trusts the "
-                    "credential as-issued, with no later state change."
-                ),
-                accent_color=colors.TEXT_SECONDARY,
-            ))
+        cols_w = QWidget()
+        cols_w.setLayout(cols)
+        outer.addWidget(cols_w)
+
+        if i.requires_targeted:
+            note = QLabel(
+                "ⓘ When the issuer's AID equals the issuee's AID, the "
+                "credential is <b>self-issued</b> — a self-attestation by "
+                "that AID about itself. (Visible only on actual credentials.)"
+            )
+            note.setWordWrap(True)
+            note.setTextFormat(Qt.TextFormat.RichText)
+            note.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; padding-top: 6px;"
+            )
+            outer.addWidget(note)
 
         return frame
 
-    def _build_party_row(
-        self, label: str, primary: str, secondary: str, accent_color: str,
+    def _build_party_column(
+        self,
+        role: str | None,
+        heading: str,
+        body: str,
+        placeholder: bool = False,
     ) -> QWidget:
-        """One row of the Parties & lifecycle card. A small accent bar on
-        the left lets the eye scan rows quickly without making each row
-        feel like its own card."""
-        row = QFrame()
-        row.setObjectName("sdPartyRow")
-        row.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
-        row.setStyleSheet(
-            "QFrame#sdPartyRow { background: transparent;"
-            f" border-left: 3px solid {accent_color};"
-            " border-radius: 0px; }"
-            "QFrame#sdPartyRow QLabel { background: transparent; }"
+        """One column of the Parties card: sigil placeholder + role label
+        + body copy. `placeholder=True` renders a dashed-outline circle
+        instead of the sigil, used for the 'No issuee' (untargeted) case."""
+        from locksmith.plugins.ecosystem_viewer.overview_cards import (
+            IssuerSigilCircle,
         )
-        layout = QVBoxLayout(row)
-        layout.setContentsMargins(10, 4, 0, 4)
-        layout.setSpacing(2)
+        col = QFrame()
+        col.setObjectName("sdPartyColumn")
+        col.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        col.setStyleSheet(
+            "QFrame#sdPartyColumn { background: transparent; }"
+            "QFrame#sdPartyColumn QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(col)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(6)
+        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
+        # Header row: sigil + heading
         head_row = QHBoxLayout()
         head_row.setContentsMargins(0, 0, 0, 0)
         head_row.setSpacing(10)
-        head_row.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+        head_row.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
 
-        label_lbl = QLabel(label)
-        label_lbl.setStyleSheet(
-            f"font-size: 11px; color: {colors.TEXT_SECONDARY};"
-            " font-weight: 600; letter-spacing: 0.04em;"
-        )
-        head_row.addWidget(label_lbl)
+        if placeholder:
+            head_row.addWidget(_DashedCircle(diameter=40))
+        else:
+            sigil = IssuerSigilCircle(is_self=False, role=role)
+            head_row.addWidget(sigil)
 
-        primary_lbl = QLabel(primary)
-        primary_lbl.setStyleSheet(
-            f"font-size: 13px; font-weight: 600; color: {colors.TEXT_DARK};"
+        heading_lbl = QLabel(heading)
+        heading_lbl.setStyleSheet(
+            f"font-size: 14px; font-weight: 600; color: {colors.TEXT_DARK};"
         )
-        head_row.addWidget(primary_lbl)
+        head_row.addWidget(heading_lbl)
         head_row.addStretch()
 
         head_w = QWidget()
         head_w.setLayout(head_row)
         layout.addWidget(head_w)
 
-        secondary_lbl = QLabel(secondary)
-        secondary_lbl.setWordWrap(True)
-        secondary_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
-        layout.addWidget(secondary_lbl)
+        body_lbl = QLabel(body)
+        body_lbl.setWordWrap(True)
+        body_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        layout.addWidget(body_lbl)
 
-        return row
+        return col
+
+    def _build_lifecycle_card(self, i: Any) -> QWidget:
+        """Schema-level Lifecycle card: the time axis. Single fact —
+        does this schema require registry anchoring? Per design
+        2026-05-07-acdc-parties-lifecycle §4.2."""
+        from locksmith.plugins.ecosystem_viewer.widgets import LifecycleWidget
+        frame = QFrame()
+        frame.setObjectName("sdLifecycleCard")
+        frame.setStyleSheet(
+            "QFrame#sdLifecycleCard { background-color: white;"
+            " border: 1px solid #E0E3EA; border-radius: 8px; }"
+            "QFrame#sdLifecycleCard QLabel { background: transparent; }"
+        )
+        outer = QVBoxLayout(frame)
+        outer.setContentsMargins(20, 16, 20, 16)
+        outer.setSpacing(10)
+
+        title = QLabel("Lifecycle")
+        title.setStyleSheet("font-size: 14px; font-weight: 600;")
+        outer.addWidget(title)
+
+        # Single row: glyph + heading + body
+        row = QHBoxLayout()
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(12)
+        row.setAlignment(Qt.AlignmentFlag.AlignTop)
+
+        glyph = LifecycleWidget(revocable=i.requires_registry)
+        # Larger size for hero-card use; resize from default 18px to 32px.
+        glyph.setFixedSize(32, 32)
+        row.addWidget(glyph, 0, Qt.AlignmentFlag.AlignTop)
+
+        text_block = QVBoxLayout()
+        text_block.setContentsMargins(0, 0, 0, 0)
+        text_block.setSpacing(4)
+
+        if i.requires_registry:
+            heading_text = "Revocable"
+            body_text = (
+                "This schema requires registry anchoring. Issued credentials "
+                "live in a TEL — the issuer can append a revocation event to "
+                "mark a specific credential revoked. Verifiers should consult "
+                "the TEL state, not just the SAID."
+            )
+        else:
+            heading_text = "One-shot"
+            body_text = (
+                "No registry. Issued credentials are anchored once and "
+                "cannot be revoked. The issuer's signature commits to the "
+                "credential as-issued; verifiers trust it on its face. "
+                "Appropriate for non-revocable attestations (a measurement, "
+                "a transcript) but not for entitlements that must support "
+                "withdrawal."
+            )
+
+        heading_lbl = QLabel(heading_text)
+        heading_lbl.setStyleSheet(
+            f"font-size: 14px; font-weight: 600; color: {colors.TEXT_DARK};"
+        )
+        text_block.addWidget(heading_lbl)
+
+        body_lbl = QLabel(body_text)
+        body_lbl.setWordWrap(True)
+        body_lbl.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        text_block.addWidget(body_lbl)
+
+        row.addLayout(text_block, 1)
+        row_w = QWidget()
+        row_w.setLayout(row)
+        outer.addWidget(row_w)
+
+        return frame
 
     # ------------------------------------------------------------------
     # Attributes card (NEW — user's correction)
@@ -2081,3 +2161,25 @@ class EcosystemDetailPage(QWidget):
         delete_btn.clicked.connect(lambda: self.delete_ecosystem_clicked.emit(eco.name))
         layout.addWidget(delete_btn)
         return wrapper
+
+
+class _DashedCircle(QWidget):
+    """Painted dashed-outline circle used as the 'absent role'
+    placeholder in the Parties card when a schema is untargeted."""
+
+    def __init__(self, diameter: int = 40, parent: QWidget | None = None):
+        super().__init__(parent)
+        self._diameter = diameter
+        self.setFixedSize(diameter, diameter)
+        self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground, True)
+
+    def paintEvent(self, event):
+        p = QPainter(self)
+        p.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        pen = QPen(QColor(colors.TEXT_SECONDARY), 1.5)
+        pen.setStyle(Qt.PenStyle.DashLine)
+        p.setPen(pen)
+        p.setBrush(Qt.BrushStyle.NoBrush)
+        d = self._diameter
+        p.drawEllipse(2, 2, d - 4, d - 4)
+        p.end()
