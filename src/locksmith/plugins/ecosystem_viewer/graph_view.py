@@ -269,6 +269,7 @@ class EcosystemGraphView(QWidget):
         n_real_schemas = sum(1 for n in result.schema_nodes.values() if not n.ghost)
         n_issuers = len(result.issuer_nodes)
         n_chain = len(result.chain_edges)
+        n_permitted = len(result.permitted_issuer_edges)
         total_members = n_real_schemas + n_issuers
 
         if total_members == 0:
@@ -287,6 +288,12 @@ class EcosystemGraphView(QWidget):
             self._hint_label.setText(
                 "These members declare no chain-of-authority between each other. "
                 "Their relationships are flat."
+            )
+            self._hint_label.show()
+        elif n_real_schemas >= 1 and n_issuers >= 1 and n_permitted == 0:
+            self._hint_label.setText(
+                "Tip: drag from an issuer node up to a schema to mark "
+                "them as the permitted issuer in this ecosystem."
             )
             self._hint_label.show()
         else:
