@@ -1938,6 +1938,15 @@ class EcosystemDetailPage(QWidget):
         self._graph_view.remove_permitted_issuer_requested.connect(
             self._on_graph_remove_permitted_issuer
         )
+        # Stage 14 T7: drag-to-create / right-click-remove qualification
+        # rule on the canvas — bubble up to the page-level signals that
+        # the plugin already handles.
+        self._graph_view.add_qualification_rule_requested.connect(
+            self._on_graph_add_qualification_rule
+        )
+        self._graph_view.remove_qualification_rule_requested.connect(
+            self._on_graph_remove_qualification_rule
+        )
         self._content_stack.addWidget(self._graph_view)
 
         # List tab — wraps the previous scrollable layout.
@@ -1988,6 +1997,18 @@ class EcosystemDetailPage(QWidget):
             return
         self.remove_permitted_issuer_clicked.emit(self._current_name, said, aid)
 
+    def _on_graph_add_qualification_rule(self, said: str, role_name: str) -> None:
+        if self._current_name is None:
+            return
+        self.set_qualification_rule_clicked.emit(self._current_name, said, role_name)
+
+    def _on_graph_remove_qualification_rule(self, said: str, role_name: str) -> None:
+        if self._current_name is None:
+            return
+        # Page-level signal takes (eco, schema) — role_name unused on the
+        # remove path (one rule per schema).
+        self.remove_qualification_rule_clicked.emit(self._current_name, said)
+
     def _refresh(self) -> None:
         # Clear header, add-button area, and the list tab's section widgets.
         self._purge_layout(self._header_layout)
@@ -2023,7 +2044,28 @@ class EcosystemDetailPage(QWidget):
 
         # Graph tab — render the graph for this ecosystem.
         vault = getattr(self.app, "vault", None)
-        self._graph_view.render_ecosystem(eco, vault)
+        # Stage 14 T7: hand role-aware resolvers to the graph so it can
+        # draw role nodes + qualification edges and (via the side panel)
+        # resolve role members against vault credentials.
+        from locksmith.plugins.ecosystem_viewer.plugin import (
+            vault_credential_finder,
+        )
+        db = self._db
+        get_role = (
+            (lambda role_name, en=eco.name: db.get_role(en, role_name))
+            if db is not None else None
+        )
+        list_roles = (
+            (lambda eco_name: db.list_roles(eco_name))
+            if db is not None else None
+        )
+        self._graph_view.render_ecosystem(
+            eco,
+            vault,
+            get_role=get_role,
+            list_roles=list_roles,
+            find_credentials_of_schema=vault_credential_finder(vault),
+        )
 
         # List tab — keep the existing schemas/AIDs/actions sections.
         self._content_layout.insertWidget(0, self._build_schemas_section(eco))
