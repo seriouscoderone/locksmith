@@ -851,8 +851,8 @@ class _GraphView(QGraphicsView):
 
         if self._drag_active:
             scene_pos = self.mapToScene(event.position().toPoint())
-            self._update_rubber_band(scene_pos)
             self._update_snap_targets(scene_pos)
+            self._update_rubber_band(scene_pos)
             event.accept()
             return  # don't pan while drawing
 

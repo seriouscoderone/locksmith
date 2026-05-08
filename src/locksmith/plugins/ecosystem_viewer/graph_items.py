@@ -940,9 +940,15 @@ class PermittedIssuerEdge(QGraphicsPathItem):
         painter.drawPath(self.path())
 
         # Hollow open arrowhead at the schema end.
-        sp = self.source.top_anchor()
+        # The path is a cubic Bézier; the tangent at the target endpoint is
+        # along the vector from ctrl2 (just above the target) to tp. Using
+        # the straight chord (source->target) here would misalign the
+        # arrowhead with the curve when source and target are far apart
+        # horizontally.
         tp = self.target.bottom_anchor()
-        self._draw_hollow_arrowhead(painter, sp, tp, color, width)
+        # ctrl2 mirrors refresh()'s ctrl2 below the target endpoint.
+        ctrl2 = QPointF(tp.x(), tp.y() + 30)
+        self._draw_hollow_arrowhead(painter, ctrl2, tp, color, width)
 
     def _draw_hollow_arrowhead(
         self,
