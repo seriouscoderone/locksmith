@@ -432,6 +432,102 @@ class EcosystemBaser(dbing.LMDBer):
         }
         self.put_ecosystem(eco)
 
+    # --------------------------- Resolver helpers ---------------------------
+
+    def resolve_role_members(
+        self,
+        ecosystem_name: str,
+        role_name: str,
+        find_credentials_of_schema,
+    ) -> set[str]:
+        """Compute the current AID members of a role.
+
+        Root role (issuer_role_name=""): returns the role's
+        root_issuer_aids verbatim.
+
+        Chained role: returns the holders of qualification credentials
+        whose issuer is a member of the parent role. Walks the chain
+        recursively with cycle protection.
+
+        Parameters
+        ----------
+        ecosystem_name, role_name : str
+            The role to resolve. Returns set() if unknown.
+        find_credentials_of_schema : callable(str) -> Iterable
+            Returns credentials of a given schema_said. Each credential
+            must have .holder_aid, .issuer_aid, .schema_said attributes.
+            The plugin layer passes a vault.rgy.reger-backed
+            implementation; tests pass a mock.
+
+        Raises
+        ------
+        ValueError
+            If a cycle is detected in the role chain. (put_role validates
+            against cycles on insert; this defends against externally-
+            tampered databases.)
+        """
+        return self._resolve_role_members(
+            ecosystem_name, role_name, find_credentials_of_schema, visited=set(),
+        )
+
+    def _resolve_role_members(
+        self, ecosystem_name, role_name, find_credentials_of_schema, visited,
+    ) -> set[str]:
+        if role_name in visited:
+            raise ValueError(
+                f"cycle detected in role chain at '{role_name}' "
+                f"(ecosystem '{ecosystem_name}')"
+            )
+        visited = visited | {role_name}
+
+        role = self.get_role(ecosystem_name, role_name)
+        if role is None:
+            return set()
+        if not role.issuer_role_name:
+            # Root role.
+            return set(role.root_issuer_aids)
+
+        parent_members = self._resolve_role_members(
+            ecosystem_name, role.issuer_role_name, find_credentials_of_schema, visited,
+        )
+        if not parent_members:
+            return set()
+
+        members: set[str] = set()
+        for cred in find_credentials_of_schema(role.qualification_schema_said) or []:
+            if cred.issuer_aid in parent_members:
+                members.add(cred.holder_aid)
+        return members
+
+    def is_permitted_issuer(
+        self,
+        ecosystem_name: str,
+        schema_said: str,
+        aid: str,
+        find_credentials_of_schema,
+    ) -> bool:
+        """Return True iff `aid` is a permitted issuer of `schema_said`
+        in `ecosystem_name`, by either path:
+
+        - Explicit: `aid` is in `permitted_issuers[schema_said]`
+        - Qualification: `issuer_qualification_rules[schema_said]` is
+          a role and `aid` is a current member of that role
+        """
+        eco = self.get_ecosystem(ecosystem_name)
+        if eco is None:
+            return False
+        # Explicit list path.
+        if aid in eco.permitted_issuers.get(schema_said, []):
+            return True
+        # Role-qualification path.
+        role_name = eco.issuer_qualification_rules.get(schema_said)
+        if not role_name:
+            return False
+        members = self.resolve_role_members(
+            ecosystem_name, role_name, find_credentials_of_schema,
+        )
+        return aid in members
+
     # --------------------------- Annotations ---------------------------
 
     def put_annotation(self, ann: AnnotationRecord) -> None:

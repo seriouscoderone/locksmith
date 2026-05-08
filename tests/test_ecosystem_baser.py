@@ -462,3 +462,191 @@ def test_put_role_updates_role_names_idempotently(baser):
     baser.put_role(role)
     eco = baser.get_ecosystem("eco")
     assert eco.role_names.count("state-doi") == 1
+
+
+# ---------------------------------------------------------------------------
+# Stage 12: Resolver — resolve_role_members + is_permitted_issuer
+# ---------------------------------------------------------------------------
+
+from collections import namedtuple
+
+# Minimal credential shape used by the resolver. Real plugin will pass a
+# keripy-backed object with the same three attributes.
+_Cred = namedtuple("_Cred", ["holder_aid", "issuer_aid", "schema_said"])
+
+
+def _make_finder(creds: list[_Cred]):
+    """Build a find_credentials_of_schema(schema_said) -> list[Credential]
+    callable from a fixed credential pool."""
+    def finder(schema_said: str):
+        return [c for c in creds if c.schema_said == schema_said]
+    return finder
+
+
+def test_resolve_root_role_returns_root_issuer_aids(baser):
+    """A root role (no issuer_role_name) resolves to its enumerated AIDs."""
+    _seed_eco_with_schema_and_aid(baser, schema="ES1", aid="EGLEIF")
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EGLEIF", "EOTHER"],
+    ))
+    members = baser.resolve_role_members("eco", "root", _make_finder([]))
+    assert members == {"EGLEIF", "EOTHER"}
+
+
+def test_resolve_chained_role_walks_credentials(baser):
+    """A role with issuer_role_name="parent" resolves to the holders of
+    qualification credentials issued by parent-role members."""
+    # Ecosystem with two schemas, both members; one root role + one
+    # chained role under it.
+    baser.put_ecosystem(EcosystemRecord(
+        name="eco",
+        schema_saids=["ES_DOI", "ES_PROD"],
+        issuer_aids=["EGLEIF", "ECA-DOI"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES_DOI",
+        root_issuer_aids=["EGLEIF"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES_DOI",
+        issuer_role_name="root",
+    ))
+    # Credential pool: ES_DOI was issued by EGLEIF (a root member) to
+    # ECA-DOI; nothing else.
+    creds = [_Cred(holder_aid="ECA-DOI", issuer_aid="EGLEIF", schema_said="ES_DOI")]
+    members = baser.resolve_role_members("eco", "state-doi", _make_finder(creds))
+    assert members == {"ECA-DOI"}
+
+
+def test_resolve_filters_credentials_with_unauthorized_issuer(baser):
+    """Credentials whose issuer is NOT in the parent role are ignored."""
+    baser.put_ecosystem(EcosystemRecord(
+        name="eco", schema_saids=["ES1"], issuer_aids=["EROOT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EROOT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="downstream",
+        qualification_schema_said="ES1",
+        issuer_role_name="root",
+    ))
+    # Two credentials of ES1: one issued by EROOT (good), one by ESQUATTER (bad).
+    creds = [
+        _Cred(holder_aid="EVALID", issuer_aid="EROOT", schema_said="ES1"),
+        _Cred(holder_aid="EBAD", issuer_aid="ESQUATTER", schema_said="ES1"),
+    ]
+    members = baser.resolve_role_members("eco", "downstream", _make_finder(creds))
+    assert members == {"EVALID"}
+
+
+def test_resolve_returns_empty_set_when_no_credentials_match(baser):
+    baser.put_ecosystem(EcosystemRecord(
+        name="eco", schema_saids=["ES1"], issuer_aids=["EROOT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EROOT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="downstream",
+        qualification_schema_said="ES1",
+        issuer_role_name="root",
+    ))
+    members = baser.resolve_role_members("eco", "downstream", _make_finder([]))
+    assert members == set()
+
+
+def test_resolve_unknown_role_returns_empty_set(baser):
+    baser.put_ecosystem(EcosystemRecord(name="eco"))
+    members = baser.resolve_role_members("eco", "ghost", _make_finder([]))
+    assert members == set()
+
+
+def test_resolve_detects_cycle_in_role_chain(baser):
+    """A role chain that loops back on itself raises a clear error
+    rather than recursing forever. Cycles are forbidden by put_role's
+    validation, but a database tampered with externally could still
+    create one — the resolver must defend itself."""
+    _seed_eco_with_schema_and_aid(baser)
+    # Build the cycle by writing directly to the Komer (bypassing put_role).
+    baser.roles.pin(keys=("eco", "a"), val=RoleRecord(
+        ecosystem_name="eco", name="a",
+        qualification_schema_said="ES1", issuer_role_name="b",
+    ))
+    baser.roles.pin(keys=("eco", "b"), val=RoleRecord(
+        ecosystem_name="eco", name="b",
+        qualification_schema_said="ES1", issuer_role_name="a",
+    ))
+    with pytest.raises(ValueError, match="cycle"):
+        baser.resolve_role_members("eco", "a", _make_finder([]))
+
+
+def test_is_permitted_issuer_via_explicit_list(baser):
+    """An AID listed in eco.permitted_issuers[schema] is a permitted
+    issuer regardless of any role chain."""
+    _seed_eco_with_schema_and_aid(baser, schema="ES1", aid="EA1")
+    baser.set_permitted_issuers("eco", "ES1", ["EA1"])
+    assert baser.is_permitted_issuer("eco", "ES1", "EA1", _make_finder([])) is True
+    assert baser.is_permitted_issuer("eco", "ES1", "EOTHER", _make_finder([])) is False
+
+
+def test_is_permitted_issuer_via_role_qualification(baser):
+    """An AID that's a member of the role named in
+    issuer_qualification_rules[schema] is a permitted issuer, even if
+    not listed in permitted_issuers."""
+    baser.put_ecosystem(EcosystemRecord(
+        name="eco", schema_saids=["ES_DOI", "ES_PROD"],
+        issuer_aids=["EROOT", "ECA-DOI"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES_DOI",
+        root_issuer_aids=["EROOT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="state-doi",
+        qualification_schema_said="ES_DOI",
+        issuer_role_name="root",
+    ))
+    rec = baser.get_ecosystem("eco")
+    rec.issuer_qualification_rules = {"ES_PROD": "state-doi"}
+    baser.put_ecosystem(rec)
+
+    creds = [_Cred(holder_aid="ECA-DOI", issuer_aid="EROOT", schema_said="ES_DOI")]
+    assert baser.is_permitted_issuer("eco", "ES_PROD", "ECA-DOI", _make_finder(creds)) is True
+    assert baser.is_permitted_issuer("eco", "ES_PROD", "EUNKNOWN", _make_finder(creds)) is False
+
+
+def test_is_permitted_issuer_combines_explicit_and_role(baser):
+    """Both paths are checked; True if either matches."""
+    # EROOT and EEXPLICIT must both be ecosystem issuer_aids so that
+    # put_ecosystem's cleanup doesn't strip them from permitted_issuers.
+    baser.put_ecosystem(EcosystemRecord(
+        name="eco", schema_saids=["ES1"], issuer_aids=["EROOT", "EEXPLICIT"],
+    ))
+    baser.put_role(RoleRecord(
+        ecosystem_name="eco", name="root",
+        qualification_schema_said="ES1",
+        root_issuer_aids=["EROOT"],
+    ))
+    rec = baser.get_ecosystem("eco")
+    rec.issuer_qualification_rules = {"ES1": "root"}
+    rec.permitted_issuers = {"ES1": ["EEXPLICIT"]}
+    baser.put_ecosystem(rec)
+
+    # EEXPLICIT matches via explicit list; EROOT matches via role.
+    assert baser.is_permitted_issuer("eco", "ES1", "EEXPLICIT", _make_finder([])) is True
+    assert baser.is_permitted_issuer("eco", "ES1", "EROOT", _make_finder([])) is True
+    assert baser.is_permitted_issuer("eco", "ES1", "ENEITHER", _make_finder([])) is False
+
+
+def test_is_permitted_issuer_unknown_ecosystem_returns_false(baser):
+    assert baser.is_permitted_issuer("nope", "ES1", "EA1", _make_finder([])) is False
