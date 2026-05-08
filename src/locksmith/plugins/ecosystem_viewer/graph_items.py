@@ -817,6 +817,125 @@ class IssuerNode(QGraphicsObject):
 
 
 # ---------------------------------------------------------------------------
+# RoleNode — credential-qualified class of AIDs (Stage 14)
+# ---------------------------------------------------------------------------
+
+
+class RoleNode(QGraphicsObject):
+    """A role: a credential-qualified class of AIDs rendered as a hexagon."""
+
+    NODE_DIAMETER = 64
+    LABEL_FONT_PT = 9
+    BADGE_FONT_PT = 8
+    OUTLINE_COLOR = QColor("#0ABFB0")
+    OUTLINE_WIDTH = 2.0
+    FILL_COLOR = QColor("#FFFFFF")
+    SELECTED_OUTLINE_WIDTH = 3.0
+    HOVER_OUTLINE_WIDTH = 2.5
+
+    from PySide6.QtCore import Signal
+    clicked = Signal()
+    double_clicked = Signal()
+
+    def __init__(
+        self,
+        role_name: str,
+        member_count: int = 0,
+        parent: QGraphicsItem | None = None,
+    ):
+        super().__init__(parent)
+        self.role_name = role_name
+        self.member_count = member_count
+        self._is_hovered = False
+        self.setAcceptHoverEvents(True)
+        self.setFlag(QGraphicsItem.GraphicsItemFlag.ItemIsSelectable, True)
+
+    def boundingRect(self) -> QRectF:
+        d = self.NODE_DIAMETER
+        return QRectF(0, 0, d, d + 22)
+
+    def _hexagon_path(self) -> QPainterPath:
+        d = self.NODE_DIAMETER
+        cx, cy, r = d / 2, d / 2, d / 2 - 2
+        path = QPainterPath()
+        for i in range(6):
+            angle = (math.pi / 3) * i - math.pi / 2
+            x = cx + r * math.cos(angle)
+            y = cy + r * math.sin(angle)
+            if i == 0:
+                path.moveTo(x, y)
+            else:
+                path.lineTo(x, y)
+        path.closeSubpath()
+        return path
+
+    def paint(self, painter: QPainter, option: QStyleOptionGraphicsItem, widget: QWidget | None = None) -> None:
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+        outline_w = self.OUTLINE_WIDTH
+        if self.isSelected():
+            outline_w = self.SELECTED_OUTLINE_WIDTH
+        elif self._is_hovered:
+            outline_w = self.HOVER_OUTLINE_WIDTH
+        painter.setPen(QPen(self.OUTLINE_COLOR, outline_w))
+        painter.setBrush(self.FILL_COLOR)
+        painter.drawPath(self._hexagon_path())
+
+        font = QFont()
+        font.setPointSize(self.LABEL_FONT_PT)
+        font.setBold(True)
+        painter.setFont(font)
+        painter.setPen(QPen(QColor("#1A1C20")))
+        label = self.role_name if len(self.role_name) <= 12 else self.role_name[:11] + "…"
+        painter.drawText(
+            QRectF(0, 0, self.NODE_DIAMETER, self.NODE_DIAMETER),
+            Qt.AlignmentFlag.AlignCenter,
+            label,
+        )
+
+        badge_font = QFont()
+        badge_font.setPointSize(self.BADGE_FONT_PT)
+        painter.setFont(badge_font)
+        painter.setPen(QPen(QColor("#666")))
+        badge_text = f"{self.member_count} member{'s' if self.member_count != 1 else ''}"
+        painter.drawText(
+            QRectF(0, self.NODE_DIAMETER + 2, self.NODE_DIAMETER, 18),
+            Qt.AlignmentFlag.AlignCenter,
+            badge_text,
+        )
+
+    def top_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(self.NODE_DIAMETER / 2, 0))
+
+    def bottom_anchor(self) -> QPointF:
+        return self.mapToScene(QPointF(self.NODE_DIAMETER / 2, self.NODE_DIAMETER))
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.clicked.emit()
+        super().mousePressEvent(event)
+
+    def mouseDoubleClickEvent(self, event):
+        if event.button() == Qt.MouseButton.LeftButton:
+            self.double_clicked.emit()
+        super().mouseDoubleClickEvent(event)
+
+    def hoverEnterEvent(self, event):
+        self._is_hovered = True
+        self.update()
+        super().hoverEnterEvent(event)
+
+    def hoverLeaveEvent(self, event):
+        self._is_hovered = False
+        self.update()
+        super().hoverLeaveEvent(event)
+
+    def set_member_count(self, count: int) -> None:
+        if count != self.member_count:
+            self.member_count = count
+            self.update()
+
+
+# ---------------------------------------------------------------------------
 # MembershipEdge — schema → issuer (or vice versa) dotted line
 # ---------------------------------------------------------------------------
 
