@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from locksmith.plugins.ecosystem_viewer.db import EcosystemBaser
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QColor, QGuiApplication, QPainter, QPalette, QPixmap
+from PySide6.QtGui import QColor, QCursor, QGuiApplication, QPainter, QPalette, QPixmap
 from PySide6.QtWidgets import (
     QButtonGroup,
     QFrame,
@@ -31,6 +31,7 @@ from PySide6.QtWidgets import (
     QGridLayout,
     QHBoxLayout,
     QLabel,
+    QMenu,
     QPlainTextEdit,
     QPushButton,
     QScrollArea,
@@ -1434,6 +1435,8 @@ class EcosystemDetailPage(QWidget):
     delete_ecosystem_clicked = Signal(str)
     show_schema_detail_requested = Signal(str)
     show_issuer_requested = Signal(str, bool)  # (aid, is_self)
+    add_authoritative_issuer_clicked = Signal(str, str, str)     # (eco, said, aid)
+    remove_authoritative_issuer_clicked = Signal(str, str, str)  # (eco, said, aid)
 
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
@@ -1680,28 +1683,212 @@ class EcosystemDetailPage(QWidget):
             return section
 
         for said in eco.schema_saids:
-            row = QFrame()
-            row.setObjectName("edSchemaMemberRow")
-            row.setStyleSheet(
-                "QFrame#edSchemaMemberRow { background: #F8F9FF; border-radius: 4px; }"
-                "QFrame#edSchemaMemberRow QLabel { background: transparent; }"
-            )
-            r = QHBoxLayout(row)
-            r.setContentsMargins(10, 6, 10, 6)
-            link = QLabel(
-                f'<a href="#nav" style="color:#3a5fff;text-decoration:none;">'
-                f'<code>{said}</code></a>'
-            )
-            link.setOpenExternalLinks(False)
-            link.linkActivated.connect(lambda _l, s=said: self.show_schema_detail_requested.emit(s))
-            link.setStyleSheet("font-size: 12px;")
-            link.setTextInteractionFlags(Qt.TextInteractionFlag.LinksAccessibleByMouse | Qt.TextInteractionFlag.TextSelectableByMouse)
-            r.addWidget(link, 1)
-            remove_btn = LocksmithIconButton(":/assets/material-icons/close.svg", tooltip="Remove from ecosystem", icon_size=16)
-            remove_btn.clicked.connect(lambda _c=False, n=eco.name, s=said: self.remove_schema_clicked.emit(n, s))
-            r.addWidget(remove_btn)
-            layout.addWidget(row)
+            layout.addWidget(self._build_schema_member_row(eco, said))
         return section
+
+    def _build_schema_member_row(self, eco: Any, said: str) -> QWidget:
+        row = QFrame()
+        row.setObjectName("edSchemaMemberRow")
+        row.setStyleSheet(
+            "QFrame#edSchemaMemberRow { background: #F8F9FF; border-radius: 4px; }"
+            "QFrame#edSchemaMemberRow QLabel { background: transparent; }"
+        )
+        rl = QVBoxLayout(row)
+        rl.setContentsMargins(10, 6, 10, 6)
+        rl.setSpacing(4)
+
+        # Top row: SAID link + remove
+        top = QHBoxLayout()
+        top.setContentsMargins(0, 0, 0, 0)
+        link = QLabel(
+            f'<a href="#nav" style="color:#3a5fff;text-decoration:none;">'
+            f'<code>{said}</code></a>'
+        )
+        link.setOpenExternalLinks(False)
+        link.linkActivated.connect(lambda _l, s=said: self.show_schema_detail_requested.emit(s))
+        link.setStyleSheet("font-size: 12px;")
+        link.setTextInteractionFlags(
+            Qt.TextInteractionFlag.LinksAccessibleByMouse
+            | Qt.TextInteractionFlag.TextSelectableByMouse
+        )
+        top.addWidget(link, 1)
+        remove_btn = LocksmithIconButton(
+            ":/assets/material-icons/close.svg",
+            tooltip="Remove from ecosystem", icon_size=16,
+        )
+        remove_btn.clicked.connect(
+            lambda _c=False, n=eco.name, s=said: self.remove_schema_clicked.emit(n, s)
+        )
+        top.addWidget(remove_btn)
+        top_w = QWidget()
+        top_w.setLayout(top)
+        rl.addWidget(top_w)
+
+        # Authoritative issuers sub-row (Stage 9)
+        rl.addWidget(self._build_authoritative_issuers_row(eco, said))
+
+        return row
+
+    def _build_authoritative_issuers_row(self, eco: Any, said: str) -> QWidget:
+        wrap = QWidget()
+        wrap.setObjectName("edAuthRow")
+        wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        wrap.setStyleSheet(
+            "QWidget#edAuthRow { background: transparent; }"
+            "QWidget#edAuthRow QLabel { background: transparent; }"
+        )
+        row = QHBoxLayout(wrap)
+        row.setContentsMargins(0, 0, 0, 0)
+        row.setSpacing(6)
+        row.setAlignment(Qt.AlignmentFlag.AlignVCenter | Qt.AlignmentFlag.AlignLeft)
+
+        prefix = QLabel("Authoritative issuers:")
+        prefix.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-weight: 600;"
+            " letter-spacing: 0.02em;"
+        )
+        row.addWidget(prefix)
+
+        authoritative = eco.authoritative_issuers.get(said, [])
+        if not authoritative:
+            none_lbl = QLabel("any ecosystem issuer accepted")
+            none_lbl.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            row.addWidget(none_lbl)
+        else:
+            for aid in authoritative:
+                row.addWidget(self._build_authoritative_chip(eco, said, aid))
+
+        # "+" add button — only enabled when there are eligible AIDs to add.
+        eligible = [a for a in eco.issuer_aids if a not in authoritative]
+        add_btn = QToolButton()
+        add_btn.setText("+")
+        add_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        if eligible:
+            tip = "Add an authoritative issuer for this schema in this ecosystem"
+        elif not eco.issuer_aids:
+            tip = (
+                "Add an issuer AID to this ecosystem first — "
+                "use the Issuer AIDs section below."
+            )
+        else:
+            tip = "All ecosystem issuers are already authoritative for this schema"
+        add_btn.setToolTip(tip)
+        add_btn.setEnabled(bool(eligible))
+        add_btn.setStyleSheet(
+            "QToolButton {"
+            f" background: white; border: 1px dashed {colors.BORDER};"
+            f" border-radius: 9px; padding: 0px 6px; min-height: 18px;"
+            f" font-size: 11px; color: {colors.TEXT_SECONDARY};"
+            "}"
+            f"QToolButton:hover {{ border-color: {colors.PRIMARY};"
+            f" color: {colors.PRIMARY}; }}"
+            f"QToolButton:disabled {{ color: {colors.TEXT_MUTED};"
+            f" border-color: {colors.BORDER}; }}"
+        )
+        add_btn.clicked.connect(
+            lambda _c=False, e=eco, s=said: self._show_add_authoritative_menu(e, s)
+        )
+        row.addWidget(add_btn)
+        row.addStretch()
+        return wrap
+
+    def _build_authoritative_chip(self, eco: Any, said: str, aid: str) -> QWidget:
+        wrap = QFrame()
+        wrap.setObjectName("edAuthChip")
+        wrap.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        wrap.setStyleSheet(
+            "QFrame#edAuthChip {"
+            f" background: {colors.BACKGROUND_SELECTION};"
+            " border-radius: 9px; padding: 0px 4px 0px 8px; min-height: 18px;"
+            "}"
+            "QFrame#edAuthChip QLabel { background: transparent; }"
+        )
+        wrap.setCursor(Qt.CursorShape.PointingHandCursor)
+        h = QHBoxLayout(wrap)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(2)
+        h.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        alias = self._alias_for_aid(aid)
+        is_self = self._is_self_aid(aid)
+        label = QLabel(alias)
+        label.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_DARK};"
+            + (f" font-weight: 600;" if is_self else "")
+        )
+        label.setToolTip(aid)
+        h.addWidget(label)
+
+        rm = QToolButton()
+        rm.setText("×")
+        rm.setCursor(Qt.CursorShape.PointingHandCursor)
+        rm.setToolTip("Remove as authoritative issuer for this schema")
+        rm.setStyleSheet(
+            "QToolButton {"
+            f" background: transparent; border: none; padding: 0px 4px;"
+            f" font-size: 13px; color: {colors.TEXT_SECONDARY};"
+            "}"
+            f"QToolButton:hover {{ color: {colors.DANGER}; }}"
+        )
+        rm.clicked.connect(
+            lambda _c=False, n=eco.name, s=said, a=aid:
+                self.remove_authoritative_issuer_clicked.emit(n, s, a)
+        )
+        h.addWidget(rm)
+
+        # Click anywhere on the chip (except the × button) navigates to the
+        # contact / identifier surface.
+        wrap.mousePressEvent = (
+            lambda _ev, a=aid, s=is_self:
+                self.show_issuer_requested.emit(a, s)
+        )
+        return wrap
+
+    def _show_add_authoritative_menu(self, eco: Any, said: str) -> None:
+        already = set(eco.authoritative_issuers.get(said, []))
+        eligible = [a for a in eco.issuer_aids if a not in already]
+        if not eligible:
+            return
+        menu = QMenu(self)
+        for aid in eligible:
+            alias = self._alias_for_aid(aid)
+            action = menu.addAction(f"{alias}  —  {aid[:14]}…")
+            action.triggered.connect(
+                lambda _c=False, n=eco.name, s=said, a=aid:
+                    self.add_authoritative_issuer_clicked.emit(n, s, a)
+            )
+        menu.exec(QCursor.pos())
+
+    def _alias_for_aid(self, aid: str) -> str:
+        vault = getattr(self.app, "vault", None)
+        if vault is None or not aid:
+            return aid[:14] + "…" if len(aid) > 16 else aid
+        try:
+            for c in vault.org.list():
+                if c.get("id") == aid:
+                    a = c.get("alias")
+                    if a:
+                        return a
+        except Exception:
+            pass
+        try:
+            hab = vault.hby.habByPre(aid)
+            if hab is not None and hab.name:
+                return f"{hab.name} (mine)"
+        except Exception:
+            pass
+        return aid[:14] + "…" if len(aid) > 16 else aid
+
+    def _is_self_aid(self, aid: str) -> bool:
+        vault = getattr(self.app, "vault", None)
+        if vault is None:
+            return False
+        try:
+            return any(hab.pre == aid for hab in vault.hby.habs.values())
+        except Exception:
+            return False
 
     def _build_aids_section(self, eco: Any) -> QWidget:
         section = QFrame()

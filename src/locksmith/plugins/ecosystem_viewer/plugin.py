@@ -22,8 +22,9 @@ from locksmith.plugins.ecosystem_viewer.db import (
     AnnotationRecord,
 )
 from locksmith.plugins.ecosystem_viewer.dialogs import (
-    CreateEcosystemDialog,
     AddMemberDialog,
+    ConfirmDeleteEcosystemDialog,
+    CreateEcosystemDialog,
     EditAnnotationDialog,
 )
 from locksmith.plugins.ecosystem_viewer.pages import (
@@ -73,6 +74,12 @@ class EcosystemViewerPlugin(PluginBase):
         self._ecosystem_detail_page.remove_aid_clicked.connect(self._remove_aid_member)
         self._ecosystem_detail_page.delete_ecosystem_clicked.connect(self._delete_ecosystem)
         self._ecosystem_detail_page.show_issuer_requested.connect(self._show_issuer)
+        self._ecosystem_detail_page.add_authoritative_issuer_clicked.connect(
+            self._add_authoritative_issuer
+        )
+        self._ecosystem_detail_page.remove_authoritative_issuer_clicked.connect(
+            self._remove_authoritative_issuer
+        )
 
         logger.info("EcosystemViewerPlugin initialized (stages 1-3)")
 
@@ -300,7 +307,53 @@ class EcosystemViewerPlugin(PluginBase):
             return
         self._refresh_ecosystem_detail()
 
+    def _add_authoritative_issuer(
+        self, ecosystem_name: str, schema_said: str, aid: str,
+    ) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.add_authoritative_issuer(ecosystem_name, schema_said, aid)
+        except Exception:
+            logger.exception("Failed to add authoritative issuer")
+            return
+        self._refresh_ecosystem_detail()
+
+    def _remove_authoritative_issuer(
+        self, ecosystem_name: str, schema_said: str, aid: str,
+    ) -> None:
+        if self._db is None:
+            return
+        try:
+            self._db.remove_authoritative_issuer(ecosystem_name, schema_said, aid)
+        except Exception:
+            logger.exception("Failed to remove authoritative issuer")
+            return
+        self._refresh_ecosystem_detail()
+
     def _delete_ecosystem(self, ecosystem_name: str) -> None:
+        if self._db is None:
+            return
+        # Look up member counts to populate the confirmation message.
+        try:
+            rec = self._db.get_ecosystem(ecosystem_name)
+        except Exception:
+            logger.exception("Failed to load ecosystem for delete confirm")
+            return
+        if rec is None:
+            return
+        dialog = ConfirmDeleteEcosystemDialog(
+            ecosystem_name=ecosystem_name,
+            n_schemas=len(rec.schema_saids),
+            n_aids=len(rec.issuer_aids),
+            parent=self._ecosystem_detail_page,
+        )
+        dialog.confirmed.connect(
+            lambda n=ecosystem_name: self._delete_ecosystem_confirmed(n)
+        )
+        dialog.open()
+
+    def _delete_ecosystem_confirmed(self, ecosystem_name: str) -> None:
         if self._db is None:
             return
         try:

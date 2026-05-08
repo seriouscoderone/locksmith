@@ -42,6 +42,12 @@ from keri import help
 
 logger = help.ogler.getLogger(__name__)
 
+
+def _short_aid(aid: str, head: int = 10, tail: int = 4) -> str:
+    if len(aid) <= head + tail + 1:
+        return aid
+    return f"{aid[:head]}…{aid[-tail:]}"
+
 from locksmith.acdc import icons as acdc_icons
 from locksmith.acdc import inspect_acdc_schema
 from locksmith.plugins.ecosystem_viewer.graph_items import (
@@ -115,6 +121,7 @@ class EcosystemGraphView(QWidget):
         self._build_chrome()
         self._build_result: GraphBuildResult | None = None
         self._selected_node: Any | None = None  # SchemaNode | IssuerNode | None
+        self._eco: Any | None = None  # last-rendered EcosystemRecord
 
     # ------------------------------------------------------------------
     # Construction helpers
@@ -234,6 +241,9 @@ class EcosystemGraphView(QWidget):
         # Close any open side panel — the previously selected node no
         # longer exists in the new scene.
         self._side_panel.close()
+        # Cache the ecosystem record so the side panel can render
+        # authoritative-issuer info for selected schemas (Stage 9).
+        self._eco = eco
         result = self._build_scene(eco, vault)
         self._build_result = result
         self._update_stats(result)
@@ -598,11 +608,30 @@ class EcosystemGraphView(QWidget):
             )
             return
         edges_out = self._build_result.schema_edges_by_src.get(said, [])
+
+        # Authoritative issuers (Stage 9): pull from cached ecosystem record
+        # and resolve each AID's alias / is_self via cached issuer metadata.
+        auth_aids: list[str] = []
+        ecosystem_has_issuers = False
+        if self._eco is not None:
+            ecosystem_has_issuers = bool(self._eco.issuer_aids)
+            auth_aids = list(
+                self._eco.authoritative_issuers.get(said, []) or []
+            )
+        authoritative: list[tuple[str, str, bool]] = []
+        for aid in auth_aids:
+            meta = self._build_result.issuer_meta.get(aid, {})
+            alias = meta.get("alias") or _short_aid(aid)
+            is_self = bool(meta.get("is_self"))
+            authoritative.append((aid, alias, is_self))
+
         self._side_panel.show_schema(
             inspection=inspection,
             edges_out=edges_out,
             edges_in=edges_in,
             schema_titles=titles,
+            authoritative_issuers=authoritative,
+            ecosystem_has_issuers=ecosystem_has_issuers,
         )
 
     def _populate_panel_for_issuer(self, aid: str) -> None:

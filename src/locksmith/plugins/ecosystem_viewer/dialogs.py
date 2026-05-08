@@ -255,3 +255,72 @@ class EditAnnotationDialog(LocksmithDialog):
     def _on_delete(self) -> None:
         self.annotation_deleted.emit()
         self.close()
+
+
+class ConfirmDeleteEcosystemDialog(LocksmithDialog):
+    """'Are you sure?' confirmation before deleting an ecosystem record.
+
+    The schemas and AIDs themselves stay in the wallet — only the user's
+    grouping (name, description, member lists, authoritative-issuer
+    mapping, annotations) is removed. The dialog spells this out so a
+    confirmation isn't ambiguous about what's destroyed.
+    """
+
+    confirmed = Signal()
+
+    def __init__(self, ecosystem_name: str, n_schemas: int, n_aids: int,
+                 parent: QWidget | None = None):
+        content = QWidget()
+        content.setObjectName("confirmDeleteEcoContent")
+        content.setStyleSheet(
+            f"#confirmDeleteEcoContent {{ background-color: {colors.BACKGROUND_CONTENT}; }}"
+            "#confirmDeleteEcoContent QLabel { background: transparent; }"
+        )
+        layout = QVBoxLayout(content)
+        layout.setContentsMargins(0, 8, 0, 8)
+        layout.setSpacing(10)
+
+        prompt = QLabel(
+            f"Delete the ecosystem <b>{html.escape(ecosystem_name)}</b>?"
+        )
+        prompt.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_DARK};")
+        prompt.setWordWrap(True)
+        layout.addWidget(prompt)
+
+        member_summary = []
+        if n_schemas:
+            member_summary.append(f"{n_schemas} schema{'s' if n_schemas != 1 else ''}")
+        if n_aids:
+            member_summary.append(f"{n_aids} issuer{'s' if n_aids != 1 else ''}")
+        member_text = " and ".join(member_summary) if member_summary else "no members"
+
+        detail = QLabel(
+            f"This ecosystem currently groups {member_text}. The schemas and "
+            "AIDs themselves stay in your wallet — only the grouping, its "
+            "annotations, and any authoritative-issuer assignments are removed."
+        )
+        detail.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        detail.setWordWrap(True)
+        layout.addWidget(detail)
+
+        button_row = QHBoxLayout()
+        button_row.setSpacing(10)
+        cancel_btn = LocksmithInvertedButton("Cancel")
+        cancel_btn.clicked.connect(self.close)
+        delete_btn = LocksmithButton("Delete ecosystem")
+        delete_btn.clicked.connect(self._on_confirm)
+        button_row.addStretch()
+        button_row.addWidget(cancel_btn)
+        button_row.addWidget(delete_btn)
+
+        super().__init__(
+            parent=parent,
+            title="Delete ecosystem?",
+            content=content,
+            buttons=button_row,
+            show_close_button=True,
+        )
+
+    def _on_confirm(self) -> None:
+        self.confirmed.emit()
+        self.close()

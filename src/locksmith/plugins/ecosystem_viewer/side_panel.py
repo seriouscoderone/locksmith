@@ -183,6 +183,9 @@ class SidePanel(QFrame):
         edges_out: list[tuple[str, str]],   # (dst_said, op)
         edges_in: list[tuple[str, str]],    # (src_said, op)
         schema_titles: dict[str, str],      # said -> title (for link labels)
+        authoritative_issuers: list[tuple[str, str, bool]] | None = None,
+        # ^ list of (aid, alias, is_self) for each authoritative issuer
+        ecosystem_has_issuers: bool = True,
     ) -> None:
         self._clear_inner()
 
@@ -229,6 +232,14 @@ class SidePanel(QFrame):
                 self._inner_layout.count() - 1,
                 self._build_edges_section("Chained from", edges_in, schema_titles),
             )
+
+        # Authoritative issuers section (Stage 9 EGF overlay).
+        self._inner_layout.insertWidget(
+            self._inner_layout.count() - 1,
+            self._build_authoritative_issuers_section(
+                authoritative_issuers or [], ecosystem_has_issuers,
+            ),
+        )
 
         # Open detail button
         open_btn = QPushButton("Open detail page →")
@@ -459,6 +470,86 @@ class SidePanel(QFrame):
 
         layout.addStretch()
         return row
+
+    def _build_authoritative_issuers_section(
+        self,
+        authoritative: list[tuple[str, str, bool]],
+        ecosystem_has_issuers: bool,
+    ) -> QWidget:
+        section = QWidget()
+        layout = QVBoxLayout(section)
+        layout.setContentsMargins(0, 6, 0, 0)
+        layout.setSpacing(4)
+
+        head = QLabel("Authoritative issuers")
+        head.setStyleSheet(
+            f"font-size: 10px; color: {colors.TEXT_SECONDARY};"
+            " font-weight: 600; letter-spacing: 0.04em;"
+        )
+        layout.addWidget(head)
+
+        if not authoritative:
+            body_text = (
+                "Any ecosystem issuer accepted"
+                if ecosystem_has_issuers
+                else "Add an issuer AID to this ecosystem first"
+            )
+            body = QLabel(body_text)
+            body.setWordWrap(True)
+            body.setStyleSheet(
+                f"font-size: 11px; color: {colors.TEXT_SECONDARY}; font-style: italic;"
+            )
+            layout.addWidget(body)
+            return section
+
+        # Flow chips left-to-right, wrapping naturally via stretch at the end.
+        chips_row = QVBoxLayout()
+        chips_row.setContentsMargins(0, 0, 0, 0)
+        chips_row.setSpacing(3)
+        for aid, alias, is_self in authoritative:
+            chip = self._build_authoritative_chip(aid, alias, is_self)
+            chips_row.addWidget(chip)
+        chips_w = QWidget()
+        chips_w.setLayout(chips_row)
+        layout.addWidget(chips_w)
+        return section
+
+    def _build_authoritative_chip(
+        self, aid: str, alias: str, is_self: bool,
+    ) -> QWidget:
+        chip = QFrame()
+        chip.setObjectName("egvSidePanelAuthChip")
+        chip.setAttribute(Qt.WidgetAttribute.WA_StyledBackground, True)
+        chip.setCursor(Qt.CursorShape.PointingHandCursor)
+        chip.setStyleSheet(
+            "QFrame#egvSidePanelAuthChip {"
+            f" background: {colors.BACKGROUND_SELECTION};"
+            " border-radius: 9px; padding: 1px 8px;"
+            "}"
+            f"QFrame#egvSidePanelAuthChip:hover {{"
+            f" background: {colors.BACKGROUND_TABLE_ROW_HOVER}; }}"
+            "QFrame#egvSidePanelAuthChip QLabel { background: transparent; }"
+        )
+        layout = QHBoxLayout(chip)
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(4)
+        layout.setAlignment(Qt.AlignmentFlag.AlignVCenter)
+
+        text = alias
+        if is_self:
+            text = f"{alias} ★"
+        label = QLabel(text)
+        label.setStyleSheet(
+            f"font-size: 11px; color: {colors.TEXT_DARK};"
+            + (f" font-weight: 600;" if is_self else "")
+        )
+        label.setToolTip(f"{aid}\n(click to open in {'Identifiers' if is_self else 'Contacts'})")
+        layout.addWidget(label)
+
+        chip.mousePressEvent = (
+            lambda _ev, a=aid, s=is_self: self.open_issuer.emit(a, s)
+        )
+        return chip
 
     def _build_edges_section(
         self,

@@ -148,3 +148,112 @@ def test_put_ecosystem_overwrite_removes_stale_aid_reverse_index(baser):
 
     assert sorted(baser.ecosystems_for_aid("EAID1")) == ["eco"]
     assert baser.ecosystems_for_aid("EAID2") == []
+
+
+# ---------------------------------------------------------------------------
+# Authoritative issuers (Stage 9 EGF overlay)
+# ---------------------------------------------------------------------------
+
+
+def _seed_eco(baser, name="eco", schemas=("ES1", "ES2"), aids=("EA1", "EA2")):
+    baser.put_ecosystem(EcosystemRecord(
+        name=name,
+        schema_saids=list(schemas),
+        issuer_aids=list(aids),
+    ))
+
+
+def test_authoritative_issuers_default_empty(baser):
+    _seed_eco(baser)
+    assert baser.authoritative_issuers_for("eco", "ES1") == []
+
+
+def test_set_authoritative_issuers_persists_and_dedupes(baser):
+    _seed_eco(baser)
+    baser.set_authoritative_issuers("eco", "ES1", ["EA2", "EA1", "EA1"])
+    assert baser.authoritative_issuers_for("eco", "ES1") == ["EA1", "EA2"]
+    rec = baser.get_ecosystem("eco")
+    assert rec.authoritative_issuers == {"ES1": ["EA1", "EA2"]}
+
+
+def test_set_authoritative_issuers_empty_list_clears_entry(baser):
+    _seed_eco(baser)
+    baser.set_authoritative_issuers("eco", "ES1", ["EA1"])
+    baser.set_authoritative_issuers("eco", "ES1", [])
+    assert baser.authoritative_issuers_for("eco", "ES1") == []
+    rec = baser.get_ecosystem("eco")
+    assert "ES1" not in rec.authoritative_issuers
+
+
+def test_add_and_remove_authoritative_issuer(baser):
+    _seed_eco(baser)
+    baser.add_authoritative_issuer("eco", "ES1", "EA1")
+    baser.add_authoritative_issuer("eco", "ES1", "EA2")
+    baser.add_authoritative_issuer("eco", "ES1", "EA1")  # idempotent
+    assert baser.authoritative_issuers_for("eco", "ES1") == ["EA1", "EA2"]
+
+    baser.remove_authoritative_issuer("eco", "ES1", "EA1")
+    assert baser.authoritative_issuers_for("eco", "ES1") == ["EA2"]
+    baser.remove_authoritative_issuer("eco", "ES1", "EA1")  # idempotent
+    assert baser.authoritative_issuers_for("eco", "ES1") == ["EA2"]
+
+
+def test_set_authoritative_issuers_rejects_non_member_schema(baser):
+    _seed_eco(baser)
+    with pytest.raises(ValueError, match="not a member"):
+        baser.set_authoritative_issuers("eco", "ES_UNKNOWN", ["EA1"])
+
+
+def test_set_authoritative_issuers_rejects_non_member_aid(baser):
+    _seed_eco(baser)
+    with pytest.raises(ValueError, match="not members"):
+        baser.set_authoritative_issuers("eco", "ES1", ["EA1", "EA_UNKNOWN"])
+
+
+def test_set_authoritative_issuers_rejects_unknown_ecosystem(baser):
+    with pytest.raises(KeyError):
+        baser.set_authoritative_issuers("nope", "ES1", [])
+
+
+def test_removing_schema_drops_authoritative_entry(baser):
+    _seed_eco(baser)
+    baser.set_authoritative_issuers("eco", "ES1", ["EA1"])
+    baser.remove_schema_from_ecosystem("eco", "ES1")
+    rec = baser.get_ecosystem("eco")
+    assert "ES1" not in rec.authoritative_issuers
+    assert baser.authoritative_issuers_for("eco", "ES1") == []
+
+
+def test_removing_aid_strips_it_from_authoritative_lists(baser):
+    _seed_eco(baser)
+    baser.set_authoritative_issuers("eco", "ES1", ["EA1", "EA2"])
+    baser.set_authoritative_issuers("eco", "ES2", ["EA1"])
+    baser.remove_aid_from_ecosystem("eco", "EA1")
+    rec = baser.get_ecosystem("eco")
+    # ES1 keeps EA2; ES2 had only EA1, so the entry is removed entirely.
+    assert rec.authoritative_issuers == {"ES1": ["EA2"]}
+
+
+def test_authoritative_issuers_survives_round_trip(baser):
+    """A record stored and re-fetched preserves the dict structure."""
+    _seed_eco(baser)
+    baser.set_authoritative_issuers("eco", "ES1", ["EA2"])
+    baser.set_authoritative_issuers("eco", "ES2", ["EA1", "EA2"])
+
+    fresh = baser.get_ecosystem("eco")
+    assert fresh.authoritative_issuers == {
+        "ES1": ["EA2"],
+        "ES2": ["EA1", "EA2"],
+    }
+
+
+def test_legacy_record_with_no_authoritative_field_still_round_trips(baser):
+    """An EcosystemRecord constructed without authoritative_issuers (the
+    field defaults to {}) round-trips cleanly — covers existing on-disk
+    records written before stage 9 added the field."""
+    rec = EcosystemRecord(
+        name="legacy", schema_saids=["ES1"], issuer_aids=["EA1"]
+    )
+    baser.put_ecosystem(rec)
+    fresh = baser.get_ecosystem("legacy")
+    assert fresh.authoritative_issuers == {}
