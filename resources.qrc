@@ -3,9 +3,13 @@
         <file>assets/.DS_Store</file>
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
+        <file>assets/material-icons/mediation.svg</file>
         <file>assets/material-icons/settings_shield.svg</file>
+        <file>assets/material-icons/add_link.svg</file>
         <file>assets/material-icons/out-badge.svg</file>
+        <file>assets/material-icons/account_tree.svg</file>
         <file>assets/material-icons/public.svg</file>
+        <file>assets/material-icons/add_to_drive.svg</file>
         <file>assets/material-icons/all_inbox.svg</file>
         <file>assets/material-icons/shield_person.svg</file>
         <file>assets/material-icons/step-next.svg</file>
@@ -20,7 +24,9 @@
         <file>assets/material-icons/swords.svg</file>
         <file>assets/material-icons/adjust-unread.svg</file>
         <file>assets/material-icons/witness2.svg</file>
+        <file>assets/material-icons/add_card.svg</file>
         <file>assets/material-icons/remove_moderator.svg</file>
+        <file>assets/material-icons/spoke.svg</file>
         <file>assets/material-icons/lock.svg</file>
         <file>assets/material-icons/vault-drawer-hover.svg</file>
         <file>assets/material-icons/group_add.svg</file>
@@ -30,6 +36,7 @@
         <file>assets/material-icons/vault-drawer.svg</file>
         <file>assets/material-icons/mail.svg</file>
         <file>assets/material-icons/shield.svg</file>
+        <file>assets/material-icons/hub.svg</file>
         <file>assets/material-icons/notifications_unread_hover.svg</file>
         <file>assets/material-icons/in-badge.svg</file>
         <file>assets/material-icons/chevron_right.svg</file>
@@ -45,6 +52,7 @@
         <file>assets/material-icons/settings-hover.svg</file>
         <file>assets/material-icons/call_received.svg</file>
         <file>assets/material-icons/drafts.svg</file>
+        <file>assets/material-icons/add_business.svg</file>
         <file>assets/material-icons/enable.svg</file>
         <file>assets/material-icons/add.svg</file>
         <file>assets/material-icons/first_page.svg</file>
@@ -60,6 +68,7 @@
         <file>assets/material-icons/badge.svg</file>
         <file>assets/material-icons/browse.svg</file>
         <file>assets/material-icons/content_copy.svg</file>
+        <file>assets/material-icons/device_hub.svg</file>
         <file>assets/material-icons/p2p.svg</file>
         <file>assets/material-icons/delegate.svg</file>
         <file>assets/material-icons/send.svg</file>
@@ -68,6 +77,7 @@
         <file>assets/material-icons/notifications_hover.svg</file>
         <file>assets/material-icons/groups.svg</file>
         <file>assets/material-icons/security.svg</file>
+        <file>assets/material-icons/lan.svg</file>
         <file>assets/material-icons/launch-proxy.svg</file>
         <file>assets/material-icons/visibility_off.svg</file>
         <file>assets/material-icons/edit.svg</file>
