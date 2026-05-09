@@ -65,9 +65,10 @@ graph view and issuer cards on the overview."""
 # Ecosystem (§3.2)
 # ---------------------------------------------------------------------------
 
-ICON_ECOSYSTEM = ":/assets/material-icons/ecosystem_diamond.svg"
-"""Filled diamond. Glyph for ecosystem tiles on the overview and
-section headers in the ecosystem detail page."""
+ICON_ECOSYSTEM = ":/assets/material-icons/hub.svg"
+"""Hub glyph (a node with spokes). Canonical icon for "ecosystem"
+across the entire wallet — overview tiles, section headers, the
+plugin's menu entry, anywhere an ecosystem is identified visually."""
 
 
 # ---------------------------------------------------------------------------

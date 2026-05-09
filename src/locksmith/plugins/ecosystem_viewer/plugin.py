@@ -175,7 +175,7 @@ class EcosystemViewerPlugin(PluginBase):
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
-            icon=QIcon(":/assets/material-icons/schema.svg"),
+            icon=QIcon(":/assets/material-icons/hub.svg"),
             label="Ecosystem Viewer",
         )
 
@@ -184,7 +184,7 @@ class EcosystemViewerPlugin(PluginBase):
         items.append(BackButton(dark_mode=False))
         items.append(MenuSpacer(15))
         self._nav_button = MenuButton(
-            icon=QIcon(":/assets/material-icons/schema.svg"),
+            icon=QIcon(":/assets/material-icons/hub.svg"),
             label="Overview",
         )
         self._nav_button.clicked.connect(self._show_overview)
