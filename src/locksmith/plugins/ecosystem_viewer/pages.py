@@ -2022,9 +2022,8 @@ class EcosystemDetailPage(QWidget):
         self.create_role_clicked.emit(self._current_name)
 
     def _refresh(self) -> None:
-        # Clear header, add-button area, and the list tab's section widgets.
+        # Clear header and the list tab's section widgets.
         self._purge_layout(self._header_layout)
-        self._purge_layout(self._add_btn_holder_layout)
         while self._content_layout.count() > 1:
             item = self._content_layout.takeAt(0)
             w = item.widget() if item else None

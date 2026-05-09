@@ -9,6 +9,10 @@ pytest.importorskip("PySide6")
 
 from PySide6.QtTest import QTest
 
+# Load Qt resources so icon paths like ":/assets/material-icons/schema.svg"
+# resolve. main.py imports this for the same effect at app startup.
+import locksmith.resources_rc  # noqa: F401
+
 from locksmith.plugins.ecosystem_viewer.db import EcosystemRecord
 from locksmith.plugins.ecosystem_viewer.graph_view import (
     EcosystemGraphView,
@@ -39,14 +43,21 @@ def test_canvas_toolbar_renders_three_buttons(qapp):
     bar.add_aid_clicked.connect(lambda: captured.append("aid"))
     bar.add_role_clicked.connect(lambda: captured.append("role"))
 
-    # Find the buttons in deterministic order via children iteration.
-    from PySide6.QtWidgets import QPushButton
-    buttons = bar.findChildren(QPushButton)
+    from PySide6.QtWidgets import QToolButton
+    buttons = bar.findChildren(QToolButton)
     assert len(buttons) == 3
-    labels = [b.text() for b in buttons]
-    assert labels == ["+ Schema", "+ AID", "+ Role"]
-
+    tooltips = [b.toolTip() for b in buttons]
+    assert tooltips == [
+        "Add schema to ecosystem",
+        "Add issuer AID to ecosystem",
+        "Add role to ecosystem",
+    ]
     for b in buttons:
+        # Icons are loaded as Qt resources — the icon should be non-null.
+        assert not b.icon().isNull(), (
+            f"button with tooltip '{b.toolTip()}' has no icon — Qt resources may "
+            f"not be initialized in the test (does main.py import resources_rc?)"
+        )
         b.click()
     qapp.processEvents()
     assert captured == ["schema", "aid", "role"]

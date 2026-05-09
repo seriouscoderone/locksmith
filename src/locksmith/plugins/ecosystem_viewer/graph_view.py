@@ -33,7 +33,6 @@ from PySide6.QtWidgets import (
     QGraphicsView,
     QHBoxLayout,
     QLabel,
-    QPushButton,
     QSizePolicy,
     QToolButton,
     QVBoxLayout,
@@ -107,15 +106,18 @@ class GraphBuildResult:
 
 
 class GraphCanvasToolbar(QFrame):
-    """Floating toolbar overlaid on the graph canvas (top-left).
+    """Floating icon-only toolbar overlaid on the graph canvas (top-left).
 
-    Compact pill-shaped buttons for adding ecosystem members directly
-    from the graph view: schema, issuer AID, role.
+    Three buttons for adding ecosystem members directly from the graph
+    view: schema, issuer AID, role. Icons only; tooltips identify them.
     """
 
     add_schema_clicked = Signal()
     add_aid_clicked = Signal()
     add_role_clicked = Signal()
+
+    BUTTON_SIZE = 32
+    ICON_SIZE = 20
 
     def __init__(self, parent: QWidget | None = None):
         super().__init__(parent)
@@ -124,34 +126,24 @@ class GraphCanvasToolbar(QFrame):
             "QFrame#graphCanvasToolbar {"
             f" background-color: {colors.BACKGROUND_CONTENT};"
             f" border: 1px solid {colors.BORDER_NEUTRAL};"
-            " border-radius: 18px;"
-            "}"
-            "QFrame#graphCanvasToolbar QPushButton {"
-            " border: none;"
-            " border-radius: 14px;"
-            " padding: 4px 12px;"
-            " font-size: 12px;"
-            f" color: {colors.TEXT_DARK};"
-            " background: transparent;"
-            "}"
-            "QFrame#graphCanvasToolbar QPushButton:hover {"
-            f" background-color: {colors.BACKGROUND_HIGHLIGHT};"
-            "}"
-            "QFrame#graphCanvasToolbar QPushButton:pressed {"
-            f" background-color: {colors.BACKGROUND_SELECTION};"
+            " border-radius: 6px;"
             "}"
         )
         layout = QHBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(2)
 
-        for label, signal in (
-            ("+ Schema", self.add_schema_clicked),
-            ("+ AID", self.add_aid_clicked),
-            ("+ Role", self.add_role_clicked),
+        for icon_path, tooltip, signal in (
+            (":/assets/material-icons/schema.svg", "Add schema to ecosystem",
+             self.add_schema_clicked),
+            (":/assets/material-icons/person_add.svg", "Add issuer AID to ecosystem",
+             self.add_aid_clicked),
+            (":/assets/material-icons/group_add.svg", "Add role to ecosystem",
+             self.add_role_clicked),
         ):
-            btn = QPushButton(label)
-            btn.setCursor(Qt.CursorShape.PointingHandCursor)
+            btn = LocksmithIconButton(icon_path, tooltip=tooltip,
+                                      icon_size=self.ICON_SIZE, border=False)
+            btn.setFixedSize(self.BUTTON_SIZE, self.BUTTON_SIZE)
             btn.clicked.connect(signal.emit)
             layout.addWidget(btn)
 
