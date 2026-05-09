@@ -180,3 +180,10 @@ cython_debug/
 
 # Git worktrees (linked worktrees under the project root)
 .worktrees/
+
+# Claude Code per-project state — track config files inside .claude/, but
+# never the runtime lock/state files it rewrites on every session.
+.claude/*.lock
+.claude/projects/
+.claude/shell-snapshots/
+.claude/todos/
