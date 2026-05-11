@@ -23,9 +23,16 @@
     "credentials": {
       "type": "object",
       "required": ["held", "issued"],
+      "additionalProperties": false,
       "properties": {
-        "held": { "type": "array", "items": { "type": "object" } },
-        "issued": { "type": "array", "items": { "type": "object" } }
+        "held": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/held_credential" }
+        },
+        "issued": {
+          "type": "array",
+          "items": { "$ref": "#/$defs/issued_credential" }
+        }
       }
     },
     "commands": { "type": "array", "items": { "type": "object" } },
@@ -80,6 +87,147 @@
             "watcher_network": { "type": "boolean" },
             "mailbox": { "type": "boolean" },
             "acdc_registry": { "type": "boolean" }
+          }
+        }
+      }
+    },
+    "held_credential": {
+      "type": "object",
+      "required": ["id", "expected_schema_said"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "expected_schema_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+        "expected_issuer_role": { "type": "string" },
+        "expected_attribute_constraints": { "type": "object" },
+        "lifecycle_acceptance": {
+          "type": "array",
+          "items": { "type": "string" },
+          "default": ["active"]
+        },
+        "narrative": { "type": "string" }
+      }
+    },
+    "edge_operator": {
+      "type": "string",
+      "enum": ["authorizes", "references", "authorizes-via-delegate"]
+    },
+    "disclosure_mode": {
+      "type": "string",
+      "enum": ["full", "selective", "aggregate"]
+    },
+    "tel_primitive": {
+      "type": "string",
+      "enum": ["issue", "update", "revoke"]
+    },
+    "issued_credential": {
+      "type": "object",
+      "required": ["id", "name", "description", "envelope", "schema", "lifecycle"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "envelope": {
+          "type": "object",
+          "required": ["holder_role", "verifier_roles", "edges", "disclosure_mode"],
+          "additionalProperties": false,
+          "properties": {
+            "holder_role": { "type": "string" },
+            "verifier_roles": { "type": "array", "items": { "type": "string" } },
+            "edges": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["edge_name", "credential_id", "cardinality", "operator"],
+                "additionalProperties": false,
+                "properties": {
+                  "edge_name": { "type": "string" },
+                  "credential_id": { "type": "string" },
+                  "cardinality": { "type": "string", "enum": ["one", "one_or_more"] },
+                  "operator": { "$ref": "#/$defs/edge_operator" }
+                }
+              }
+            },
+            "disclosure_mode": { "$ref": "#/$defs/disclosure_mode" }
+          }
+        },
+        "schema": {
+          "type": "object",
+          "required": ["schema_said", "schema_path"],
+          "additionalProperties": false,
+          "properties": {
+            "schema_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+            "schema_path": { "type": "string", "pattern": "^schemas/[a-z][a-z0-9_-]*\\.json$" }
+          }
+        },
+        "lifecycle": {
+          "type": "object",
+          "required": ["states", "initial", "transitions"],
+          "additionalProperties": false,
+          "properties": {
+            "states": {
+              "type": "array",
+              "items": { "type": "string" },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "initial": { "type": "string" },
+            "transitions": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["id", "from", "to", "tel_primitive"],
+                "additionalProperties": false,
+                "properties": {
+                  "id": { "type": "string" },
+                  "from": {
+                    "oneOf": [
+                      { "type": "string" },
+                      { "type": "array", "items": { "type": "string" } }
+                    ]
+                  },
+                  "to": { "type": "string" },
+                  "via_workflow": { "type": ["string", "null"] },
+                  "tel_primitive": { "$ref": "#/$defs/tel_primitive" },
+                  "trigger": { "type": "string", "enum": ["manual", "automatic"] },
+                  "condition_rule_ref": { "type": "string" },
+                  "requires": {
+                    "type": "array",
+                    "items": {
+                      "type": "object",
+                      "required": ["rule_ref"],
+                      "additionalProperties": false,
+                      "properties": { "rule_ref": { "type": "string" } }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        },
+        "rule_refs": { "type": "array", "items": { "type": "string" }, "default": [] },
+        "value_flow": {
+          "type": "object",
+          "required": ["implied_credentials"],
+          "additionalProperties": false,
+          "properties": {
+            "implied_credentials": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "required": ["credential_id", "relationship"],
+                "additionalProperties": false,
+                "properties": {
+                  "credential_id": { "type": "string" },
+                  "relationship": {
+                    "type": "string",
+                    "enum": ["issuer_grants", "per_emission", "per_holder_emission", "implies_obligation"]
+                  },
+                  "description": { "type": "string" }
+                }
+              }
+            }
           }
         }
       }

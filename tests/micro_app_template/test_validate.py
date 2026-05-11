@@ -247,3 +247,47 @@ def test_xref_passes_on_consistent_doc():
     }
     errors = validate_xrefs(doc)
     assert errors == []
+
+
+def test_credentials_fixture_validates(fixtures_dir):
+    import json
+    with open(fixtures_dir / "credentials_valid.json") as f:
+        doc = json.load(f)
+    errors = validate_against_meta_schema(doc, META_SCHEMA)
+    assert errors == [], f"unexpected: {[e.message for e in errors]}"
+
+
+def test_invalid_edge_operator_fails(fixtures_dir):
+    import json
+    with open(fixtures_dir / "credentials_valid.json") as f:
+        doc = json.load(f)
+    doc["credentials"]["issued"][0]["envelope"]["edges"][0]["operator"] = "not_a_real_operator"
+    errors = validate_against_meta_schema(doc, META_SCHEMA)
+    assert any("operator" in e.path or "operator" in e.message for e in errors)
+
+
+def test_invalid_disclosure_mode_fails(fixtures_dir):
+    import json
+    with open(fixtures_dir / "credentials_valid.json") as f:
+        doc = json.load(f)
+    doc["credentials"]["issued"][0]["envelope"]["disclosure_mode"] = "secret"
+    errors = validate_against_meta_schema(doc, META_SCHEMA)
+    assert any("disclosure_mode" in e.path or "secret" in e.message for e in errors)
+
+
+def test_invalid_tel_primitive_fails(fixtures_dir):
+    import json
+    with open(fixtures_dir / "credentials_valid.json") as f:
+        doc = json.load(f)
+    doc["credentials"]["issued"][0]["lifecycle"]["transitions"][0]["tel_primitive"] = "delete"
+    errors = validate_against_meta_schema(doc, META_SCHEMA)
+    assert any("tel_primitive" in e.path or "delete" in e.message for e in errors)
+
+
+def test_schema_path_must_be_in_schemas_dir(fixtures_dir):
+    import json
+    with open(fixtures_dir / "credentials_valid.json") as f:
+        doc = json.load(f)
+    doc["credentials"]["issued"][0]["schema"]["schema_path"] = "elsewhere/policy.json"
+    errors = validate_against_meta_schema(doc, META_SCHEMA)
+    assert any("schema_path" in e.path for e in errors)
