@@ -1,0 +1,1074 @@
+{
+  "aggregates": [
+    {
+      "description": "Authoritative registry of every carrier_license this regulator has touched: pending applications under review, active licenses currently in force, suspended licenses awaiting reinstatement or revocation, denied applications, and revoked licenses. The single source of truth for the regulator's TEL-backed licensing posture.",
+      "id": "license_registry",
+      "inception_event_type": "registry_inception",
+      "initial_state": {
+        "active_licenses": [],
+        "denied_applications": [],
+        "pending_applications": [],
+        "revoked_licenses": [],
+        "suspended_licenses": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "no_duplicate_active_license_per_carrier"
+        }
+      ],
+      "log_scope": "witnessed",
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active_licenses": {
+            "items": {
+              "properties": {
+                "effective_date": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "expiration_date": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "granted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "holder_aid": {
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "license_number": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "license_said",
+                "license_number",
+                "holder_aid",
+                "jurisdiction",
+                "lines_of_business",
+                "effective_date",
+                "expiration_date",
+                "granted_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "denied_applications": {
+            "items": {
+              "properties": {
+                "application_id": {
+                  "type": "string"
+                },
+                "denial_reason": {
+                  "type": "string"
+                },
+                "denied_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "application_id",
+                "denial_reason",
+                "denied_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "pending_applications": {
+            "items": {
+              "properties": {
+                "applicant_aid": {
+                  "type": "string"
+                },
+                "application_id": {
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "received_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "application_id",
+                "applicant_aid",
+                "jurisdiction",
+                "lines_of_business",
+                "received_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "revoked_licenses": {
+            "items": {
+              "properties": {
+                "holder_aid": {
+                  "type": "string"
+                },
+                "license_number": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "revocation_reason": {
+                  "type": "string"
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "license_said",
+                "license_number",
+                "holder_aid",
+                "revocation_reason",
+                "revoked_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "suspended_licenses": {
+            "items": {
+              "properties": {
+                "holder_aid": {
+                  "type": "string"
+                },
+                "license_number": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "suspended_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "suspension_reason": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "license_said",
+                "license_number",
+                "holder_aid",
+                "suspension_reason",
+                "suspended_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "pending_applications",
+          "active_licenses",
+          "suspended_licenses",
+          "revoked_licenses",
+          "denied_applications"
+        ],
+        "type": "object"
+      }
+    }
+  ],
+  "commands": [
+    {
+      "auth_preconditions": [
+        {
+          "rule_ref": "applicant_provided_all_required_fields"
+        }
+      ],
+      "counterparty_role": "carrier",
+      "description": "Adjudicate a pending application favorably and issue a new carrier_license credential to the applicant. Locksmith renders this as the regulator's grant-decision form, prefilled from the inbound application.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": "carrier_license",
+            "imported_credential_id": null,
+            "kind": "credential",
+            "schema_said_referenced": "ENRy4fo74JoBf2_1K2Olx1WJ6UqY_v98Y8S_qnw2GuDR",
+            "verb": "grant"
+          },
+          "kind": "exchange"
+        },
+        {
+          "exported_credential_id": "carrier_license",
+          "kind": "lifecycle_advance",
+          "to_state": "active"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_granted",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ license_number: command.license_number, jurisdiction: command.jurisdiction, lines_of_business: command.lines_of_business, effective_date: command.effective_date, expiration_date: command.expiration_date, application_id: command.application_id, granted_at: event.timestamp }"
+        }
+      ],
+      "id": "grant_license",
+      "idempotency_key_expression": "hash(payload.application_id + ':' + payload.license_number)",
+      "name": "Grant carrier license",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "description": "SAID of the carrier_license_application this grant adjudicates.",
+            "type": "string"
+          },
+          "effective_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "expiration_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "jurisdiction": {
+            "pattern": "^US-[A-Z]{2}$",
+            "type": "string"
+          },
+          "license_number": {
+            "pattern": "^[A-Z0-9-]+$",
+            "type": "string"
+          },
+          "lines_of_business": {
+            "items": {
+              "enum": [
+                "property",
+                "casualty",
+                "life",
+                "health",
+                "auto",
+                "workers_compensation",
+                "marine",
+                "aviation"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "regulatory_body": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "license_number",
+          "jurisdiction",
+          "lines_of_business",
+          "effective_date",
+          "expiration_date"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/grant_license",
+      "state_preconditions": [
+        {
+          "rule_ref": "application_pending_for_grant"
+        },
+        {
+          "rule_ref": "no_duplicate_active_license_per_carrier"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Adjudicate a pending application unfavorably. Sends a spurn back to the applicant and records the denial in the license registry. No credential is issued.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": "carrier_license",
+            "imported_credential_id": null,
+            "kind": "credential",
+            "schema_said_referenced": "ENRy4fo74JoBf2_1K2Olx1WJ6UqY_v98Y8S_qnw2GuDR",
+            "verb": "spurn"
+          },
+          "kind": "exchange"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "application_denied",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ application_id: command.application_id, denial_reason: command.denial_reason, denied_at: event.timestamp }"
+        }
+      ],
+      "id": "spurn_application",
+      "idempotency_key_expression": "hash('spurn:' + payload.application_id)",
+      "name": "Deny carrier license application",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "application_id": {
+            "type": "string"
+          },
+          "denial_reason": {
+            "description": "Plain-English reason for the denial. Surfaced to the applicant.",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "application_id",
+          "denial_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/spurn_application",
+      "state_preconditions": [
+        {
+          "rule_ref": "application_pending_for_grant"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Temporarily put an active carrier_license into a suspended state. The license is not revoked; the carrier may seek reinstatement once grounds are cleared.",
+      "emissions": [
+        {
+          "exported_credential_id": "carrier_license",
+          "kind": "lifecycle_advance",
+          "to_state": "suspended"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_suspended",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ license_said: command.license_said, suspension_reason: command.suspension_reason, suspended_at: event.timestamp }"
+        }
+      ],
+      "id": "suspend_license",
+      "idempotency_key_expression": "hash('suspend:' + payload.license_said)",
+      "name": "Suspend carrier license",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "license_said": {
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "suspension_reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "license_said",
+          "suspension_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/suspend_license",
+      "state_preconditions": [
+        {
+          "rule_ref": "license_currently_active"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Move a suspended carrier_license back to active. Requires the suspension_grounds_cleared rule to evaluate true.",
+      "emissions": [
+        {
+          "exported_credential_id": "carrier_license",
+          "kind": "lifecycle_advance",
+          "to_state": "active"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_reinstated",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ license_said: command.license_said, reinstatement_note: command.reinstatement_note, reinstated_at: event.timestamp }"
+        }
+      ],
+      "id": "reinstate_license",
+      "idempotency_key_expression": "hash('reinstate:' + payload.license_said)",
+      "name": "Reinstate suspended license",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "license_said": {
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "reinstatement_note": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "license_said",
+          "reinstatement_note"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/reinstate_license",
+      "state_preconditions": [
+        {
+          "rule_ref": "license_currently_suspended"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Permanently invalidate a carrier_license. Fires a TEL revocation event; the credential cannot be reinstated after revocation.",
+      "emissions": [
+        {
+          "exported_credential_id": "carrier_license",
+          "kind": "lifecycle_advance",
+          "to_state": "revoked"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_revoked",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ license_said: command.license_said, revocation_reason: command.revocation_reason, revoked_at: event.timestamp }"
+        }
+      ],
+      "id": "revoke_license",
+      "idempotency_key_expression": "hash('revoke:' + payload.license_said)",
+      "name": "Revoke carrier license",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "license_said": {
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "revocation_reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "license_said",
+          "revocation_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/revoke_license",
+      "state_preconditions": [
+        {
+          "rule_ref": "license_currently_active_or_suspended"
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "Authorization for a carrier to bear insurance risk on the listed lines of business in this jurisdiction. Issued by the state DOI to a regulated insurance carrier; verifiable by any party that needs to confirm the carrier is in good standing.",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [],
+          "holder_role": "carrier",
+          "verifier_roles": [
+            "carrier",
+            "producer",
+            "policyholder",
+            "auditor"
+          ]
+        },
+        "id": "carrier_license",
+        "lifecycle": {
+          "initial": "pending",
+          "states": [
+            "pending",
+            "active",
+            "suspended",
+            "revoked"
+          ],
+          "transitions": [
+            {
+              "from": "pending",
+              "id": "activate",
+              "requires": [
+                {
+                  "rule_ref": "financial_solvency_demonstrated"
+                }
+              ],
+              "tel_primitive": "issue",
+              "to": "active",
+              "trigger": "manual"
+            },
+            {
+              "from": "active",
+              "id": "suspend",
+              "tel_primitive": "update",
+              "to": "suspended",
+              "trigger": "manual"
+            },
+            {
+              "from": "suspended",
+              "id": "reinstate",
+              "requires": [
+                {
+                  "rule_ref": "suspension_grounds_cleared"
+                }
+              ],
+              "tel_primitive": "update",
+              "to": "active",
+              "trigger": "manual"
+            },
+            {
+              "from": [
+                "active",
+                "suspended"
+              ],
+              "id": "revoke",
+              "tel_primitive": "revoke",
+              "to": "revoked",
+              "trigger": "manual"
+            }
+          ]
+        },
+        "name": "Carrier License",
+        "rule_refs": [
+          "carrier_license_authority",
+          "ongoing_compliance_obligation",
+          "applicant_provided_all_required_fields",
+          "financial_solvency_demonstrated",
+          "suspension_grounds_cleared",
+          "carrier_license_authority_articulation"
+        ],
+        "schema": {
+          "schema_path": "schemas/carrier_license.json",
+          "schema_said": "ENRy4fo74JoBf2_1K2Olx1WJ6UqY_v98Y8S_qnw2GuDR"
+        },
+        "value_flow": {
+          "implied_credentials": []
+        }
+      }
+    ],
+    "imports": []
+  },
+  "d": "EGC-pXapBBUCNgF6aZq0oJgGmcoKmao0bFdA-Qoy6yAv",
+  "header": {
+    "description": "The state Department of Insurance's side of carrier licensing: receive applications, adjudicate them, grant or spurn the license credential, and manage its full lifecycle (suspension, reinstatement, revocation). Pivotal event: a license has been granted or revoked.",
+    "display_name": "Regulator Grants Carrier License",
+    "expression_language": "UEL/1.0",
+    "id": "regulator-grants-carrier-license",
+    "version": "1.0"
+  },
+  "projections": [
+    {
+      "description": "License applications awaiting regulatory review. Sorted by receipt time so the oldest applications surface first.",
+      "display": {
+        "columns": [
+          {
+            "display_template": "{applicant_aid|aid12}",
+            "field": "applicant_aid",
+            "header": "Applicant"
+          },
+          {
+            "field": "jurisdiction",
+            "header": "Jurisdiction"
+          },
+          {
+            "field": "lines_of_business",
+            "header": "Lines"
+          },
+          {
+            "display_template": "{received_at|date}",
+            "field": "received_at",
+            "header": "Received"
+          }
+        ],
+        "default_sort": {
+          "column": "received_at",
+          "direction": "asc"
+        },
+        "empty_state": "No applications awaiting review.",
+        "view_type": "table"
+      },
+      "fold_expression": "source == 'application_received' ? { rows: state.rows + [{ application_id: event.payload.application_id, applicant_aid: event.payload.applicant_aid, jurisdiction: event.payload.jurisdiction, lines_of_business: event.payload.lines_of_business, received_at: event.payload.received_at }] } : (source == 'license_granted' || source == 'application_denied' || source == 'application_withdrawn') ? { rows: state.rows.filter(r => r.application_id != event.payload.application_id) } : state",
+      "id": "pending_applications",
+      "name": "Pending Applications",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "items": {
+              "properties": {
+                "applicant_aid": {
+                  "type": "string"
+                },
+                "application_id": {
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "received_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "application_id",
+                "applicant_aid",
+                "jurisdiction",
+                "lines_of_business",
+                "received_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "type": "object"
+      },
+      "source_events": [
+        "application_received",
+        "license_granted",
+        "application_denied",
+        "application_withdrawn"
+      ]
+    },
+    {
+      "description": "All carrier licenses currently in force within this regulator's jurisdiction. The regulator's primary compliance view.",
+      "display": {
+        "columns": [
+          {
+            "field": "license_number",
+            "header": "License #"
+          },
+          {
+            "display_template": "{holder_aid|aid12}",
+            "field": "holder_aid",
+            "header": "Carrier"
+          },
+          {
+            "field": "lines_of_business",
+            "header": "Lines"
+          },
+          {
+            "field": "effective_date",
+            "header": "Effective"
+          },
+          {
+            "field": "expiration_date",
+            "header": "Expires"
+          }
+        ],
+        "default_sort": {
+          "column": "granted_at",
+          "direction": "desc"
+        },
+        "empty_state": "No active licenses in this jurisdiction.",
+        "view_type": "table"
+      },
+      "fold_expression": "source == 'license_granted' ? { rows: state.rows + [{ license_said: event.payload.license_said, license_number: event.payload.license_number, holder_aid: event.payload.holder_aid, jurisdiction: event.payload.jurisdiction, lines_of_business: event.payload.lines_of_business, effective_date: event.payload.effective_date, expiration_date: event.payload.expiration_date, granted_at: event.payload.granted_at }] } : source == 'license_reinstated' ? state : (source == 'license_suspended' || source == 'license_revoked') ? { rows: state.rows.filter(r => r.license_said != event.payload.license_said) } : state",
+      "id": "active_licenses_in_state",
+      "name": "Active Licenses In State",
+      "output_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "rows": {
+            "items": {
+              "properties": {
+                "effective_date": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "expiration_date": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "granted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "holder_aid": {
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "license_number": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "license_said",
+                "license_number",
+                "holder_aid",
+                "jurisdiction",
+                "lines_of_business",
+                "effective_date",
+                "expiration_date",
+                "granted_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "rows"
+        ],
+        "type": "object"
+      },
+      "source_events": [
+        "license_granted",
+        "license_suspended",
+        "license_reinstated",
+        "license_revoked"
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "description": "When a carrier submits a carrier_license_application via IPEX apply, record the application in the license registry as pending and surface it to the regulator's review queue. The regulator will then either grant_license or spurn_application.",
+      "emissions": [
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "application_received",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ application_id: event.payload.application_id, applicant_aid: event.actorAID, jurisdiction: event.payload.jurisdiction, lines_of_business: event.payload.lines_of_business, received_at: event.timestamp }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_spurn",
+        "timeout_seconds": 60
+      },
+      "id": "on_application_received",
+      "trigger": {
+        "route": "/insurance/cmd/submit_application",
+        "type": "exn_received"
+      }
+    },
+    {
+      "description": "When a carrier withdraws a pending application (notification to /insurance/note/application_withdrawn) before adjudication, remove it from pending_applications. No spurn fires because the applicant is the one cancelling.",
+      "emissions": [
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "application_withdrawn",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ application_id: event.payload.application_id, withdrawn_at: event.timestamp }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_application_withdrawn",
+      "trigger": {
+        "route": "/insurance/note/application_withdrawn",
+        "type": "exn_received"
+      }
+    }
+  ],
+  "role": {
+    "description": "A US state's insurance regulator. The DOI is the root authority for carrier licensing within its jurisdiction: its commands are gated by KEL-anchored regulatory authority rather than by held credentials. The DOI issues, suspends, reinstates, and revokes carrier_license credentials.",
+    "display_name": "State Department of Insurance",
+    "id": "state-doi",
+    "keri_infrastructure": {
+      "acdc_registry": true,
+      "mailbox": true,
+      "watcher_network": true,
+      "witness_pool": true
+    },
+    "kind": "government"
+  },
+  "rules": [
+    {
+      "body": "The undersigned State Department of Insurance, acting under the statutory authority of its enabling jurisdiction, holds exclusive power to license entities authorized to bear insurance risk within that jurisdiction. The CarrierLicense credential, when issued by this regulator's KEL-anchored AID, constitutes prima facie evidence of the licensee's authority to underwrite the listed lines of business between the effective_date and expiration_date stated therein. Licensees acknowledge and accept that this license is held subject to ongoing compliance with the regulatory framework of the granting jurisdiction and may be suspended or revoked by the regulator for cause.",
+      "id": "carrier_license_authority",
+      "title": "Authority to License Insurance Carriers",
+      "type": "legal_prose"
+    },
+    {
+      "body": "Holders of a CarrierLicense agree to maintain continuous compliance with the licensing terms of the granting jurisdiction. Licensees shall: (a) maintain actuarially-certified solvency reserves at or above the regulatory minimum; (b) submit annual statutory filings within ninety (90) days of fiscal year end; (c) notify the regulator within ten (10) business days of any material adverse change to financial condition, ownership, or operational footprint; and (d) cooperate fully with any market-conduct examination conducted by the regulator. Failure to maintain compliance is grounds for suspension or revocation of the license under this regulator's enforcement powers.",
+      "id": "ongoing_compliance_obligation",
+      "title": "Ongoing Compliance Obligation",
+      "type": "legal_prose"
+    },
+    {
+      "description": "The carrier's application contains all fields required for license issuance. UEL guess: the command payload (sourced from the application) contains application_id, license_number candidate, jurisdiction, lines_of_business with at least one item, effective_date, and expiration_date.",
+      "expression": "notNull(command.application_id) && notNull(command.license_number) && notNull(command.jurisdiction) && command.lines_of_business.length >= 1 && notNull(command.effective_date) && notNull(command.expiration_date)",
+      "id": "applicant_provided_all_required_fields",
+      "language": "UEL/1.0",
+      "purpose": "auth_precondition",
+      "title": "Application complete",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates grant_license and spurn_application on the named application_id still being in pending_applications.",
+      "expression": "state.pending_applications.exists(a => a.application_id == command.application_id)",
+      "id": "application_pending_for_grant",
+      "language": "UEL/1.0",
+      "purpose": "state_precondition",
+      "title": "Application is pending and not yet adjudicated",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates suspend_license on the named license_said being in active_licenses.",
+      "expression": "state.active_licenses.exists(l => l.license_said == command.license_said)",
+      "id": "license_currently_active",
+      "language": "UEL/1.0",
+      "purpose": "state_precondition",
+      "title": "License is currently active",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates reinstate_license on the named license_said being in suspended_licenses.",
+      "expression": "state.suspended_licenses.exists(l => l.license_said == command.license_said)",
+      "id": "license_currently_suspended",
+      "language": "UEL/1.0",
+      "purpose": "state_precondition",
+      "title": "License is currently suspended",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates revoke_license on the named license_said being either active or suspended (already-revoked licenses cannot be re-revoked).",
+      "expression": "state.active_licenses.exists(l => l.license_said == command.license_said) || state.suspended_licenses.exists(l => l.license_said == command.license_said)",
+      "id": "license_currently_active_or_suspended",
+      "language": "UEL/1.0",
+      "purpose": "state_precondition",
+      "title": "License is currently active or suspended",
+      "type": "predicate"
+    },
+    {
+      "description": "Required for the activate transition (pending -> active). Confirms the applicant has demonstrated solvency reserves at or above the regulatory minimum. UEL guess: the credential carries a solvency_demonstrated boolean attribute set true by the regulator's review process; in practice this is gated by the regulator's signature on grant_license.",
+      "expression": "credential.attributes.market_conduct_status == 'good_standing' || credential.attributes.market_conduct_status == 'under_review'",
+      "id": "financial_solvency_demonstrated",
+      "language": "UEL/1.0",
+      "purpose": "lifecycle_transition_requires",
+      "title": "Financial solvency demonstrated for activation",
+      "type": "predicate"
+    },
+    {
+      "description": "Required for the reinstate transition (suspended -> active). Captures the regulator's determination that the conditions causing suspension have been remediated. The regulator's manual approval of reinstate_license is the operational gate; this predicate is the formal articulation.",
+      "expression": "credential.attributes.market_conduct_status == 'good_standing'",
+      "id": "suspension_grounds_cleared",
+      "language": "UEL/1.0",
+      "purpose": "lifecycle_transition_requires",
+      "title": "Suspension grounds have been cleared",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: a carrier cannot hold multiple simultaneously active licenses for the same jurisdiction issued by this regulator. UEL guess: groups active_licenses by holder_aid + jurisdiction and asserts cardinality <= 1.",
+      "expression": "state.active_licenses.every(l => state.active_licenses.filter(o => o.holder_aid == l.holder_aid && o.jurisdiction == l.jurisdiction).length == 1)",
+      "id": "no_duplicate_active_license_per_carrier",
+      "language": "UEL/1.0",
+      "title": "At most one active license per carrier in this jurisdiction",
+      "type": "validation"
+    },
+    {
+      "description": "The legal_prose Authority to License Insurance Carriers is articulated formally by the financial_solvency_demonstrated predicate gating the activate transition, and protected at the aggregate level by no_duplicate_active_license_per_carrier.",
+      "id": "carrier_license_authority_articulation",
+      "links": [
+        {
+          "rule_id": "carrier_license_authority"
+        },
+        {
+          "rule_id": "financial_solvency_demonstrated"
+        },
+        {
+          "rule_id": "no_duplicate_active_license_per_carrier"
+        }
+      ],
+      "title": "Authority articulation",
+      "type": "binding_link"
+    }
+  ],
+  "spec_version": "micro-app-template/0.1",
+  "workflows": [
+    {
+      "counterparty_role": "carrier",
+      "description": "Regulator's view of the licensing conversation. Triggered when a carrier sends an /insurance/cmd/submit_application exn. Records the application as pending, branches on the regulator's internal review decision, and emits either a grant (issuing the carrier_license credential) or a spurn (denial with reason).",
+      "id": "license_grant_workflow",
+      "name": "License Grant Workflow",
+      "steps": [
+        {
+          "actor": "self",
+          "id": "step_record_application",
+          "name": "Record application as pending",
+          "next_steps": [
+            "step_internal_review"
+          ],
+          "reaction_id": "on_application_received"
+        },
+        {
+          "actor": "self",
+          "branches": [
+            {
+              "next_step": "step_grant",
+              "rule_ref": "applicant_provided_all_required_fields"
+            }
+          ],
+          "id": "step_internal_review",
+          "name": "Internal review",
+          "next_steps": [
+            "step_spurn"
+          ],
+          "time_bound": {
+            "duration": "P30D",
+            "on_expiry": "step_review_lapsed"
+          }
+        },
+        {
+          "actor": "self",
+          "command_id": "grant_license",
+          "id": "step_grant",
+          "name": "Grant license",
+          "next_steps": [
+            "step_await_admit"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "spurn_application",
+          "id": "step_spurn",
+          "name": "Deny application",
+          "next_steps": []
+        },
+        {
+          "actor": "counterparty",
+          "id": "step_await_admit",
+          "name": "Await carrier admit (or spurn) of granted credential",
+          "next_steps": [],
+          "time_bound": {
+            "duration": "P30D",
+            "on_expiry": "step_grant_lapsed"
+          }
+        },
+        {
+          "actor": "self",
+          "id": "step_review_lapsed",
+          "name": "Review window expired without decision",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "id": "step_grant_lapsed",
+          "name": "Carrier did not admit grant in time",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "route": "/insurance/cmd/submit_application",
+        "type": "exn_received"
+      }
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Regulator-initiated revocation of an active or suspended license following a compliance violation. Fires the TEL revocation event; the carrier observes the revocation via their watcher network.",
+      "id": "license_revocation_workflow",
+      "name": "License Revocation Workflow",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "revoke_license",
+          "id": "step_revoke",
+          "name": "Revoke license",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "state-doi",
+        "type": "manual"
+      }
+    },
+    {
+      "counterparty_role": "carrier",
+      "description": "Regulator-initiated suspension of an active license for a stated reason. The suspension is reversible via reinstate_license once suspension_grounds_cleared.",
+      "id": "license_suspension_workflow",
+      "name": "License Suspension Workflow",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "suspend_license",
+          "id": "step_suspend",
+          "name": "Suspend license",
+          "next_steps": [
+            "step_monitor_for_reinstatement"
+          ]
+        },
+        {
+          "actor": "self",
+          "branches": [
+            {
+              "next_step": "step_reinstate",
+              "rule_ref": "suspension_grounds_cleared"
+            }
+          ],
+          "id": "step_monitor_for_reinstatement",
+          "name": "Monitor for reinstatement criteria",
+          "next_steps": [],
+          "time_bound": {
+            "duration": "P180D",
+            "on_expiry": "step_escalate_to_revocation"
+          }
+        },
+        {
+          "actor": "self",
+          "command_id": "reinstate_license",
+          "id": "step_reinstate",
+          "name": "Reinstate license",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "command_id": "revoke_license",
+          "id": "step_escalate_to_revocation",
+          "name": "Escalate suspended license to revocation",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "state-doi",
+        "type": "manual"
+      }
+    }
+  ]
+}

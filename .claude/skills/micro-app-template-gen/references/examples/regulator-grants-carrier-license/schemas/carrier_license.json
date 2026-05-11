@@ -1,0 +1,71 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "ENRy4fo74JoBf2_1K2Olx1WJ6UqY_v98Y8S_qnw2GuDR",
+  "title": "Carrier License",
+  "description": "License authorizing an entity to bear insurance risk in a jurisdiction. Issued by a state Department of Insurance to a regulated insurance carrier following review and adjudication of a carrier_license_application.",
+  "type": "object",
+  "required": [
+    "license_number",
+    "jurisdiction",
+    "lines_of_business",
+    "effective_date",
+    "expiration_date"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "license_number": {
+      "type": "string",
+      "description": "Jurisdiction-assigned license identifier. Upper-case alphanumeric with hyphens.",
+      "pattern": "^[A-Z0-9-]+$",
+      "minLength": 3,
+      "maxLength": 32
+    },
+    "jurisdiction": {
+      "type": "string",
+      "description": "ISO 3166-2 subdivision code for the granting jurisdiction (e.g., 'US-CA').",
+      "pattern": "^US-[A-Z]{2}$"
+    },
+    "lines_of_business": {
+      "type": "array",
+      "description": "Authorized lines of business under this license.",
+      "items": {
+        "type": "string",
+        "enum": [
+          "property",
+          "casualty",
+          "life",
+          "health",
+          "auto",
+          "workers_compensation",
+          "marine",
+          "aviation"
+        ]
+      },
+      "minItems": 1,
+      "uniqueItems": true
+    },
+    "effective_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the license takes effect."
+    },
+    "expiration_date": {
+      "type": "string",
+      "format": "date",
+      "description": "Date the license expires absent renewal."
+    },
+    "regulatory_body": {
+      "type": "string",
+      "description": "Display name of the issuing regulator (e.g., 'California Department of Insurance')."
+    },
+    "market_conduct_status": {
+      "type": "string",
+      "description": "Current market-conduct standing as assessed by the regulator.",
+      "enum": [
+        "good_standing",
+        "under_review",
+        "restricted"
+      ]
+    }
+  }
+}
