@@ -46,7 +46,7 @@
     "reactions": { "type": "array", "items": { "$ref": "#/$defs/reaction" } },
     "workflows": { "type": "array", "items": { "$ref": "#/$defs/workflow" } },
     "projections": { "type": "array", "items": { "$ref": "#/$defs/projection" } },
-    "rules": { "type": "array", "items": { "type": "object" } }
+    "rules": { "type": "array", "items": { "$ref": "#/$defs/rule" } }
   },
   "$defs": {
     "header": {
@@ -531,6 +531,79 @@
           }
         }
       }
+    },
+    "rule_type": {
+      "type": "string",
+      "enum": [
+        "legal_prose",
+        "behavioral_expectation",
+        "business_policy",
+        "predicate",
+        "computational",
+        "validation",
+        "binding_link"
+      ]
+    },
+    "predicate_purpose": {
+      "type": "string",
+      "enum": [
+        "auth_precondition",
+        "state_precondition",
+        "temporal_precondition",
+        "lifecycle_transition_requires",
+        "lifecycle_transition_condition",
+        "workflow_branch_condition",
+        "aggregate_invariant",
+        "projection_row_filter",
+        "derived_membership"
+      ]
+    },
+    "rule": {
+      "type": "object",
+      "required": ["id", "type", "title"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "type": { "$ref": "#/$defs/rule_type" },
+        "title": { "type": "string" },
+        "description": { "type": "string" },
+        "body": { "type": "string" },
+        "expression": { "type": "string" },
+        "language": { "type": "string", "pattern": "^[A-Z][A-Za-z]*/[0-9]+\\.[0-9]+$" },
+        "purpose": { "$ref": "#/$defs/predicate_purpose" },
+        "result_attribute": { "type": "string" },
+        "links": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule_id"],
+            "additionalProperties": false,
+            "properties": { "rule_id": { "type": "string" } }
+          }
+        }
+      },
+      "allOf": [
+        {
+          "if": { "properties": { "type": { "enum": ["legal_prose", "behavioral_expectation"] } } },
+          "then": { "required": ["body"] }
+        },
+        {
+          "if": { "properties": { "type": { "enum": ["predicate", "computational", "validation"] } } },
+          "then": { "required": ["expression", "language"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "predicate" } } },
+          "then": { "required": ["purpose"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "computational" } } },
+          "then": { "required": ["result_attribute"] }
+        },
+        {
+          "if": { "properties": { "type": { "const": "binding_link" } } },
+          "then": { "required": ["links"] }
+        }
+      ]
     }
   }
 }

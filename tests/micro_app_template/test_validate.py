@@ -477,3 +477,75 @@ def test_invalid_view_type_fails(minimal_valid_template):
     })
     errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
     assert any("view_type" in e.path or "spreadsheet" in e.message for e in errors)
+
+
+def test_legal_prose_rule_validates(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "warranty_disclaimer",
+        "type": "legal_prose",
+        "title": "Coverage Warranty",
+        "body": "Carrier warrants accuracy of all attributes."
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == []
+
+
+def test_predicate_rule_requires_purpose(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "premium_paid",
+        "type": "predicate",
+        "title": "Premium Paid",
+        "expression": "state.paid > 0",
+        "language": "UEL/1.0"
+        # missing purpose
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("purpose" in e.message for e in errors)
+
+
+def test_predicate_rule_validates_with_purpose(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "premium_paid",
+        "type": "predicate",
+        "purpose": "lifecycle_transition_requires",
+        "title": "Premium Paid",
+        "expression": "state.paid > 0",
+        "language": "UEL/1.0"
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == []
+
+
+def test_computational_rule_requires_result_attribute(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "premium",
+        "type": "computational",
+        "title": "Premium",
+        "expression": "base * mult",
+        "language": "UEL/1.0"
+        # missing result_attribute
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("result_attribute" in e.message for e in errors)
+
+
+def test_binding_link_requires_links(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "link_a",
+        "type": "binding_link",
+        "title": "Link"
+        # missing links
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("links" in e.message for e in errors)
+
+
+def test_legal_prose_requires_body(minimal_valid_template):
+    minimal_valid_template["rules"].append({
+        "id": "x",
+        "type": "legal_prose",
+        "title": "X"
+        # missing body
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("body" in e.message for e in errors)
