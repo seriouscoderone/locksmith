@@ -2,6 +2,10 @@
 
 Detailed guidance for each rule type, with worked examples.
 
+For UEL/1.0 expression syntax — bound contexts per `purpose`, available
+operators, idiomatic patterns, format pipes, and gotchas — see
+`uel-1.0-cheat-sheet.md`.
+
 ## `legal_prose`
 
 **When to use:** Ricardian contractual prose. Terms of service, warranties, scope-of-authority statements, disclaimers.
@@ -75,6 +79,9 @@ Detailed guidance for each rule type, with worked examples.
 - `aggregate_invariant` — aggregate validity check
 - `projection_row_filter` — projection access control
 - `derived_membership` — derived-role membership
+
+Each purpose has a different bound context (which variables are in scope).
+See `uel-1.0-cheat-sheet.md` §1 for the table.
 
 **Worked example:**
 

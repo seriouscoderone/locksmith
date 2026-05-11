@@ -66,6 +66,7 @@ Plus:
 | `references/question-bank.md` | Primary + follow-up questions to ask per step |
 | `references/adversarial-prompts.md` | Pre-save adversarial review checklist |
 | `references/rule-types-reference.md` | Per-type rule guidance with worked examples |
+| `references/uel-1.0-cheat-sheet.md` | UEL/1.0 syntax: bound contexts per position, operators, idioms, format pipes, gotchas |
 | `references/naming-conventions.md` | Recommended naming for credentials, roles, workflows, routes |
 | `references/skeleton.json` | Copyable starting template (minimal-valid with REPLACE-ME fields) |
 | `references/examples/` | Worked examples (one per ecosystem domain, when available) |
