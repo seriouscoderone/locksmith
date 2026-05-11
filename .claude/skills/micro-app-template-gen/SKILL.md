@@ -43,8 +43,8 @@ The 10-step process is **rigid in order**. Step N's questions depend on Step N-1
 |---|---|---|
 | 0 | Identify the role | `references/ten-step-process.md` §Step 0; `references/question-bank.md` §Step 0 |
 | 1 | Name the use case (pivotal event) | §Step 1 |
-| 2 | Held credentials (imports) | §Step 2 |
-| 3 | Issued credentials (exports) | §Step 3 — heaviest step; produces schemas/*.json files |
+| 2 | Credential imports (the imports list) | §Step 2 |
+| 3 | Credential exports (the exports list) | §Step 3 — heaviest step; produces schemas/*.json files |
 | 4 | Commands | §Step 4 |
 | 5 | Aggregates | §Step 5 |
 | 6 | Reactions | §Step 6 |
@@ -87,7 +87,7 @@ Plus:
 - ❌ Skipping the adversarial review — the highest-value step
 - ❌ Inventing schema SAIDs — they must be content-addressed
 - ❌ Authoring on `/ipex/*` routes — reserved for protocol
-- ❌ Conflating held credentials with issued credentials — different lists, different purposes
+- ❌ Conflating imported credentials with exported credentials — different lists, different purposes
 - ❌ Putting state or principal in `idempotency_key_expression` — must be deterministic from payload alone
 
 ## Recovery / resumption

@@ -42,7 +42,7 @@ def minimal_valid_template() -> dict:
                 "acdc_registry": False,
             },
         },
-        "credentials": {"held": [], "issued": []},
+        "credentials": {"imports": [], "exports": []},
         "commands": [],
         "aggregates": [],
         "reactions": [],

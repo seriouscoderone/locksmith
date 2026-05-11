@@ -39,8 +39,8 @@ def test_dangling_rule_ref_caught_by_xref():
     doc = {
         "rules": [{"id": "real-rule", "type": "legal_prose", "title": "X", "body": "y"}],
         "credentials": {
-            "held": [],
-            "issued": [
+            "imports": [],
+            "exports": [
                 {
                     "id": "cred-a",
                     "name": "Cred A",
@@ -128,7 +128,7 @@ from locksmith.micro_app_template.xref import validate_xrefs
         {
             "rules": [],
             "workflows": [],
-            "credentials": {"held": [], "issued": [{
+            "credentials": {"imports": [], "exports": [{
                 "id": "c1", "name": "n", "description": "d",
                 "envelope": {"holder_role": "r", "verifier_roles": [], "edges": [], "disclosure_mode": "full"},
                 "schema": {"schema_said": "E" + "x" * 43, "schema_path": "schemas/c.json"},
@@ -153,17 +153,17 @@ from locksmith.micro_app_template.xref import validate_xrefs
         },
         "missing-command",
     ),
-    # reaction trigger credential_held_id
+    # reaction trigger imported_credential_id
     (
         {
-            "credentials": {"held": [], "issued": []},
+            "credentials": {"imports": [], "exports": []},
             "reactions": [{
                 "id": "r1", "description": "r",
-                "trigger": {"type": "credential_received", "credential_held_id": "missing-held"},
+                "trigger": {"type": "credential_received", "imported_credential_id": "missing-import"},
                 "emissions": [],
             }],
         },
-        "missing-held",
+        "missing-import",
     ),
     # aggregate invariant rule_ref
     (
@@ -199,17 +199,17 @@ from locksmith.micro_app_template.xref import validate_xrefs
         },
         "missing-rule",
     ),
-    # command emission lifecycle_advance credential_issued_id
+    # command emission lifecycle_advance exported_credential_id
     (
         {
-            "credentials": {"held": [], "issued": []},
+            "credentials": {"imports": [], "exports": []},
             "commands": [{
                 "id": "c1", "name": "c", "description": "c", "route": "/x/cmd/c",
                 "payload_schema": {}, "idempotency_key_expression": "hash(p)",
-                "emissions": [{"kind": "lifecycle_advance", "credential_issued_id": "missing-issued", "to_state": "active"}],
+                "emissions": [{"kind": "lifecycle_advance", "exported_credential_id": "missing-export", "to_state": "active"}],
             }],
         },
-        "missing-issued",
+        "missing-export",
     ),
     # command emission aggregate_event aggregate_id
     (
@@ -236,8 +236,8 @@ def test_xref_passes_on_consistent_doc():
     doc = {
         "rules": [{"id": "r1", "type": "legal_prose", "title": "T", "body": "B"}],
         "credentials": {
-            "held": [{"id": "h1", "expected_schema_said": "E" + "x" * 43}],
-            "issued": [],
+            "imports": [{"id": "h1", "expected_schema_said": "E" + "x" * 43}],
+            "exports": [],
         },
         "commands": [],
         "aggregates": [],
@@ -261,7 +261,7 @@ def test_invalid_edge_operator_fails(fixtures_dir):
     import json
     with open(fixtures_dir / "credentials_valid.json") as f:
         doc = json.load(f)
-    doc["credentials"]["issued"][0]["envelope"]["edges"][0]["operator"] = "not_a_real_operator"
+    doc["credentials"]["exports"][0]["envelope"]["edges"][0]["operator"] = "not_a_real_operator"
     errors = validate_against_meta_schema(doc, META_SCHEMA)
     assert any("operator" in e.path or "operator" in e.message for e in errors)
 
@@ -270,7 +270,7 @@ def test_invalid_disclosure_mode_fails(fixtures_dir):
     import json
     with open(fixtures_dir / "credentials_valid.json") as f:
         doc = json.load(f)
-    doc["credentials"]["issued"][0]["envelope"]["disclosure_mode"] = "secret"
+    doc["credentials"]["exports"][0]["envelope"]["disclosure_mode"] = "secret"
     errors = validate_against_meta_schema(doc, META_SCHEMA)
     assert any("disclosure_mode" in e.path or "secret" in e.message for e in errors)
 
@@ -279,7 +279,7 @@ def test_invalid_tel_primitive_fails(fixtures_dir):
     import json
     with open(fixtures_dir / "credentials_valid.json") as f:
         doc = json.load(f)
-    doc["credentials"]["issued"][0]["lifecycle"]["transitions"][0]["tel_primitive"] = "delete"
+    doc["credentials"]["exports"][0]["lifecycle"]["transitions"][0]["tel_primitive"] = "delete"
     errors = validate_against_meta_schema(doc, META_SCHEMA)
     assert any("tel_primitive" in e.path or "delete" in e.message for e in errors)
 
@@ -288,7 +288,7 @@ def test_schema_path_must_be_in_schemas_dir(fixtures_dir):
     import json
     with open(fixtures_dir / "credentials_valid.json") as f:
         doc = json.load(f)
-    doc["credentials"]["issued"][0]["schema"]["schema_path"] = "elsewhere/policy.json"
+    doc["credentials"]["exports"][0]["schema"]["schema_path"] = "elsewhere/policy.json"
     errors = validate_against_meta_schema(doc, META_SCHEMA)
     assert any("schema_path" in e.path for e in errors)
 
@@ -314,8 +314,8 @@ def test_command_with_credential_emission_validates(minimal_valid_template):
                 "exchange": {
                     "kind": "credential",
                     "verb": "apply",
-                    "credential_held_id": None,
-                    "credential_issued_id": None,
+                    "imported_credential_id": None,
+                    "exported_credential_id": None,
                     "schema_said_referenced": "EAbc0000000000000000000000000000000000000000"
                 }
             }
@@ -353,8 +353,8 @@ def test_invalid_ipex_verb_fails(minimal_valid_template):
                 "exchange": {
                     "kind": "credential",
                     "verb": "yeet",
-                    "credential_held_id": None,
-                    "credential_issued_id": None
+                    "imported_credential_id": None,
+                    "exported_credential_id": None
                 }
             }
         ]
@@ -400,7 +400,7 @@ def test_reaction_validates(minimal_valid_template):
         "description": "Admit incoming license credential.",
         "trigger": {
             "type": "credential_received",
-            "credential_held_id": "carrier_license",
+            "imported_credential_id": "carrier_license",
             "ipex_verb": "grant"
         },
         "emissions": [
@@ -409,7 +409,7 @@ def test_reaction_validates(minimal_valid_template):
                 "exchange": {
                     "kind": "credential",
                     "verb": "admit",
-                    "credential_held_id": "carrier_license"
+                    "imported_credential_id": "carrier_license"
                 }
             }
         ],

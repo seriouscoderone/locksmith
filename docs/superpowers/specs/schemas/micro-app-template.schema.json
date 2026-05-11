@@ -22,16 +22,16 @@
     "role": { "$ref": "#/$defs/role" },
     "credentials": {
       "type": "object",
-      "required": ["held", "issued"],
+      "required": ["imports", "exports"],
       "additionalProperties": false,
       "properties": {
-        "held": {
+        "imports": {
           "type": "array",
-          "items": { "$ref": "#/$defs/held_credential" }
+          "items": { "$ref": "#/$defs/imported_credential" }
         },
-        "issued": {
+        "exports": {
           "type": "array",
-          "items": { "$ref": "#/$defs/issued_credential" }
+          "items": { "$ref": "#/$defs/exported_credential" }
         }
       }
     },
@@ -97,7 +97,7 @@
         }
       }
     },
-    "held_credential": {
+    "imported_credential": {
       "type": "object",
       "required": ["id", "expected_schema_said"],
       "additionalProperties": false,
@@ -126,7 +126,7 @@
       "type": "string",
       "enum": ["issue", "update", "revoke"]
     },
-    "issued_credential": {
+    "exported_credential": {
       "type": "object",
       "required": ["id", "name", "description", "envelope", "schema", "lifecycle"],
       "additionalProperties": false,
@@ -253,8 +253,8 @@
           "properties": {
             "kind": { "const": "credential" },
             "verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] },
-            "credential_held_id": { "type": ["string", "null"] },
-            "credential_issued_id": { "type": ["string", "null"] },
+            "imported_credential_id": { "type": ["string", "null"] },
+            "exported_credential_id": { "type": ["string", "null"] },
             "schema_said_referenced": { "type": ["string", "null"] }
           }
         },
@@ -281,10 +281,10 @@
           }
         },
         {
-          "required": ["kind", "credential_issued_id", "to_state"],
+          "required": ["kind", "exported_credential_id", "to_state"],
           "properties": {
             "kind": { "const": "lifecycle_advance" },
-            "credential_issued_id": { "type": "string" },
+            "exported_credential_id": { "type": "string" },
             "to_state": { "type": "string" }
           }
         },
@@ -341,10 +341,10 @@
       "required": ["type"],
       "oneOf": [
         {
-          "required": ["type", "credential_held_id"],
+          "required": ["type", "imported_credential_id"],
           "properties": {
             "type": { "const": "credential_received" },
-            "credential_held_id": { "type": "string" },
+            "imported_credential_id": { "type": "string" },
             "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] }
           }
         },
@@ -360,8 +360,8 @@
           "required": ["type"],
           "properties": {
             "type": { "const": "lifecycle_event" },
-            "credential_issued_id": { "type": "string" },
-            "credential_held_id": { "type": "string" },
+            "exported_credential_id": { "type": "string" },
+            "imported_credential_id": { "type": "string" },
             "to_state": { "type": "string" }
           }
         },
@@ -420,7 +420,7 @@
             "additionalProperties": false,
             "properties": {
               "trigger_type": { "type": "string", "enum": ["credential_received", "exn_received", "lifecycle_event"] },
-              "credential_held_id": { "type": "string" },
+              "imported_credential_id": { "type": "string" },
               "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] },
               "route": { "type": "string" },
               "on_match": { "type": "string", "pattern": "^next_step:" }
@@ -460,7 +460,7 @@
         "cadence": { "type": "string" },
         "at": { "type": "string", "format": "date-time" },
         "credential_id": { "type": "string" },
-        "credential_held_id": { "type": "string" },
+        "imported_credential_id": { "type": "string" },
         "to_state": { "type": "string" },
         "route": { "type": "string" },
         "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] }

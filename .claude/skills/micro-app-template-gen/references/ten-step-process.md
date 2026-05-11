@@ -61,13 +61,13 @@ Let the SME override defaults. The flags are deployment-readiness *expectations*
 
 **Save:** Write `header` and `role` fields. The template is now structurally minimal-valid (other primitives are empty arrays).
 
-## Step 2 — Held credentials (imports)
+## Step 2 — Credential imports (the imports list)
 
 **Goal:** Identify the credentials this role must hold for its commands to be authorized.
 
-**Why this comes before issued credentials:** What you HOLD constrains what you can DO. Held credentials determine the universe of commands available.
+**Why this comes before exported credentials:** What you import constrains what you can DO. Imported credentials determine the universe of commands available.
 
-**For each held credential, capture:**
+**For each imported credential, capture:**
 
 | Field | Notes |
 |---|---|
@@ -83,15 +83,15 @@ Let the SME override defaults. The flags are deployment-readiness *expectations*
 **Anti-patterns:**
 
 - ❌ Inventing schema SAIDs — they must be content-addressed
-- ❌ Conflating "credentials this role *holds*" with "credentials this role *issues*" — different lists
+- ❌ Conflating "credentials this role *imports*" with "credentials this role *exports*" — different lists
 
-## Step 3 — Issued credentials (exports)
+## Step 3 — Credential exports (the exports list)
 
 **Goal:** Define the credentials this role produces — their envelope, schema, lifecycle, rules, value flow.
 
-**The most substantial step.** Each issued credential has six layers (per spec §6.3).
+**The most substantial step.** Each exported credential has six layers (per spec §6.3).
 
-For each issued credential, walk:
+For each exported credential, walk:
 
 1. **Envelope contract** — who holds it, who verifies it, what it chains from
 2. **Schema** — author a JSON-Schema file in `schemas/` and capture its SAID
@@ -153,7 +153,7 @@ Aggregates are typically TEL-backed (when tracking credential lifecycle) or KEL-
 
 For each reaction:
 
-1. **Trigger** — credential_received (with credential_held_id + optional ipex_verb), exn_received (with route), lifecycle_event (with credential and state), or scheduled (with cadence)
+1. **Trigger** — credential_received (with imported_credential_id + optional ipex_verb), exn_received (with route), lifecycle_event (with credential and state), or scheduled (with cadence)
 2. **Emissions** — same shape as command emissions
 3. **Failure policy** — `log_and_continue` | `log_and_spurn` | `abort`; optional timeout_seconds
 

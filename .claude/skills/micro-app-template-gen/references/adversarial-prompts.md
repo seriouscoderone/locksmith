@@ -5,7 +5,7 @@ Before declaring a template done, deliberately try to break it. Walk this checkl
 ## 1. Impersonation
 
 - *Can an impostor present a forged credential and have it pass auth_preconditions?*
-- KERI's signature/credential machinery makes this "no by construction" when auth_preconditions correctly reference held credentials with proper rule blocks. Verify that your auth_preconditions DO reference real credential checks (not just `true` or omitted).
+- KERI's signature/credential machinery makes this "no by construction" when auth_preconditions correctly reference imported credentials with proper rule blocks. Verify that your auth_preconditions DO reference real credential checks (not just `true` or omitted).
 
 ## 2. Credential revocation timing
 

@@ -101,8 +101,8 @@ A single JSON document with:
   "header": { ... },
   "role": { ... },
   "credentials": {
-    "held": [ ... ],
-    "issued": [ ... ]
+    "imports": [ ... ],
+    "exports": [ ... ]
   },
   "commands": [ ... ],
   "aggregates": [ ... ],
@@ -166,7 +166,7 @@ A typical micro-app template directory:
 my-micro-app/
 ├── micro-app-template.json    # canonical artifact (SAID-self-identifying)
 ├── metadata.json              # sibling viewer color (optional; non-canonical; §9)
-└── schemas/                   # JSON-Schema files for issued credentials (§6.3)
+└── schemas/                   # JSON-Schema files for exported credentials (§6.3)
     ├── carrier_license.json
     ├── policy.json
     └── ...
@@ -238,18 +238,18 @@ The single role this micro-app embodies. Every other primitive operates from thi
 
 The kind suggests defaults for `keri_infrastructure` (e.g., `organization` typically has all four; `individual` often has only `mailbox`), but the SME may override.
 
-Only one role is declared per template. Counterparty roles referenced elsewhere (in `credentials.held[].issuer_role`, `commands[].counterparty_role`, etc.) are referred to by id only and resolved against the emergent ecosystem at render time.
+Only one role is declared per template. Counterparty roles referenced elsewhere (in `credentials.imports[].issuer_role`, `commands[].counterparty_role`, etc.) are referred to by id only and resolved against the emergent ecosystem at render time.
 
-### 6.3 Credentials — held and issued
+### 6.3 Credentials — imports and exports
 
 Credentials this role interacts with, split into two lists by direction.
 
-**Held** — credentials this role must hold to perform commands. Imports.
+**Imports** — credentials this role must hold to perform commands.
 
 ```json
 {
   "credentials": {
-    "held": [
+    "imports": [
       {
         "id": "carrier_license",
         "expected_schema_said": "EAuthorityIssuedSchemaSAID...",
@@ -261,27 +261,27 @@ Credentials this role interacts with, split into two lists by direction.
         "narrative": "Holding a license credential from a state regulator is the precondition for binding policies."
       }
     ],
-    "issued": [ ... ]
+    "exports": [ ... ]
   }
 }
 ```
 
-Each held credential entry declares the *expectation*. The actual credential is observed at runtime from the wallet's TEL views. Fields:
+Each imported credential entry declares the *expectation*. The actual credential is observed at runtime from the wallet's TEL views. Fields:
 
 - `id` (required) — local identifier used by commands and rules to reference this expectation
-- `expected_schema_said` (required) — content-addressed schema identity that this micro-app expects to find on credentials it holds. This is the **imports SAID** that the Ecosystem Viewer matches against other templates' `issued[].schema_said`.
+- `expected_schema_said` (required) — content-addressed schema identity that this micro-app expects to find on credentials it holds. This is the **imports SAID** that the Ecosystem Viewer matches against other templates' `exports[].schema_said`.
 - `expected_issuer_role` (optional) — narrowing constraint: only accept credentials issued by AIDs in this role
 - `expected_attribute_constraints` (optional) — soft type constraints on credential attributes (for validation at use time)
 - `lifecycle_acceptance` (optional) — which lifecycle states make this credential usable (default: `["active"]`)
 - `narrative` (optional) — SME explanation surfaced in UI tooltips
 
-**Issued** — credentials this role produces. Exports.
+**Exports** — credentials this role produces.
 
 ```json
 {
   "credentials": {
-    "held": [ ... ],
-    "issued": [
+    "imports": [ ... ],
+    "exports": [
       {
         "id": "policy",
         "name": "Policy Credential",
@@ -355,7 +355,7 @@ Each held credential entry declares the *expectation*. The actual credential is 
 }
 ```
 
-Each issued credential has six logical layers, surfaced as nested fields:
+Each exported credential has six logical layers, surfaced as nested fields:
 
 - **`id`, `name`, `description`** — local identity and human-readable strings
 - **`envelope`** — the contract: who holds (`holder_role`), who verifies (`verifier_roles`), chain references (`edges`), disclosure semantics (`disclosure_mode`)
@@ -371,7 +371,7 @@ Each issued credential has six logical layers, surfaced as nested fields:
   - `transitions[]` — each has `id`, `from` (string or array), `to`, optional `via_workflow` (manual transition driven by a workflow step), optional `trigger: "automatic"` and `condition_rule_ref` (automatic transition fired by rule evaluation), required `tel_primitive` (one of `issue`, `update`, `revoke`), optional `requires` (array of `rule_ref` objects). The `tel_primitive` is the mapping from abstract state to KERI substrate.
 - **`rule_refs`** — array of rule identifiers (declared in §6.9) attached to this credential (Ricardian clauses, validations, computations, behavioral expectations)
 - **`value_flow`** (optional) — documents economic/authority relationships implied by this credential:
-  - `implied_credentials[]` — references to other credentials (in this template's issued list OR imported from elsewhere) with named `relationship` semantics. Supported `relationship` values: `issuer_grants` (holder of this credential is empowered to issue the named credential), `per_emission` (each emission of this triggers an instance of the named credential), `per_holder_emission` (each emission by this holder triggers an instance), `implies_obligation` (holding this creates an obligation expressed via the named credential).
+  - `implied_credentials[]` — references to other credentials (in this template's exports list OR imported from elsewhere) with named `relationship` semantics. Supported `relationship` values: `issuer_grants` (holder of this credential is empowered to issue the named credential), `per_emission` (each emission of this triggers an instance of the named credential), `per_holder_emission` (each emission by this holder triggers an instance), `implies_obligation` (holding this creates an obligation expressed via the named credential).
 
 ### 6.4 Commands
 
@@ -407,8 +407,8 @@ The actions this role takes — buttons in the Locksmith UI, exn messages on the
           "exchange": {
             "kind": "credential",
             "verb": "apply",
-            "credential_held_id": null,
-            "credential_issued_id": null,
+            "imported_credential_id": null,
+            "exported_credential_id": null,
             "schema_said_referenced": "EAbc...CarrierLicenseSchemaSAID..."
           }
         }
@@ -430,7 +430,7 @@ Each command has:
 - `idempotency_key_expression` (required) — UEL expression over `payload` only (no state, no principal) that produces a stable hash. Locksmith uses this to deduplicate retries.
 - `emissions[]` — what events fire when the command succeeds. Each emission is either:
   - `kind: "exchange"` — an outbound exn message. The `exchange` object follows §6.7's shape (credential/message/null kinds).
-  - `kind: "lifecycle_advance"` — advances a credential's lifecycle. The `lifecycle_advance` object has `credential_issued_id` and `to_state`.
+  - `kind: "lifecycle_advance"` — advances a credential's lifecycle. The `lifecycle_advance` object has `exported_credential_id` and `to_state`.
   - `kind: "aggregate_event"` — appends an event to one of the role's aggregates. The object has `aggregate_id`, `event_type`, `payload_mapping` (UEL expression mapping command payload + state to event payload).
 
 ### 6.5 Aggregates
@@ -492,7 +492,7 @@ What this role does when it observes an event it didn't initiate.
       "description": "When a license credential is granted to us by the regulator, admit it and advance our local aggregate.",
       "trigger": {
         "type": "credential_received",
-        "credential_held_id": "carrier_license",
+        "imported_credential_id": "carrier_license",
         "ipex_verb": "grant"
       },
       "emissions": [
@@ -501,7 +501,7 @@ What this role does when it observes an event it didn't initiate.
           "exchange": {
             "kind": "credential",
             "verb": "admit",
-            "credential_held_id": "carrier_license"
+            "imported_credential_id": "carrier_license"
           }
         },
         {
@@ -522,9 +522,9 @@ What this role does when it observes an event it didn't initiate.
 
 - `id`, `description` — local identity and SME narrative
 - `trigger` — the event pattern this reaction matches. `type` is one of:
-  - `credential_received` — an inbound IPEX-borne credential. Sub-fields: `credential_held_id` (matches against `credentials.held`), `ipex_verb` (which verb the inbound message was — `apply`, `offer`, `grant`, etc.)
+  - `credential_received` — an inbound IPEX-borne credential. Sub-fields: `imported_credential_id` (matches against `credentials.imports`), `ipex_verb` (which verb the inbound message was — `apply`, `offer`, `grant`, etc.)
   - `exn_received` — an inbound non-IPEX exn message. Sub-fields: `route` (the exn route pattern), `schema_id` (optional payload schema match)
-  - `lifecycle_event` — a local credential's lifecycle transitioned. Sub-fields: `credential_issued_id` (or `credential_held_id`), `to_state`
+  - `lifecycle_event` — a local credential's lifecycle transitioned. Sub-fields: `exported_credential_id` (or `imported_credential_id`), `to_state`
   - `scheduled` — a timer fired. Sub-fields: `cadence` (cron-style) or `at` (specific datetime)
 - `emissions[]` — same shape as command emissions (§6.4)
 - `failure_policy` — what to do if the reaction's emissions can't complete. `on_validation_failure`: `log_and_continue` | `log_and_spurn` | `abort`. `timeout_seconds`: maximum time to wait for downstream completion before deeming the reaction failed (null for no timeout).
@@ -562,7 +562,7 @@ This role's external interactions over time — named sequences of commands and 
           "expected_inbound": [
             {
               "trigger_type": "credential_received",
-              "credential_held_id": "carrier_license",
+              "imported_credential_id": "carrier_license",
               "ipex_verb": "grant",
               "on_match": "next_step:admit"
             },
@@ -609,7 +609,7 @@ Each workflow has:
   - `type: "scheduled"` with `cadence` — runs on a schedule
   - `type: "lifecycle_event"` with credential and state — starts when a credential transitions
   - `type: "exn_received"` with route — starts when an inbound message arrives
-  - `type: "credential_received"` with held credential id and verb — starts when a credential is received
+  - `type: "credential_received"` with imported credential id and verb — starts when a credential is received
 - `steps[]` — ordered (by `next_steps` references) list of steps. Each step has:
   - `id`, `name` — local identity and UI label
   - `actor` — `self` (this role acts) or `counterparty` (we await the counterparty's action)
@@ -622,7 +622,7 @@ Workflows from this role's perspective only. The counterparty has their own work
 
 The exchange palette across all steps:
 
-- **Credential exchange (IPEX):** `kind: "credential"`, with `verb ∈ {apply, offer, agree, grant, admit, spurn}` and `credential_held_id` or `credential_issued_id` reference
+- **Credential exchange (IPEX):** `kind: "credential"`, with `verb ∈ {apply, offer, agree, grant, admit, spurn}` and `imported_credential_id` or `exported_credential_id` reference
 - **Message exchange (exn):** `kind: "message"`, with `pattern ∈ {command, query, notification}` and `route` and optional `schema_id`
 - **Internal step (no exchange):** `exchange: null`
 
@@ -772,9 +772,9 @@ Each rule has:
 
 Rules referenced from elsewhere in the template:
 
-- `credentials.issued[].rule_refs[]` — rules attached to a credential (Ricardian, validations, computations, behavioral expectations)
-- `credentials.issued[].lifecycle.transitions[].requires[].rule_ref` — predicate gating a state transition
-- `credentials.issued[].lifecycle.transitions[].condition_rule_ref` — predicate gating an automatic transition
+- `credentials.exports[].rule_refs[]` — rules attached to a credential (Ricardian, validations, computations, behavioral expectations)
+- `credentials.exports[].lifecycle.transitions[].requires[].rule_ref` — predicate gating a state transition
+- `credentials.exports[].lifecycle.transitions[].condition_rule_ref` — predicate gating an automatic transition
 - `commands[].auth_preconditions[].rule_ref`, `commands[].state_preconditions[].rule_ref`, `commands[].temporal_preconditions[].rule_ref` — predicates gating a command
 - `aggregates[].invariants[].rule_ref` — validations enforced by aggregate
 - `workflows[].steps[].branches[].rule_ref` — branch condition predicates
@@ -782,24 +782,24 @@ Rules referenced from elsewhere in the template:
 
 ## 7. Imports/exports and alignment mechanisms
 
-The template's imports and exports — i.e., what credentials it depends on (held) and produces (issued) — are the substrate for the emergent ecosystem view. Two alignment mechanisms operate over them.
+The template's imports and exports — i.e., what credentials it depends on (`credentials.imports`) and produces (`credentials.exports`) — are the substrate for the emergent ecosystem view. Two alignment mechanisms operate over them.
 
 ### 7.1 SAID-based alignment (content-addressed)
 
 Two templates are **content-aligned** on a credential when:
 
-- Template A's `credentials.issued[i].schema.schema_said` equals
-- Template B's `credentials.held[j].expected_schema_said`
+- Template A's `credentials.exports[i].schema.schema_said` equals
+- Template B's `credentials.imports[j].expected_schema_said`
 
 This is automatic and strong. It is the same alignment ACDC schemas already exhibit: identical canonical content → identical SAID → cryptographic equivalence. The viewer renders a directed edge from A to B labeled by the SAID.
 
-The viewer's emergent ecosystem clusters templates that share SAID references. A "the insurance ecosystem" is what you see when you look at the connected component of templates whose held/issued SAIDs interlock.
+The viewer's emergent ecosystem clusters templates that share SAID references. A "the insurance ecosystem" is what you see when you look at the connected component of templates whose import/export SAIDs interlock.
 
 ### 7.2 Convention-based alignment (naming)
 
 Two templates are **convention-aligned** on a credential when:
 
-- Template A's `credentials.issued[i].name` and Template B's `credentials.held[j]` (looked up by `expected_schema_said` resolved through a known-naming-convention registry) follow the same naming pattern (e.g., both name a `ProducerLicense`)
+- Template A's `credentials.exports[i].name` and Template B's `credentials.imports[j]` (looked up by `expected_schema_said` resolved through a known-naming-convention registry) follow the same naming pattern (e.g., both name a `ProducerLicense`)
 - But their SAIDs differ (different canonical content)
 
 This is fuzzy. The viewer renders a dashed edge labeled with a "compatible-by-convention?" hint, prompting the user to compare and decide. Two competing implementations of `ProducerLicense` is a common organic-ecosystem dynamic — the convention says "these are probably trying to do the same thing"; the SAIDs say "their authors disagreed on the details."
@@ -958,15 +958,15 @@ Ask: *From this role's perspective, what is the outcome they want?* State as a p
 
 Produces: `header.id`, `header.display_name`, `header.description`. Sets the narrative anchor for everything that follows.
 
-### Step 2 — Identify held credentials (imports)
+### Step 2 — Identify credential imports
 
 Ask: *What credentials must this role hold to perform its commands?* For each: an id, the expected schema SAID (resolved from other templates the wallet knows about, or asked of the user), the expected issuer role, optional attribute constraints, lifecycle states that make it usable.
 
 These come from OTHER micro-apps. The skill prompts the user to look at the emergent ecosystem view (if available) or ask about SAIDs explicitly.
 
-Produces: `credentials.held[]` (§6.3).
+Produces: `credentials.imports[]` (§6.3).
 
-### Step 3 — Identify issued credentials (exports)
+### Step 3 — Identify credential exports
 
 Ask: *What credentials does this role produce?* For each:
 
@@ -978,7 +978,7 @@ Ask: *What credentials does this role produce?* For each:
 
 This is the heaviest step. Subagents can be dispatched for schema authoring per credential.
 
-Produces: `credentials.issued[]` (§6.3) + schema files in `schemas/`.
+Produces: `credentials.exports[]` (§6.3) + schema files in `schemas/`.
 
 ### Step 4 — Identify commands
 
@@ -1091,7 +1091,7 @@ Before declaring a template done, walk these:
 
 (The MVP focuses on single-role templates; multi-role authority topology lives in the Ecosystem Viewer's emergent model. Future extensions may surface these directly.)
 
-### Edge operators (`credentials.issued[].envelope.edges[].operator`)
+### Edge operators (`credentials.exports[].envelope.edges[].operator`)
 
 | Operator | Semantic | KERI-native acronym |
 |---|---|---|
@@ -1099,7 +1099,7 @@ Before declaring a template done, walk these:
 | `references` | Informational pointer; no authority transfer | NI2I |
 | `authorizes-via-delegate` | Issuer is a KEL-delegated AID of parent's holder | DI2I |
 
-### TEL primitives (`credentials.issued[].lifecycle.transitions[].tel_primitive`)
+### TEL primitives (`credentials.exports[].lifecycle.transitions[].tel_primitive`)
 
 `issue` | `update` | `revoke`
 

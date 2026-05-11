@@ -21,8 +21,8 @@
     }
   },
   "credentials": {
-    "held": [],
-    "issued": []
+    "imports": [],
+    "exports": []
   },
   "commands": [],
   "aggregates": [],

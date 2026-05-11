@@ -20,23 +20,23 @@ Per-step questions to ask an SME. Pick the primary question first; ask follow-up
 - *"If two outcomes feel central, can you state each separately? They might be two micro-apps."*
 - *"Does this template descend from another? If so, what's the parent's SAID and version, and what did you change?"*
 
-## Step 2 — Held credentials (imports)
+## Step 2 — Credential imports (the imports list)
 
 **Primary:**
 - *"What credentials must this role hold to take its actions?"*
 
-**Follow-ups per held credential:**
+**Follow-ups per imported credential:**
 - *"What's this credential type called?"*
 - *"What's the SAID of the schema?"* — if not known, note as TBD and continue
 - *"Who issues it? (which role)"*
 - *"Which lifecycle states make it usable? (default: active)"*
 
-## Step 3 — Issued credentials (exports)
+## Step 3 — Credential exports (the exports list)
 
 **Primary:**
 - *"What credentials does this role produce?"*
 
-**Follow-ups per issued credential:**
+**Follow-ups per exported credential:**
 - *"What's the credential called and what does it convey?"*
 - *"Who holds it? Who can verify it?"*
 - *"Does it chain from another credential — like 'I can only issue this if I hold a parent credential'? If so, which?"*

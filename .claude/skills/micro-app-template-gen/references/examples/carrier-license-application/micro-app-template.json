@@ -123,8 +123,8 @@
       "emissions": [
         {
           "exchange": {
-            "credential_held_id": null,
-            "credential_issued_id": null,
+            "exported_credential_id": null,
+            "imported_credential_id": null,
             "kind": "credential",
             "schema_said_referenced": null,
             "verb": "apply"
@@ -203,7 +203,8 @@
     }
   ],
   "credentials": {
-    "held": [
+    "exports": [],
+    "imports": [
       {
         "expected_issuer_role": "state-doi",
         "expected_schema_said": "EAA00000000000000000000000000000000000000TBD",
@@ -213,10 +214,9 @@
         ],
         "narrative": "Type declaration for the license credential this carrier is applying for. As a startup the carrier has no active instance yet; this entry exists so reactions and workflows can reference the credential type. Schema SAID is TBD until the regulator's micro-app fixes it."
       }
-    ],
-    "issued": []
+    ]
   },
-  "d": "EK-U0kLgnJkHluwN_I5uI_UmqoZsk_PjsTFpL2M5peqU",
+  "d": "EKWa05YClt7wT3cp99noQHfuVocp7VDNQnQrrxHYxkLN",
   "header": {
     "description": "The carrier's side of license application: a startup insurance carrier submits an application to a state regulator and processes the resulting grant or revocation. Pivotal event: an application has been submitted and adjudicated.",
     "display_name": "Carrier Applies for License",
@@ -314,7 +314,7 @@
       },
       "id": "on_license_granted",
       "trigger": {
-        "credential_held_id": "carrier_license",
+        "imported_credential_id": "carrier_license",
         "ipex_verb": "grant",
         "type": "credential_received"
       }
@@ -335,7 +335,7 @@
       },
       "id": "on_license_revoked",
       "trigger": {
-        "credential_held_id": "carrier_license",
+        "imported_credential_id": "carrier_license",
         "to_state": "revoked",
         "type": "lifecycle_event"
       }
@@ -422,7 +422,7 @@
           "actor": "counterparty",
           "expected_inbound": [
             {
-              "credential_held_id": "carrier_license",
+              "imported_credential_id": "carrier_license",
               "ipex_verb": "grant",
               "on_match": "next_step:step_evaluate_grant",
               "trigger_type": "credential_received"

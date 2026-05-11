@@ -2,8 +2,8 @@
 
 JSON-Schema validates structural shape. This module validates the
 references *within* the document: rule_refs resolve to declared rule
-ids, credential_held_id references resolve to entries in
-credentials.held, lifecycle transition workflow references resolve to
+ids, imported_credential_id references resolve to entries in
+credentials.imports, lifecycle transition workflow references resolve to
 declared workflows, etc.
 """
 from __future__ import annotations
@@ -30,9 +30,9 @@ def _collect_rule_ids(doc: dict[str, Any]) -> set[str]:
 
 def _collect_credential_ids(doc: dict[str, Any]) -> tuple[set[str], set[str]]:
     creds = doc.get("credentials", {})
-    held = {c["id"] for c in creds.get("held", []) if "id" in c}
-    issued = {c["id"] for c in creds.get("issued", []) if "id" in c}
-    return held, issued
+    import_ids = {c["id"] for c in creds.get("imports", []) if "id" in c}
+    export_ids = {c["id"] for c in creds.get("exports", []) if "id" in c}
+    return import_ids, export_ids
 
 
 def _collect_workflow_ids(doc: dict[str, Any]) -> set[str]:
@@ -55,18 +55,18 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
     """Return a list of unresolved cross-references found in doc."""
     errors: list[XrefError] = []
     rule_ids = _collect_rule_ids(doc)
-    held_ids, issued_ids = _collect_credential_ids(doc)
+    import_ids, export_ids = _collect_credential_ids(doc)
     workflow_ids = _collect_workflow_ids(doc)
     command_ids = _collect_command_ids(doc)
     reaction_ids = _collect_reaction_ids(doc)
     aggregate_ids = _collect_aggregate_ids(doc)
 
-    # credentials.issued[].rule_refs
-    for i, c in enumerate(doc.get("credentials", {}).get("issued", [])):
+    # credentials.exports[].rule_refs
+    for i, c in enumerate(doc.get("credentials", {}).get("exports", [])):
         for j, ref in enumerate(c.get("rule_refs", [])):
             if ref not in rule_ids:
                 errors.append(XrefError(
-                    path=f"credentials.issued[{i}].rule_refs[{j}]",
+                    path=f"credentials.exports[{i}].rule_refs[{j}]",
                     reference=ref, target_type="rule",
                 ))
         # lifecycle transitions
@@ -74,20 +74,20 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
             wf = t.get("via_workflow")
             if wf is not None and wf not in workflow_ids:
                 errors.append(XrefError(
-                    path=f"credentials.issued[{i}].lifecycle.transitions[{k}].via_workflow",
+                    path=f"credentials.exports[{i}].lifecycle.transitions[{k}].via_workflow",
                     reference=wf, target_type="workflow",
                 ))
             cond = t.get("condition_rule_ref")
             if cond is not None and cond not in rule_ids:
                 errors.append(XrefError(
-                    path=f"credentials.issued[{i}].lifecycle.transitions[{k}].condition_rule_ref",
+                    path=f"credentials.exports[{i}].lifecycle.transitions[{k}].condition_rule_ref",
                     reference=cond, target_type="rule",
                 ))
             for m, req in enumerate(t.get("requires", []) or []):
                 rr = req.get("rule_ref") if isinstance(req, dict) else None
                 if rr is not None and rr not in rule_ids:
                     errors.append(XrefError(
-                        path=f"credentials.issued[{i}].lifecycle.transitions[{k}].requires[{m}].rule_ref",
+                        path=f"credentials.exports[{i}].lifecycle.transitions[{k}].requires[{m}].rule_ref",
                         reference=rr, target_type="rule",
                     ))
 
@@ -101,17 +101,17 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
                         path=f"commands[{i}].{kind}[{j}].rule_ref",
                         reference=rr, target_type="rule",
                     ))
-        # commands[].emissions: lifecycle_advance.credential_issued_id and aggregate_event.aggregate_id
+        # commands[].emissions: lifecycle_advance.exported_credential_id and aggregate_event.aggregate_id
         for j, em in enumerate(cmd.get("emissions", []) or []):
             if not isinstance(em, dict):
                 continue
             kind = em.get("kind")
             if kind == "lifecycle_advance":
-                cid = em.get("credential_issued_id")
-                if cid is not None and cid not in issued_ids:
+                cid = em.get("exported_credential_id")
+                if cid is not None and cid not in export_ids:
                     errors.append(XrefError(
-                        path=f"commands[{i}].emissions[{j}].credential_issued_id",
-                        reference=cid, target_type="credentials.issued",
+                        path=f"commands[{i}].emissions[{j}].exported_credential_id",
+                        reference=cid, target_type="credentials.exports",
                     ))
             elif kind == "aggregate_event":
                 aid = em.get("aggregate_id")
@@ -127,29 +127,29 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
         if isinstance(trig, dict):
             ttype = trig.get("type")
             if ttype == "credential_received":
-                hid = trig.get("credential_held_id")
-                if hid is not None and hid not in held_ids:
+                hid = trig.get("imported_credential_id")
+                if hid is not None and hid not in import_ids:
                     errors.append(XrefError(
-                        path=f"reactions[{i}].trigger.credential_held_id",
-                        reference=hid, target_type="credentials.held",
+                        path=f"reactions[{i}].trigger.imported_credential_id",
+                        reference=hid, target_type="credentials.imports",
                     ))
             elif ttype == "lifecycle_event":
-                cid = trig.get("credential_issued_id")
-                if cid is not None and cid not in issued_ids:
+                cid = trig.get("exported_credential_id")
+                if cid is not None and cid not in export_ids:
                     errors.append(XrefError(
-                        path=f"reactions[{i}].trigger.credential_issued_id",
-                        reference=cid, target_type="credentials.issued",
+                        path=f"reactions[{i}].trigger.exported_credential_id",
+                        reference=cid, target_type="credentials.exports",
                     ))
         for j, em in enumerate(rx.get("emissions", []) or []):
             if not isinstance(em, dict):
                 continue
             kind = em.get("kind")
             if kind == "lifecycle_advance":
-                cid = em.get("credential_issued_id")
-                if cid is not None and cid not in issued_ids:
+                cid = em.get("exported_credential_id")
+                if cid is not None and cid not in export_ids:
                     errors.append(XrefError(
-                        path=f"reactions[{i}].emissions[{j}].credential_issued_id",
-                        reference=cid, target_type="credentials.issued",
+                        path=f"reactions[{i}].emissions[{j}].exported_credential_id",
+                        reference=cid, target_type="credentials.exports",
                     ))
             elif kind == "aggregate_event":
                 aid = em.get("aggregate_id")
@@ -191,13 +191,13 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
                         path=f"workflows[{i}].steps[{j}].branches[{k}].rule_ref",
                         reference=rr, target_type="rule",
                     ))
-            # expected_inbound[].credential_held_id
+            # expected_inbound[].imported_credential_id
             for k, ei in enumerate(step.get("expected_inbound", []) or []):
-                hid = ei.get("credential_held_id") if isinstance(ei, dict) else None
-                if hid is not None and hid not in held_ids:
+                hid = ei.get("imported_credential_id") if isinstance(ei, dict) else None
+                if hid is not None and hid not in import_ids:
                     errors.append(XrefError(
-                        path=f"workflows[{i}].steps[{j}].expected_inbound[{k}].credential_held_id",
-                        reference=hid, target_type="credentials.held",
+                        path=f"workflows[{i}].steps[{j}].expected_inbound[{k}].imported_credential_id",
+                        reference=hid, target_type="credentials.imports",
                     ))
 
     # projections[].access.row_filter_rule_ref

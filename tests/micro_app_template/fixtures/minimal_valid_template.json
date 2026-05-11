@@ -20,7 +20,7 @@
       "acdc_registry": false
     }
   },
-  "credentials": { "held": [], "issued": [] },
+  "credentials": { "imports": [], "exports": [] },
   "commands": [],
   "aggregates": [],
   "reactions": [],
