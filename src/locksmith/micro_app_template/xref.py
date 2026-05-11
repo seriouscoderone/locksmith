@@ -101,6 +101,63 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
                         path=f"commands[{i}].{kind}[{j}].rule_ref",
                         reference=rr, target_type="rule",
                     ))
+        # commands[].emissions: lifecycle_advance.credential_issued_id and aggregate_event.aggregate_id
+        for j, em in enumerate(cmd.get("emissions", []) or []):
+            if not isinstance(em, dict):
+                continue
+            kind = em.get("kind")
+            if kind == "lifecycle_advance":
+                cid = em.get("credential_issued_id")
+                if cid is not None and cid not in issued_ids:
+                    errors.append(XrefError(
+                        path=f"commands[{i}].emissions[{j}].credential_issued_id",
+                        reference=cid, target_type="credentials.issued",
+                    ))
+            elif kind == "aggregate_event":
+                aid = em.get("aggregate_id")
+                if aid is not None and aid not in aggregate_ids:
+                    errors.append(XrefError(
+                        path=f"commands[{i}].emissions[{j}].aggregate_id",
+                        reference=aid, target_type="aggregate",
+                    ))
+
+    # reactions[].trigger / reactions[].emissions
+    for i, rx in enumerate(doc.get("reactions", [])):
+        trig = rx.get("trigger") or {}
+        if isinstance(trig, dict):
+            ttype = trig.get("type")
+            if ttype == "credential_received":
+                hid = trig.get("credential_held_id")
+                if hid is not None and hid not in held_ids:
+                    errors.append(XrefError(
+                        path=f"reactions[{i}].trigger.credential_held_id",
+                        reference=hid, target_type="credentials.held",
+                    ))
+            elif ttype == "lifecycle_event":
+                cid = trig.get("credential_issued_id")
+                if cid is not None and cid not in issued_ids:
+                    errors.append(XrefError(
+                        path=f"reactions[{i}].trigger.credential_issued_id",
+                        reference=cid, target_type="credentials.issued",
+                    ))
+        for j, em in enumerate(rx.get("emissions", []) or []):
+            if not isinstance(em, dict):
+                continue
+            kind = em.get("kind")
+            if kind == "lifecycle_advance":
+                cid = em.get("credential_issued_id")
+                if cid is not None and cid not in issued_ids:
+                    errors.append(XrefError(
+                        path=f"reactions[{i}].emissions[{j}].credential_issued_id",
+                        reference=cid, target_type="credentials.issued",
+                    ))
+            elif kind == "aggregate_event":
+                aid = em.get("aggregate_id")
+                if aid is not None and aid not in aggregate_ids:
+                    errors.append(XrefError(
+                        path=f"reactions[{i}].emissions[{j}].aggregate_id",
+                        reference=aid, target_type="aggregate",
+                    ))
 
     # aggregates[].invariants
     for i, agg in enumerate(doc.get("aggregates", [])):
@@ -133,6 +190,14 @@ def validate_xrefs(doc: dict[str, Any]) -> list[XrefError]:
                     errors.append(XrefError(
                         path=f"workflows[{i}].steps[{j}].branches[{k}].rule_ref",
                         reference=rr, target_type="rule",
+                    ))
+            # expected_inbound[].credential_held_id
+            for k, ei in enumerate(step.get("expected_inbound", []) or []):
+                hid = ei.get("credential_held_id") if isinstance(ei, dict) else None
+                if hid is not None and hid not in held_ids:
+                    errors.append(XrefError(
+                        path=f"workflows[{i}].steps[{j}].expected_inbound[{k}].credential_held_id",
+                        reference=hid, target_type="credentials.held",
                     ))
 
     # projections[].access.row_filter_rule_ref

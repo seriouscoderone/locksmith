@@ -75,3 +75,146 @@ def test_validate_template_returns_typed_result(minimal_valid_template):
     assert not result.is_valid
     assert len(result.errors) > 0
     assert all(isinstance(e, ValidationError) for e in result.errors)
+
+
+import pytest
+from locksmith.micro_app_template.xref import validate_xrefs
+
+
+@pytest.mark.parametrize("doc,expected_substring", [
+    # rule_ref in commands auth_preconditions
+    (
+        {
+            "rules": [],
+            "commands": [{
+                "id": "c1", "name": "c", "description": "c", "route": "/x/cmd/c",
+                "payload_schema": {}, "idempotency_key_expression": "hash(p)", "emissions": [],
+                "auth_preconditions": [{"rule_ref": "missing-rule"}],
+            }],
+        },
+        "missing-rule",
+    ),
+    # via_workflow on lifecycle transition
+    (
+        {
+            "rules": [],
+            "workflows": [],
+            "credentials": {"held": [], "issued": [{
+                "id": "c1", "name": "n", "description": "d",
+                "envelope": {"holder_role": "r", "verifier_roles": [], "edges": [], "disclosure_mode": "full"},
+                "schema": {"schema_said": "E" + "x" * 43, "schema_path": "schemas/c.json"},
+                "lifecycle": {"states": ["a"], "initial": "a", "transitions": [
+                    {"id": "t1", "from": "a", "to": "a", "tel_primitive": "issue", "via_workflow": "missing-workflow"}
+                ]},
+                "rule_refs": [],
+                "value_flow": {"implied_credentials": []},
+            }]},
+        },
+        "missing-workflow",
+    ),
+    # workflow step command_id reference
+    (
+        {
+            "commands": [],
+            "workflows": [{
+                "id": "w1", "name": "w", "description": "d",
+                "trigger": {"type": "manual"},
+                "steps": [{"id": "s1", "name": "s", "actor": "self", "command_id": "missing-command"}],
+            }],
+        },
+        "missing-command",
+    ),
+    # reaction trigger credential_held_id
+    (
+        {
+            "credentials": {"held": [], "issued": []},
+            "reactions": [{
+                "id": "r1", "description": "r",
+                "trigger": {"type": "credential_received", "credential_held_id": "missing-held"},
+                "emissions": [],
+            }],
+        },
+        "missing-held",
+    ),
+    # aggregate invariant rule_ref
+    (
+        {
+            "rules": [],
+            "aggregates": [{
+                "id": "a1", "description": "a", "inception_event_type": "x",
+                "state_schema": {}, "initial_state": {}, "log_scope": "private",
+                "invariants": [{"rule_ref": "missing-rule"}],
+            }],
+        },
+        "missing-rule",
+    ),
+    # projection access row_filter_rule_ref
+    (
+        {
+            "rules": [],
+            "projections": [{
+                "id": "p1", "name": "p", "description": "p",
+                "source_events": ["e1"], "output_schema": {}, "fold_expression": "state",
+                "access": {"row_filter_rule_ref": "missing-rule"},
+            }],
+        },
+        "missing-rule",
+    ),
+    # rule binding_link links
+    (
+        {
+            "rules": [
+                {"id": "r1", "type": "binding_link", "title": "L",
+                 "links": [{"rule_id": "missing-rule"}]},
+            ],
+        },
+        "missing-rule",
+    ),
+    # command emission lifecycle_advance credential_issued_id
+    (
+        {
+            "credentials": {"held": [], "issued": []},
+            "commands": [{
+                "id": "c1", "name": "c", "description": "c", "route": "/x/cmd/c",
+                "payload_schema": {}, "idempotency_key_expression": "hash(p)",
+                "emissions": [{"kind": "lifecycle_advance", "credential_issued_id": "missing-issued", "to_state": "active"}],
+            }],
+        },
+        "missing-issued",
+    ),
+    # command emission aggregate_event aggregate_id
+    (
+        {
+            "aggregates": [],
+            "commands": [{
+                "id": "c1", "name": "c", "description": "c", "route": "/x/cmd/c",
+                "payload_schema": {}, "idempotency_key_expression": "hash(p)",
+                "emissions": [{"kind": "aggregate_event", "aggregate_id": "missing-agg", "event_type": "e", "payload_mapping": "m"}],
+            }],
+        },
+        "missing-agg",
+    ),
+])
+def test_xref_catches_dangling_reference(doc, expected_substring):
+    errors = validate_xrefs(doc)
+    assert any(expected_substring in e.message for e in errors), (
+        f"expected substring {expected_substring!r} not in any error: {[e.message for e in errors]}"
+    )
+
+
+def test_xref_passes_on_consistent_doc():
+    """A document with all references resolving should produce no xref errors."""
+    doc = {
+        "rules": [{"id": "r1", "type": "legal_prose", "title": "T", "body": "B"}],
+        "credentials": {
+            "held": [{"id": "h1", "expected_schema_said": "E" + "x" * 43}],
+            "issued": [],
+        },
+        "commands": [],
+        "aggregates": [],
+        "reactions": [],
+        "workflows": [],
+        "projections": [],
+    }
+    errors = validate_xrefs(doc)
+    assert errors == []
