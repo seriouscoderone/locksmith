@@ -549,3 +549,36 @@ def test_legal_prose_requires_body(minimal_valid_template):
     })
     errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
     assert any("body" in e.message for e in errors)
+
+
+METADATA_SCHEMA = Path(__file__).parent.parent.parent / "docs/superpowers/specs/schemas/metadata.schema.json"
+
+
+def test_metadata_fixture_validates(fixtures_dir):
+    import json
+    with open(fixtures_dir / "minimal_valid_metadata.json") as f:
+        doc = json.load(f)
+    errors = validate_against_meta_schema(doc, METADATA_SCHEMA)
+    assert errors == []
+
+
+def test_metadata_requires_for_micro_app_said(fixtures_dir):
+    import json
+    with open(fixtures_dir / "minimal_valid_metadata.json") as f:
+        doc = json.load(f)
+    del doc["for_micro_app_said"]
+    errors = validate_against_meta_schema(doc, METADATA_SCHEMA)
+    assert any("for_micro_app_said" in e.message for e in errors)
+
+
+def test_invalid_lineage_relation_fails(fixtures_dir):
+    import json
+    with open(fixtures_dir / "minimal_valid_metadata.json") as f:
+        doc = json.load(f)
+    doc["semantic_lineage"] = [{
+        "relation": "loves",
+        "target_said": "E" + "x" * 43,
+        "note": "x"
+    }]
+    errors = validate_against_meta_schema(doc, METADATA_SCHEMA)
+    assert any("loves" in e.message or "relation" in e.path for e in errors)

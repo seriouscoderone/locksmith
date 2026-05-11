@@ -1,0 +1,59 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://locksmith/spec/micro-app-template/0.1/metadata",
+  "title": "Micro-App Template Metadata",
+  "description": "Sibling metadata for a micro-app-template.json. Non-canonical viewer color; does not affect the template's SAID.",
+  "type": "object",
+  "required": ["for_micro_app_said"],
+  "additionalProperties": false,
+  "properties": {
+    "for_micro_app_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+    "ecosystem_affinity": {
+      "type": "array",
+      "items": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" }
+    },
+    "convention_compliance": {
+      "type": "object",
+      "additionalProperties": { "type": "string" }
+    },
+    "semantic_lineage": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["relation", "target_said"],
+        "additionalProperties": false,
+        "properties": {
+          "relation": {
+            "type": "string",
+            "enum": ["refines", "improves", "inspired_by", "competes_with", "obsoletes"]
+          },
+          "target_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+          "note": { "type": "string" }
+        }
+      }
+    },
+    "author_intent_notes": { "type": "string" },
+    "compatibility_hints": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "compatible_with": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 44, "maxLength": 44 }
+        },
+        "incompatible_with": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["target_said", "reason"],
+            "additionalProperties": false,
+            "properties": {
+              "target_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+              "reason": { "type": "string" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

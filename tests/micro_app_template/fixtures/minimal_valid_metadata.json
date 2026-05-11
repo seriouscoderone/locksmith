@@ -1,0 +1,8 @@
+{
+  "for_micro_app_said": "EAbc0000000000000000000000000000000000000000",
+  "ecosystem_affinity": ["insurance"],
+  "convention_compliance": {
+    "credential_naming": "compliant",
+    "role_naming": "compliant"
+  }
+}
