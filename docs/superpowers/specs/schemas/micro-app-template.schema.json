@@ -43,9 +43,9 @@
       "type": "array",
       "items": { "$ref": "#/$defs/aggregate" }
     },
-    "reactions": { "type": "array", "items": { "type": "object" } },
-    "workflows": { "type": "array", "items": { "type": "object" } },
-    "projections": { "type": "array", "items": { "type": "object" } },
+    "reactions": { "type": "array", "items": { "$ref": "#/$defs/reaction" } },
+    "workflows": { "type": "array", "items": { "$ref": "#/$defs/workflow" } },
+    "projections": { "type": "array", "items": { "$ref": "#/$defs/projection" } },
     "rules": { "type": "array", "items": { "type": "object" } }
   },
   "$defs": {
@@ -334,6 +334,202 @@
         "initial_state": {},
         "invariants": { "type": "array", "items": { "$ref": "#/$defs/rule_ref_obj" } },
         "log_scope": { "$ref": "#/$defs/log_scope" }
+      }
+    },
+    "reaction_trigger": {
+      "type": "object",
+      "required": ["type"],
+      "oneOf": [
+        {
+          "required": ["type", "credential_held_id"],
+          "properties": {
+            "type": { "const": "credential_received" },
+            "credential_held_id": { "type": "string" },
+            "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] }
+          }
+        },
+        {
+          "required": ["type", "route"],
+          "properties": {
+            "type": { "const": "exn_received" },
+            "route": { "type": "string", "pattern": "^/[a-z][a-z0-9_/-]*$" },
+            "schema_id": { "type": "string" }
+          }
+        },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "lifecycle_event" },
+            "credential_issued_id": { "type": "string" },
+            "credential_held_id": { "type": "string" },
+            "to_state": { "type": "string" }
+          }
+        },
+        {
+          "required": ["type"],
+          "properties": {
+            "type": { "const": "scheduled" },
+            "cadence": { "type": "string" },
+            "at": { "type": "string", "format": "date-time" }
+          }
+        }
+      ]
+    },
+    "reaction": {
+      "type": "object",
+      "required": ["id", "description", "trigger", "emissions"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "description": { "type": "string" },
+        "trigger": { "$ref": "#/$defs/reaction_trigger" },
+        "emissions": { "type": "array", "items": { "$ref": "#/$defs/emission" } },
+        "failure_policy": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "on_validation_failure": { "type": "string", "enum": ["log_and_continue", "log_and_spurn", "abort"] },
+            "timeout_seconds": { "type": ["integer", "null"], "minimum": 0 }
+          }
+        }
+      }
+    },
+    "workflow_step": {
+      "type": "object",
+      "required": ["id", "name", "actor"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string" },
+        "name": { "type": "string" },
+        "actor": { "type": "string", "enum": ["self", "counterparty"] },
+        "command_id": { "type": "string" },
+        "reaction_id": { "type": "string" },
+        "advance_lifecycle": {
+          "type": ["object", "null"],
+          "required": ["credential_id", "to_state"],
+          "additionalProperties": false,
+          "properties": {
+            "credential_id": { "type": "string" },
+            "to_state": { "type": "string" }
+          }
+        },
+        "expected_inbound": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "properties": {
+              "trigger_type": { "type": "string", "enum": ["credential_received", "exn_received", "lifecycle_event"] },
+              "credential_held_id": { "type": "string" },
+              "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] },
+              "route": { "type": "string" },
+              "on_match": { "type": "string", "pattern": "^next_step:" }
+            }
+          }
+        },
+        "branches": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["rule_ref", "next_step"],
+            "additionalProperties": false,
+            "properties": {
+              "rule_ref": { "type": "string" },
+              "next_step": { "type": "string" }
+            }
+          }
+        },
+        "next_steps": { "type": "array", "items": { "type": "string" } },
+        "time_bound": {
+          "type": "object",
+          "required": ["duration", "on_expiry"],
+          "additionalProperties": false,
+          "properties": {
+            "duration": { "type": "string" },
+            "on_expiry": { "type": "string" }
+          }
+        }
+      }
+    },
+    "workflow_trigger": {
+      "type": "object",
+      "required": ["type"],
+      "properties": {
+        "type": { "type": "string", "enum": ["manual", "scheduled", "lifecycle_event", "exn_received", "credential_received"] },
+        "initiator_role": { "type": "string" },
+        "cadence": { "type": "string" },
+        "at": { "type": "string", "format": "date-time" },
+        "credential_id": { "type": "string" },
+        "credential_held_id": { "type": "string" },
+        "to_state": { "type": "string" },
+        "route": { "type": "string" },
+        "ipex_verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] }
+      }
+    },
+    "workflow": {
+      "type": "object",
+      "required": ["id", "name", "description", "trigger", "steps"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "counterparty_role": { "type": ["string", "null"] },
+        "trigger": { "$ref": "#/$defs/workflow_trigger" },
+        "steps": { "type": "array", "items": { "$ref": "#/$defs/workflow_step" }, "minItems": 1 }
+      }
+    },
+    "view_type": {
+      "type": "string",
+      "enum": ["table", "list", "cards", "kanban", "timeline", "summary"]
+    },
+    "projection": {
+      "type": "object",
+      "required": ["id", "name", "description", "source_events", "output_schema", "fold_expression"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "source_events": { "type": "array", "items": { "type": "string" }, "minItems": 1 },
+        "output_schema": { "type": "object" },
+        "fold_expression": { "type": "string" },
+        "access": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "row_filter_rule_ref": { "type": "string" },
+            "lens_template": { "type": "string" }
+          }
+        },
+        "display": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "view_type": { "$ref": "#/$defs/view_type" },
+            "columns": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "properties": {
+                  "field": { "type": "string" },
+                  "header": { "type": "string" },
+                  "display_template": { "type": "string" }
+                }
+              }
+            },
+            "default_sort": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "column": { "type": "string" },
+                "direction": { "type": "string", "enum": ["asc", "desc"] }
+              }
+            },
+            "empty_state": { "type": "string" }
+          }
+        }
       }
     }
   }

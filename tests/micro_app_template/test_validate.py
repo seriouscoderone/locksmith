@@ -392,3 +392,88 @@ def test_invalid_log_scope_fails(minimal_valid_template):
     })
     errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
     assert any("log_scope" in e.path or "public" in e.message for e in errors)
+
+
+def test_reaction_validates(minimal_valid_template):
+    minimal_valid_template["reactions"].append({
+        "id": "on_license_granted",
+        "description": "Admit incoming license credential.",
+        "trigger": {
+            "type": "credential_received",
+            "credential_held_id": "carrier_license",
+            "ipex_verb": "grant"
+        },
+        "emissions": [
+            {
+                "kind": "exchange",
+                "exchange": {
+                    "kind": "credential",
+                    "verb": "admit",
+                    "credential_held_id": "carrier_license"
+                }
+            }
+        ],
+        "failure_policy": {
+            "on_validation_failure": "log_and_spurn",
+            "timeout_seconds": None
+        }
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == [], f"unexpected: {[e.message for e in errors]}"
+
+
+def test_workflow_validates(minimal_valid_template):
+    minimal_valid_template["workflows"].append({
+        "id": "license_application_carrier_side",
+        "name": "License Application (Carrier)",
+        "description": "Carrier-side license application flow.",
+        "counterparty_role": "regulator",
+        "trigger": {"type": "manual", "initiator_role": "carrier"},
+        "steps": [
+            {
+                "id": "submit",
+                "name": "Submit",
+                "actor": "self",
+                "command_id": "submit_application",
+                "next_steps": ["await_response"]
+            }
+        ]
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == [], f"unexpected: {[e.message for e in errors]}"
+
+
+def test_projection_validates(minimal_valid_template):
+    minimal_valid_template["projections"].append({
+        "id": "active_policies",
+        "name": "Active Policies",
+        "description": "Currently in-force policies.",
+        "source_events": ["policy_issued", "policy_revoked"],
+        "output_schema": {
+            "type": "array",
+            "items": {"type": "object"}
+        },
+        "fold_expression": "state + [event.payload]",
+        "display": {
+            "view_type": "table",
+            "columns": [{"field": "policy_id", "header": "Policy"}],
+            "default_sort": {"column": "policy_id", "direction": "asc"},
+            "empty_state": "No policies in force."
+        }
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == []
+
+
+def test_invalid_view_type_fails(minimal_valid_template):
+    minimal_valid_template["projections"].append({
+        "id": "x",
+        "name": "y",
+        "description": "z",
+        "source_events": ["e1"],
+        "output_schema": {},
+        "fold_expression": "state",
+        "display": {"view_type": "spreadsheet"}
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("view_type" in e.path or "spreadsheet" in e.message for e in errors)
