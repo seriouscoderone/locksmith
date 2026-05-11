@@ -1,9 +1,9 @@
 #!/usr/bin/env python3
 """CLI wrapper: compute or verify the SAID of a micro-app template.
 
-The on-disk form uses canonical (sorted-keys) JSON, so SAID computation
-must operate on the same sorted form to round-trip stably. We
-recursively sort the document before delegating to the saidify library.
+Delegates to the saidify library, which handles canonical-form
+SAID computation internally. The CLI reads the input JSON, hands it
+to the library, and writes back the canonical form on stamp.
 """
 from __future__ import annotations
 
@@ -11,7 +11,6 @@ import argparse
 import json
 import sys
 from pathlib import Path
-from typing import Any
 
 from locksmith.micro_app_template.canonical_json import canonicalize
 from locksmith.micro_app_template.saidify import (
@@ -19,15 +18,6 @@ from locksmith.micro_app_template.saidify import (
     saidify_document,
     verify_said,
 )
-
-
-def _sort_recursive(obj: Any) -> Any:
-    """Recursively sort dict keys so SAID computation matches canonical JSON."""
-    if isinstance(obj, dict):
-        return {k: _sort_recursive(obj[k]) for k in sorted(obj)}
-    if isinstance(obj, list):
-        return [_sort_recursive(x) for x in obj]
-    return obj
 
 
 def main() -> int:
@@ -43,7 +33,7 @@ def main() -> int:
         print(f"error: file not found: {args.input}", file=sys.stderr)
         return 2
 
-    doc = _sort_recursive(json.loads(args.input.read_text()))
+    doc = json.loads(args.input.read_text())
 
     if args.in_place:
         stamped = saidify_document(doc)

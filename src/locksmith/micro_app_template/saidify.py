@@ -14,6 +14,19 @@ from typing import Any
 from keri.core.coring import MtrDex, Saider
 
 
+def _sort_keys_recursive(obj):
+    """Return obj with all nested dict keys sorted lexicographically.
+
+    Matches the canonical form produced by canonicalize() — ensures SAID
+    computation operates on the same byte-ordering as on-disk storage.
+    """
+    if isinstance(obj, dict):
+        return {k: _sort_keys_recursive(obj[k]) for k in sorted(obj.keys())}
+    if isinstance(obj, list):
+        return [_sort_keys_recursive(item) for item in obj]
+    return obj
+
+
 PLACEHOLDER = "#" * 44
 """44-character placeholder used while computing a Blake3-256 SAID."""
 
@@ -27,7 +40,7 @@ def compute_said(doc: dict[str, Any], *, label: str = "d") -> str:
     """
     if label not in doc:
         raise KeyError(f"document missing label field: {label!r}")
-    sad = copy.deepcopy(doc)
+    sad = _sort_keys_recursive(copy.deepcopy(doc))
     sad[label] = PLACEHOLDER
     saider, _ = Saider.saidify(sad=sad, code=MtrDex.Blake3_256, label=label)
     return saider.qb64
@@ -37,7 +50,7 @@ def saidify_document(doc: dict[str, Any], *, label: str = "d") -> dict[str, Any]
     """Return a copy of doc with the SAID injected at the label field."""
     if label not in doc:
         raise KeyError(f"document missing label field: {label!r}")
-    sad = copy.deepcopy(doc)
+    sad = _sort_keys_recursive(copy.deepcopy(doc))
     sad[label] = PLACEHOLDER
     _, stamped = Saider.saidify(sad=sad, code=MtrDex.Blake3_256, label=label)
     return stamped

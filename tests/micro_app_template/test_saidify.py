@@ -60,3 +60,23 @@ def test_saidify_requires_d_field():
     import pytest
     with pytest.raises(KeyError):
         saidify_document({"header": {"id": "x"}})
+
+
+def test_saidify_independent_of_input_key_order():
+    """SAID computation must be independent of the input dict's key order —
+    it operates against the canonical (sorted-keys) form."""
+    doc_a = {"d": "", "header": {"id": "x"}, "role": {"id": "y"}}
+    doc_b = {"role": {"id": "y"}, "header": {"id": "x"}, "d": ""}
+    assert saidify_document(doc_a)["d"] == saidify_document(doc_b)["d"]
+
+
+def test_saidify_matches_canonical_form_round_trip():
+    """A stamped doc, written via canonicalize and read back, must still
+    verify. This is the round-trip the CLI depends on."""
+    import json
+    from locksmith.micro_app_template.canonical_json import canonicalize
+    doc = {"d": "", "header": {"id": "test", "version": "1.0"}, "role": {"id": "tester"}}
+    stamped = saidify_document(doc)
+    written = canonicalize(stamped)
+    re_read = json.loads(written)
+    assert verify_said(re_read) is True
