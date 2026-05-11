@@ -291,3 +291,104 @@ def test_schema_path_must_be_in_schemas_dir(fixtures_dir):
     doc["credentials"]["issued"][0]["schema"]["schema_path"] = "elsewhere/policy.json"
     errors = validate_against_meta_schema(doc, META_SCHEMA)
     assert any("schema_path" in e.path for e in errors)
+
+
+def test_command_with_credential_emission_validates(minimal_valid_template):
+    minimal_valid_template["commands"].append({
+        "id": "submit_app",
+        "name": "Submit Application",
+        "description": "Submit a license application.",
+        "route": "/insurance/cmd/submit_application",
+        "counterparty_role": "regulator",
+        "payload_schema": {
+            "type": "object",
+            "properties": {"jurisdiction": {"type": "string"}}
+        },
+        "auth_preconditions": [],
+        "state_preconditions": [],
+        "temporal_preconditions": [],
+        "idempotency_key_expression": "hash(payload.jurisdiction)",
+        "emissions": [
+            {
+                "kind": "exchange",
+                "exchange": {
+                    "kind": "credential",
+                    "verb": "apply",
+                    "credential_held_id": None,
+                    "credential_issued_id": None,
+                    "schema_said_referenced": "EAbc0000000000000000000000000000000000000000"
+                }
+            }
+        ]
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == [], f"unexpected: {[e.message for e in errors]}"
+
+
+def test_command_on_ipex_route_fails(minimal_valid_template):
+    minimal_valid_template["commands"].append({
+        "id": "bad",
+        "name": "Bad",
+        "description": "Tries to use /ipex/ route.",
+        "route": "/ipex/apply",
+        "payload_schema": {},
+        "idempotency_key_expression": "hash(payload)",
+        "emissions": []
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert len(errors) > 0
+
+
+def test_invalid_ipex_verb_fails(minimal_valid_template):
+    minimal_valid_template["commands"].append({
+        "id": "bad",
+        "name": "Bad",
+        "description": "Uses non-IPEX verb.",
+        "route": "/insurance/cmd/x",
+        "payload_schema": {},
+        "idempotency_key_expression": "hash(payload)",
+        "emissions": [
+            {
+                "kind": "exchange",
+                "exchange": {
+                    "kind": "credential",
+                    "verb": "yeet",
+                    "credential_held_id": None,
+                    "credential_issued_id": None
+                }
+            }
+        ]
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert len(errors) > 0
+
+
+def test_aggregate_validates(minimal_valid_template):
+    minimal_valid_template["aggregates"].append({
+        "id": "license_registry",
+        "description": "Tracks carrier license lifecycle.",
+        "inception_event_type": "license_received",
+        "state_schema": {
+            "type": "object",
+            "properties": {"active": {"type": "array"}}
+        },
+        "initial_state": {"active": []},
+        "invariants": [],
+        "log_scope": "private"
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == []
+
+
+def test_invalid_log_scope_fails(minimal_valid_template):
+    minimal_valid_template["aggregates"].append({
+        "id": "x",
+        "description": "y",
+        "inception_event_type": "z",
+        "state_schema": {},
+        "initial_state": {},
+        "invariants": [],
+        "log_scope": "public"
+    })
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("log_scope" in e.path or "public" in e.message for e in errors)

@@ -35,8 +35,14 @@
         }
       }
     },
-    "commands": { "type": "array", "items": { "type": "object" } },
-    "aggregates": { "type": "array", "items": { "type": "object" } },
+    "commands": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/command" }
+    },
+    "aggregates": {
+      "type": "array",
+      "items": { "$ref": "#/$defs/aggregate" }
+    },
     "reactions": { "type": "array", "items": { "type": "object" } },
     "workflows": { "type": "array", "items": { "type": "object" } },
     "projections": { "type": "array", "items": { "type": "object" } },
@@ -230,6 +236,104 @@
             }
           }
         }
+      }
+    },
+    "rule_ref_obj": {
+      "type": "object",
+      "required": ["rule_ref"],
+      "additionalProperties": false,
+      "properties": { "rule_ref": { "type": "string" } }
+    },
+    "exchange": {
+      "type": "object",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "required": ["kind", "verb"],
+          "properties": {
+            "kind": { "const": "credential" },
+            "verb": { "type": "string", "enum": ["apply", "offer", "agree", "grant", "admit", "spurn"] },
+            "credential_held_id": { "type": ["string", "null"] },
+            "credential_issued_id": { "type": ["string", "null"] },
+            "schema_said_referenced": { "type": ["string", "null"] }
+          }
+        },
+        {
+          "required": ["kind", "pattern", "route"],
+          "properties": {
+            "kind": { "const": "message" },
+            "pattern": { "type": "string", "enum": ["command", "query", "notification"] },
+            "route": { "type": "string", "pattern": "^/[a-z][a-z0-9_/-]*$" },
+            "schema_id": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "emission": {
+      "type": "object",
+      "required": ["kind"],
+      "oneOf": [
+        {
+          "required": ["kind", "exchange"],
+          "properties": {
+            "kind": { "const": "exchange" },
+            "exchange": { "$ref": "#/$defs/exchange" }
+          }
+        },
+        {
+          "required": ["kind", "credential_issued_id", "to_state"],
+          "properties": {
+            "kind": { "const": "lifecycle_advance" },
+            "credential_issued_id": { "type": "string" },
+            "to_state": { "type": "string" }
+          }
+        },
+        {
+          "required": ["kind", "aggregate_id", "event_type", "payload_mapping"],
+          "properties": {
+            "kind": { "const": "aggregate_event" },
+            "aggregate_id": { "type": "string" },
+            "event_type": { "type": "string" },
+            "payload_mapping": { "type": "string" }
+          }
+        }
+      ]
+    },
+    "command": {
+      "type": "object",
+      "required": ["id", "name", "description", "route", "payload_schema", "idempotency_key_expression", "emissions"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "name": { "type": "string" },
+        "description": { "type": "string" },
+        "route": {
+          "type": "string",
+          "pattern": "^/[a-z][a-z0-9_/-]*$",
+          "not": { "pattern": "^/ipex/" }
+        },
+        "counterparty_role": { "type": ["string", "null"] },
+        "payload_schema": { "type": "object" },
+        "auth_preconditions": { "type": "array", "items": { "$ref": "#/$defs/rule_ref_obj" } },
+        "state_preconditions": { "type": "array", "items": { "$ref": "#/$defs/rule_ref_obj" } },
+        "temporal_preconditions": { "type": "array", "items": { "$ref": "#/$defs/rule_ref_obj" } },
+        "idempotency_key_expression": { "type": "string" },
+        "emissions": { "type": "array", "items": { "$ref": "#/$defs/emission" } }
+      }
+    },
+    "log_scope": { "type": "string", "enum": ["private", "witnessed", "shared"] },
+    "aggregate": {
+      "type": "object",
+      "required": ["id", "description", "inception_event_type", "state_schema", "initial_state", "log_scope"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "description": { "type": "string" },
+        "inception_event_type": { "type": "string" },
+        "state_schema": { "type": "object" },
+        "initial_state": {},
+        "invariants": { "type": "array", "items": { "$ref": "#/$defs/rule_ref_obj" } },
+        "log_scope": { "$ref": "#/$defs/log_scope" }
       }
     }
   }
