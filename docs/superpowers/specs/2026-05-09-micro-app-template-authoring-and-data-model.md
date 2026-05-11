@@ -275,6 +275,8 @@ Each imported credential entry declares the *expectation*. The actual credential
 - `lifecycle_acceptance` (optional) — which lifecycle states make this credential usable (default: `["active"]`)
 - `narrative` (optional) — SME explanation surfaced in UI tooltips
 
+**Imports describe credential types, not instances.** Each entry in `credentials.imports[]` declares a credential *type* this role is expected to potentially hold (per its `expected_schema_said`, `expected_issuer_role`, etc.). Whether the role currently holds a credential of that type is a *runtime* concern that Locksmith determines by observing the wallet's TEL state — it is not asserted by the template. A role at the start of its lifecycle (e.g., a newly-instantiated carrier before licensure) declares the credential types its commands and reactions will reference, even when no instance exists yet. The `narrative` field is the conventional place to record "no active instance at instantiation; will be obtained via the license_application workflow."
+
 **Exports** — credentials this role produces.
 
 ```json

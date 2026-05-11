@@ -78,6 +78,8 @@ Let the SME override defaults. The flags are deployment-readiness *expectations*
 | `lifecycle_acceptance` | Which lifecycle states make it usable (default `["active"]`) |
 | `narrative` | SME tooltip explanation |
 
+**Imports describe types, not instances.** Even if the role has NO active credential of a given type at the moment the micro-app is instantiated, declare the type here. Locksmith determines runtime holdings by observing the wallet's TEL state. The `narrative` field is the conventional place to note "no active instance at start; obtained via [workflow_id]."
+
 **When the SAID isn't yet known:** Note it explicitly. The Ecosystem Viewer will surface dangling imports as candidates for alignment.
 
 **Anti-patterns:**

@@ -30,6 +30,7 @@ Per-step questions to ask an SME. Pick the primary question first; ask follow-up
 - *"What's the SAID of the schema?"* — if not known, note as TBD and continue
 - *"Who issues it? (which role)"*
 - *"Which lifecycle states make it usable? (default: active)"*
+- *"Does the role start without an active instance of this credential type? If so, we still declare it here — the imports list captures types, not current holdings. Note the 'starts empty' status in the `narrative` field."*
 
 ## Step 3 — Credential exports (the exports list)
 
