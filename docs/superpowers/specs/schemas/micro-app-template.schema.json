@@ -1,0 +1,88 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://locksmith/spec/micro-app-template/0.1",
+  "title": "Micro-App Template",
+  "description": "Canonical artifact describing one role's slice of operational behavior in a KERI-native ecosystem application.",
+  "type": "object",
+  "required": ["d", "spec_version", "header", "role", "credentials", "commands", "aggregates", "reactions", "workflows", "projections", "rules"],
+  "additionalProperties": false,
+  "properties": {
+    "d": {
+      "type": "string",
+      "minLength": 44,
+      "maxLength": 44,
+      "description": "Self-SAID of this document. 44-character CESR-encoded Blake3-256 digest of the canonical form with d field placeholdered."
+    },
+    "spec_version": {
+      "type": "string",
+      "pattern": "^micro-app-template/[0-9]+\\.[0-9]+$",
+      "description": "Version of the ecosystem-template meta-schema this document conforms to."
+    },
+    "header": { "$ref": "#/$defs/header" },
+    "role": { "$ref": "#/$defs/role" },
+    "credentials": {
+      "type": "object",
+      "required": ["held", "issued"],
+      "properties": {
+        "held": { "type": "array", "items": { "type": "object" } },
+        "issued": { "type": "array", "items": { "type": "object" } }
+      }
+    },
+    "commands": { "type": "array", "items": { "type": "object" } },
+    "aggregates": { "type": "array", "items": { "type": "object" } },
+    "reactions": { "type": "array", "items": { "type": "object" } },
+    "workflows": { "type": "array", "items": { "type": "object" } },
+    "projections": { "type": "array", "items": { "type": "object" } },
+    "rules": { "type": "array", "items": { "type": "object" } }
+  },
+  "$defs": {
+    "header": {
+      "type": "object",
+      "required": ["id", "display_name", "description", "version", "expression_language"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9-]*$" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "version": { "type": "string", "pattern": "^[0-9]+\\.[0-9]+(\\.[0-9]+)?$" },
+        "expression_language": { "type": "string", "pattern": "^[A-Z][A-Za-z]*/[0-9]+\\.[0-9]+$" },
+        "forked_from": {
+          "type": "object",
+          "required": ["template_said", "template_version", "forked_at"],
+          "additionalProperties": false,
+          "properties": {
+            "template_said": { "type": "string", "minLength": 44, "maxLength": 44 },
+            "template_version": { "type": "string" },
+            "forked_at": { "type": "string", "format": "date" },
+            "fork_intent": { "type": "string" }
+          }
+        }
+      }
+    },
+    "role": {
+      "type": "object",
+      "required": ["id", "display_name", "description", "kind", "keri_infrastructure"],
+      "additionalProperties": false,
+      "properties": {
+        "id": { "type": "string", "pattern": "^[a-z][a-z0-9_-]*$" },
+        "display_name": { "type": "string", "minLength": 1 },
+        "description": { "type": "string", "minLength": 1 },
+        "kind": {
+          "type": "string",
+          "enum": ["individual", "organization", "system", "device", "agent", "government"]
+        },
+        "keri_infrastructure": {
+          "type": "object",
+          "required": ["witness_pool", "watcher_network", "mailbox", "acdc_registry"],
+          "additionalProperties": false,
+          "properties": {
+            "witness_pool": { "type": "boolean" },
+            "watcher_network": { "type": "boolean" },
+            "mailbox": { "type": "boolean" },
+            "acdc_registry": { "type": "boolean" }
+          }
+        }
+      }
+    }
+  }
+}

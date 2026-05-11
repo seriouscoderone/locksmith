@@ -77,6 +77,35 @@ def test_validate_template_returns_typed_result(minimal_valid_template):
     assert all(isinstance(e, ValidationError) for e in result.errors)
 
 
+def test_meta_schema_file_exists():
+    assert META_SCHEMA.exists(), f"meta-schema not found at {META_SCHEMA}"
+
+
+def test_meta_schema_is_valid_jsonschema():
+    import json
+    import jsonschema
+    with open(META_SCHEMA) as f:
+        schema = json.load(f)
+    jsonschema.Draft202012Validator.check_schema(schema)
+
+
+def test_minimal_template_validates_against_meta_schema(minimal_valid_template):
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert errors == [], f"unexpected errors: {[e.message for e in errors]}"
+
+
+def test_wrong_kind_fails(minimal_valid_template):
+    minimal_valid_template["role"]["kind"] = "not_a_real_kind"
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("kind" in e.path or "kind" in e.message for e in errors)
+
+
+def test_missing_required_top_level_fails(minimal_valid_template):
+    del minimal_valid_template["role"]
+    errors = validate_against_meta_schema(minimal_valid_template, META_SCHEMA)
+    assert any("role" in e.message for e in errors)
+
+
 import pytest
 from locksmith.micro_app_template.xref import validate_xrefs
 

@@ -1,0 +1,30 @@
+{
+  "d": "############################################",
+  "spec_version": "micro-app-template/0.1",
+  "header": {
+    "id": "minimal-test",
+    "display_name": "Minimal Test Template",
+    "description": "Smallest valid template used as a test fixture.",
+    "version": "0.1",
+    "expression_language": "UEL/1.0"
+  },
+  "role": {
+    "id": "tester",
+    "display_name": "Test Actor",
+    "description": "A placeholder role used for fixtures.",
+    "kind": "individual",
+    "keri_infrastructure": {
+      "witness_pool": false,
+      "watcher_network": false,
+      "mailbox": true,
+      "acdc_registry": false
+    }
+  },
+  "credentials": { "held": [], "issued": [] },
+  "commands": [],
+  "aggregates": [],
+  "reactions": [],
+  "workflows": [],
+  "projections": [],
+  "rules": []
+}
