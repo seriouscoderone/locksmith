@@ -4,6 +4,8 @@ locksmith.ui.window module
 
 This module contains the main window for the Locksmith application.
 """
+import os
+
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QMainWindow,
@@ -102,6 +104,17 @@ class LocksmithWindow(QMainWindow):
 
         # Start on home page
         self.nav_manager.navigate_to(Pages.HOME)
+
+        # Optional dev-only control server. Activated by setting
+        # LOCKSMITH_DEV_CONTROL=1 in the environment. Listens on a Unix
+        # socket at /tmp/locksmith-control.sock and lets local tooling
+        # (or an AI dev loop) drive the running UI via JSON commands.
+        # OFF in production by design.
+        self._dev_control_server = None
+        if os.environ.get("LOCKSMITH_DEV_CONTROL") == "1":
+            from locksmith.dev_control import DevControlServer
+            self._dev_control_server = DevControlServer(self, parent=self)
+            self._dev_control_server.start()
 
         logger.info("LocksmithHome initialized")
 
