@@ -60,7 +60,23 @@
       ]
     }
   ],
-  "aggregates": [],
+  "aggregates": [
+    {
+      "id": "license_register",
+      "description": "Active and historical licenses issued by this regulator.",
+      "inception_event_type": "regulator.licensing.inaugurated",
+      "state_schema": {
+        "type": "object",
+        "properties": {
+          "active": {"type": "integer"},
+          "revoked": {"type": "integer"}
+        }
+      },
+      "initial_state": {"active": 0, "revoked": 0},
+      "log_scope": "witnessed",
+      "invariants": []
+    }
+  ],
   "reactions": [],
   "workflows": [
     {
