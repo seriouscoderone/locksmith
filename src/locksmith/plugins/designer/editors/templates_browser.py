@@ -15,7 +15,7 @@ from typing import Any
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
-    QVBoxLayout, QWidget,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.store import TemplateRef, TemplateStore
@@ -42,6 +42,9 @@ class _TemplateCard(QFrame):
             "#card{background:#fff;border:1px solid #e0e3ea;border-radius:8px;}"
             "#card:hover{border:1px solid #d97757;}"
         )
+        # Don't expand vertically — the card sizes to its content, the
+        # grid pushes extra space into a trailing stretch row.
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
         self._build(doc)
 
     @property
@@ -186,9 +189,15 @@ class TemplatesBrowserPage(QWidget):
             c.setParent(None)
             c.deleteLater()
         self._cards = []
+        # Clear every row stretch the previous refresh set, so cards in a
+        # new (potentially smaller) layout don't carry leftover stretchy
+        # rows from a bigger one.
+        for r in range(self._grid.rowCount()):
+            self._grid.setRowStretch(r, 0)
         refs = self._store.list_templates()
         self._is_empty = len(refs) == 0
         self._empty_label.setVisible(self._is_empty)
+        max_row = 0
         for i, ref in enumerate(refs):
             doc, _meta = self._store.load(ref)
             card = _TemplateCard(ref=ref, doc=doc)
@@ -198,6 +207,10 @@ class TemplatesBrowserPage(QWidget):
             row, col = divmod(i, 2)
             self._grid.addWidget(card, row, col)
             self._cards.append(card)
+            max_row = max(max_row, row)
+        # Trailing stretch row absorbs all extra vertical space so cards
+        # render at their natural height instead of stretching to fill.
+        self._grid.setRowStretch(max_row + 1, 1)
 
     def card_count(self) -> int:
         return len(self._cards)
