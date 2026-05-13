@@ -91,6 +91,19 @@
       ]
     }
   ],
-  "projections": [],
+  "projections": [
+    {
+      "id": "active_licensees",
+      "name": "Active Licensees",
+      "description": "Roster of carriers currently authorized to bind risk.",
+      "source_events": ["license.issued", "license.revoked"],
+      "output_schema": {
+        "type": "array",
+        "items": {"type": "object", "properties": {"carrier_id": {"type": "string"}}}
+      },
+      "fold_expression": "events.filter(e => e.kind == 'license.issued').map(e => e.carrier_id)",
+      "display": {"view_type": "table"}
+    }
+  ],
   "rules": []
 }
