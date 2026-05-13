@@ -7,6 +7,7 @@ save prompts.
 """
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from PySide6.QtCore import QObject, Signal
@@ -38,12 +39,26 @@ def _path_parts(path: str) -> list[str]:
 
 
 class TemplateModel(QObject):
+    """In-memory template model with change signals and dirty tracking.
+
+    Owns its own copy of the input dict — callers may discard their
+    original reference after construction. Direct mutations via
+    `model.doc[...] = ...` are NOT signal-emitting; use the named
+    methods instead.
+
+    Signals:
+      changed(path):       emitted on every mutation; path is the
+                           JSON pointer that changed, or "" when the
+                           entire document was replaced (full reload).
+      dirty_changed(bool): emitted only on actual dirty-flag transitions.
+    """
+
     changed = Signal(str)         # path that changed
     dirty_changed = Signal(bool)
 
     def __init__(self, doc: dict[str, Any]):
         super().__init__()
-        self._doc = doc
+        self._doc = copy.deepcopy(doc)
         self._dirty = False
 
     @property
@@ -88,7 +103,7 @@ class TemplateModel(QObject):
         self.changed.emit(path)
 
     def replace_doc(self, new_doc: dict[str, Any]) -> None:
-        self._doc = new_doc
+        self._doc = copy.deepcopy(new_doc)
         self._set_dirty(False)
         self.changed.emit("")
 
