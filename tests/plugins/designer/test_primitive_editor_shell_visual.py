@@ -86,3 +86,25 @@ def test_shell_set_right_pane_replaces_content(qapp):
     shell.set_right_pane(pane)
     qapp.processEvents()
     assert shell.right_pane_container.layout().count() == 1
+
+
+def test_cross_ref_strip_does_not_accumulate_stretches(qapp):
+    from locksmith.plugins.designer.crossref import CrossRef
+    from locksmith.plugins.designer.widgets.cross_ref_chip import CrossRefChipStrip
+
+    strip = CrossRefChipStrip()
+    ref = CrossRef(surface="commands", primitive_label="Do", primitive_path="/commands/0")
+
+    # Refresh many times. Layout count should stabilize, not grow with each call.
+    for _ in range(5):
+        strip.set_refs((ref,))
+    qapp.processEvents()
+    counts_after_first_round = strip.layout().count()
+
+    for _ in range(5):
+        strip.set_refs((ref,))
+    qapp.processEvents()
+    counts_after_second_round = strip.layout().count()
+
+    assert counts_after_first_round == counts_after_second_round, \
+        "Layout item count grew across refresh cycles — stretch is leaking"

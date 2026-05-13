@@ -37,6 +37,7 @@ class CrossRefChipStrip(QWidget):
         self._empty_label = QLabel("Not referenced elsewhere")
         self._empty_label.setStyleSheet("color:#aaa;font-size:11px;")
         self._layout.addWidget(self._empty_label)
+        self._layout.addStretch(1)
         self._chips: list[CrossRefChip] = []
 
     def set_refs(self, refs):
@@ -45,9 +46,11 @@ class CrossRefChipStrip(QWidget):
             c.deleteLater()
         self._chips = []
         self._empty_label.setVisible(len(refs) == 0)
+        # Insert chips just before the trailing stretch so the stretch
+        # always remains the last item.
         for ref in refs:
             chip = CrossRefChip(ref)
             chip.navigated.connect(self.navigated.emit)
-            self._layout.addWidget(chip)
+            insertion_index = self._layout.count() - 1
+            self._layout.insertWidget(insertion_index, chip)
             self._chips.append(chip)
-        self._layout.addStretch(1)
