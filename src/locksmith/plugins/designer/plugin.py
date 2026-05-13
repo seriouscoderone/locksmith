@@ -71,14 +71,14 @@ class DesignerPlugin(PluginBase):
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
-            icon=QIcon(":/assets/material-icons/draft.svg"),
+            icon=QIcon(":/assets/material-icons/drafts.svg"),
             label="Micro App Designer",
         )
 
     def get_menu_section(self) -> list[QWidget]:
         items: list[QWidget] = [BackButton(dark_mode=False), MenuSpacer(15)]
         items.append(MenuButton(
-            icon=QIcon(":/assets/material-icons/draft.svg"),
+            icon=QIcon(":/assets/material-icons/drafts.svg"),
             label="Templates",
         ))
         return items
