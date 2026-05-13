@@ -49,6 +49,7 @@ dependencies = [
 ]
 
 [project.entry-points."locksmith.plugins"]
+designer = "locksmith.plugins.designer.plugin:DesignerPlugin"
 kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
 ecosystem_viewer = "locksmith.plugins.ecosystem_viewer.plugin:EcosystemViewerPlugin"
 
