@@ -34,11 +34,12 @@ def test_browser_shows_seeded_templates(qapp, seeded_store):
     QTest.qWait(200)
     qapp.processEvents()
 
-    assert page.card_count() == 3
+    assert page.card_count() == 4
     titles = page.card_titles()
     assert "Regulator Grants Carrier License" in titles
     assert "Carrier License Application" in titles
     assert "Broken Refs Demo" in titles
+    assert "Untitled template" in titles
     _grab(page, "templates_browser_two_seeded")
 
 

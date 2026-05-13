@@ -1,0 +1,24 @@
+{
+  "d": "EDR4ftUnt1tl3dxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "spec_version": "micro-app-template/0.1",
+  "header": {
+    "id": "untitled-draft",
+    "display_name": "Untitled template",
+    "description": "Authoring in progress.",
+    "version": "0.1",
+    "expression_language": "UEL/1.0"
+  },
+  "role": {
+    "id": "untitled",
+    "display_name": "Untitled role",
+    "description": "Role identity not yet defined.",
+    "kind": "individual",
+    "keri_infrastructure": {
+      "witness_pool": false, "watcher_network": false,
+      "mailbox": false, "acdc_registry": false
+    }
+  },
+  "credentials": {"imports": [], "exports": []},
+  "commands": [], "aggregates": [], "reactions": [],
+  "workflows": [], "projections": [], "rules": []
+}
