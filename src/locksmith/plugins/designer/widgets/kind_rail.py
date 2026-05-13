@@ -1,0 +1,56 @@
+# -*- encoding: utf-8 -*-
+"""KindRail: left-rail list with kind-color dots and validation badges."""
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QColor, QPainter, QPixmap
+from PySide6.QtWidgets import QListWidget, QListWidgetItem
+
+
+@dataclass(frozen=True)
+class RailItem:
+    id: str
+    label: str
+    kind_color: str  # CSS hex, e.g. "#0ABFB0"
+    has_errors: bool
+
+
+def _dot_icon(color_hex: str, size: int = 12) -> QPixmap:
+    pix = QPixmap(size, size)
+    pix.fill(Qt.transparent)
+    painter = QPainter(pix)
+    painter.setRenderHint(QPainter.Antialiasing)
+    painter.setBrush(QColor(color_hex))
+    painter.setPen(Qt.NoPen)
+    painter.drawEllipse(0, 0, size, size)
+    painter.end()
+    return pix
+
+
+class KindRail(QListWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent=parent)
+        self.setStyleSheet(
+            "QListWidget{background:#fff;border:0;}"
+            "QListWidget::item{padding:8px 12px;border-bottom:1px solid #f0f2f5;}"
+            "QListWidget::item:selected{background:#f6f7f9;color:#1A1C20;}"
+        )
+
+    def populate(self, items: list[RailItem]) -> None:
+        self.clear()
+        for r in items:
+            label = r.label + ("  ⛔" if r.has_errors else "")
+            item = QListWidgetItem(label)
+            item.setIcon(_dot_icon(r.kind_color))
+            item.setData(Qt.UserRole, r.id)
+            self.addItem(item)
+        if self.count() > 0:
+            self.setCurrentRow(0)
+
+    def selected_id(self) -> str | None:
+        item = self.currentItem()
+        if item is None:
+            return None
+        return item.data(Qt.UserRole)
