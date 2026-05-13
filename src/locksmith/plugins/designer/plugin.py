@@ -7,11 +7,13 @@ sidebar entry, its 10 pages, and the navigation among them.
 """
 from __future__ import annotations
 
+import json
+import uuid
 from pathlib import Path
 from typing import Any
 
 from PySide6.QtGui import QIcon
-from PySide6.QtWidgets import QWidget
+from PySide6.QtWidgets import QFileDialog, QMessageBox, QWidget
 from keri import help
 
 from locksmith.plugins.base import PluginBase
@@ -85,6 +87,7 @@ class DesignerPlugin(PluginBase):
 
         browser = TemplatesBrowserPage(store=self._store)
         browser.template_open_requested.connect(self._open_template)
+        browser.import_file_requested.connect(self._import_file)
         self._pages[PAGE_KEY_TEMPLATES_BROWSER] = browser
         # Also re-register the new browser with the host so the
         # content_stack swap actually takes effect; the placeholder
@@ -148,6 +151,58 @@ class DesignerPlugin(PluginBase):
         if vault_page is not None:
             vault_page.register_page(PAGE_KEY_OVERVIEW, overview)
         self._navigate(PAGE_KEY_OVERVIEW)
+
+    def _import_file(self) -> None:
+        """Open a file picker and import a micro-app-template.json."""
+        if self._store is None:
+            return
+        browser = self._pages.get(PAGE_KEY_TEMPLATES_BROWSER)
+        path_str, _ = QFileDialog.getOpenFileName(
+            browser,
+            "Import micro-app-template.json",
+            str(Path.home()),
+            "JSON files (*.json);;All files (*)",
+        )
+        if not path_str:
+            return
+        path = Path(path_str)
+        try:
+            doc = json.loads(path.read_text())
+        except (OSError, json.JSONDecodeError) as e:
+            QMessageBox.warning(
+                browser, "Import failed",
+                f"Could not parse {path.name}:\n{e}",
+            )
+            return
+        if not isinstance(doc, dict):
+            QMessageBox.warning(
+                browser, "Import failed",
+                f"{path.name} is not a JSON object at the top level.",
+            )
+            return
+
+        said = doc.get("d", "")
+        try:
+            if isinstance(said, str) and len(said) == 44 and not said.startswith("#"):
+                # Looks like a real SAID — register it; allow overwrite so
+                # re-importing the same file refreshes the on-disk copy.
+                self._store.save_registered(
+                    said=said, doc=doc, metadata={}, overwrite=True,
+                )
+            else:
+                # No SAID / placeholder — save as a draft with a new local id.
+                local_id = f"imported-{uuid.uuid4().hex[:8]}"
+                self._store.save_draft(local_id=local_id, doc=doc, metadata={})
+        except Exception as e:  # noqa: BLE001
+            QMessageBox.warning(
+                browser, "Import failed",
+                f"Could not save template:\n{e}",
+            )
+            return
+
+        logger.info("Imported template from %s", path)
+        if hasattr(browser, "refresh"):
+            browser.refresh()
 
     def _drilldown(self, kind: str) -> None:
         page_key = PRIMITIVE_PAGE_KEY.get(kind)
