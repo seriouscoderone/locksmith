@@ -79,7 +79,18 @@
   },
   "commands": [],
   "aggregates": [],
-  "reactions": [],
+  "reactions": [
+    {
+      "id": "on_license_grant",
+      "description": "When the DOI grants a license, mark our internal state as licensed.",
+      "trigger": {
+        "type": "credential_received",
+        "imported_credential_id": "carrier_license",
+        "ipex_verb": "grant"
+      },
+      "emissions": []
+    }
+  ],
   "workflows": [],
   "projections": [],
   "rules": []
