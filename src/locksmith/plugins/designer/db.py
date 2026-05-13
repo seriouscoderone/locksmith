@@ -75,6 +75,11 @@ class DesignerBaser(dbing.LMDBer):
     def put_index(self, rec: TemplateIndexRecord) -> None:
         if not rec.ref_key:
             raise ValueError("TemplateIndexRecord.ref_key is required")
+        if rec.kind not in ("draft", "registered"):
+            raise ValueError(
+                f"TemplateIndexRecord.kind must be 'draft' or 'registered'; "
+                f"got {rec.kind!r}"
+            )
         self.index.pin(keys=(rec.ref_key,), val=rec)
 
     def get_index(self, ref_key: str) -> TemplateIndexRecord | None:
@@ -84,6 +89,7 @@ class DesignerBaser(dbing.LMDBer):
         return [val for (_keys, val) in self.index.getItemIter()]
 
     def delete_index(self, ref_key: str) -> None:
+        """Remove an index record. Idempotent — silently no-op if absent."""
         self.index.rem(keys=(ref_key,))
 
     def put_open_state(self, rec: OpenStateRecord) -> None:

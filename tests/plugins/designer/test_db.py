@@ -76,3 +76,18 @@ def test_open_state_round_trip(db):
 
 def test_get_open_state_when_unset(db):
     assert db.get_open_state() is None
+
+
+def test_put_index_rejects_invalid_kind(db):
+    bad = TemplateIndexRecord(
+        ref_key="draft:x", kind="bogus", label="X", role_kind="individual",
+        validation_summary="valid", modified_at="2026-05-12T10:00:00Z",
+        source="manual",
+    )
+    with pytest.raises(ValueError, match="must be 'draft' or 'registered'"):
+        db.put_index(bad)
+
+
+def test_delete_index_missing_is_idempotent(db):
+    # Deleting a key that was never put should not raise.
+    db.delete_index("draft:never-existed")
