@@ -1,0 +1,72 @@
+{
+  "d": "EBROKnnnrefsxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+  "spec_version": "micro-app-template/0.1",
+  "header": {
+    "id": "broken-references-demo",
+    "display_name": "Broken Refs Demo",
+    "description": "Demo fixture with deliberately-broken cross references for validation panel tests.",
+    "version": "0.1",
+    "expression_language": "UEL/1.0"
+  },
+  "role": {
+    "id": "tester",
+    "display_name": "Tester",
+    "description": "A test role.",
+    "kind": "individual",
+    "keri_infrastructure": {
+      "witness_pool": false, "watcher_network": false,
+      "mailbox": false, "acdc_registry": false
+    }
+  },
+  "credentials": {
+    "imports": [],
+    "exports": [
+      {
+        "id": "exp1",
+        "name": "Test Export",
+        "description": "An export referencing nonexistent things.",
+        "envelope": {
+          "holder_role": "tester",
+          "verifier_roles": [],
+          "edges": [],
+          "disclosure_mode": "full"
+        },
+        "schema": {
+          "schema_said": "EBADSCHEMASAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+          "schema_path": "schemas/exp1.json"
+        },
+        "lifecycle": {
+          "states": ["init", "issued"],
+          "initial": "init",
+          "transitions": [
+            {
+              "id": "issue",
+              "from": "init",
+              "to": "issued",
+              "tel_primitive": "issue",
+              "via_workflow": "nonexistent_workflow"
+            }
+          ]
+        },
+        "rule_refs": ["nonexistent_rule"]
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "do_thing",
+      "name": "Do Thing",
+      "description": "A command with bad references.",
+      "route": "/do",
+      "payload_schema": {},
+      "idempotency_key_expression": "id",
+      "auth_preconditions": [{"rule_ref": "another_missing_rule"}],
+      "emissions": []
+    }
+  ],
+  "aggregates": [],
+  "reactions": [],
+  "workflows": [],
+  "projections": [],
+  "rules": []
+}
