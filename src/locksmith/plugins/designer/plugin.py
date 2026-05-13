@@ -54,6 +54,7 @@ class DesignerPlugin(PluginBase):
         self._store: TemplateStore | None = None
         self._model: TemplateModel | None = None
         self._pages: dict[str, QWidget] = {}
+        self._templates_nav_button: MenuButton | None = None
 
         # Build a placeholder browser at initialize-time (before vault is
         # opened) so get_pages() always returns the full key set, which
@@ -85,6 +86,12 @@ class DesignerPlugin(PluginBase):
         browser = TemplatesBrowserPage(store=self._store)
         browser.template_open_requested.connect(self._open_template)
         self._pages[PAGE_KEY_TEMPLATES_BROWSER] = browser
+        # Also re-register the new browser with the host so the
+        # content_stack swap actually takes effect; the placeholder
+        # browser registered at initialize() time is replaced.
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is not None:
+            vault_page.register_page(PAGE_KEY_TEMPLATES_BROWSER, browser)
         browser.refresh()
 
         vault.plugin_state["designer"] = {
@@ -127,13 +134,42 @@ class DesignerPlugin(PluginBase):
             (PAGE_KEY_IMPORTS, ImportsEditorPage),
             (PAGE_KEY_EXPORTS, ExportsEditorPage),
         ):
-            self._pages[key] = cls(model=self._model, crossrefs=crossrefs)
+            page = cls(model=self._model, crossrefs=crossrefs)
+            self._pages[key] = page
+            vault_page = getattr(self._app, "_vault_page", None)
+            if vault_page is not None:
+                # Newly-built pages must be registered with the host's
+                # content_stack; the placeholder QWidgets we registered
+                # at initialize() time stayed in the stack and need to
+                # be swapped out.
+                vault_page.register_page(key, page)
+
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is not None:
+            vault_page.register_page(PAGE_KEY_OVERVIEW, overview)
+        self._navigate(PAGE_KEY_OVERVIEW)
 
     def _drilldown(self, kind: str) -> None:
         page_key = PRIMITIVE_PAGE_KEY.get(kind)
         if page_key is None:
             return
-        logger.info("Drilldown requested: %s → %s", kind, page_key)
+        self._navigate(page_key)
+
+    def _show_templates_browser(self, *_args: Any) -> None:
+        self._navigate(PAGE_KEY_TEMPLATES_BROWSER)
+        browser = self._pages.get(PAGE_KEY_TEMPLATES_BROWSER)
+        if hasattr(browser, "refresh"):
+            browser.refresh()
+
+    def _navigate(self, page_key: str) -> None:
+        vault_page = getattr(self._app, "_vault_page", None)
+        if vault_page is None:
+            logger.warning(
+                "DesignerPlugin: vault_page not available; cannot show %s",
+                page_key,
+            )
+            return
+        vault_page._show_page(page_key)
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
@@ -143,10 +179,12 @@ class DesignerPlugin(PluginBase):
 
     def get_menu_section(self) -> list[QWidget]:
         items: list[QWidget] = [BackButton(dark_mode=False), MenuSpacer(15)]
-        items.append(MenuButton(
+        self._templates_nav_button = MenuButton(
             icon=QIcon(":/assets/material-icons/drafts.svg"),
             label="Templates",
-        ))
+        )
+        self._templates_nav_button.clicked.connect(self._show_templates_browser)
+        items.append(self._templates_nav_button)
         return items
 
     def get_pages(self) -> dict[str, QWidget]:
