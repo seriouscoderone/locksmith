@@ -93,6 +93,10 @@ def test_promote_draft_to_registered(store):
     assert (store.root / "templates" / "drafts" / "d1").exists() is False
     assert (store.root / "templates" / "registered" / VALID_FIXTURE["d"]).exists()
 
+    loaded_doc, _ = store.load(promoted)
+    assert loaded_doc["d"] == VALID_FIXTURE["d"]
+    assert loaded_doc["header"]["label"] == "Test Template"
+
 
 def test_delete_draft(store):
     ref = store.save_draft(local_id="d1", doc=VALID_FIXTURE, metadata=VALID_METADATA)
@@ -106,3 +110,9 @@ def test_list_returns_drafts_and_registered(store):
     refs = store.list_templates()
     kinds = {r.kind for r in refs}
     assert kinds == {"draft", "registered"}
+
+
+def test_delete_missing_raises(store):
+    ref = TemplateRef(kind="draft", local_id="never-saved", said=None)
+    with pytest.raises(TemplateNotFound):
+        store.delete(ref)

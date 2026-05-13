@@ -40,6 +40,22 @@ class TemplateRef:
     local_id: str | None
     said: str | None
 
+    def __post_init__(self) -> None:
+        if self.kind == "draft":
+            if not self.local_id or self.said is not None:
+                raise ValueError(
+                    f"draft refs must have local_id set and said=None; got "
+                    f"local_id={self.local_id!r}, said={self.said!r}"
+                )
+        elif self.kind == "registered":
+            if not self.said or self.local_id is not None:
+                raise ValueError(
+                    f"registered refs must have said set and local_id=None; got "
+                    f"local_id={self.local_id!r}, said={self.said!r}"
+                )
+        else:
+            raise ValueError(f"unknown kind: {self.kind!r}")
+
 
 class TemplateStore:
     def __init__(self, root: Path):
@@ -56,6 +72,24 @@ class TemplateStore:
     @property
     def _drafts_dir(self) -> Path:
         return self._templates_dir / "drafts"
+
+    def _write_pair_atomic(
+        self, dir_path: Path, doc: dict[str, Any], metadata: dict[str, Any],
+    ) -> None:
+        """Write template + metadata atomically via .tmp + Path.replace().
+
+        Both files are written to sibling .tmp paths first; only after both
+        succeed are they each renamed into place. A crash before the final
+        rename leaves no half-written final files (list_templates ignores
+        .tmp files because it checks for the canonical filename).
+        """
+        dir_path.mkdir(parents=True, exist_ok=True)
+        doc_tmp = dir_path / (TEMPLATE_FILENAME + ".tmp")
+        meta_tmp = dir_path / (METADATA_FILENAME + ".tmp")
+        doc_tmp.write_text(json.dumps(doc, indent=2, sort_keys=True))
+        meta_tmp.write_text(json.dumps(metadata, indent=2, sort_keys=True))
+        doc_tmp.replace(dir_path / TEMPLATE_FILENAME)
+        meta_tmp.replace(dir_path / METADATA_FILENAME)
 
     def _ref_dir(self, ref: TemplateRef) -> Path:
         if ref.kind == "registered":
@@ -97,13 +131,7 @@ class TemplateStore:
     ) -> TemplateRef:
         ref = TemplateRef(kind="draft", local_id=local_id, said=None)
         dir_path = self._ref_dir(ref)
-        dir_path.mkdir(parents=True, exist_ok=True)
-        (dir_path / TEMPLATE_FILENAME).write_text(
-            json.dumps(doc, indent=2, sort_keys=True)
-        )
-        (dir_path / METADATA_FILENAME).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True)
-        )
+        self._write_pair_atomic(dir_path, doc, metadata)
         return ref
 
     def save_registered(
@@ -114,13 +142,7 @@ class TemplateStore:
         dir_path = self._ref_dir(ref)
         if dir_path.exists() and not overwrite:
             raise TemplateAlreadyExists(f"Already at {dir_path}")
-        dir_path.mkdir(parents=True, exist_ok=True)
-        (dir_path / TEMPLATE_FILENAME).write_text(
-            json.dumps(doc, indent=2, sort_keys=True)
-        )
-        (dir_path / METADATA_FILENAME).write_text(
-            json.dumps(metadata, indent=2, sort_keys=True)
-        )
+        self._write_pair_atomic(dir_path, doc, metadata)
         return ref
 
     def promote_to_registered(
@@ -136,5 +158,6 @@ class TemplateStore:
 
     def delete(self, ref: TemplateRef) -> None:
         dir_path = self._ref_dir(ref)
-        if dir_path.exists():
-            shutil.rmtree(dir_path)
+        if not dir_path.exists():
+            raise TemplateNotFound(f"No template at {dir_path}")
+        shutil.rmtree(dir_path)
