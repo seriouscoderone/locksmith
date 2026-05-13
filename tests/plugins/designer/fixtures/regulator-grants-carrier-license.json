@@ -105,5 +105,21 @@
       "display": {"view_type": "table"}
     }
   ],
-  "rules": []
+  "rules": [
+    {
+      "id": "solvency_minimum",
+      "type": "predicate",
+      "title": "Carrier must hold minimum reserves",
+      "description": "Applicant must demonstrate solvency under state code.",
+      "expression": "applicant.capital_usd >= 100_000_000",
+      "language": "UEL/1.0",
+      "purpose": "auth_precondition"
+    },
+    {
+      "id": "fit_and_proper",
+      "type": "legal_prose",
+      "title": "Fit and Proper Persons",
+      "body": "All carrier officers and directors must pass background review under RCW 48.05.030."
+    }
+  ]
 }
