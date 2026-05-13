@@ -1,0 +1,80 @@
+{
+  "d": "EGCpXap_yYxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx6yAv",
+  "spec_version": "micro-app-template/0.1",
+  "header": {
+    "id": "regulator-grants-carrier-license",
+    "display_name": "Regulator Grants Carrier License",
+    "description": "The state DOI authorizes carriers to bear risk in this jurisdiction. Reviews applications, grants licenses, monitors solvency, revokes when grounds arise.",
+    "version": "1.0",
+    "expression_language": "UEL/1.0"
+  },
+  "role": {
+    "id": "state_doi",
+    "display_name": "State DOI",
+    "description": "State Department of Insurance — issues and supervises carrier licenses.",
+    "kind": "government",
+    "keri_infrastructure": {
+      "witness_pool": true, "watcher_network": true,
+      "mailbox": true, "acdc_registry": true
+    }
+  },
+  "credentials": {
+    "imports": [],
+    "exports": [
+      {
+        "id": "carrier_license",
+        "name": "Carrier License",
+        "description": "Authority to bind insurance risk within the state.",
+        "envelope": {
+          "holder_role": "carrier",
+          "verifier_roles": ["public"],
+          "edges": [],
+          "disclosure_mode": "full"
+        },
+        "schema": {
+          "schema_said": "EBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB",
+          "schema_path": "schemas/carrier_license.json"
+        },
+        "lifecycle": {
+          "states": ["pending", "active", "suspended", "revoked"],
+          "initial": "pending",
+          "transitions": [
+            {"id": "issue", "from": "pending", "to": "active", "tel_primitive": "issue", "via_workflow": "review_application"},
+            {"id": "suspend", "from": "active", "to": "suspended", "tel_primitive": "update"},
+            {"id": "revoke", "from": ["active", "suspended"], "to": "revoked", "tel_primitive": "revoke"}
+          ]
+        }
+      }
+    ]
+  },
+  "commands": [
+    {
+      "id": "issue_license",
+      "name": "Issue License",
+      "description": "Issue a new carrier license to an applicant.",
+      "route": "/issue",
+      "payload_schema": {},
+      "idempotency_key_expression": "applicant_id",
+      "emissions": [
+        {"kind": "lifecycle_advance", "exported_credential_id": "carrier_license", "to_state": "active"}
+      ]
+    }
+  ],
+  "aggregates": [],
+  "reactions": [],
+  "workflows": [
+    {
+      "id": "review_application",
+      "name": "Review Application",
+      "description": "Process and adjudicate a carrier license application.",
+      "trigger": {"type": "manual"},
+      "steps": [
+        {"id": "intake", "name": "Receive application", "actor": "counterparty"},
+        {"id": "review", "name": "Review materials", "actor": "self"},
+        {"id": "decide", "name": "Issue or deny", "actor": "self", "command_id": "issue_license"}
+      ]
+    }
+  ],
+  "projections": [],
+  "rules": []
+}
