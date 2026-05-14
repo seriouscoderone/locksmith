@@ -1,9 +1,9 @@
 # -*- encoding: utf-8 -*-
 """AggregatesEditorPage: 'I track …' surface.
 
-Right-pane sections (canonical schema):
-  Identity · Inception event type · Log scope · Invariants ·
-  Entry JSON · Used-by.
+V1 right-pane layout: header + inception-event chip + log-scope chip +
+state-schema preview + initial-state preview + invariants RuleChipStrip
++ Used by.
 """
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -28,6 +28,16 @@ from locksmith.plugins.designer.widgets.primitive_editor_shell import (
 )
 
 
+def _aggregate_subtitle(agg: dict) -> str:
+    parts: list[str] = []
+    scope = agg.get("log_scope")
+    if scope:
+        parts.append(f"{scope} log")
+    invs = agg.get("invariants") or []
+    parts.append(f"{len(invs)} invariant{'s' if len(invs) != 1 else ''}")
+    return " · ".join(parts)
+
+
 class _AggregateSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
@@ -37,52 +47,84 @@ class _AggregateSectionPane(QWidget):
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
-        self._identity = make_section("Identity")
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._description = QPlainTextEdit()
-        self._description.setReadOnly(True)
-        self._description.setFixedHeight(60)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        self._identity.layout().addWidget(QLabel("Description"))
-        self._identity.layout().addWidget(self._description)
-        lay.addWidget(self._identity)
-
-        self._inception = make_section("Inception event type")
-        self._inception_label = QLabel("(unset)")
-        self._inception_label.setStyleSheet(
-            "color:#444;font-family:monospace;font-size:11px;"
+        # Header.
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
         )
-        self._inception.layout().addWidget(self._inception_label)
-        lay.addWidget(self._inception)
+        title_row.addWidget(self._name_label)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
+        )
+        title_row.addWidget(self._id_chip)
+        title_row.addStretch(1)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        lay.addWidget(self._header_frame)
 
-        self._log = make_section("Log scope")
-        self._log_label = QLabel("(unset)")
-        self._log_label.setStyleSheet("color:#444;font-weight:600;")
-        self._log.layout().addWidget(self._log_label)
-        lay.addWidget(self._log)
+        # Inception event + log scope side-by-side.
+        ic_row = QHBoxLayout()
+        ic_row.setSpacing(14)
+        self._inception_section = make_section("Inception event")
+        self._inception_chip = QLabel("(unset)")
+        self._inception_chip.setStyleSheet(
+            "background:#f3edfb;color:#A36AE6;border-radius:9px;"
+            "padding:2px 9px;font-size:11px;font-weight:600;"
+            "font-family:monospace;"
+        )
+        self._inception_section.layout().addWidget(self._inception_chip)
+        ic_row.addWidget(self._inception_section, 1)
+        self._scope_section = make_section("Log scope")
+        self._scope_chip = QLabel("(unset)")
+        self._scope_chip.setStyleSheet(
+            "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+            "padding:2px 9px;font-size:11px;font-weight:600;"
+        )
+        self._scope_section.layout().addWidget(self._scope_chip)
+        ic_row.addWidget(self._scope_section, 1)
+        lay.addLayout(ic_row)
 
-        self._invariants = make_section("Invariants")
-        self._invariants_label = QLabel("(none)")
-        self._invariants_label.setStyleSheet("color:#444;")
-        self._invariants_label.setWordWrap(True)
-        self._invariants.layout().addWidget(self._invariants_label)
-        lay.addWidget(self._invariants)
-
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
+        # State schema preview.
+        self._state_schema_section = make_section("State schema")
+        self._state_schema_view = QPlainTextEdit()
+        self._state_schema_view.setReadOnly(True)
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(10)
-        self._json_view.setFont(mono)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
+        self._state_schema_view.setFont(mono)
+        self._state_schema_view.setFixedHeight(80)
+        self._state_schema_section.layout().addWidget(self._state_schema_view)
+        lay.addWidget(self._state_schema_section)
 
+        # Initial state preview.
+        self._initial_section = make_section("Initial state")
+        self._initial_view = QPlainTextEdit()
+        self._initial_view.setReadOnly(True)
+        self._initial_view.setFont(mono)
+        self._initial_view.setFixedHeight(50)
+        self._initial_section.layout().addWidget(self._initial_view)
+        lay.addWidget(self._initial_section)
+
+        # Invariants.
+        self._inv_section = make_section("Invariants")
+        self._inv_holder = QVBoxLayout()
+        self._inv_section.layout().addLayout(self._inv_holder)
+        lay.addWidget(self._inv_section)
+
+        # Used by.
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
@@ -90,33 +132,56 @@ class _AggregateSectionPane(QWidget):
         lay.addStretch(1)
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._id.setText(entry.get("id", ""))
-        self._description.setPlainText(entry.get("description", ""))
-        self._inception_label.setText(
-            entry.get("inception_event_type", "(unset)")
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
         )
-        self._log_label.setText(entry.get("log_scope", "(unset)"))
-        invariants = entry.get("invariants", [])
-        if invariants:
-            refs = [inv.get("rule_ref", "?") for inv in invariants]
-            self._invariants_label.setText(
-                f"{len(refs)}: " + ", ".join(refs)
-            )
-        else:
-            self._invariants_label.setText("(none)")
-        self._json_view.setPlainText(
-            json.dumps(entry, indent=2, sort_keys=True)
+
+        self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        self._description_label.setText(entry.get("description") or "")
+        self._inception_chip.setText(
+            entry.get("inception_event_type") or "(unset)"
         )
-        key = f"aggregate:{entry.get('id', '')}"
-        self.chip_strip.set_refs(self._crossrefs.consumers_of(key))
+        scope = entry.get("log_scope")
+        self._scope_chip.setText(scope or "(unset)")
+
+        self._state_schema_view.setPlainText(
+            json.dumps(entry.get("state_schema") or {}, indent=2, sort_keys=True)
+        )
+        self._initial_view.setPlainText(
+            json.dumps(entry.get("initial_state"), indent=2, sort_keys=True)
+        )
+
+        while self._inv_holder.count():
+            item = self._inv_holder.takeAt(0)
+            w = item.widget() if item is not None else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        refs = [r.get("rule_ref", "") for r in (entry.get("invariants") or [])
+                if r.get("rule_ref")]
+        self._inv_holder.addWidget(RuleChipStrip(refs))
+
+        self.chip_strip.set_refs(
+            self._crossrefs.consumers_of(f"aggregate:{entry.get('id', '')}")
+        )
 
     def text_summary(self) -> str:
-        return " ".join([
-            self._id.text(),
-            self._inception_label.text(),
-            self._log_label.text(),
-            self._invariants_label.text(),
-        ])
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
+        )
+        parts = [
+            self._name_label.text(),
+            self._id_chip.text(),
+            self._description_label.text(),
+            self._inception_chip.text(),
+            self._scope_chip.text(),
+            self._state_schema_view.toPlainText(),
+            self._initial_view.toPlainText(),
+        ]
+        for strip in self.findChildren(RuleChipStrip):
+            parts.extend(strip.chip_texts())
+        return " ".join(parts)
 
 
 class AggregatesEditorPage(QWidget):
@@ -136,6 +201,7 @@ class AggregatesEditorPage(QWidget):
             RailItem(
                 id=a.get("id", ""),
                 label=a.get("name") or a.get("id") or "(unnamed)",
+                subtitle=_aggregate_subtitle(a),
                 kind_color=color,
                 has_errors=False,
             )
