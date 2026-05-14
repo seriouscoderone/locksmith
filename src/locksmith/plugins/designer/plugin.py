@@ -85,6 +85,9 @@ class DesignerPlugin(PluginBase):
             root.mkdir(parents=True, exist_ok=True)
         self._store = TemplateStore(root=Path(root))
 
+        from locksmith.plugins.designer import seed_fixtures
+        seed_fixtures.maybe_seed(self._store)
+
         browser = TemplatesBrowserPage(store=self._store)
         browser.template_open_requested.connect(self._open_template)
         browser.import_file_requested.connect(self._import_file)
