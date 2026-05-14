@@ -1,18 +1,17 @@
 # -*- encoding: utf-8 -*-
 """WorkflowsEditorPage: 'I follow …' surface.
 
-Right-pane sections (canonical schema): Identity · Trigger · Roles
-involved · Steps · SwimlaneDiagram · Entry JSON · Used-by.
+V1 right-pane layout:
+  Header (id chip + description) · Trigger card · Counterparty card ·
+  Flow (full-width swimlane v2) · Step details · Used by.
 """
 from __future__ import annotations
 
-import json
 from typing import Any
 
 from PySide6.QtCore import Signal
-from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -30,14 +29,29 @@ from locksmith.plugins.designer.widgets.swimlane_diagram import (
 )
 
 
-def _trigger_summary(trigger: dict[str, Any]) -> str:
-    t = trigger.get("type", "?")
-    bits = [t]
-    for key in ("initiator_role", "cadence", "at", "credential_id",
-                "imported_credential_id", "to_state", "route", "ipex_verb"):
-        if trigger.get(key):
-            bits.append(f"{key}={trigger[key]}")
-    return " · ".join(bits)
+def _workflow_subtitle(wf: dict) -> str:
+    parts: list[str] = []
+    cp = wf.get("counterparty_role")
+    if cp:
+        parts.append(f"↔ {cp}")
+    n = len(wf.get("steps") or [])
+    if n:
+        parts.append(f"{n} step{'s' if n != 1 else ''}")
+    return " · ".join(parts) if parts else ""
+
+
+def _step_subtitle(s: dict) -> str:
+    if s.get("command_id"):
+        return f"command · {s['command_id']}"
+    if s.get("reaction_id"):
+        return f"reaction · {s['reaction_id']}"
+    adv = s.get("advance_lifecycle") or {}
+    if adv.get("credential_id"):
+        return f"advance {adv['credential_id']}"
+    if s.get("expected_inbound"):
+        inb = s["expected_inbound"][0]
+        return f"{inb.get('trigger_type','?')} · {inb.get('route', '')}"
+    return "internal · no exchange"
 
 
 class _WorkflowSectionPane(QWidget):
@@ -49,60 +63,65 @@ class _WorkflowSectionPane(QWidget):
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
-        self._identity = make_section("Identity")
-        self._name = QLineEdit()
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._description = QPlainTextEdit()
-        self._description.setReadOnly(True)
-        self._description.setFixedHeight(50)
-        self._identity.layout().addWidget(QLabel("Name"))
-        self._identity.layout().addWidget(self._name)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        self._identity.layout().addWidget(QLabel("Description"))
-        self._identity.layout().addWidget(self._description)
-        lay.addWidget(self._identity)
+        # Header.
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
+        )
+        title_row.addWidget(self._name_label)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
+        )
+        title_row.addWidget(self._id_chip)
+        title_row.addStretch(1)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        lay.addWidget(self._header_frame)
 
-        self._trigger = make_section("Trigger")
-        self._trigger_label = QLabel("(unset)")
-        self._trigger_label.setStyleSheet("color:#444;font-family:monospace;font-size:11px;")
-        self._trigger_label.setWordWrap(True)
-        self._trigger.layout().addWidget(self._trigger_label)
-        lay.addWidget(self._trigger)
+        # Trigger + Counterparty side by side.
+        tc_row = QHBoxLayout()
+        tc_row.setSpacing(14)
+        self._trigger_section = make_section("Trigger")
+        self._trigger_holder = QVBoxLayout()
+        self._trigger_section.layout().addLayout(self._trigger_holder)
+        tc_row.addWidget(self._trigger_section, 1)
+        self._counterparty_section = make_section("Counterparty")
+        self._cp_chip = QLabel("(none)")
+        self._cp_chip.setStyleSheet(
+            "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+            "padding:2px 9px;font-size:11px;font-weight:600;"
+        )
+        self._counterparty_section.layout().addWidget(self._cp_chip)
+        tc_row.addWidget(self._counterparty_section, 1)
+        lay.addLayout(tc_row)
 
-        self._roles = make_section("Roles involved")
-        self._roles_label = QLabel("(none)")
-        self._roles_label.setStyleSheet("color:#444;")
-        self._roles.layout().addWidget(self._roles_label)
-        lay.addWidget(self._roles)
+        # Flow swimlane.
+        self._flow_section = make_section("Flow")
+        self.swimlane = SwimlaneDiagram()
+        self.swimlane.setMinimumHeight(280)
+        self._flow_section.layout().addWidget(self.swimlane)
+        lay.addWidget(self._flow_section)
 
-        self._diagram_section = make_section("Swimlane diagram")
-        self.diagram = SwimlaneDiagram()
-        self.diagram.setFixedHeight(200)
-        self._diagram_section.layout().addWidget(self.diagram)
-        lay.addWidget(self._diagram_section)
+        # Step details.
+        self._steps_section = make_section("Step details")
+        self._steps_holder = QVBoxLayout()
+        self._steps_section.layout().addLayout(self._steps_holder)
+        lay.addWidget(self._steps_section)
 
-        self._steps = make_section("Steps")
-        self._steps_list = QLabel("(none)")
-        self._steps_list.setStyleSheet("color:#444;")
-        self._steps_list.setWordWrap(True)
-        self._steps.layout().addWidget(self._steps_list)
-        lay.addWidget(self._steps)
-
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-        self._json_view.setFont(mono)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
-
+        # Used by.
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
@@ -110,42 +129,148 @@ class _WorkflowSectionPane(QWidget):
         lay.addStretch(1)
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._name.setText(entry.get("name", ""))
-        self._id.setText(entry.get("id", ""))
-        self._description.setPlainText(entry.get("description", ""))
-        self._trigger_label.setText(_trigger_summary(entry.get("trigger", {})))
+        self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        self._description_label.setText(entry.get("description", ""))
 
-        steps = entry.get("steps", [])
-        actors: list[str] = []
-        for s in steps:
-            a = s.get("actor")
-            if a and a not in actors:
-                actors.append(a)
-        cp_role = entry.get("counterparty_role")
-        roles_text = ", ".join(actors)
-        if cp_role:
-            roles_text += f" (counterparty = {cp_role})"
-        self._roles_label.setText(roles_text or "(none)")
-
-        if steps:
-            self._steps_list.setText("\n".join(
-                f"{i + 1}. {s.get('name', '?')} ({s.get('actor', '?')})"
-                for i, s in enumerate(steps)
-            ))
-        else:
-            self._steps_list.setText("(none)")
-
-        self.diagram.render(
-            lanes=actors if actors else ["self"],
-            steps=[SwimlaneStep(step_id=s.get("id", f"step{i}"),
-                                label=s.get("name", "?"),
-                                actor=s.get("actor", "self"))
-                   for i, s in enumerate(steps)],
+        # Trigger card content.
+        while self._trigger_holder.count():
+            old = self._trigger_holder.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+            else:
+                item = self._trigger_holder.takeAt(0)
+        trig = entry.get("trigger") or {}
+        t_type = trig.get("type", "")
+        row_w = QFrame()
+        chip_row = QHBoxLayout(row_w)
+        chip_row.setContentsMargins(0, 0, 0, 0)
+        chip_row.setSpacing(6)
+        type_chip = QLabel(t_type or "(none)")
+        type_chip.setStyleSheet(
+            "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+            "padding:2px 9px;font-size:11px;font-weight:600;"
         )
-        self._json_view.setPlainText(json.dumps(entry, indent=2, sort_keys=True))
+        chip_row.addWidget(type_chip)
+        if trig.get("route"):
+            r_lbl = QLabel(trig["route"])
+            r_lbl.setStyleSheet(
+                "color:#0ABFB0;font-family:monospace;font-size:11px;"
+            )
+            chip_row.addWidget(r_lbl)
+        chip_row.addStretch(1)
+        self._trigger_holder.addWidget(row_w)
+
+        # Counterparty chip.
+        cp = entry.get("counterparty_role")
+        if cp:
+            self._cp_chip.setText(cp)
+            self._cp_chip.setStyleSheet(
+                "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+                "padding:2px 9px;font-size:11px;font-weight:600;"
+            )
+        else:
+            self._cp_chip.setText("(none)")
+            self._cp_chip.setStyleSheet(
+                "color:#aaa;font-style:italic;font-size:11px;background:transparent;"
+            )
+
+        # Swimlane v2.
+        steps_raw = entry.get("steps") or []
+        actors = sorted({s.get("actor", "self") for s in steps_raw},
+                        key=lambda a: 0 if a == "self" else 1)
+        if not actors:
+            actors = ["self"]
+        wf_id = entry.get("id", "")
+        cp_role = entry.get("counterparty_role", "counterparty")
+        lane_labels = [
+            f"I ({wf_id})" if a == "self"
+            else f"counterparty ({cp_role})"
+            for a in actors
+        ]
+        actor_to_label = {a: lane_labels[i] for i, a in enumerate(actors)}
+        swim_steps: list[SwimlaneStep] = []
+        for s in steps_raw:
+            actor = s.get("actor", "self")
+            is_internal = (
+                not s.get("command_id")
+                and not s.get("reaction_id")
+                and not s.get("advance_lifecycle")
+                and not s.get("expected_inbound")
+                and not s.get("branches")
+            )
+            tb = s.get("time_bound") or {}
+            tb_text = None
+            if isinstance(tb, dict) and tb.get("duration"):
+                exp = tb.get("on_expiry") or ""
+                tb_text = (f"{tb['duration']} bound"
+                           f"{' · on expiry → ' + exp if exp else ''}")
+            swim_steps.append(SwimlaneStep(
+                step_id=s.get("id", ""),
+                label=s.get("name") or s.get("id") or "(unnamed)",
+                actor=actor_to_label.get(actor, lane_labels[0]),
+                subtitle=_step_subtitle(s),
+                branches=s.get("branches"),
+                time_bound=tb_text,
+                is_internal=is_internal,
+            ))
+        self.swimlane.render(lanes=lane_labels, steps=swim_steps)
+
+        # Step details rich list.
+        while self._steps_holder.count():
+            old_item = self._steps_holder.takeAt(0)
+            w = old_item.widget() if old_item is not None else None
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        for s in steps_raw:
+            row_w = QFrame()
+            row = QHBoxLayout(row_w)
+            row.setContentsMargins(0, 2, 0, 2)
+            row.setSpacing(8)
+            name_lbl = QLabel(s.get("name") or s.get("id", "?"))
+            name_lbl.setStyleSheet(
+                "font-weight:600;color:#1A1C20;font-size:12px;"
+            )
+            row.addWidget(name_lbl)
+            actor_lbl = QLabel(f"actor: {s.get('actor', '?')}")
+            actor_lbl.setStyleSheet("color:#666;font-size:11px;")
+            row.addWidget(actor_lbl)
+            if s.get("command_id"):
+                cmd_lbl = QLabel(f"→ command {s['command_id']}")
+                cmd_lbl.setStyleSheet("color:#0ABFB0;font-size:11px;")
+                row.addWidget(cmd_lbl)
+            if s.get("reaction_id"):
+                rx_lbl = QLabel(f"→ reaction {s['reaction_id']}")
+                rx_lbl.setStyleSheet("color:#0ABFB0;font-size:11px;")
+                row.addWidget(rx_lbl)
+            adv = s.get("advance_lifecycle") or {}
+            if adv.get("credential_id"):
+                a_lbl = QLabel(
+                    f"→ advance {adv['credential_id']} to {adv.get('to_state','?')}"
+                )
+                a_lbl.setStyleSheet("color:#0ABFB0;font-size:11px;")
+                row.addWidget(a_lbl)
+            row.addStretch(1)
+            self._steps_holder.addWidget(row_w)
+
         self.chip_strip.set_refs(
             self._crossrefs.consumers_of(f"workflow:{entry.get('id', '')}")
         )
+
+    def text_summary(self) -> str:
+        parts = [
+            self._name_label.text(),
+            self._id_chip.text(),
+            self._description_label.text(),
+            self._cp_chip.text(),
+        ]
+        for lbl in self._trigger_section.findChildren(QLabel):
+            parts.append(lbl.text())
+        for lbl in self._steps_section.findChildren(QLabel):
+            parts.append(lbl.text())
+        return " ".join(parts)
 
 
 class WorkflowsEditorPage(QWidget):
@@ -159,6 +284,7 @@ class WorkflowsEditorPage(QWidget):
             RailItem(
                 id=w.get("id", ""),
                 label=w.get("name") or w.get("id") or "(unnamed)",
+                subtitle=_workflow_subtitle(w),
                 kind_color=color,
                 has_errors=False,
             )
@@ -200,5 +326,8 @@ class WorkflowsEditorPage(QWidget):
                 self._pane.set_entry(w)
                 return
 
+    def section_text(self) -> str:
+        return self._pane.text_summary()
+
     def swimlane_step_count(self) -> int:
-        return self._pane.diagram.step_count
+        return self._pane.swimlane.step_count
