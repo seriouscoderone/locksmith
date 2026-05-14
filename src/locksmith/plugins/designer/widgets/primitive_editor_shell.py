@@ -32,9 +32,11 @@ class PrimitiveEditorShell(QWidget):
         surface_label: str,
         template_label: str,
         items: list[RailItem],
+        add_label: str | None = None,
         parent=None,
     ):
         super().__init__(parent=parent)
+        self._add_label = add_label or "+ Add"
         self._build(surface_label=surface_label, template_label=template_label)
         self.rail_list.populate(items)
         self.rail_list.currentItemChanged.connect(self._on_rail_change)
@@ -77,16 +79,18 @@ class PrimitiveEditorShell(QWidget):
         rail_lay = QVBoxLayout(rail_panel)
         rail_lay.setContentsMargins(0, 0, 0, 0)
         rail_lay.setSpacing(0)
-        self.rail_list = KindRail()
-        rail_lay.addWidget(self.rail_list, 1)
-        self.add_button = QPushButton("+ Add")
+        self.add_button = QPushButton(self._add_label)
         self.add_button.setStyleSheet(
-            "QPushButton{background:#fff;border:0;border-top:1px solid #f0f2f5;"
-            "padding:10px;text-align:left;color:#666;}"
-            "QPushButton:hover{background:#f6f7f9;}"
+            "QPushButton{background:#fff;border:0;"
+            "border-bottom:1px solid #e0e3ea;"
+            "padding:10px 12px;text-align:center;color:#0ABFB0;"
+            "font-weight:600;}"
+            "QPushButton:hover{background:#f0fbfa;}"
         )
         self.add_button.clicked.connect(self.add_clicked.emit)
         rail_lay.addWidget(self.add_button)
+        self.rail_list = KindRail()
+        rail_lay.addWidget(self.rail_list, 1)
         body.addWidget(rail_panel)
 
         self.right_pane_container = QFrame()
