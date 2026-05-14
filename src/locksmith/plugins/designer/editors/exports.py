@@ -145,6 +145,27 @@ class _ExportSectionPane(QWidget):
         )
 
 
+def _export_subtitle(exp: dict) -> str:
+    env = exp.get("envelope") or {}
+    lc = exp.get("lifecycle") or {}
+    parts: list[str] = []
+    if env.get("holder_role"):
+        parts.append(f"→ {env['holder_role']}")
+    states = lc.get("states") or []
+    if states:
+        parts.append(f"{len(states)} states")
+    rule_count = len(exp.get("rule_refs") or [])
+    for t in (lc.get("transitions") or []):
+        if t.get("condition_rule_ref"):
+            rule_count += 1
+        for r in (t.get("requires") or []):
+            if r.get("rule_ref"):
+                rule_count += 1
+    if rule_count:
+        parts.append(f"{rule_count} rules")
+    return " · ".join(parts) if parts else ""
+
+
 class ExportsEditorPage(QWidget):
     navigated = Signal(str, str)
 
@@ -156,6 +177,7 @@ class ExportsEditorPage(QWidget):
             RailItem(
                 id=exp.get("id", ""),
                 label=exp.get("name") or exp.get("id") or "(unnamed)",
+                subtitle=_export_subtitle(exp),
                 kind_color=color,
                 has_errors=False,
             )
