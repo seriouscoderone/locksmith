@@ -97,12 +97,11 @@ class _ExportSectionPane(QWidget):
             w = self._build_tab(name)
             self._tab_widgets[name] = w
             self._stack.addWidget(w)
-        # Diagram lives in the Lifecycle tab — Task 8 puts a minimal
-        # state-machine in; Task 9 adds the transitions list.
+        # Diagram lives in the Lifecycle tab. Stash a reference; the
+        # full Lifecycle content (diagram + transitions list) is rebuilt
+        # by _fill_lifecycle_tab each time set_entry runs.
         self.diagram = StateMachineDiagram()
         self.diagram.setFixedHeight(200)
-        lifecycle_holder = self._tab_widgets["Lifecycle"].property("holder")
-        lifecycle_holder.layout().addWidget(self.diagram)
         self._stack.setCurrentWidget(self._tab_widgets["Lifecycle"])
 
         # Used-by stays outside the tabs.
@@ -143,6 +142,7 @@ class _ExportSectionPane(QWidget):
         self._said_label.setText(short)
         self._description_label.setText(entry.get("description", ""))
 
+        # Refresh diagram + Lifecycle tab content.
         lifecycle = entry.get("lifecycle") or {}
         transitions = [
             StateTransition(
@@ -154,9 +154,93 @@ class _ExportSectionPane(QWidget):
         ]
         self.diagram.render(transitions)
 
+        lifecycle_holder = self._tab_widgets["Lifecycle"].property("holder")
+        holder_lay = lifecycle_holder.layout()
+        while holder_lay.count():
+            old = holder_lay.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                # Don't deleteLater the diagram — re-add it below.
+                if old is not self.diagram:
+                    old.deleteLater()
+        self._fill_lifecycle_tab(lifecycle_holder, entry)
+
         self.chip_strip.set_refs(
             self._crossrefs.consumers_of(f"export:{entry.get('id', '')}")
         )
+
+    def _fill_lifecycle_tab(self, holder: QFrame, entry: dict) -> None:
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
+        )
+
+        lc = entry.get("lifecycle") or {}
+        transitions = lc.get("transitions") or []
+        initial = lc.get("initial", "")
+        n_states = len(lc.get("states") or [])
+        n_trans = len(transitions)
+
+        # State-machine title row.
+        title_row = QHBoxLayout()
+        title = QLabel("State machine")
+        title.setStyleSheet("font-size:13px;font-weight:600;color:#1A1C20;")
+        title_row.addWidget(title)
+        sub = QLabel(
+            f"{n_states} states · {n_trans} transitions · "
+            f"initial state: <b>{initial}</b>"
+        )
+        sub.setStyleSheet("color:#888;font-size:11px;")
+        title_row.addWidget(sub)
+        title_row.addStretch(1)
+        holder.layout().addLayout(title_row)
+        holder.layout().addWidget(self.diagram)
+
+        # Transitions list.
+        trans_section = make_section("Transitions")
+        for t in transitions:
+            row = QHBoxLayout()
+            row.setSpacing(6)
+            from_val = t.get("from", "")
+            from_text = (
+                ", ".join(from_val) if isinstance(from_val, list) else from_val
+            )
+            to_val = t.get("to", "")
+            chip_from = QLabel(from_text)
+            chip_from.setStyleSheet(
+                "background:#f0f2f5;color:#444;border-radius:9px;"
+                "padding:2px 8px;font-size:11px;"
+            )
+            arrow = QLabel("→")
+            arrow.setStyleSheet("color:#888;font-size:12px;")
+            chip_to = QLabel(to_val)
+            chip_to.setStyleSheet(
+                "background:#f0f2f5;color:#444;border-radius:9px;"
+                "padding:2px 8px;font-size:11px;"
+            )
+            row.addWidget(chip_from)
+            row.addWidget(arrow)
+            row.addWidget(chip_to)
+            via = t.get("via_workflow")
+            if via:
+                via_lbl = QLabel(f"via workflow {via}")
+                via_lbl.setStyleSheet("color:#0ABFB0;font-size:11px;")
+                row.addWidget(via_lbl)
+            requires = [r.get("rule_ref", "") for r in (t.get("requires") or [])
+                        if r.get("rule_ref")]
+            if requires:
+                req_lbl = QLabel("· requires")
+                req_lbl.setStyleSheet("color:#888;font-size:11px;")
+                row.addWidget(req_lbl)
+                row.addWidget(RuleChipStrip(requires))
+            row.addStretch(1)
+            prim_chip = QLabel(t.get("tel_primitive", ""))
+            prim_chip.setStyleSheet(
+                f"color:{_tel_color(t.get('tel_primitive', ''))};"
+                "font-size:10px;font-weight:600;background:transparent;"
+            )
+            row.addWidget(prim_chip)
+            trans_section.layout().addLayout(row)
+        holder.layout().addWidget(trans_section)
 
     def text_summary(self) -> str:
         return " ".join([
@@ -165,6 +249,11 @@ class _ExportSectionPane(QWidget):
             self._said_label.text(),
             self._description_label.text(),
         ])
+
+
+def _tel_color(prim: str) -> str:
+    return {"issue": "#D97757", "update": "#0ABFB0",
+            "revoke": "#E94B7B"}.get(prim, "#666")
 
 
 def _export_subtitle(exp: dict) -> str:
