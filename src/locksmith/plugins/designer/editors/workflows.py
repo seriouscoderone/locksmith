@@ -137,8 +137,10 @@ class _WorkflowSectionPane(QWidget):
 
         self.diagram.render(
             lanes=actors if actors else ["self"],
-            steps=[SwimlaneStep(label=s.get("name", "?"),
-                                actor=s.get("actor", "self")) for s in steps],
+            steps=[SwimlaneStep(step_id=s.get("id", f"step{i}"),
+                                label=s.get("name", "?"),
+                                actor=s.get("actor", "self"))
+                   for i, s in enumerate(steps)],
         )
         self._json_view.setPlainText(json.dumps(entry, indent=2, sort_keys=True))
         self.chip_strip.set_refs(
