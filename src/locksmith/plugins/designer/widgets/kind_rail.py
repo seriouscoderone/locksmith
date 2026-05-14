@@ -16,6 +16,7 @@ class RailItem:
     kind_color: str  # CSS hex, e.g. "#0ABFB0"
     has_errors: bool
     subtitle: str | None = None
+    group_header: str | None = None
 
 
 def _dot_icon(color_hex: str, size: int = 12) -> QPixmap:
@@ -37,19 +38,31 @@ class KindRail(QListWidget):
             "QListWidget{background:#fff;border:0;}"
             "QListWidget::item{padding:10px 12px;border-bottom:1px solid #f0f2f5;}"
             "QListWidget::item:selected{background:#f6f7f9;color:#1A1C20;}"
+            "QListWidget::item:disabled{"
+            "color:#888;background:#fafbfc;font-size:9px;"
+            "font-weight:600;letter-spacing:0.5px;padding:6px 12px;}"
         )
 
     def populate(self, items: list[RailItem]) -> None:
         self.clear()
+        first_selectable = -1
         for r in items:
+            if r.group_header:
+                hdr = QListWidgetItem(r.group_header)
+                hdr.setFlags(Qt.NoItemFlags)
+                hdr.setData(Qt.UserRole, None)
+                self.addItem(hdr)
+                continue
             main = r.label + ("  ⛔" if r.has_errors else "")
             text = f"{main}\n{r.subtitle}" if r.subtitle else main
             item = QListWidgetItem(text)
             item.setIcon(_dot_icon(r.kind_color))
             item.setData(Qt.UserRole, r.id)
             self.addItem(item)
-        if self.count() > 0:
-            self.setCurrentRow(0)
+            if first_selectable == -1:
+                first_selectable = self.count() - 1
+        if first_selectable >= 0:
+            self.setCurrentRow(first_selectable)
 
     def selected_id(self) -> str | None:
         item = self.currentItem()
