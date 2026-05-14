@@ -186,6 +186,16 @@ class CommandsEditorPage(QWidget):
         if items:
             self._pane.set_entry(model.doc.get("commands", [{}])[0])
         self.shell.set_right_pane(self._pane)
+        from locksmith.plugins.designer.widgets.validation_panel import (
+            ValidationPanel,
+        )
+        from locksmith.plugins.designer.widgets.json_source_view import (
+            JsonSourceView,
+        )
+        self._validation_panel = ValidationPanel()
+        self._json_source_view = JsonSourceView()
+        self.shell.set_side_panel(self._validation_panel)
+        self.shell.set_bottom_panel(self._json_source_view)
         self.shell.item_selected.connect(self._on_select)
         self._pane.chip_strip.navigated.connect(self.navigated.emit)
         outer = QVBoxLayout(self)
