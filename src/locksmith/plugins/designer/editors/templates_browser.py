@@ -58,22 +58,29 @@ class _TemplateCard(QFrame):
         return self._title
 
     def _build(self, doc: dict[str, Any]) -> None:
+        from locksmith.plugins.designer.widgets.role_icon_badge import (
+            RoleIconBadge,
+        )
+        from locksmith.plugins.designer.widgets.validation_pill import (
+            ValidationPill,
+        )
+        from locksmith.plugins.designer.widgets.ecosystem_chip import (
+            CrossTemplateChip, EcosystemChip,
+        )
+
         header = doc.get("header", {})
         role = doc.get("role", {})
         self._title = header.get("display_name", "(untitled)")
         kind = role.get("kind", "")
-        role_name = role.get("display_name", "")
-        color = _ROLE_KIND_COLOR.get(kind, "#888888")
+        meta = self._meta
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(16, 16, 16, 16)
         outer.setSpacing(8)
 
         top = QHBoxLayout()
-        swatch = QLabel()
-        swatch.setFixedSize(44, 44)
-        swatch.setStyleSheet(f"background:{color};border-radius:6px;")
-        top.addWidget(swatch)
+        self.role_badge = RoleIconBadge(kind=kind, size=44)
+        top.addWidget(self.role_badge)
 
         text = QVBoxLayout()
         title_row = QHBoxLayout()
@@ -87,10 +94,16 @@ class _TemplateCard(QFrame):
         )
         title_row.addWidget(version)
         title_row.addStretch(1)
+        self.validation_pill = ValidationPill(
+            error_count=meta.get("error_count", 0),
+            warning_count=meta.get("warning_count", 0),
+        )
+        title_row.addWidget(self.validation_pill)
         text.addLayout(title_row)
 
+        color = _ROLE_KIND_COLOR.get(kind, "#888888")
         subtitle = QLabel(
-            f"<span style='color:{color};font-weight:600;'>{role_name}</span>"
+            f"<span style='color:{color};font-weight:600;'>{role.get('id', '')}</span>"
             f" · {kind}"
         )
         subtitle.setStyleSheet("font-size:11px;color:#666;")
@@ -103,6 +116,23 @@ class _TemplateCard(QFrame):
         desc.setStyleSheet("font-size:12px;color:#444;")
         outer.addWidget(desc)
 
+        self.ecosystem_chips: list[QLabel] = []
+        chip_row = QHBoxLayout()
+        chip_row.setSpacing(6)
+        for tag in meta.get("ecosystem_tags", []):
+            chip = EcosystemChip(tag)
+            self.ecosystem_chips.append(chip)
+            chip_row.addWidget(chip)
+        forked_from = (header.get("forked_from", {}) or {}).get("template_said")
+        if forked_from:
+            short = (forked_from[:4] + "…" + forked_from[-6:]
+                     if len(forked_from) > 12 else forked_from)
+            chip_row.addWidget(
+                CrossTemplateChip(kind="forked_from", target=short)
+            )
+        chip_row.addStretch(1)
+        outer.addLayout(chip_row)
+
         counts = (
             f"{len(doc.get('credentials', {}).get('imports', []))} imports · "
             f"{len(doc.get('credentials', {}).get('exports', []))} exports · "
@@ -114,6 +144,9 @@ class _TemplateCard(QFrame):
         ftext.setStyleSheet("font-size:10px;color:#888;")
         footer.addWidget(ftext)
         footer.addStretch(1)
+        self.modified_label = QLabel(self._format_modified(meta.get("modified_at")))
+        self.modified_label.setStyleSheet("font-size:10px;color:#888;")
+        footer.addWidget(self.modified_label)
         if self._ref.kind == "draft":
             badge = QLabel("DRAFT")
         else:
@@ -122,6 +155,26 @@ class _TemplateCard(QFrame):
         badge.setStyleSheet("font-size:9px;color:#aaa;font-family:monospace;")
         footer.addWidget(badge)
         outer.addLayout(footer)
+
+    @staticmethod
+    def _format_modified(ts: str | None) -> str:
+        if not ts:
+            return "Modified just now"
+        try:
+            from datetime import datetime, timezone
+            dt = datetime.fromisoformat(ts.replace("Z", "+00:00"))
+            now = datetime.now(timezone.utc)
+            delta = now - dt
+            secs = int(delta.total_seconds())
+            if secs < 60:
+                return f"Modified {secs}s ago"
+            if secs < 3600:
+                return f"Modified {secs // 60}m ago"
+            if secs < 86400:
+                return f"Modified {secs // 3600}h ago"
+            return f"Modified {secs // 86400}d ago"
+        except (ValueError, TypeError):
+            return "Modified just now"
 
     def mousePressEvent(self, ev):
         if ev.button() == Qt.LeftButton:

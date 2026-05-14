@@ -37,3 +37,36 @@ def test_grid_renders_two_cards_in_two_up(qapp, seeded_store):
     page = TemplatesBrowserPage(store=seeded_store)
     page.refresh()
     assert page.card_count() == 2
+
+
+def test_card_renders_role_icon_badge_with_glyph(qapp, seeded_store):
+    page = TemplatesBrowserPage(store=seeded_store)
+    page.refresh()
+    regulator = next(c for c in page._cards
+                     if "Regulator" in c.title)
+    assert regulator.role_badge.glyph_label.text() == "🏛️"
+
+
+def test_card_renders_validation_pill(qapp, seeded_store):
+    page = TemplatesBrowserPage(store=seeded_store)
+    page.refresh()
+    regulator = next(c for c in page._cards
+                     if "Regulator" in c.title)
+    assert regulator.validation_pill.text() == "✓ valid"
+
+
+def test_card_renders_ecosystem_chips(qapp, seeded_store):
+    page = TemplatesBrowserPage(store=seeded_store)
+    page.refresh()
+    regulator = next(c for c in page._cards
+                     if "Regulator" in c.title)
+    chip_texts = [c.text() for c in regulator.ecosystem_chips]
+    assert chip_texts == ["insurance", "compliance"]
+
+
+def test_card_renders_modified_timestamp(qapp, seeded_store):
+    page = TemplatesBrowserPage(store=seeded_store)
+    page.refresh()
+    regulator = next(c for c in page._cards
+                     if "Regulator" in c.title)
+    assert regulator.modified_label.text().startswith("Modified")
