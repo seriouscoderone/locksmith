@@ -158,6 +158,18 @@ class _CommandSectionPane(QWidget):
         ])
 
 
+def _command_subtitle(c: dict) -> str:
+    parts: list[str] = []
+    cp = c.get("counterparty_role")
+    if cp:
+        parts.append(f"→ {cp}")
+    emissions = c.get("emissions") or []
+    n = len(emissions)
+    if n:
+        parts.append(f"{n} emission{'s' if n != 1 else ''}")
+    return " · ".join(parts) if parts else ""
+
+
 class CommandsEditorPage(QWidget):
     navigated = Signal(str, str)
 
@@ -209,6 +221,7 @@ class CommandsEditorPage(QWidget):
             items.append(RailItem(
                 id=c.get("id", ""),
                 label=c.get("name") or c.get("id") or "(unnamed)",
+                subtitle=_command_subtitle(c),
                 kind_color=color,
                 has_errors=False,
             ))
