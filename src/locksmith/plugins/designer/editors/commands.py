@@ -176,6 +176,10 @@ class CommandsEditorPage(QWidget):
             surface_label="Commands",
             template_label=template_label,
             items=items,
+            add_label="+ Add command",
+            item_count=len(items),
+            role_label=model.doc.get("role", {}).get("id", ""),
+            is_valid=True,
             parent=self,
         )
         self._pane = _CommandSectionPane(crossrefs=crossrefs)

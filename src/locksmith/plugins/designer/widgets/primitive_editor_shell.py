@@ -33,10 +33,18 @@ class PrimitiveEditorShell(QWidget):
         template_label: str,
         items: list[RailItem],
         add_label: str | None = None,
+        item_count: int = 0,
+        role_label: str = "",
+        is_valid: bool = True,
+        issue_count: int = 0,
         parent=None,
     ):
         super().__init__(parent=parent)
         self._add_label = add_label or "+ Add"
+        self._item_count = item_count
+        self._role_label = role_label
+        self._is_valid = is_valid
+        self._issue_count = issue_count
         self._build(surface_label=surface_label, template_label=template_label)
         self.rail_list.populate(items)
         self.rail_list.currentItemChanged.connect(self._on_rail_change)
@@ -66,7 +74,36 @@ class PrimitiveEditorShell(QWidget):
         self.surface_label = QLabel(surface_label)
         self.surface_label.setStyleSheet("color:#666;")
         strip_lay.addWidget(self.surface_label)
+
+        self.count_label = QLabel(f"({self._item_count})")
+        self.count_label.setStyleSheet("color:#888;")
+        strip_lay.addWidget(self.count_label)
+
         strip_lay.addStretch(1)
+
+        role_text = f"Role: {self._role_label}" if self._role_label else ""
+        self.role_pill = QLabel(role_text)
+        self.role_pill.setStyleSheet(
+            "color:#0ABFB0;font-weight:600;padding:3px 8px;"
+            "background:#f0fbfa;border-radius:10px;font-size:11px;"
+        )
+        if not self._role_label:
+            self.role_pill.setVisible(False)
+        strip_lay.addWidget(self.role_pill)
+
+        if self._is_valid:
+            self.valid_pill = QLabel("✓ valid")
+            self.valid_pill.setStyleSheet(
+                "color:#2a8a4a;background:#eafaf0;border-radius:10px;"
+                "padding:3px 8px;font-size:11px;font-weight:600;"
+            )
+        else:
+            self.valid_pill = QLabel(f"⚠ {self._issue_count} issues")
+            self.valid_pill.setStyleSheet(
+                "color:#a5641a;background:#fdf3e7;border-radius:10px;"
+                "padding:3px 8px;font-size:11px;font-weight:600;"
+            )
+        strip_lay.addWidget(self.valid_pill)
         root.addWidget(strip)
 
         body = QHBoxLayout()

@@ -172,6 +172,10 @@ class RulesEditorPage(QWidget):
             surface_label="Rules",
             template_label=model.doc.get("header", {}).get("display_name", "(untitled)"),
             items=items,
+            add_label="+ Add rule",
+            item_count=len(items),
+            role_label=model.doc.get("role", {}).get("id", ""),
+            is_valid=True,
             parent=self,
         )
         self._pane = _RuleSectionPane(crossrefs=crossrefs)

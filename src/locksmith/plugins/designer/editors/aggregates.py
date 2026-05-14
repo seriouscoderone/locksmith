@@ -147,6 +147,10 @@ class AggregatesEditorPage(QWidget):
                 "display_name", "(untitled)"
             ),
             items=items,
+            add_label="+ Add aggregate",
+            item_count=len(items),
+            role_label=model.doc.get("role", {}).get("id", ""),
+            is_valid=True,
             parent=self,
         )
         self._pane = _AggregateSectionPane(crossrefs=crossrefs)

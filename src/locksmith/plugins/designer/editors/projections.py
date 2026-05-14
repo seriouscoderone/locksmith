@@ -212,6 +212,10 @@ class ProjectionsEditorPage(QWidget):
             surface_label="Projections",
             template_label=model.doc.get("header", {}).get("display_name", "(untitled)"),
             items=items,
+            add_label="+ Add projection",
+            item_count=len(items),
+            role_label=model.doc.get("role", {}).get("id", ""),
+            is_valid=True,
             parent=self,
         )
         self._pane = _ProjectionSectionPane(crossrefs=crossrefs)
