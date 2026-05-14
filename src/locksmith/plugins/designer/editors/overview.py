@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
     QFrame, QGridLayout, QHBoxLayout, QLabel, QPushButton, QScrollArea,
     QVBoxLayout, QWidget,
@@ -63,41 +63,105 @@ class TemplateOverviewPage(QWidget):
         super().__init__(parent=parent)
         self._model = model
         self._cards: dict[str, FirstPersonCard] = {}
-        self._header_label = QLabel()
-        self._role_chip = QPushButton()
         self._build()
         self._model.changed.connect(lambda _path: self._refresh())
 
     def _build(self) -> None:
+        from locksmith.plugins.designer.widgets.role_icon_badge import (
+            RoleIconBadge,
+        )
+        from locksmith.plugins.designer.widgets.kebab_button import KebabButton
+
+        header = self._model.doc.get("header", {})
+        role = self._model.doc.get("role", {})
+        said = self._model.doc.get("d", "")
+
         root = QVBoxLayout(self)
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
         header_strip = QFrame()
-        header_strip.setStyleSheet("background:#fff;border-bottom:1px solid #e0e3ea;")
+        header_strip.setStyleSheet(
+            "background:#fff;border-bottom:1px solid #e0e3ea;"
+        )
         h = QHBoxLayout(header_strip)
         h.setContentsMargins(20, 14, 20, 14)
-        self._header_label.setText(self._model.doc.get("header", {}).get("display_name", ""))
-        self._header_label.setStyleSheet("font-size:18px;font-weight:600;color:#1A1C20;")
-        h.addWidget(self._header_label)
-        sep = QLabel("·")
-        sep.setStyleSheet("color:#ccc;")
-        h.addWidget(sep)
-        role = self._model.doc.get("role", {})
-        self._role_chip.setText(
-            f"{role.get('display_name', '')} · {role.get('kind', '')}"
+        h.setSpacing(14)
+
+        self.role_badge = RoleIconBadge(kind=role.get("kind", ""), size=52)
+        h.addWidget(self.role_badge)
+
+        center = QVBoxLayout()
+        center.setSpacing(3)
+
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._header_label = QLabel(header.get("display_name", ""))
+        self._header_label.setStyleSheet(
+            "font-size:18px;font-weight:600;color:#1A1C20;"
         )
-        self._role_chip.setFlat(True)
-        self._role_chip.setStyleSheet(
-            "background:#0ABFB0;color:#fff;border-radius:10px;"
-            "padding:3px 10px;font-size:11px;font-weight:600;"
+        title_row.addWidget(self._header_label)
+        self.version_chip = QLabel(f"v{header.get('version', '0.0')}")
+        self.version_chip.setStyleSheet(
+            "color:#888;background:#f6f7f9;padding:2px 8px;border-radius:10px;"
+            "font-size:11px;"
         )
-        self._role_chip.clicked.connect(self.edit_role_requested.emit)
-        h.addWidget(self._role_chip)
-        h.addStretch(1)
-        edit_header_btn = QPushButton("Edit header")
-        edit_header_btn.clicked.connect(self.edit_header_requested.emit)
-        h.addWidget(edit_header_btn)
+        title_row.addWidget(self.version_chip)
+        title_row.addStretch(1)
+        center.addLayout(title_row)
+
+        role_kind = role.get("kind", "")
+        keri_infra = role.get("keri_infrastructure", {})
+        infra_count = sum(1 for v in keri_infra.values() if v)
+        self.role_subtitle = QLabel(
+            f"<span style='color:#0ABFB0;font-weight:600;'>I am</span>"
+            f" · {role.get('display_name', '')}"
+            f" · {role_kind} · {infra_count} KERI services"
+        )
+        self.role_subtitle.setStyleSheet("font-size:12px;color:#444;")
+        self.role_subtitle.setTextFormat(Qt.RichText)
+        center.addWidget(self.role_subtitle)
+
+        self.description_label = QLabel(header.get("description", ""))
+        self.description_label.setWordWrap(True)
+        self.description_label.setStyleSheet("font-size:12px;color:#444;")
+        center.addWidget(self.description_label)
+
+        h.addLayout(center, 1)
+
+        right_col = QVBoxLayout()
+        right_col.setSpacing(6)
+        right_col.setAlignment(Qt.AlignTop)
+
+        top_right_row = QHBoxLayout()
+        top_right_row.addStretch(1)
+        said_block = QVBoxLayout()
+        said_block.setSpacing(0)
+        said_title = QLabel("SAID")
+        said_title.setStyleSheet(
+            "font-size:9px;color:#888;font-weight:600;letter-spacing:0.5px;"
+        )
+        said_block.addWidget(said_title)
+        short = (said[:4] + "…" + said[-4:]) if len(said) >= 8 else said
+        self.said_label = QLabel(short)
+        self.said_label.setStyleSheet(
+            "color:#666;background:#f6f7f9;padding:2px 8px;border-radius:6px;"
+            "font-size:10px;font-family:monospace;"
+        )
+        said_block.addWidget(self.said_label)
+        top_right_row.addLayout(said_block)
+        self.kebab_button = KebabButton()
+        top_right_row.addWidget(self.kebab_button)
+        right_col.addLayout(top_right_row)
+
+        self.walkthrough_button = QPushButton("Walk me through it")
+        self.walkthrough_button.setStyleSheet(
+            "background:#d97757;color:#fff;font-weight:600;"
+            "padding:6px 12px;border-radius:4px;"
+        )
+        right_col.addWidget(self.walkthrough_button)
+
+        h.addLayout(right_col)
         root.addWidget(header_strip)
 
         scroll = QScrollArea()
@@ -141,8 +205,6 @@ class TemplateOverviewPage(QWidget):
                 old.setParent(None)
                 old.deleteLater()
         self._cards = {}
-        self._header_label = QLabel()
-        self._role_chip = QPushButton()
         self._build()
 
     def card_kinds(self) -> list[str]:
@@ -156,4 +218,6 @@ class TemplateOverviewPage(QWidget):
         return self._header_label.text()
 
     def role_chip_text(self) -> str:
-        return self._role_chip.text()
+        # Compatibility shim — older tests asserted against a chip text.
+        # The role moved into a richer subtitle; return its plain text.
+        return self.role_subtitle.text()
