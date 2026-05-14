@@ -58,6 +58,7 @@ class _WorkflowSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
         self._crossrefs = crossrefs
+        self._role_id = "self"
         self._build()
 
     def _build(self) -> None:
@@ -128,6 +129,9 @@ class _WorkflowSectionPane(QWidget):
         lay.addWidget(self._used_by)
         lay.addStretch(1)
 
+    def set_role_id(self, role_id: str) -> None:
+        self._role_id = role_id
+
     def set_entry(self, entry: dict[str, Any]) -> None:
         self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
         self._id_chip.setText(entry.get("id", ""))
@@ -182,10 +186,9 @@ class _WorkflowSectionPane(QWidget):
                         key=lambda a: 0 if a == "self" else 1)
         if not actors:
             actors = ["self"]
-        wf_id = entry.get("id", "")
         cp_role = entry.get("counterparty_role", "counterparty")
         lane_labels = [
-            f"I ({wf_id})" if a == "self"
+            f"I ({self._role_id})" if a == "self"
             else f"counterparty ({cp_role})"
             for a in actors
         ]
@@ -301,6 +304,7 @@ class WorkflowsEditorPage(QWidget):
             parent=self,
         )
         self._pane = _WorkflowSectionPane(crossrefs=crossrefs)
+        self._pane.set_role_id(model.doc.get("role", {}).get("id", "self"))
         if items:
             self._pane.set_entry(model.doc["workflows"][0])
         self.shell.set_right_pane(self._pane)
