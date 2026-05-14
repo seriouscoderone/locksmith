@@ -94,17 +94,20 @@ def _qualifier_for_workflow(entry: dict) -> str | None:
 
 
 def _entries_for(kind: str, items: list[dict]) -> list:
+    # Show up to 4 entries per card (matches v1 mock's "I DO" with 4
+    # commands). Per-entry qualifier sublines only fire for the
+    # primitives where the mock surfaces extra metadata: exports
+    # ("to carrier · 4 states · 1 schema") and aggregates
+    # ("witnessed log · 3 invariants"). Workflows / reactions /
+    # commands / projections list just the entry names, matching
+    # mock density.
     out = []
-    for e in items[:3]:
+    for e in items[:4]:
         label = entry_label(e)
         if kind == "exports":
             q = _qualifier_for_export(e)
         elif kind == "aggregates":
             q = _qualifier_for_aggregate(e)
-        elif kind == "reactions":
-            q = _qualifier_for_reaction(e)
-        elif kind == "workflows":
-            q = _qualifier_for_workflow(e)
         else:
             q = None
         out.append(FacetEntry(label=label, qualifier=q))
@@ -309,6 +312,14 @@ class TemplateOverviewPage(QWidget):
             row, col = divmod(idx, 4)
             grid.addWidget(card, row, col)
             self._cards[kind] = card
+
+        # Trailing stretch row absorbs extra vertical space so the 2 card
+        # rows sit at the top of the scroll area without stretching to
+        # fill the viewport height.
+        grid.setRowStretch(2, 1)
+        # Equal column widths so cards in the same row align in width.
+        for c in range(4):
+            grid.setColumnStretch(c, 1)
 
         scroll.setWidget(host)
 
