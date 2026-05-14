@@ -22,17 +22,101 @@ from locksmith.plugins.designer.widgets.first_person_card import (
 
 
 _CARD_SPECS: list[tuple[str, str, str, str]] = [
-    # (kind, framing, label, doc-path-to-list)
-    ("role",        "I am …",          "Role",                   ""),
-    ("imports",     "I hold …",        "Imported credentials",   "credentials.imports"),
-    ("exports",     "I issue …",       "Issued credentials",     "credentials.exports"),
-    ("commands",    "I do …",          "Commands",               "commands"),
-    ("reactions",   "I respond to …",  "Reactions",              "reactions"),
-    ("workflows",   "I follow …",      "Workflows",              "workflows"),
-    ("aggregates",  "I track …",       "Aggregates",             "aggregates"),
-    ("projections", "I see …",         "Projections",            "projections"),
-    ("rules",       "I'm bound by …",  "Rules",                  "rules"),
+    # (kind, framing, secondary-label, doc-path)
+    ("imports",     "I HOLD",         "Imported credentials",   "credentials.imports"),
+    ("exports",     "I ISSUE",        "Issued credentials",     "credentials.exports"),
+    ("commands",    "I DO",           "Commands",               "commands"),
+    ("reactions",   "I RESPOND TO",   "Reactions",              "reactions"),
+    ("workflows",   "I FOLLOW",       "Workflows",              "workflows"),
+    ("aggregates",  "I TRACK",        "Aggregates",             "aggregates"),
+    ("projections", "I SEE",          "Projections",            "projections"),
+    ("rules",       "I'M BOUND BY",   "Rules",                  "rules"),
 ]
+
+
+_EMPTY_MESSAGES: dict[str, str] = {
+    "imports":     "No imports — this role is the root authority for licenses",
+    "exports":     "No issued credentials yet",
+    "commands":    "No commands yet",
+    "reactions":   "No reactions yet",
+    "workflows":   "No workflows yet",
+    "aggregates":  "No aggregates yet",
+    "projections": "No projections yet",
+    "rules":       "No rules yet",
+}
+
+
+def _qualifier_for_export(entry: dict) -> str | None:
+    env = entry.get("envelope", {})
+    lc = entry.get("lifecycle", {})
+    bits: list[str] = []
+    if env.get("holder_role"):
+        bits.append(f"to {env['holder_role']}")
+    if lc.get("states"):
+        bits.append(f"{len(lc['states'])} states")
+    if entry.get("schema"):
+        bits.append("1 schema")
+    return " · ".join(bits) if bits else None
+
+
+def _qualifier_for_aggregate(entry: dict) -> str | None:
+    bits: list[str] = []
+    scope = entry.get("log_scope")
+    if scope:
+        bits.append(f"{scope} log")
+    invs = entry.get("invariants") or []
+    if invs:
+        bits.append(f"{len(invs)} invariant{'s' if len(invs) != 1 else ''}")
+    return " · ".join(bits) if bits else None
+
+
+def _qualifier_for_reaction(entry: dict) -> str | None:
+    trig = entry.get("trigger", {})
+    n = len(entry.get("emissions") or [])
+    parts: list[str] = []
+    t_type = trig.get("type")
+    if t_type:
+        parts.append(f"← {t_type}")
+    if n:
+        parts.append(f"{n} emission{'s' if n != 1 else ''}")
+    return " · ".join(parts) if parts else None
+
+
+def _qualifier_for_workflow(entry: dict) -> str | None:
+    cp = entry.get("counterparty_role")
+    steps = entry.get("steps") or []
+    parts: list[str] = []
+    if cp:
+        parts.append(f"↔ {cp}")
+    if steps:
+        parts.append(f"{len(steps)} steps")
+    return " · ".join(parts) if parts else None
+
+
+def _entries_for(kind: str, items: list[dict]) -> list:
+    out = []
+    for e in items[:3]:
+        label = entry_label(e)
+        if kind == "exports":
+            q = _qualifier_for_export(e)
+        elif kind == "aggregates":
+            q = _qualifier_for_aggregate(e)
+        elif kind == "reactions":
+            q = _qualifier_for_reaction(e)
+        elif kind == "workflows":
+            q = _qualifier_for_workflow(e)
+        else:
+            q = None
+        out.append(FacetEntry(label=label, qualifier=q))
+    return out
+
+
+def _rule_type_counts(rules: list[dict]) -> dict[str, int]:
+    out: dict[str, int] = {}
+    for r in rules:
+        t = r.get("type", "")
+        out[t] = out.get(t, 0) + 1
+    return out
 
 
 def entry_label(entry: dict, fallback: str = "(unnamed)") -> str:
@@ -171,25 +255,28 @@ class TemplateOverviewPage(QWidget):
         grid = QGridLayout(host)
         grid.setContentsMargins(20, 20, 20, 20)
         grid.setSpacing(14)
+        self._grid = grid
 
         for idx, (kind, framing, label, dotted) in enumerate(_CARD_SPECS):
-            if kind == "role":
-                role = self._model.doc.get("role", {})
-                entries = [FacetEntry(
-                    label=f"{role.get('display_name', '(unnamed)')} ({role.get('kind', '?')})",
-                )]
-                count = 1
+            items_at = _list_at(self._model.doc, dotted)
+            count = len(items_at)
+            if kind == "rules":
+                card = FirstPersonCard(
+                    framing=framing, kind_label=label,
+                    count=count, entries=[],
+                    rule_type_counts=_rule_type_counts(items_at),
+                    empty_message=_EMPTY_MESSAGES[kind],
+                )
             else:
-                items_at = _list_at(self._model.doc, dotted)
-                entries = [FacetEntry(label=entry_label(e)) for e in items_at]
-                count = len(items_at)
-            card = FirstPersonCard(
-                framing=framing, kind_label=label,
-                count=count, entries=entries,
-            )
+                card = FirstPersonCard(
+                    framing=framing, kind_label=label,
+                    count=count,
+                    entries=_entries_for(kind, items_at),
+                    empty_message=_EMPTY_MESSAGES[kind],
+                )
             card.clicked.connect(lambda k=kind: self.drilldown_requested.emit(k))
             card.add_clicked.connect(lambda k=kind: self.add_requested.emit(k))
-            row, col = divmod(idx, 3)
+            row, col = divmod(idx, 4)
             grid.addWidget(card, row, col)
             self._cards[kind] = card
 

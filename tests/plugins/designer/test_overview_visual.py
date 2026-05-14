@@ -27,7 +27,7 @@ def _grab(widget, name):
     return path
 
 
-def test_overview_renders_nine_first_person_cards(qapp, fixture_dir):
+def test_overview_renders_eight_facet_cards(qapp, fixture_dir):
     doc = json.loads((fixture_dir / "regulator-grants-carrier-license.json").read_text())
     model = TemplateModel(doc)
     page = TemplateOverviewPage(model=model)
@@ -38,7 +38,7 @@ def test_overview_renders_nine_first_person_cards(qapp, fixture_dir):
 
     cards = page.card_kinds()
     expected = [
-        "role", "imports", "exports", "commands", "reactions",
+        "imports", "exports", "commands", "reactions",
         "workflows", "aggregates", "projections", "rules",
     ]
     assert cards == expected

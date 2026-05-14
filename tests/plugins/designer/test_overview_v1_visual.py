@@ -54,3 +54,38 @@ def test_header_walkthrough_cta_exists(qapp, regulator_model):
 def test_header_kebab_button_exists(qapp, regulator_model):
     page = TemplateOverviewPage(model=regulator_model)
     assert page.kebab_button.text() == "⋯"
+
+
+def test_overview_renders_eight_facet_cards_no_role_card(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    assert "role" not in page.card_kinds()
+    assert len(page.card_kinds()) == 8
+
+
+def test_overview_grid_is_four_columns_by_two_rows(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    rows = {page._grid.itemAtPosition(r, c).widget()
+            for r in range(2) for c in range(4)
+            if page._grid.itemAtPosition(r, c) is not None}
+    assert len(rows) == 8
+
+
+def test_i_issue_card_shows_qualifier_subline(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    card = page._cards["exports"]
+    assert card.framing_label.text() == "I ISSUE"
+    assert "Carrier License" in card.entries_text()
+
+
+def test_i_bound_by_card_uses_rule_type_chips(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    card = page._cards["rules"]
+    chips = card.chips_text()
+    assert "prose" in chips
+    assert "predicate" in chips or "predicates" in chips
+
+
+def test_i_hold_card_uses_root_authority_empty_state(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    card = page._cards["imports"]
+    assert "root authority" in card.entries_text()
