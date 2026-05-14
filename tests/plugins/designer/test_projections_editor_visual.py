@@ -27,7 +27,7 @@ def test_projections_editor_renders(qapp, fixture_dir):
     page.show()
     qapp.processEvents()
     QTest.qWait(150)
-    assert page.shell.rail_list.count() == 1
+    assert page.shell.rail_list.count() == 2
     assert page.preview_visible() is True
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     page.grab().save(str(SHOTS_DIR / "projections_editor.png"))

@@ -37,8 +37,8 @@ def test_commands_editor_renders_rail_and_sections(qapp, fixture_dir):
     qapp.processEvents()
     QTest.qWait(200)
 
-    assert page.shell.rail_list.count() == 1
+    assert page.shell.rail_list.count() == 4
     text = page.section_text()
-    assert "Issue License" in text
-    assert "/issue" in text
+    assert "Grant License" in text
+    assert "/insurance/cmd/grant_license" in text
     _grab(page, "commands_editor")

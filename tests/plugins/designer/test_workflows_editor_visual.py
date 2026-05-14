@@ -27,7 +27,7 @@ def test_workflows_editor_renders_swimlane(qapp, fixture_dir):
     page.show()
     qapp.processEvents()
     QTest.qWait(200)
-    assert page.shell.rail_list.count() == 1
-    assert page.swimlane_step_count() == 3  # review_application has 3 steps
+    assert page.shell.rail_list.count() == 3
+    assert page.swimlane_step_count() == 5  # license_grant_workflow has 5 steps
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     page.grab().save(str(SHOTS_DIR / "workflows_editor.png"))

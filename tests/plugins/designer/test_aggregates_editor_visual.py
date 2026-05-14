@@ -29,7 +29,7 @@ def test_aggregates_editor_renders(qapp, fixture_dir):
     QTest.qWait(150)
     assert page.shell.rail_list.count() == 1
     text = page.section_text()
-    assert "license_register" in text
+    assert "license_registry" in text
     assert "witnessed" in text
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     page.grab().save(str(SHOTS_DIR / "aggregates_editor.png"))

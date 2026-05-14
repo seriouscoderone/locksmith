@@ -27,9 +27,9 @@ def test_rules_editor_renders_typed_rail(qapp, fixture_dir):
     page.show()
     qapp.processEvents()
     QTest.qWait(150)
-    assert page.shell.rail_list.count() == 2
+    assert page.shell.rail_list.count() == 7
     text = page.section_text().lower()
-    # Selected is first rule (solvency_minimum / predicate)
-    assert "predicate" in text or "solvency" in text
+    # Selected is first rule (issued_under_statutory_authority / legal_prose)
+    assert "statutory" in text or "legal_prose" in text or "issued" in text
     SHOTS_DIR.mkdir(parents=True, exist_ok=True)
     page.grab().save(str(SHOTS_DIR / "rules_editor.png"))

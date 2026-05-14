@@ -62,4 +62,4 @@ def test_overview_header_strip_shows_label_and_role(qapp, fixture_dir):
     page.show()
     qapp.processEvents()
     assert page.header_label_text() == "Regulator Grants Carrier License"
-    assert "State DOI" in page.role_chip_text()
+    assert "State Department of Insurance" in page.role_chip_text()
