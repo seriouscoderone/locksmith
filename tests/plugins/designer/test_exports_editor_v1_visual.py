@@ -29,3 +29,26 @@ def test_export_rail_items_have_subtitles(qapp, regulator_model):
     subtitle = text.split("\n", 1)[1]
     assert "carrier" in subtitle
     assert "4 states" in subtitle
+
+
+def test_export_pane_has_five_tab_strip(qapp, regulator_model):
+    from locksmith.plugins.designer.widgets.editor_tab_bar import EditorTabBar
+    page = ExportsEditorPage(
+        model=regulator_model,
+        crossrefs=compute_crossrefs(regulator_model.doc),
+    )
+    tab_bar = page._pane.findChild(EditorTabBar)
+    assert tab_bar is not None
+    assert tab_bar.tab_names() == [
+        "Envelope", "Schema", "Lifecycle", "Rules", "Value flow",
+    ]
+
+
+def test_export_pane_lifecycle_tab_is_active_by_default(qapp, regulator_model):
+    from locksmith.plugins.designer.widgets.editor_tab_bar import EditorTabBar
+    page = ExportsEditorPage(
+        model=regulator_model,
+        crossrefs=compute_crossrefs(regulator_model.doc),
+    )
+    tab_bar = page._pane.findChild(EditorTabBar)
+    assert tab_bar.active_tab() == "Lifecycle"

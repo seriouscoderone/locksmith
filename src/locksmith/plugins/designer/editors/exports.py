@@ -14,7 +14,8 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+    QStackedWidget, QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -39,88 +40,110 @@ class _ExportSectionPane(QWidget):
         self._build()
 
     def _build(self) -> None:
+        from locksmith.plugins.designer.widgets.editor_tab_bar import (
+            EditorTabBar,
+        )
+
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(10)
 
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-
-        self._identity = make_section("Identity")
-        self._name = QLineEdit()
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._description = QPlainTextEdit()
-        self._description.setReadOnly(True)
-        self._description.setFixedHeight(50)
-        self._identity.layout().addWidget(QLabel("Name"))
-        self._identity.layout().addWidget(self._name)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        self._identity.layout().addWidget(QLabel("Description"))
-        self._identity.layout().addWidget(self._description)
-        lay.addWidget(self._identity)
-
-        self._envelope = make_section("Envelope")
-        self._envelope_label = QLabel("(unset)")
-        self._envelope_label.setStyleSheet("color:#444;font-size:11px;")
-        self._envelope.layout().addWidget(self._envelope_label)
-        lay.addWidget(self._envelope)
-
-        self._schema = make_section("Schema (SAID)")
-        self._schema_label = QLabel("(unset)")
-        self._schema_label.setFont(mono)
-        self._schema_label.setStyleSheet("color:#444;font-size:10px;")
-        self._schema.layout().addWidget(self._schema_label)
-        lay.addWidget(self._schema)
-
-        self._lifecycle = make_section("TEL lifecycle")
-        self.diagram = StateMachineDiagram()
-        self.diagram.setFixedHeight(180)
-        self._lifecycle.layout().addWidget(self.diagram)
-        lay.addWidget(self._lifecycle)
-
-        self._states = make_section("States")
-        self._states_label = QLabel("(none)")
-        self._states_label.setStyleSheet("color:#444;")
-        self._states_label.setTextFormat(
-            # Allow bold HTML for the initial state highlight
-            self._states_label.textFormat()
+        # Header.
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
         )
-        self._states.layout().addWidget(self._states_label)
-        lay.addWidget(self._states)
+        title_row.addWidget(self._name_label)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
+        )
+        title_row.addWidget(self._id_chip)
+        title_row.addStretch(1)
+        said_title = QLabel("Schema SAID:")
+        said_title.setStyleSheet("font-size:10px;color:#888;")
+        title_row.addWidget(said_title)
+        self._said_label = QLabel("")
+        self._said_label.setStyleSheet(
+            "color:#666;font-family:monospace;font-size:10px;"
+            "background:#f6f7f9;border-radius:6px;padding:2px 8px;"
+        )
+        title_row.addWidget(self._said_label)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        lay.addWidget(self._header_frame)
 
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
-        self._json_view.setFont(mono)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
+        self.tab_bar = EditorTabBar(
+            ["Envelope", "Schema", "Lifecycle", "Rules", "Value flow"],
+        )
+        self.tab_bar.set_active("Lifecycle")
+        self.tab_bar.tab_changed.connect(self._on_tab_changed)
+        lay.addWidget(self.tab_bar)
 
+        self._stack = QStackedWidget()
+        lay.addWidget(self._stack, 1)
+        self._tab_widgets: dict[str, QWidget] = {}
+        for name in self.tab_bar.tab_names():
+            w = self._build_tab(name)
+            self._tab_widgets[name] = w
+            self._stack.addWidget(w)
+        # Diagram lives in the Lifecycle tab — Task 8 puts a minimal
+        # state-machine in; Task 9 adds the transitions list.
+        self.diagram = StateMachineDiagram()
+        self.diagram.setFixedHeight(200)
+        lifecycle_holder = self._tab_widgets["Lifecycle"].property("holder")
+        lifecycle_holder.layout().addWidget(self.diagram)
+        self._stack.setCurrentWidget(self._tab_widgets["Lifecycle"])
+
+        # Used-by stays outside the tabs.
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
         lay.addWidget(self._used_by)
+
+    def _build_tab(self, name: str) -> QWidget:
+        w = QWidget()
+        lay = QVBoxLayout(w)
+        lay.setContentsMargins(0, 0, 0, 0)
+        lay.setSpacing(10)
+        holder = QFrame()
+        holder_lay = QVBoxLayout(holder)
+        holder_lay.setContentsMargins(0, 0, 0, 0)
+        holder_lay.setSpacing(8)
+        w.setProperty("holder", holder)
+        lay.addWidget(holder)
         lay.addStretch(1)
+        # Non-Lifecycle tabs get a stub placeholder until later phases.
+        if name != "Lifecycle":
+            stub = QLabel(f"({name} content — Phase 3b/3c follow-up)")
+            stub.setStyleSheet("color:#aaa;font-style:italic;font-size:11px;")
+            holder_lay.addWidget(stub)
+        return w
+
+    def _on_tab_changed(self, name: str) -> None:
+        if name in self._tab_widgets:
+            self._stack.setCurrentWidget(self._tab_widgets[name])
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._name.setText(entry.get("name", ""))
-        self._id.setText(entry.get("id", ""))
-        self._description.setPlainText(entry.get("description", ""))
+        self._current_entry = entry
+        self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        said = (entry.get("schema") or {}).get("schema_said") or ""
+        short = said[:4] + "…" + said[-6:] if len(said) > 12 else said
+        self._said_label.setText(short)
+        self._description_label.setText(entry.get("description", ""))
 
-        env = entry.get("envelope", {})
-        self._envelope_label.setText(
-            f"holder = {env.get('holder_role', '?')} · "
-            f"disclosure = {env.get('disclosure_mode', '?')} · "
-            f"verifiers = {', '.join(env.get('verifier_roles', [])) or '(none)'}"
-        )
-
-        schema = entry.get("schema", {})
-        self._schema_label.setText(schema.get("schema_said", "(unset)"))
-
-        lifecycle = entry.get("lifecycle", {})
+        lifecycle = entry.get("lifecycle") or {}
         transitions = [
             StateTransition(
                 from_state=t.get("from", ""),
@@ -131,18 +154,17 @@ class _ExportSectionPane(QWidget):
         ]
         self.diagram.render(transitions)
 
-        states = lifecycle.get("states", [])
-        initial = lifecycle.get("initial", "")
-        decorated = [
-            f"<b>{s}</b> (initial)" if s == initial else s
-            for s in states
-        ]
-        self._states_label.setText(", ".join(decorated) if decorated else "(none)")
-
-        self._json_view.setPlainText(json.dumps(entry, indent=2, sort_keys=True))
         self.chip_strip.set_refs(
             self._crossrefs.consumers_of(f"export:{entry.get('id', '')}")
         )
+
+    def text_summary(self) -> str:
+        return " ".join([
+            self._name_label.text(),
+            self._id_chip.text(),
+            self._said_label.text(),
+            self._description_label.text(),
+        ])
 
 
 def _export_subtitle(exp: dict) -> str:
