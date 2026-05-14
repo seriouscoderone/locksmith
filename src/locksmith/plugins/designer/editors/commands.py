@@ -13,7 +13,7 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -61,50 +61,87 @@ class _CommandSectionPane(QWidget):
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
-        self._identity = make_section("Identity")
-        self._name = QLineEdit()
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._identity.layout().addWidget(QLabel("Name"))
-        self._identity.layout().addWidget(self._name)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        lay.addWidget(self._identity)
+        # Header (id + name + route + description).
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
+        )
+        title_row.addWidget(self._name_label)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
+        )
+        title_row.addWidget(self._id_chip)
+        title_row.addStretch(1)
+        self._route_label = QLabel("")
+        self._route_label.setStyleSheet(
+            "color:#0ABFB0;font-family:monospace;font-size:11px;"
+        )
+        title_row.addWidget(self._route_label)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        lay.addWidget(self._header_frame)
 
-        self._route_section = make_section("Route")
-        self._route_label = QLabel("(unset)")
-        self._counterparty_label = QLabel("")
-        self._counterparty_label.setStyleSheet("color:#666;font-size:11px;")
-        self._route_section.layout().addWidget(self._route_label)
-        self._route_section.layout().addWidget(self._counterparty_label)
-        lay.addWidget(self._route_section)
+        # TARGETS
+        targets = make_section("Targets")
+        self._cp_row = QHBoxLayout()
+        cp_lbl = QLabel("Counterparty role:")
+        cp_lbl.setStyleSheet("color:#444;font-size:12px;")
+        self._cp_row.addWidget(cp_lbl)
+        self._cp_chip = QLabel("(none)")
+        self._cp_chip.setStyleSheet(
+            "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+            "padding:2px 9px;font-size:11px;font-weight:600;"
+        )
+        self._cp_row.addWidget(self._cp_chip)
+        self._cp_row.addStretch(1)
+        targets.layout().addLayout(self._cp_row)
+        lay.addWidget(targets)
 
-        self._preconditions = make_section("Preconditions")
-        self._pre_label = QLabel("(none)")
-        self._pre_label.setStyleSheet("color:#444;")
-        self._preconditions.layout().addWidget(self._pre_label)
-        lay.addWidget(self._preconditions)
+        # PAYLOAD
+        self._payload_section = make_section("What the actor supplies (payload)")
+        self._payload_holder = QFrame()
+        ph = QVBoxLayout(self._payload_holder)
+        ph.setContentsMargins(0, 0, 0, 0)
+        ph.setSpacing(0)
+        self._payload_section.layout().addWidget(self._payload_holder)
+        lay.addWidget(self._payload_section)
 
-        self._emissions = make_section("Emissions")
-        self._emissions_label = QLabel("(none)")
-        self._emissions_label.setStyleSheet("color:#444;")
-        self._emissions_label.setWordWrap(True)
-        self._emissions.layout().addWidget(self._emissions_label)
-        lay.addWidget(self._emissions)
+        # PRECONDITIONS — three sub-rows.
+        self._precond_section = make_section("Preconditions")
+        self._auth_strip_holder = QVBoxLayout()
+        self._state_strip_holder = QVBoxLayout()
+        self._temporal_strip_holder = QVBoxLayout()
+        for label, holder in (
+            ("Auth — actor must hold credentials matching:", self._auth_strip_holder),
+            ("State — facts that must exist in aggregates:", self._state_strip_holder),
+            ("Temporal — time bounds:", self._temporal_strip_holder),
+        ):
+            lbl = QLabel(label)
+            lbl.setStyleSheet("color:#666;font-size:11px;")
+            self._precond_section.layout().addWidget(lbl)
+            self._precond_section.layout().addLayout(holder)
+        lay.addWidget(self._precond_section)
 
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-        self._json_view.setFont(mono)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
+        # EMISSIONS
+        self._emissions_section = make_section("Emissions")
+        self._emissions_holder = QVBoxLayout()
+        self._emissions_section.layout().addLayout(self._emissions_holder)
+        lay.addWidget(self._emissions_section)
 
+        # USED BY
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
@@ -112,50 +149,95 @@ class _CommandSectionPane(QWidget):
         lay.addStretch(1)
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._name.setText(entry.get("name", ""))
-        self._id.setText(entry.get("id", ""))
-
-        route = entry.get("route", "(unset)")
-        self._route_label.setText(route)
-        cp = entry.get("counterparty_role")
-        self._counterparty_label.setText(
-            f"Counterparty: {cp}" if cp else ""
+        from locksmith.plugins.designer.widgets.payload_schema_table import (
+            PayloadSchemaTable,
+        )
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
         )
 
-        auth = len(entry.get("auth_preconditions", []))
-        state = len(entry.get("state_preconditions", []))
-        temporal = len(entry.get("temporal_preconditions", []))
-        parts = []
-        if auth:
-            parts.append(f"{auth} auth")
-        if state:
-            parts.append(f"{state} state")
-        if temporal:
-            parts.append(f"{temporal} temporal")
-        self._pre_label.setText(", ".join(parts) if parts else "(none)")
-
-        emissions = entry.get("emissions", [])
-        if emissions:
-            self._emissions_label.setText(
-                "\n".join(f"• {_emission_summary(e)}" for e in emissions)
+        self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        self._route_label.setText(entry.get("route", ""))
+        self._description_label.setText(entry.get("description", ""))
+        cp = entry.get("counterparty_role")
+        if cp:
+            self._cp_chip.setText(cp)
+            self._cp_chip.setStyleSheet(
+                "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+                "padding:2px 9px;font-size:11px;font-weight:600;"
             )
         else:
-            self._emissions_label.setText("(none)")
+            self._cp_chip.setText("(none)")
+            self._cp_chip.setStyleSheet(
+                "color:#aaa;font-style:italic;font-size:11px;background:transparent;"
+            )
 
-        self._json_view.setPlainText(
-            json.dumps(entry, indent=2, sort_keys=True)
-        )
+        ph_layout = self._payload_holder.layout()
+        while ph_layout.count():
+            old = ph_layout.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+        ph_layout.addWidget(PayloadSchemaTable(entry.get("payload_schema") or {}))
+
+        for holder, refs_key in (
+            (self._auth_strip_holder, "auth_preconditions"),
+            (self._state_strip_holder, "state_preconditions"),
+            (self._temporal_strip_holder, "temporal_preconditions"),
+        ):
+            while holder.count():
+                old = holder.takeAt(0).widget()
+                if old is not None:
+                    old.setParent(None)
+                    old.deleteLater()
+            refs = [r.get("rule_ref", "") for r in (entry.get(refs_key) or [])
+                    if r.get("rule_ref")]
+            holder.addWidget(RuleChipStrip(refs))
+
+        while self._emissions_holder.count():
+            old = self._emissions_holder.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+        emissions = entry.get("emissions") or []
+        if not emissions:
+            none_lbl = QLabel("(none)")
+            none_lbl.setStyleSheet("color:#aaa;font-style:italic;font-size:11px;")
+            self._emissions_holder.addWidget(none_lbl)
+        else:
+            for em in emissions:
+                summary = _emission_summary(em)
+                lbl = QLabel(f"• {summary}")
+                lbl.setStyleSheet("color:#444;font-size:11px;")
+                self._emissions_holder.addWidget(lbl)
 
         key = f"command:{entry.get('id', '')}"
         self.chip_strip.set_refs(self._crossrefs.consumers_of(key))
 
     def text_summary(self) -> str:
-        return " ".join([
-            self._name.text(),
+        from locksmith.plugins.designer.widgets.payload_schema_table import (
+            PayloadSchemaTable,
+        )
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
+        )
+
+        parts = [
+            self._name_label.text(),
+            self._id_chip.text(),
             self._route_label.text(),
-            self._pre_label.text(),
-            self._emissions_label.text(),
-        ])
+            self._description_label.text(),
+            "Auth State Temporal",
+            self._cp_chip.text(),
+        ]
+        for table in self.findChildren(PayloadSchemaTable):
+            for row in table.field_rows():
+                parts.append(row.get("field", ""))
+                parts.append(row.get("constraint", ""))
+        for strip in self.findChildren(RuleChipStrip):
+            parts.extend(strip.chip_texts())
+        return " ".join(parts)
 
 
 def _command_subtitle(c: dict) -> str:
