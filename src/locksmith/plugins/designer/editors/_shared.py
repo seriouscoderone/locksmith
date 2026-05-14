@@ -21,22 +21,23 @@ def kind_color_for(role_kind: str) -> str:
 
 
 def make_section(title: str) -> QFrame:
-    """A right-pane section frame, white card with a title row.
+    """A right-pane section: uppercase teal label + content, no card chrome.
 
-    Stylesheet also explicitly forces light-themed inputs on every
-    QLineEdit / QPlainTextEdit / QComboBox inside the frame. Without
-    this, the global Locksmith QSS sets only `color: TEXT_PRIMARY`
-    on QLineEdit and Qt's macOS-side default for the background
-    paints the field opaque dark — making dark-text-on-dark-fill
-    invisible at full window size. Caught via the dev-control
-    screenshot loop on the Commands editor; cascades fix every
-    editor.
+    Earlier iterations wrapped every section in its own white-bordered
+    card, which produced a "every text in a grey box" effect (8 boxes
+    stacked vertically per editor). The v1 mocks instead use flat
+    sections — a small uppercase teal section header with content
+    flowing beneath on the page's shared surface. This shape matches.
+
+    The descendant-selector stylesheet on QLineEdit/QPlainTextEdit/
+    QComboBox remains: macOS Qt paints the default field background
+    dark unless we force light, so input widgets inside the section
+    still need the explicit white-fill rule. Caught via the dev-control
+    screenshot loop on the Commands editor.
     """
     frame = QFrame()
     frame.setObjectName("editor-section")
     frame.setStyleSheet(
-        "#editor-section{background:#fff;border:1px solid #e0e3ea;"
-        "border-radius:6px;}"
         "#editor-section QLineEdit, #editor-section QPlainTextEdit, "
         "#editor-section QComboBox{"
         "background:#fff;color:#1A1C20;border:1px solid #e0e3ea;"
@@ -46,9 +47,12 @@ def make_section(title: str) -> QFrame:
         "background:#f6f7f9;color:#444;}"
     )
     lay = QVBoxLayout(frame)
-    lay.setContentsMargins(14, 12, 14, 12)
-    lay.setSpacing(8)
-    title_label = QLabel(title)
-    title_label.setStyleSheet("font-size:12px;font-weight:600;color:#666;")
+    lay.setContentsMargins(0, 0, 0, 4)
+    lay.setSpacing(6)
+    title_label = QLabel(title.upper())
+    title_label.setStyleSheet(
+        "font-size:10px;font-weight:600;color:#0ABFB0;"
+        "letter-spacing:0.5px;background:transparent;"
+    )
     lay.addWidget(title_label)
     return frame
