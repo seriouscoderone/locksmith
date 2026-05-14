@@ -34,9 +34,11 @@ _ROLE_KIND_COLOR: dict[str, str] = {
 class _TemplateCard(QFrame):
     clicked = Signal()
 
-    def __init__(self, ref: TemplateRef, doc: dict[str, Any], parent=None):
+    def __init__(self, ref: TemplateRef, doc: dict[str, Any],
+                 meta: dict[str, Any] | None = None, parent=None):
         super().__init__(parent=parent)
         self._ref = ref
+        self._meta = meta or {}
         self.setObjectName("card")
         self.setStyleSheet(
             "#card{background:#fff;border:1px solid #e0e3ea;border-radius:8px;}"
@@ -146,12 +148,21 @@ class TemplatesBrowserPage(QWidget):
 
         toolbar = QFrame()
         toolbar.setStyleSheet("background:#fff;border-bottom:1px solid #e0e3ea;")
-        toolbar_lay = QHBoxLayout(toolbar)
-        toolbar_lay.setContentsMargins(20, 14, 20, 14)
+        toolbar_lay = QVBoxLayout(toolbar)
+        toolbar_lay.setContentsMargins(20, 14, 20, 6)
+        toolbar_lay.setSpacing(2)
+
+        top_row = QHBoxLayout()
+        title_block = QVBoxLayout()
+        title_block.setSpacing(0)
         title = QLabel("Micro-App Templates")
         title.setStyleSheet("font-size:18px;font-weight:600;color:#1A1C20;")
-        toolbar_lay.addWidget(title)
-        toolbar_lay.addStretch(1)
+        title_block.addWidget(title)
+        self.summary_label = QLabel("0 templates")
+        self.summary_label.setStyleSheet("font-size:11px;color:#888;")
+        title_block.addWidget(self.summary_label)
+        top_row.addLayout(title_block)
+        top_row.addStretch(1)
 
         btn_import_file = QPushButton("⬇ Import file")
         btn_import_file.clicked.connect(self.import_file_requested.emit)
@@ -165,7 +176,14 @@ class TemplatesBrowserPage(QWidget):
         )
         btn_new.clicked.connect(self.new_template_requested.emit)
         for b in (btn_import_file, btn_import_oobi, btn_new):
-            toolbar_lay.addWidget(b)
+            top_row.addWidget(b)
+        toolbar_lay.addLayout(top_row)
+
+        # Filter strip — chips are display-only in Phase 1.
+        self._filter_strip = QHBoxLayout()
+        self._filter_strip.setContentsMargins(0, 6, 0, 8)
+        self._filter_strip.setSpacing(8)
+        toolbar_lay.addLayout(self._filter_strip)
         root.addWidget(toolbar)
 
         self._scroll = QScrollArea()
@@ -189,18 +207,28 @@ class TemplatesBrowserPage(QWidget):
             c.setParent(None)
             c.deleteLater()
         self._cards = []
-        # Clear every row stretch the previous refresh set, so cards in a
-        # new (potentially smaller) layout don't carry leftover stretchy
-        # rows from a bigger one.
         for r in range(self._grid.rowCount()):
             self._grid.setRowStretch(r, 0)
         refs = self._store.list_templates()
-        self._is_empty = len(refs) == 0
+        loaded: list[tuple] = []
+        for ref in refs:
+            doc, meta = self._store.load(ref)
+            loaded.append((ref, doc, meta))
+        all_n = len(loaded)
+        valid_n = sum(1 for _r, _d, m in loaded
+                      if m.get("schema_validated", True))
+        draft_n = sum(1 for r, _d, _m in loaded if r.kind == "draft")
+        plural = "templates" if all_n != 1 else "template"
+        d_plural = "drafts" if draft_n != 1 else "draft"
+        self.summary_label.setText(
+            f"{all_n} {plural} · {valid_n} valid · {draft_n} {d_plural}"
+        )
+        self._rebuild_filter_strip(loaded)
+        self._is_empty = all_n == 0
         self._empty_label.setVisible(self._is_empty)
         max_row = 0
-        for i, ref in enumerate(refs):
-            doc, _meta = self._store.load(ref)
-            card = _TemplateCard(ref=ref, doc=doc)
+        for i, (ref, doc, meta) in enumerate(loaded):
+            card = _TemplateCard(ref=ref, doc=doc, meta=meta)
             card.clicked.connect(
                 lambda r=ref: self.template_open_requested.emit(r)
             )
@@ -208,9 +236,67 @@ class TemplatesBrowserPage(QWidget):
             self._grid.addWidget(card, row, col)
             self._cards.append(card)
             max_row = max(max_row, row)
-        # Trailing stretch row absorbs all extra vertical space so cards
-        # render at their natural height instead of stretching to fill.
         self._grid.setRowStretch(max_row + 1, 1)
+
+    def _rebuild_filter_strip(self, refs_and_docs: list[tuple]) -> None:
+        while self._filter_strip.count():
+            old = self._filter_strip.takeAt(0)
+            w = old.widget()
+            if w is not None:
+                w.setParent(None)
+                w.deleteLater()
+        all_n = len(refs_and_docs)
+        valid_n = sum(1 for _r, _d, m in refs_and_docs
+                      if m.get("schema_validated", True))
+        draft_n = sum(1 for r, _d, _m in refs_and_docs if r.kind == "draft")
+        role_kinds: dict[str, int] = {}
+        ecosystems: dict[str, int] = {}
+        for _r, doc, meta in refs_and_docs:
+            k = doc.get("role", {}).get("kind", "")
+            if k:
+                role_kinds[k] = role_kinds.get(k, 0) + 1
+            for tag in meta.get("ecosystem_tags", []):
+                ecosystems[tag] = ecosystems.get(tag, 0) + 1
+
+        def add_label(text: str) -> None:
+            lbl = QLabel(text)
+            lbl.setStyleSheet("font-size:11px;color:#888;")
+            self._filter_strip.addWidget(lbl)
+
+        def add_chip(text: str, active: bool = False) -> None:
+            lbl = QLabel(text)
+            if active:
+                lbl.setStyleSheet(
+                    "background:#1A1C20;color:#fff;border-radius:9px;"
+                    "padding:2px 9px;font-size:11px;font-weight:600;"
+                )
+            else:
+                lbl.setStyleSheet(
+                    "background:#f0f2f5;color:#444;border-radius:9px;"
+                    "padding:2px 9px;font-size:11px;"
+                )
+            self._filter_strip.addWidget(lbl)
+
+        add_label("Filter:")
+        add_chip(f"All ({all_n})", active=True)
+        add_chip(f"Valid ({valid_n})")
+        add_chip(f"Draft ({draft_n})")
+        add_label("  |  Role kind:")
+        for kind, n in sorted(role_kinds.items()):
+            add_chip(f"{kind} ({n})")
+        add_label("  |  Ecosystem:")
+        for tag, n in sorted(ecosystems.items()):
+            add_chip(f"{tag} ({n})")
+        self._filter_strip.addStretch(1)
+
+    def filter_chips_text(self) -> str:
+        parts: list[str] = []
+        for i in range(self._filter_strip.count()):
+            item = self._filter_strip.itemAt(i)
+            w = item.widget() if item is not None else None
+            if isinstance(w, QLabel):
+                parts.append(w.text())
+        return " ".join(parts)
 
     def card_count(self) -> int:
         return len(self._cards)
