@@ -143,9 +143,16 @@ class TemplateOverviewPage(QWidget):
     edit_header_requested = Signal()
     edit_role_requested = Signal()
 
-    def __init__(self, *, model: TemplateModel, parent=None):
+    def __init__(
+        self,
+        *,
+        model: TemplateModel,
+        ecosystem_tags: list[str] | None = None,
+        parent=None,
+    ):
         super().__init__(parent=parent)
         self._model = model
+        self._ecosystem_tags = ecosystem_tags or []
         self._cards: dict[str, FirstPersonCard] = {}
         self._build()
         self._model.changed.connect(lambda _path: self._refresh())
@@ -282,6 +289,85 @@ class TemplateOverviewPage(QWidget):
 
         scroll.setWidget(host)
         root.addWidget(scroll, 1)
+
+        from locksmith.plugins.designer.widgets.ecosystem_chip import (
+            EcosystemChip,
+        )
+        from locksmith.plugins.designer.widgets.validation_pill import (
+            ValidationPill,
+        )
+
+        bottom = QFrame()
+        bottom.setStyleSheet(
+            "background:#fff;border-top:1px solid #e0e3ea;"
+        )
+        b = QHBoxLayout(bottom)
+        b.setContentsMargins(20, 12, 20, 12)
+        b.setSpacing(20)
+
+        eco = QVBoxLayout()
+        eco.setSpacing(2)
+        eco_title = QLabel("ECOSYSTEM AFFINITY")
+        eco_title.setStyleSheet(
+            "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
+        )
+        eco.addWidget(eco_title)
+        eco_chips_row = QHBoxLayout()
+        eco_chips_row.setSpacing(6)
+        self.ecosystem_chips: list[QLabel] = []
+        for tag in self._ecosystem_tags:
+            chip = EcosystemChip(tag)
+            self.ecosystem_chips.append(chip)
+            eco_chips_row.addWidget(chip)
+        if not self._ecosystem_tags:
+            none_chip = QLabel("(none)")
+            none_chip.setStyleSheet("font-size:11px;color:#aaa;font-style:italic;")
+            eco_chips_row.addWidget(none_chip)
+        eco_chips_row.addStretch(1)
+        eco.addLayout(eco_chips_row)
+        b.addLayout(eco, 1)
+
+        lin = QVBoxLayout()
+        lin.setSpacing(2)
+        lin_title = QLabel("LINEAGE")
+        lin_title.setStyleSheet(
+            "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
+        )
+        lin.addWidget(lin_title)
+        forked = (self._model.doc.get("header", {})
+                                  .get("forked_from", {}) or {})
+        if forked.get("template_said"):
+            ft = forked["template_said"]
+            short = ft[:4] + "…" + ft[-6:] if len(ft) > 12 else ft
+            self.lineage_label = QLabel(f"↪ forked from {short}")
+        else:
+            self.lineage_label = QLabel("No parent template")
+        self.lineage_label.setStyleSheet("font-size:11px;color:#666;")
+        lin.addWidget(self.lineage_label)
+        b.addLayout(lin, 1)
+
+        val = QVBoxLayout()
+        val.setSpacing(2)
+        val_title = QLabel("✓ VALIDATION")
+        val_title.setStyleSheet(
+            "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
+        )
+        val.addWidget(val_title)
+        report = getattr(self._model, "last_validation_report", lambda: None)()
+        if report is None:
+            err = warn = 0
+        else:
+            err = sum(1 for i in report.issues
+                      if getattr(i, "severity", "error") == "error")
+            warn = sum(1 for i in report.issues
+                       if getattr(i, "severity", "error") == "warning")
+        self.bottom_validation_pill = ValidationPill(
+            error_count=err, warning_count=warn,
+        )
+        val.addWidget(self.bottom_validation_pill)
+        b.addLayout(val, 1)
+
+        root.addWidget(bottom)
 
     def _refresh(self) -> None:
         # Tear down + rebuild — templates are small enough this is cheap.

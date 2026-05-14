@@ -122,11 +122,14 @@ class DesignerPlugin(PluginBase):
     def _open_template(self, ref) -> None:
         if self._store is None:
             return
-        doc, _meta = self._store.load(ref)
+        doc, meta = self._store.load(ref)
         self._model = TemplateModel(doc)
         crossrefs = compute_crossrefs(doc)
 
-        overview = TemplateOverviewPage(model=self._model)
+        ecosystem_tags = list(meta.get("ecosystem_tags", []))
+        overview = TemplateOverviewPage(
+            model=self._model, ecosystem_tags=ecosystem_tags,
+        )
         overview.drilldown_requested.connect(self._drilldown)
         self._pages[PAGE_KEY_OVERVIEW] = overview
 

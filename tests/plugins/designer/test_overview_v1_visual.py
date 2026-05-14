@@ -89,3 +89,22 @@ def test_i_hold_card_uses_root_authority_empty_state(qapp, regulator_model):
     page = TemplateOverviewPage(model=regulator_model)
     card = page._cards["imports"]
     assert "root authority" in card.entries_text()
+
+
+def test_bottom_strip_renders_ecosystem_chips(qapp, regulator_model):
+    page = TemplateOverviewPage(
+        model=regulator_model,
+        ecosystem_tags=["insurance", "compliance"],
+    )
+    chip_texts = [c.text() for c in page.ecosystem_chips]
+    assert chip_texts == ["insurance", "compliance"]
+
+
+def test_bottom_strip_renders_lineage_no_parent(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    assert page.lineage_label.text() == "No parent template"
+
+
+def test_bottom_strip_renders_validation_pill(qapp, regulator_model):
+    page = TemplateOverviewPage(model=regulator_model)
+    assert page.bottom_validation_pill.text() == "✓ valid"
