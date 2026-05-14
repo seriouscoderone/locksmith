@@ -13,7 +13,8 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit,
+    QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -104,61 +105,65 @@ def _rail_items_grouped(rules: list[dict], crossrefs, color_for_type) -> list[Ra
 
 
 class _RuleSectionPane(QWidget):
-    def __init__(self, crossrefs: CrossRefIndex, parent=None):
+    def __init__(self, crossrefs: CrossRefIndex, model: TemplateModel = None,
+                 parent=None):
         super().__init__(parent=parent)
         self._crossrefs = crossrefs
+        self._model = model
         self._build()
 
     def _build(self) -> None:
         lay = QVBoxLayout(self)
         lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
+        lay.setSpacing(14)
 
-        self._identity = make_section("Identity")
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._title_field = QLineEdit()
-        self._description = QPlainTextEdit()
-        self._description.setReadOnly(True)
-        self._description.setFixedHeight(50)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        self._identity.layout().addWidget(QLabel("Title"))
-        self._identity.layout().addWidget(self._title_field)
-        self._identity.layout().addWidget(QLabel("Description"))
-        self._identity.layout().addWidget(self._description)
-        lay.addWidget(self._identity)
+        # Header.
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._badge_holder = QHBoxLayout()
+        title_row.addLayout(self._badge_holder)
+        self._title_label = QLabel("")
+        self._title_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
+        )
+        title_row.addWidget(self._title_label)
+        title_row.addStretch(1)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
+        )
+        title_row.addWidget(self._id_chip)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        lay.addWidget(self._header_frame)
 
-        self._type_section = make_section("Type")
-        self._type_label = QLabel("(unset)")
-        self._type_section.layout().addWidget(self._type_label)
-        lay.addWidget(self._type_section)
+        # Details (type-specific).
+        self._details_section = make_section("Details")
+        self._details_holder = QVBoxLayout()
+        self._details_section.layout().addLayout(self._details_holder)
+        lay.addWidget(self._details_section)
 
-        self._body_section = make_section("Body / Expression")
-        self._body_text = QPlainTextEdit()
-        self._body_text.setReadOnly(True)
-        self._body_text.setFixedHeight(80)
-        self._body_section.layout().addWidget(self._body_text)
-        lay.addWidget(self._body_section)
+        # Referenced from.
+        self._references_section = make_section("Referenced from")
+        self._references_holder = QVBoxLayout()
+        self._references_section.layout().addLayout(self._references_holder)
+        lay.addWidget(self._references_section)
 
-        self._extras = make_section("Type-specific fields")
-        self._extras_label = QLabel("(none)")
-        self._extras_label.setStyleSheet("color:#444;font-size:11px;")
-        self._extras_label.setWordWrap(True)
-        self._extras.layout().addWidget(self._extras_label)
-        lay.addWidget(self._extras)
+        # Pairs with (binding links).
+        self._pairs_section = make_section("Pairs with (binding links)")
+        self._pairs_holder = QVBoxLayout()
+        self._pairs_section.layout().addLayout(self._pairs_holder)
+        lay.addWidget(self._pairs_section)
 
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-        self._json_view.setFont(mono)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
-
+        # Used by (existing chip strip kept for navigation compatibility).
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
@@ -166,49 +171,165 @@ class _RuleSectionPane(QWidget):
         lay.addStretch(1)
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._id.setText(entry.get("id", ""))
-        self._title_field.setText(entry.get("title", ""))
-        self._description.setPlainText(entry.get("description", ""))
-
-        rtype = entry.get("type", "")
-        color = rule_type_color(rtype)
-        self._type_label.setText(f"<b style='color:{color};'>{rtype}</b>")
-
-        if rtype in _PROSE_TYPES:
-            self._body_text.setPlainText(entry.get("body", "(no body)"))
-        elif rtype in _EXPR_TYPES:
-            expr = entry.get("expression", "(no expression)")
-            lang = entry.get("language", "?")
-            self._body_text.setPlainText(f"# language: {lang}\n{expr}")
-        else:
-            self._body_text.setPlainText("(no body)")
-
-        extras = []
-        if rtype == "predicate" and entry.get("purpose"):
-            extras.append(f"purpose: {entry['purpose']}")
-        if rtype == "computational" and entry.get("result_attribute"):
-            extras.append(f"result_attribute: {entry['result_attribute']}")
-        if rtype == "binding_link":
-            links = entry.get("links", [])
-            extras.append(
-                f"links: {', '.join(L.get('rule_id', '?') for L in links)}"
-                if links else "links: (none)"
-            )
-        self._extras_label.setText("\n".join(extras) if extras else "(none)")
-
-        self._json_view.setPlainText(json.dumps(entry, indent=2, sort_keys=True))
-        self.chip_strip.set_refs(
-            self._crossrefs.consumers_of(f"rule:{entry.get('id', '')}")
+        from locksmith.plugins.designer.widgets.dark_code_block import (
+            DarkCodeBlock,
+        )
+        from locksmith.plugins.designer.widgets.type_color_badge import (
+            TypeColorBadge,
         )
 
+        def _clear(layout) -> None:
+            while layout.count():
+                item = layout.takeAt(0)
+                w = item.widget() if item is not None else None
+                if w is not None:
+                    w.setParent(None)
+                    w.deleteLater()
+
+        self._title_label.setText(entry.get("title") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        self._description_label.setText(entry.get("description") or "")
+
+        _clear(self._badge_holder)
+        self._badge_holder.addWidget(TypeColorBadge(entry.get("type", "")))
+
+        _clear(self._details_holder)
+        rtype = entry.get("type", "")
+        if rtype in _PROSE_TYPES:
+            body = entry.get("body", "")
+            body_lbl = QLabel(body or "(no body)")
+            body_lbl.setStyleSheet("color:#1A1C20;font-size:13px;")
+            body_lbl.setWordWrap(True)
+            self._details_holder.addWidget(body_lbl)
+        elif rtype in _EXPR_TYPES:
+            if entry.get("purpose"):
+                p_row = QHBoxLayout()
+                p_lbl = QLabel("Purpose:")
+                p_lbl.setStyleSheet("color:#666;font-size:11px;")
+                p_row.addWidget(p_lbl)
+                p_chip = QLabel(entry["purpose"])
+                p_chip.setStyleSheet(
+                    "background:#e8f4f4;color:#0a8a82;border-radius:9px;"
+                    "padding:2px 9px;font-size:11px;font-weight:600;"
+                )
+                p_row.addWidget(p_chip)
+                bound_lbl = QLabel("↗ bound context: { state, event, transition }")
+                bound_lbl.setStyleSheet("color:#0ABFB0;font-size:10px;")
+                p_row.addWidget(bound_lbl)
+                p_row.addStretch(1)
+                p_w = QFrame()
+                p_w.setLayout(p_row)
+                self._details_holder.addWidget(p_w)
+            if entry.get("language"):
+                l_row = QHBoxLayout()
+                l_lbl = QLabel("Language:")
+                l_lbl.setStyleSheet("color:#666;font-size:11px;")
+                l_row.addWidget(l_lbl)
+                l_chip = QLabel(entry["language"])
+                l_chip.setStyleSheet(
+                    "background:#f0f2f5;color:#444;border-radius:9px;"
+                    "padding:2px 9px;font-size:11px;"
+                )
+                l_row.addWidget(l_chip)
+                l_row.addStretch(1)
+                l_w = QFrame()
+                l_w.setLayout(l_row)
+                self._details_holder.addWidget(l_w)
+            expr = entry.get("expression", "")
+            self._details_holder.addWidget(DarkCodeBlock(expr))
+            cheat = QLabel("↗ UEL/1.0 cheat-sheet · test expression")
+            cheat.setStyleSheet("color:#0ABFB0;font-size:10px;")
+            self._details_holder.addWidget(cheat)
+        elif rtype == "binding_link":
+            links_lbl = QLabel("This rule couples:")
+            links_lbl.setStyleSheet("color:#666;font-size:11px;")
+            self._details_holder.addWidget(links_lbl)
+            for link in entry.get("links") or []:
+                rid = link.get("rule_id", "")
+                chip = QLabel(rid)
+                chip.setStyleSheet(
+                    "background:#f3edfb;color:#A36AE6;border-radius:9px;"
+                    "padding:2px 9px;font-size:11px;font-weight:600;"
+                )
+                self._details_holder.addWidget(chip)
+
+        # Referenced from — crossref consumers.
+        _clear(self._references_holder)
+        rid = entry.get("id", "")
+        consumers = self._crossrefs.consumers_of(f"rule:{rid}") if rid else []
+        if not consumers:
+            none_lbl = QLabel("Not referenced anywhere yet.")
+            none_lbl.setStyleSheet("color:#aaa;font-style:italic;font-size:11px;")
+            self._references_holder.addWidget(none_lbl)
+        else:
+            summary = QLabel(
+                f"This rule is referenced in {len(consumers)} place"
+                f"{'s' if len(consumers) != 1 else ''} across the template:"
+            )
+            summary.setStyleSheet("color:#444;font-size:11px;")
+            self._references_holder.addWidget(summary)
+            for ref in consumers:
+                row_lbl = QLabel(f"• {ref}")
+                row_lbl.setStyleSheet("color:#0ABFB0;font-size:11px;")
+                self._references_holder.addWidget(row_lbl)
+
+        # Pairs with — find binding_link rules pointing to this rule.
+        _clear(self._pairs_holder)
+        all_rules = (self._model.doc.get("rules", []) if self._model else [])
+        pairs: list[tuple[dict, dict]] = []
+        for r in all_rules:
+            if r.get("type") != "binding_link":
+                continue
+            link_ids = [link.get("rule_id") for link in (r.get("links") or [])]
+            if rid in link_ids:
+                for partner_id in link_ids:
+                    if partner_id == rid:
+                        continue
+                    partner = next(
+                        (rr for rr in all_rules if rr.get("id") == partner_id),
+                        None,
+                    )
+                    if partner is not None:
+                        pairs.append((r, partner))
+        if not pairs:
+            none_lbl = QLabel("Not paired via any binding_link rule.")
+            none_lbl.setStyleSheet("color:#aaa;font-style:italic;font-size:11px;")
+            self._pairs_holder.addWidget(none_lbl)
+        else:
+            for link_rule, partner in pairs:
+                row_w = QFrame()
+                row = QHBoxLayout(row_w)
+                row.setContentsMargins(0, 0, 0, 0)
+                row.setSpacing(6)
+                row.addWidget(TypeColorBadge("binding_link"))
+                row.addWidget(QLabel(link_rule.get("id", "")))
+                row.addWidget(QLabel("couples with"))
+                row.addWidget(TypeColorBadge(partner.get("type", "")))
+                pid = QLabel(partner.get("id", ""))
+                pid.setStyleSheet(
+                    "color:#666;background:#f6f7f9;font-family:monospace;"
+                    "border-radius:6px;padding:2px 8px;font-size:10px;"
+                )
+                row.addWidget(pid)
+                row.addStretch(1)
+                self._pairs_holder.addWidget(row_w)
+
+        self.chip_strip.set_refs(consumers)
+
     def text_summary(self) -> str:
-        return " ".join([
-            self._id.text(),
-            self._title_field.text(),
-            self._type_label.text(),
-            self._body_text.toPlainText(),
-            self._extras_label.text(),
-        ])
+        from locksmith.plugins.designer.widgets.dark_code_block import (
+            DarkCodeBlock,
+        )
+        parts = [
+            self._title_label.text(),
+            self._id_chip.text(),
+            self._description_label.text(),
+        ]
+        for lbl in self.findChildren(QLabel):
+            parts.append(lbl.text())
+        for block in self.findChildren(DarkCodeBlock):
+            parts.append(block.toPlainText())
+        return " ".join(parts)
 
 
 class RulesEditorPage(QWidget):
@@ -250,7 +371,7 @@ class RulesEditorPage(QWidget):
             is_valid=True,
             parent=self,
         )
-        self._pane = _RuleSectionPane(crossrefs=crossrefs)
+        self._pane = _RuleSectionPane(crossrefs=crossrefs, model=model)
         if rules_all:
             self._pane.set_entry(rules_all[0])
         self.shell.set_right_pane(self._pane)
