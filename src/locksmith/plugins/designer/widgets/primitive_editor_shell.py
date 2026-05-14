@@ -104,6 +104,34 @@ class PrimitiveEditorShell(QWidget):
                 "padding:3px 8px;font-size:11px;font-weight:600;"
             )
         strip_lay.addWidget(self.valid_pill)
+
+        # Toolbar: validation panel + JSON source toggles.
+        sep = QLabel(" ")
+        sep.setFixedWidth(8)
+        strip_lay.addWidget(sep)
+        self.panel_toggle = QPushButton("⚠")
+        self.panel_toggle.setCheckable(True)
+        self.panel_toggle.setToolTip("Validation panel")
+        self.panel_toggle.setFixedSize(28, 28)
+        self.panel_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:13px;border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.panel_toggle.toggled.connect(self._on_panel_toggled)
+        strip_lay.addWidget(self.panel_toggle)
+        self.json_toggle = QPushButton("{ }")
+        self.json_toggle.setCheckable(True)
+        self.json_toggle.setToolTip("JSON source view")
+        self.json_toggle.setFixedSize(36, 28)
+        self.json_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:11px;font-family:monospace;"
+            "border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.json_toggle.toggled.connect(self._on_json_toggled)
+        strip_lay.addWidget(self.json_toggle)
         root.addWidget(strip)
 
         body = QHBoxLayout()
@@ -134,7 +162,34 @@ class PrimitiveEditorShell(QWidget):
         self.right_pane_container.setStyleSheet("background:#f6f7f9;")
         QVBoxLayout(self.right_pane_container).setContentsMargins(20, 20, 20, 20)
         body.addWidget(self.right_pane_container, 1)
-        root.addLayout(body, 1)
+
+        self.side_panel_container = QFrame()
+        self.side_panel_container.setFixedWidth(320)
+        self.side_panel_container.setStyleSheet(
+            "background:#fff;border-left:1px solid #e0e3ea;"
+        )
+        side_lay = QVBoxLayout(self.side_panel_container)
+        side_lay.setContentsMargins(0, 0, 0, 0)
+        side_lay.setSpacing(0)
+        self.side_panel_container.setVisible(False)
+        body.addWidget(self.side_panel_container)
+
+        body_holder = QFrame()
+        body_holder_lay = QVBoxLayout(body_holder)
+        body_holder_lay.setContentsMargins(0, 0, 0, 0)
+        body_holder_lay.setSpacing(0)
+        body_holder_lay.addLayout(body, 1)
+        self.bottom_panel_container = QFrame()
+        self.bottom_panel_container.setStyleSheet(
+            "background:#fff;border-top:1px solid #e0e3ea;"
+        )
+        self.bottom_panel_container.setFixedHeight(240)
+        bottom_lay = QVBoxLayout(self.bottom_panel_container)
+        bottom_lay.setContentsMargins(0, 0, 0, 0)
+        bottom_lay.setSpacing(0)
+        self.bottom_panel_container.setVisible(False)
+        body_holder_lay.addWidget(self.bottom_panel_container)
+        root.addWidget(body_holder, 1)
 
     @property
     def selected_item_id(self) -> str | None:
@@ -158,3 +213,27 @@ class PrimitiveEditorShell(QWidget):
         item_id = current.data(Qt.UserRole)
         if item_id:
             self.item_selected.emit(item_id)
+
+    def set_side_panel(self, widget: QWidget) -> None:
+        layout = self.side_panel_container.layout()
+        while layout.count():
+            old = layout.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+        layout.addWidget(widget)
+
+    def set_bottom_panel(self, widget: QWidget) -> None:
+        layout = self.bottom_panel_container.layout()
+        while layout.count():
+            old = layout.takeAt(0).widget()
+            if old is not None:
+                old.setParent(None)
+                old.deleteLater()
+        layout.addWidget(widget)
+
+    def _on_panel_toggled(self, checked: bool) -> None:
+        self.side_panel_container.setVisible(checked)
+
+    def _on_json_toggled(self, checked: bool) -> None:
+        self.bottom_panel_container.setVisible(checked)
