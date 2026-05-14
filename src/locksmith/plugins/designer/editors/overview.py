@@ -16,7 +16,9 @@ from PySide6.QtWidgets import (
 )
 
 from locksmith.plugins.designer.model import TemplateModel
-from locksmith.plugins.designer.widgets.first_person_card import FirstPersonCard
+from locksmith.plugins.designer.widgets.first_person_card import (
+    FacetEntry, FirstPersonCard,
+)
 
 
 _CARD_SPECS: list[tuple[str, str, str, str]] = [
@@ -109,17 +111,17 @@ class TemplateOverviewPage(QWidget):
         for idx, (kind, framing, label, dotted) in enumerate(_CARD_SPECS):
             if kind == "role":
                 role = self._model.doc.get("role", {})
-                previews = [
-                    f"{role.get('display_name', '(unnamed)')} ({role.get('kind', '?')})"
-                ]
+                entries = [FacetEntry(
+                    label=f"{role.get('display_name', '(unnamed)')} ({role.get('kind', '?')})",
+                )]
                 count = 1
             else:
-                entries = _list_at(self._model.doc, dotted)
-                previews = [entry_label(e) for e in entries]
-                count = len(entries)
+                items_at = _list_at(self._model.doc, dotted)
+                entries = [FacetEntry(label=entry_label(e)) for e in items_at]
+                count = len(items_at)
             card = FirstPersonCard(
                 framing=framing, kind_label=label,
-                count=count, preview_entries=previews,
+                count=count, entries=entries,
             )
             card.clicked.connect(lambda k=kind: self.drilldown_requested.emit(k))
             card.add_clicked.connect(lambda k=kind: self.add_requested.emit(k))
