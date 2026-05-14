@@ -241,6 +241,29 @@ class TemplateOverviewPage(QWidget):
         )
         said_block.addWidget(self.said_label)
         top_right_row.addLayout(said_block)
+        self.panel_toggle = QPushButton("⚠")
+        self.panel_toggle.setCheckable(True)
+        self.panel_toggle.setToolTip("Validation panel")
+        self.panel_toggle.setFixedSize(28, 28)
+        self.panel_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:13px;border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.panel_toggle.toggled.connect(self._on_panel_toggled)
+        top_right_row.addWidget(self.panel_toggle)
+        self.json_toggle = QPushButton("{ }")
+        self.json_toggle.setCheckable(True)
+        self.json_toggle.setToolTip("JSON source view")
+        self.json_toggle.setFixedSize(36, 28)
+        self.json_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:11px;font-family:monospace;"
+            "border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.json_toggle.toggled.connect(self._on_json_toggled)
+        top_right_row.addWidget(self.json_toggle)
         self.kebab_button = KebabButton()
         top_right_row.addWidget(self.kebab_button)
         right_col.addLayout(top_right_row)
@@ -288,7 +311,31 @@ class TemplateOverviewPage(QWidget):
             self._cards[kind] = card
 
         scroll.setWidget(host)
-        root.addWidget(scroll, 1)
+
+        from locksmith.plugins.designer.widgets.validation_panel import (
+            ValidationPanel,
+        )
+        from locksmith.plugins.designer.widgets.json_source_view import (
+            JsonSourceView,
+        )
+
+        body_row = QHBoxLayout()
+        body_row.setContentsMargins(0, 0, 0, 0)
+        body_row.setSpacing(0)
+        body_row.addWidget(scroll, 1)
+        self.side_panel_container = QFrame()
+        self.side_panel_container.setFixedWidth(320)
+        self.side_panel_container.setStyleSheet(
+            "background:#fff;border-left:1px solid #e0e3ea;"
+        )
+        side_lay = QVBoxLayout(self.side_panel_container)
+        side_lay.setContentsMargins(0, 0, 0, 0)
+        side_lay.setSpacing(0)
+        self._validation_panel = ValidationPanel()
+        side_lay.addWidget(self._validation_panel)
+        self.side_panel_container.setVisible(False)
+        body_row.addWidget(self.side_panel_container)
+        root.addLayout(body_row, 1)
 
         from locksmith.plugins.designer.widgets.ecosystem_chip import (
             EcosystemChip,
@@ -368,6 +415,25 @@ class TemplateOverviewPage(QWidget):
         b.addLayout(val, 1)
 
         root.addWidget(bottom)
+
+        self.bottom_panel_container = QFrame()
+        self.bottom_panel_container.setStyleSheet(
+            "background:#fff;border-top:1px solid #e0e3ea;"
+        )
+        self.bottom_panel_container.setFixedHeight(240)
+        bottom_lay = QVBoxLayout(self.bottom_panel_container)
+        bottom_lay.setContentsMargins(0, 0, 0, 0)
+        bottom_lay.setSpacing(0)
+        self._json_source_view = JsonSourceView()
+        bottom_lay.addWidget(self._json_source_view)
+        self.bottom_panel_container.setVisible(False)
+        root.addWidget(self.bottom_panel_container)
+
+    def _on_panel_toggled(self, checked: bool) -> None:
+        self.side_panel_container.setVisible(checked)
+
+    def _on_json_toggled(self, checked: bool) -> None:
+        self.bottom_panel_container.setVisible(checked)
 
     def _refresh(self) -> None:
         # Tear down + rebuild — templates are small enough this is cheap.
