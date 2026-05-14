@@ -143,6 +143,7 @@ class DevControlServer(QObject):
             "tree": self._op_tree,
             "current_page": self._op_current_page,
             "click": self._op_click,
+            "click_list_item": self._op_click_list_item,
             "type": self._op_type,
             "select": self._op_select,
         }
@@ -199,6 +200,12 @@ class DevControlServer(QObject):
                     info["text"] = t
             except Exception:
                 pass
+        try:
+            tt = w.toolTip()
+            if isinstance(tt, str) and tt:
+                info["tooltip"] = tt
+        except Exception:
+            pass
         return info
 
     def _op_current_page(self, cmd: dict[str, Any]) -> dict[str, Any]:
@@ -232,6 +239,40 @@ class DevControlServer(QObject):
             QTest.mouseClick(widget, Qt.LeftButton)
         return {"ok": True, "clicked": self._widget_info(widget)}
 
+    def _op_click_list_item(self, cmd: dict[str, Any]) -> dict[str, Any]:
+        """Click an item inside a QListWidget by its text.
+
+        QListWidgetItem is not a QWidget, so the standard target resolver
+        can't reach it. This op walks the visible QListWidgets, finds an
+        item whose text() matches, selects it, and emits itemClicked.
+
+        Optional `list` arg restricts the search to a QListWidget with
+        that objectName.
+        """
+        from PySide6.QtWidgets import QListWidget
+
+        item_text = cmd.get("text")
+        if not item_text:
+            return {"error": "text is required"}
+        list_filter = cmd.get("list")
+        for lw in self._window.findChildren(QListWidget):
+            if not lw.isVisible():
+                continue
+            if list_filter and lw.objectName() != list_filter:
+                continue
+            for i in range(lw.count()):
+                item = lw.item(i)
+                if item.text().strip() == item_text:
+                    lw.setCurrentItem(item)
+                    lw.itemClicked.emit(item)
+                    return {
+                        "ok": True,
+                        "list_object_name": lw.objectName(),
+                        "item_text": item.text(),
+                        "index": i,
+                    }
+        return {"error": f"list item not found: {item_text!r}"}
+
     def _op_type(self, cmd: dict[str, Any]) -> dict[str, Any]:
         target = cmd.get("target")
         text = cmd.get("text", "")
@@ -264,12 +305,39 @@ class DevControlServer(QObject):
     # ----- widget lookup --------------------------------------------
 
     def _find_widget(self, target: str) -> QWidget | None:
-        """Find a visible widget by objectName or by exact .text() match.
+        """Find a visible widget by selector.
+
+        Selectors supported:
+          - exact `objectName`
+          - exact `.text()` (for widgets that have a text method)
+          - exact `.toolTip()` (for icon buttons)
+          - `Type:N` — the N-th visible widget whose class name is `Type`
+            (e.g. "QLineEdit:0", "LocksmithButton:1"). Index respects
+            widget-tree order. Useful when widgets lack names/text.
 
         Returns the first match. Ambiguous targets return the first hit
         in widget-tree order — caller is responsible for using a more
-        specific target (objectName) when that's not what they want.
+        specific target when that's not what they want.
         """
+        # Type:N selector path
+        if ":" in target:
+            type_name, _, idx_str = target.partition(":")
+            try:
+                idx = int(idx_str)
+            except ValueError:
+                idx = None
+            if idx is not None and type_name:
+                hits: list[QWidget] = []
+                for w in self._window.findChildren(QWidget):
+                    if not w.isVisible():
+                        continue
+                    if type(w).__name__ == type_name:
+                        hits.append(w)
+                if 0 <= idx < len(hits):
+                    return hits[idx]
+                return None
+
+        # Standard name/text/tooltip path
         matches: list[QWidget] = []
         for w in self._window.findChildren(QWidget):
             if not w.isVisible():
@@ -284,4 +352,11 @@ class DevControlServer(QObject):
                     t = ""
                 if isinstance(t, str) and t.strip() == target:
                     matches.append(w)
+                    continue
+            try:
+                tt = w.toolTip()
+            except Exception:
+                tt = ""
+            if isinstance(tt, str) and tt.strip() == target:
+                matches.append(w)
         return matches[0] if matches else None
