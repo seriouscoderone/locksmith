@@ -24,7 +24,8 @@ from typing import Any
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QLabel, QLineEdit, QPlainTextEdit, QScrollArea, QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QLineEdit, QPlainTextEdit, QScrollArea,
+    QVBoxLayout, QWidget,
 )
 
 from locksmith.plugins.designer.crossref import CrossRefIndex
@@ -54,136 +55,184 @@ class _ProjectionSectionPane(QWidget):
         self._build()
 
     def _build(self) -> None:
-        lay = QVBoxLayout(self)
-        lay.setContentsMargins(0, 0, 0, 0)
-        lay.setSpacing(12)
-
-        # ---- Identity ----
-        self._identity = make_section("Identity")
-        self._id = QLineEdit()
-        self._id.setReadOnly(True)
-        self._name = QLineEdit()
-        self._name.setReadOnly(True)
-        self._description = QPlainTextEdit()
-        self._description.setReadOnly(True)
-        self._description.setFixedHeight(60)
-        self._identity.layout().addWidget(QLabel("ID"))
-        self._identity.layout().addWidget(self._id)
-        self._identity.layout().addWidget(QLabel("Name"))
-        self._identity.layout().addWidget(self._name)
-        self._identity.layout().addWidget(QLabel("Description"))
-        self._identity.layout().addWidget(self._description)
-        lay.addWidget(self._identity)
-
-        # ---- Source events ----
-        self._source_events_section = make_section("Source events")
-        self._source_events_label = QLabel("(none)")
-        self._source_events_label.setStyleSheet(
-            "color:#444;font-family:monospace;font-size:11px;"
+        from locksmith.plugins.designer.widgets.view_type_chip_picker import (
+            ViewTypeChipPicker,
         )
-        self._source_events_label.setWordWrap(True)
-        self._source_events_section.layout().addWidget(self._source_events_label)
-        lay.addWidget(self._source_events_section)
 
-        # ---- Fold expression (read-only) ----
-        self._fold_section = make_section("Fold expression (read-only)")
-        self._fold_view = QPlainTextEdit()
-        self._fold_view.setReadOnly(True)
-        mono = QFont("Menlo")
-        mono.setStyleHint(QFont.StyleHint.Monospace)
-        mono.setPointSize(10)
-        self._fold_view.setFont(mono)
-        self._fold_view.setFixedHeight(60)
-        self._fold_section.layout().addWidget(self._fold_view)
-        lay.addWidget(self._fold_section)
+        outer = QVBoxLayout(self)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
 
-        # ---- Display ----
-        self._display_section = make_section("Display")
-        self._view_type_label = QLabel("(not set)")
-        self._view_type_label.setStyleSheet("color:#444;font-weight:600;")
-        self._display_section.layout().addWidget(QLabel("View type"))
-        self._display_section.layout().addWidget(self._view_type_label)
-        lay.addWidget(self._display_section)
-
-        # ---- Live preview ----
-        self._preview_section = make_section("Live preview")
-        self._preview_label = QLabel("(select a projection to preview)")
-        self._preview_label.setStyleSheet(
-            "color:#555;font-size:12px;padding:4px;"
+        # Header block.
+        self._header_frame = QFrame()
+        h = QVBoxLayout(self._header_frame)
+        h.setContentsMargins(0, 0, 0, 0)
+        h.setSpacing(4)
+        title_row = QHBoxLayout()
+        title_row.setSpacing(8)
+        self._name_label = QLabel("")
+        self._name_label.setStyleSheet(
+            "font-size:16px;font-weight:600;color:#1A1C20;"
         )
-        self._preview_label.setWordWrap(True)
-        self._preview_label.setTextFormat(
-            # Qt.RichText so we can embed <i> / <code> tags
-            __import__("PySide6.QtCore", fromlist=["Qt"]).Qt.RichText
+        title_row.addWidget(self._name_label)
+        self._id_chip = QLabel("")
+        self._id_chip.setStyleSheet(
+            "color:#666;background:#f6f7f9;font-family:monospace;"
+            "border-radius:6px;padding:2px 8px;font-size:10px;"
         )
-        self._preview_section.layout().addWidget(self._preview_label)
-        lay.addWidget(self._preview_section)
+        title_row.addWidget(self._id_chip)
+        title_row.addStretch(1)
+        h.addLayout(title_row)
+        self._description_label = QLabel("")
+        self._description_label.setStyleSheet("color:#444;font-size:12px;")
+        self._description_label.setWordWrap(True)
+        h.addWidget(self._description_label)
+        outer.addWidget(self._header_frame)
 
-        # ---- Entry JSON ----
-        self._json_section = make_section("Entry JSON (read-only)")
-        self._json_view = QPlainTextEdit()
-        self._json_view.setReadOnly(True)
-        mono2 = QFont("Menlo")
-        mono2.setStyleHint(QFont.StyleHint.Monospace)
-        mono2.setPointSize(10)
-        self._json_view.setFont(mono2)
-        self._json_view.setFixedHeight(120)
-        self._json_section.layout().addWidget(self._json_view)
-        lay.addWidget(self._json_section)
+        # Two-column body.
+        body = QHBoxLayout()
+        body.setSpacing(14)
 
-        # ---- Used by ----
+        # LEFT column.
+        left = QVBoxLayout()
+        left.setSpacing(14)
+
+        self._sources_section = make_section("Source events · fold from")
+        self._sources_holder = QVBoxLayout()
+        self._sources_section.layout().addLayout(self._sources_holder)
+        left.addWidget(self._sources_section)
+
+        self._fold_section = make_section("Fold expression")
+        self._fold_holder = QVBoxLayout()
+        self._fold_section.layout().addLayout(self._fold_holder)
+        cheat = QLabel("↗ UEL/1.0 cheat-sheet · test expression")
+        cheat.setStyleSheet("color:#0ABFB0;font-size:10px;")
+        self._fold_section.layout().addWidget(cheat)
+        left.addWidget(self._fold_section)
+
+        self._output_section = make_section("Output schema · row shape")
+        self._output_holder = QVBoxLayout()
+        self._output_section.layout().addLayout(self._output_holder)
+        left.addWidget(self._output_section)
+
+        self._access_section = make_section("Access · who can see")
+        self._access_label = QLabel(
+            "Row filter: None — all rows visible to anyone in role"
+        )
+        self._access_label.setStyleSheet("color:#444;font-size:11px;")
+        self._access_label.setWordWrap(True)
+        self._access_section.layout().addWidget(self._access_label)
+        self._access_picker_holder = QVBoxLayout()
+        self._access_section.layout().addLayout(self._access_picker_holder)
+        left.addWidget(self._access_section)
+
+        self._view_type_section = make_section("View type")
+        self._view_picker = ViewTypeChipPicker(active="table")
+        self._view_type_section.layout().addWidget(self._view_picker)
+        left.addWidget(self._view_type_section)
+
+        left.addStretch(1)
+
+        left_w = QWidget()
+        left_w.setLayout(left)
+        body.addWidget(left_w, 3)
+
+        # RIGHT column — live preview.
+        self._preview_section = make_section("Live preview · how Locksmith renders this")
+        self._preview_holder = QVBoxLayout()
+        self._preview_section.layout().addLayout(self._preview_holder)
+        body.addWidget(self._preview_section, 2)
+
+        outer.addLayout(body, 1)
+
+        # Used by.
         self._used_by = make_section("Used by")
         self.chip_strip = CrossRefChipStrip()
         self._used_by.layout().addWidget(self.chip_strip)
-        lay.addWidget(self._used_by)
-        lay.addStretch(1)
+        outer.addWidget(self._used_by)
 
     def set_entry(self, entry: dict[str, Any]) -> None:
-        self._id.setText(entry.get("id", ""))
-        self._name.setText(entry.get("name", ""))
-        self._description.setPlainText(entry.get("description", ""))
+        from locksmith.plugins.designer.widgets.dark_code_block import (
+            DarkCodeBlock,
+        )
+        from locksmith.plugins.designer.widgets.source_event_chip_strip import (
+            SourceEventChipStrip,
+        )
+        from locksmith.plugins.designer.widgets.payload_schema_table import (
+            PayloadSchemaTable,
+        )
+        from locksmith.plugins.designer.widgets.rule_chip_strip import (
+            RuleChipStrip,
+        )
 
-        source_events = entry.get("source_events", [])
-        if source_events:
-            self._source_events_label.setText(
-                "\n".join(f"• {e}" for e in source_events)
-            )
+        self._name_label.setText(entry.get("name") or entry.get("id") or "(unnamed)")
+        self._id_chip.setText(entry.get("id", ""))
+        self._description_label.setText(entry.get("description", ""))
+
+        def _clear(layout) -> None:
+            while layout.count():
+                item = layout.takeAt(0)
+                w = item.widget() if item is not None else None
+                if w is not None:
+                    w.setParent(None)
+                    w.deleteLater()
+
+        _clear(self._sources_holder)
+        self._sources_holder.addWidget(
+            SourceEventChipStrip(entry.get("source_events") or [])
+        )
+
+        _clear(self._fold_holder)
+        self._fold_holder.addWidget(
+            DarkCodeBlock(entry.get("fold_expression", ""))
+        )
+
+        _clear(self._output_holder)
+        out = entry.get("output_schema") or {}
+        if out.get("type") == "array" and isinstance(out.get("items"), dict):
+            row_schema = out["items"]
         else:
-            self._source_events_label.setText("(none)")
+            row_schema = out
+        self._output_holder.addWidget(PayloadSchemaTable(row_schema))
 
-        fold_expr = entry.get("fold_expression", "")
-        self._fold_view.setPlainText(fold_expr)
+        _clear(self._access_picker_holder)
+        access = entry.get("access") or {}
+        rf = access.get("row_filter_rule_ref")
+        refs = [rf] if rf else []
+        self._access_picker_holder.addWidget(RuleChipStrip(refs))
 
-        display = entry.get("display") or {}
-        view_type = display.get("view_type")
-        self._view_type_label.setText(view_type or "(not set)")
+        view = (entry.get("display") or {}).get("view_type", "table")
+        # set_active is a no-op if same; toggle via setting first and
+        # then back if we need to force the restyle.
+        self._view_picker._active = view
+        self._view_picker._restyle()
 
-        # Live preview — try UEL evaluator, fall back to raw display
-        self._update_preview(fold_expr)
+        # Preview pane.
+        _clear(self._preview_holder)
+        note = QLabel("evaluator pending — showing raw expression:")
+        note.setStyleSheet("color:#aaa;font-style:italic;font-size:11px;")
+        self._preview_holder.addWidget(note)
+        self._preview_holder.addWidget(
+            DarkCodeBlock(entry.get("fold_expression", ""))
+        )
 
-        self._json_view.setPlainText(json.dumps(entry, indent=2, sort_keys=True))
+        self.chip_strip.set_refs(
+            self._crossrefs.consumers_of(f"projection:{entry.get('id', '')}")
+        )
 
-        key = f"projection:{entry.get('id', '')}"
-        self.chip_strip.set_refs(self._crossrefs.consumers_of(key))
+    def preview_text(self) -> str:
+        from locksmith.plugins.designer.widgets.dark_code_block import (
+            DarkCodeBlock,
+        )
+        parts: list[str] = []
+        for lbl in self._preview_section.findChildren(QLabel):
+            parts.append(lbl.text())
+        for block in self._preview_section.findChildren(DarkCodeBlock):
+            parts.append(block.toPlainText())
+        return " ".join(parts)
 
-    def _update_preview(self, expr: str) -> None:
-        evaluator = _resolve_uel_evaluator()
-        if evaluator is None:
-            safe_expr = (
-                expr.replace("&", "&amp;").replace("<", "&lt;").replace(">", "&gt;")
-            )
-            self._preview_label.setText(
-                f"<i>evaluator pending — showing raw expression:</i><br>"
-                f"<code>{safe_expr}</code>"
-            )
-        else:
-            try:
-                result = evaluator(expr)
-                self._preview_label.setText(str(result))
-            except Exception as exc:
-                self._preview_label.setText(
-                    f"<i>evaluation error:</i><br><code>{exc}</code>"
-                )
+    def preview_visible(self) -> bool:
+        return self._preview_section.isVisible()
 
 
 def _projection_subtitle(p: dict) -> str:
@@ -257,9 +306,7 @@ class ProjectionsEditorPage(QWidget):
                 return
 
     def preview_visible(self) -> bool:
-        """Whether the live preview label widget is currently visible."""
-        return self._pane._preview_label.isVisible()
+        return self._pane.preview_visible()
 
     def preview_text(self) -> str:
-        """Current text content of the preview label (HTML stripped for comparison)."""
-        return self._pane._preview_label.text()
+        return self._pane.preview_text()
