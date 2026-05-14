@@ -186,6 +186,17 @@ class _ProjectionSectionPane(QWidget):
                 )
 
 
+def _projection_subtitle(p: dict) -> str:
+    parts: list[str] = []
+    view = (p.get("display") or {}).get("view_type")
+    if view:
+        parts.append(view)
+    n = len(p.get("source_events") or [])
+    if n:
+        parts.append(f"folds {n} event{'s' if n != 1 else ''}")
+    return " · ".join(parts) if parts else ""
+
+
 class ProjectionsEditorPage(QWidget):
     navigated = Signal(str, str)
 
@@ -203,6 +214,7 @@ class ProjectionsEditorPage(QWidget):
             RailItem(
                 id=p.get("id", ""),
                 label=p.get("name") or p.get("id") or "(unnamed)",
+                subtitle=_projection_subtitle(p),
                 kind_color=color,
                 has_errors=False,
             )
