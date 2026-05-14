@@ -15,6 +15,7 @@ class RailItem:
     label: str
     kind_color: str  # CSS hex, e.g. "#0ABFB0"
     has_errors: bool
+    subtitle: str | None = None
 
 
 def _dot_icon(color_hex: str, size: int = 12) -> QPixmap:
@@ -34,15 +35,16 @@ class KindRail(QListWidget):
         super().__init__(parent=parent)
         self.setStyleSheet(
             "QListWidget{background:#fff;border:0;}"
-            "QListWidget::item{padding:8px 12px;border-bottom:1px solid #f0f2f5;}"
+            "QListWidget::item{padding:10px 12px;border-bottom:1px solid #f0f2f5;}"
             "QListWidget::item:selected{background:#f6f7f9;color:#1A1C20;}"
         )
 
     def populate(self, items: list[RailItem]) -> None:
         self.clear()
         for r in items:
-            label = r.label + ("  ⛔" if r.has_errors else "")
-            item = QListWidgetItem(label)
+            main = r.label + ("  ⛔" if r.has_errors else "")
+            text = f"{main}\n{r.subtitle}" if r.subtitle else main
+            item = QListWidgetItem(text)
             item.setIcon(_dot_icon(r.kind_color))
             item.setData(Qt.UserRole, r.id)
             self.addItem(item)
