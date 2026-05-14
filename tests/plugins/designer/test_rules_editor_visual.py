@@ -27,7 +27,8 @@ def test_rules_editor_renders_typed_rail(qapp, fixture_dir):
     page.show()
     qapp.processEvents()
     QTest.qWait(150)
-    assert page.shell.rail_list.count() == 7
+    # 7 rules + 4 type-group headers = 11 rows.
+    assert page.shell.rail_list.count() == 11
     text = page.section_text().lower()
     # Selected is first rule (issued_under_statutory_authority / legal_prose)
     assert "statutory" in text or "legal_prose" in text or "issued" in text

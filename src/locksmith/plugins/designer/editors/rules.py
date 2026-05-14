@@ -45,6 +45,64 @@ _PROSE_TYPES = {"legal_prose", "behavioral_expectation", "business_policy"}
 _EXPR_TYPES = {"predicate", "computational", "validation"}
 
 
+_TYPE_GROUPS: list[tuple[str, list[str]]] = [
+    ("LEGAL PROSE",    ["legal_prose", "behavioral_expectation"]),
+    ("PREDICATE",      ["predicate"]),
+    ("VALIDATION",     ["validation", "computational"]),
+    ("BINDING LINK",   ["binding_link"]),
+]
+
+
+def _filter_chip_label(type_id: str) -> str:
+    return {
+        "legal_prose": "prose",
+        "behavioral_expectation": "prose",
+        "predicate": "predicate",
+        "validation": "validation",
+        "computational": "validation",
+        "binding_link": "link",
+    }.get(type_id, type_id)
+
+
+def _rule_subtitle(r: dict, crossrefs) -> str:
+    rid = r.get("id", "")
+    consumers = crossrefs.consumers_of(f"rule:{rid}") if rid else []
+    n = len(consumers)
+    rtype = r.get("type", "")
+    parts: list[str] = []
+    if rtype == "predicate":
+        purpose = r.get("purpose")
+        if purpose:
+            parts.append(f"purpose: {purpose}")
+    if rtype == "binding_link":
+        links = r.get("links") or []
+        parts.append(f"links {len(links)} rules")
+    if n:
+        parts.append(f"→ on {n} reference{'s' if n != 1 else ''}")
+    return " · ".join(parts) if parts else ""
+
+
+def _rail_items_grouped(rules: list[dict], crossrefs, color_for_type) -> list[RailItem]:
+    items: list[RailItem] = []
+    for header, type_ids in _TYPE_GROUPS:
+        bucket = [r for r in rules if r.get("type", "") in type_ids]
+        if not bucket:
+            continue
+        items.append(RailItem(
+            id=f"__header_{header}", label="", kind_color="",
+            has_errors=False, group_header=header,
+        ))
+        for r in bucket:
+            items.append(RailItem(
+                id=r.get("id", ""),
+                label=r.get("title") or r.get("id") or "(unnamed)",
+                subtitle=_rule_subtitle(r, crossrefs),
+                kind_color=color_for_type(r.get("type", "")),
+                has_errors=False,
+            ))
+    return items
+
+
 class _RuleSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
@@ -159,28 +217,42 @@ class RulesEditorPage(QWidget):
     def __init__(self, *, model: TemplateModel, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
         self._model = model
-        items = [
-            RailItem(
-                id=r.get("id", ""),
-                label=r.get("title") or r.get("id") or "(unnamed)",
-                kind_color=rule_type_color(r.get("type", "")),
-                has_errors=False,
-            )
-            for r in model.doc.get("rules", [])
-        ]
+        from locksmith.plugins.designer.widgets.rail_filter_chip_bar import (
+            RailFilterChipBar,
+        )
+        rules_all = list(model.doc.get("rules", []))
+        items = _rail_items_grouped(rules_all, crossrefs, rule_type_color)
+
+        chip_counts: dict[str, int] = {
+            "all": len(rules_all), "prose": 0, "predicate": 0,
+            "validation": 0, "link": 0,
+        }
+        for r in rules_all:
+            label = _filter_chip_label(r.get("type", ""))
+            chip_counts[label] = chip_counts.get(label, 0) + 1
+        self._filter_bar = RailFilterChipBar(
+            chips=[
+                ("all", chip_counts["all"]),
+                ("prose", chip_counts["prose"]),
+                ("predicate", chip_counts["predicate"]),
+                ("validation", chip_counts["validation"]),
+                ("link", chip_counts["link"]),
+            ],
+            active="all",
+        )
         self.shell = PrimitiveEditorShell(
             surface_label="Rules",
             template_label=model.doc.get("header", {}).get("display_name", "(untitled)"),
             items=items,
             add_label="+ Add rule",
-            item_count=len(items),
+            item_count=len(rules_all),
             role_label=model.doc.get("role", {}).get("id", ""),
             is_valid=True,
             parent=self,
         )
         self._pane = _RuleSectionPane(crossrefs=crossrefs)
-        if items:
-            self._pane.set_entry(model.doc["rules"][0])
+        if rules_all:
+            self._pane.set_entry(rules_all[0])
         self.shell.set_right_pane(self._pane)
         from locksmith.plugins.designer.widgets.validation_panel import (
             ValidationPanel,
@@ -196,6 +268,8 @@ class RulesEditorPage(QWidget):
         self._pane.chip_strip.navigated.connect(self.navigated.emit)
         outer = QVBoxLayout(self)
         outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(0)
+        outer.addWidget(self._filter_bar)
         outer.addWidget(self.shell)
 
     def _on_select(self, item_id: str) -> None:
