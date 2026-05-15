@@ -3,6 +3,7 @@
         <file>assets/.DS_Store</file>
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
+        <file>assets/material-icons/app_shortcut.svg</file>
         <file>assets/material-icons/mediation.svg</file>
         <file>assets/material-icons/settings_shield.svg</file>
         <file>assets/material-icons/add_link.svg</file>
@@ -17,6 +18,7 @@
         <file>assets/material-icons/person.svg</file>
         <file>assets/material-icons/witness1.svg</file>
         <file>assets/material-icons/export.svg</file>
+        <file>assets/material-icons/micro-app.svg</file>
         <file>assets/material-icons/arrow_back.svg</file>
         <file>assets/material-icons/visibility.svg</file>
         <file>assets/material-icons/notifications_blue.svg</file>
@@ -84,6 +86,7 @@
         <file>assets/material-icons/security.svg</file>
         <file>assets/material-icons/lan.svg</file>
         <file>assets/material-icons/launch-proxy.svg</file>
+        <file>assets/material-icons/extension.svg</file>
         <file>assets/material-icons/targeting_targeted.svg</file>
         <file>assets/material-icons/visibility_off.svg</file>
         <file>assets/material-icons/edit.svg</file>
