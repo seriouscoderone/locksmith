@@ -45,15 +45,16 @@ python3 tools/devctl.py current_page
 
 ## Operations
 
-| `op`           | Args                                | Returns                                      | Notes |
-|----------------|-------------------------------------|----------------------------------------------|-------|
-| `ping`         | —                                   | `{ok, pong}`                                 | sanity check |
-| `screenshot`   | `path?` (default `/tmp/locksmith-screenshot.png`) | `{ok, path, size: [w, h]}` | grabs the main window |
-| `tree`         | `visible_only?` (true), `clickable_only?` (false), `text_contains?` | `{ok, count, widgets: [...]}` | each widget: `type`, `objectName`, `text?`, `rect`, `enabled`, `visible` |
-| `current_page` | —                                   | `{ok, vault_page, previous_vault_page}`      | VaultPage's `_current_page_key` |
-| `click`        | `target` (required)                 | `{ok, clicked: {…widget info…}}`             | resolves target by `objectName` or exact `.text()` match |
-| `type`         | `target`, `text`                    | `{ok}`                                       | works on `QLineEdit` and `QPlainTextEdit` |
-| `select`       | `target`, `value`                   | `{ok}`                                       | sets a `QComboBox`'s current text |
+| `op`              | Args                                                                 | Returns                                                          | Notes |
+|-------------------|----------------------------------------------------------------------|------------------------------------------------------------------|-------|
+| `ping`            | —                                                                    | `{ok, pong}`                                                     | sanity check |
+| `screenshot`      | `path?` (default `/tmp/locksmith-screenshot.png`)                    | `{ok, path, size: [w, h]}`                                       | grabs the main window |
+| `tree`            | `visible_only?` (true), `clickable_only?` (false), `text_contains?`  | `{ok, count, widgets: [...]}`                                    | each widget: `type`, `objectName`, `text?`, `tooltip?`, `rect`, `enabled`, `visible` |
+| `current_page`    | —                                                                    | `{ok, vault_page, previous_vault_page}`                          | VaultPage's `_current_page_key` |
+| `click`           | `target` (required)                                                  | `{ok, clicked: {…widget info…}}`                                 | resolves target by `objectName`, exact `.text()`, exact `.toolTip()`, or `Type:N` selector |
+| `click_list_item` | `text` (required), `list?` (objectName filter)                       | `{ok, list_object_name, item_text, index}`                       | clicks a `QListWidgetItem` by its text — items are not `QWidget`s, so the standard target resolver can't reach them |
+| `type`            | `target`, `text`                                                     | `{ok}`                                                           | works on `QLineEdit` and `QPlainTextEdit` |
+| `select`          | `target`, `value`                                                    | `{ok}`                                                           | sets a `QComboBox`'s current text |
 
 Unknown `op` returns `{error, available: [...]}` listing valid op names.
 
@@ -66,6 +67,13 @@ widget tree and matching against:
    has a stable name in code (most plugin widgets do).
 2. **`.text()`** — exact match against the trimmed text of any widget
    that has a `text()` method (buttons, labels, line-edits).
+3. **`.toolTip()`** — exact match. Useful for icon-only buttons that
+   carry their identity in a tooltip rather than visible text.
+4. **`Type:N` selector** — e.g. `"QLineEdit:0"`, `"LocksmithButton:1"`.
+   The N-th visible widget of the named class, in widget-tree order.
+   Use this when a widget has no name/text/tooltip (common for inner
+   `QLineEdit`s of composite widgets) or when targeting one of several
+   identical anonymous instances.
 
 The first match in widget-tree order wins. If a target is ambiguous,
 use `tree` first to see what's available and pick a more specific
