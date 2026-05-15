@@ -107,4 +107,4 @@ def test_bottom_strip_renders_lineage_no_parent(qapp, regulator_model):
 
 def test_bottom_strip_renders_validation_pill(qapp, regulator_model):
     page = TemplateOverviewPage(model=regulator_model)
-    assert page.bottom_validation_pill.text() == "✓ valid"
+    assert page.bottom_validation_pill.text() == "Valid"

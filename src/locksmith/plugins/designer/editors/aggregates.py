@@ -42,6 +42,10 @@ class _AggregateSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
         self._crossrefs = crossrefs
+        self.setObjectName("designer-section-pane")
+        self.setStyleSheet(
+            "#designer-section-pane QLabel{background:transparent;}"
+        )
         self._build()
 
     def _build(self) -> None:
@@ -101,6 +105,7 @@ class _AggregateSectionPane(QWidget):
         self._state_schema_section = make_section("State schema")
         self._state_schema_view = QPlainTextEdit()
         self._state_schema_view.setReadOnly(True)
+        self._state_schema_view.setFrameShape(QFrame.NoFrame)
         mono = QFont("Menlo")
         mono.setStyleHint(QFont.StyleHint.Monospace)
         mono.setPointSize(10)
@@ -113,6 +118,7 @@ class _AggregateSectionPane(QWidget):
         self._initial_section = make_section("Initial state")
         self._initial_view = QPlainTextEdit()
         self._initial_view.setReadOnly(True)
+        self._initial_view.setFrameShape(QFrame.NoFrame)
         self._initial_view.setFont(mono)
         self._initial_view.setFixedHeight(50)
         self._initial_section.layout().addWidget(self._initial_view)

@@ -39,7 +39,7 @@ class KindRail(QListWidget):
             "QListWidget::item{padding:10px 12px;border-bottom:1px solid #f0f2f5;}"
             "QListWidget::item:selected{background:#f6f7f9;color:#1A1C20;}"
             "QListWidget::item:disabled{"
-            "color:#888;background:#fafbfc;font-size:9px;"
+            "color:#888;background:transparent;font-size:9px;"
             "font-weight:600;letter-spacing:0.5px;padding:6px 12px;}"
         )
 

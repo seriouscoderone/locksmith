@@ -435,7 +435,7 @@ The visual design for every v1 surface is mocked at:
 .superpowers/brainstorm/<session>/content/
 ├── shell-shapes.html              # Shell pattern survey (Profile + drilldown won)
 ├── templates-browser.html         # §4.1 entry surface
-├── overview-page-v2.html          # §4.2 Overview with cross-refs + inline +Add
+├── overview-page.html             # §4.2 Overview (v1 — canonical)
 ├── commands-editor.html           # §4.3 Commands
 ├── exports-editor.html            # §4.3 Exports + state-machine SVG
 ├── workflows-editor.html          # §4.3 Workflows + swimlane SVG

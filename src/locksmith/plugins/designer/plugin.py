@@ -145,6 +145,11 @@ class DesignerPlugin(PluginBase):
         ):
             page = cls(model=self._model, crossrefs=crossrefs)
             self._pages[key] = page
+            shell = getattr(page, "shell", None)
+            if shell is not None and hasattr(shell, "back_clicked"):
+                shell.back_clicked.connect(
+                    lambda: self._navigate(PAGE_KEY_OVERVIEW)
+                )
             vault_page = getattr(self._app, "_vault_page", None)
             if vault_page is not None:
                 # Newly-built pages must be registered with the host's
@@ -234,15 +239,15 @@ class DesignerPlugin(PluginBase):
 
     def get_menu_entry(self) -> MenuButton:
         return MenuButton(
-            icon=QIcon(":/assets/material-icons/drafts.svg"),
+            icon=QIcon(":/assets/material-icons/micro-app.svg"),
             label="Micro App Designer",
         )
 
     def get_menu_section(self) -> list[QWidget]:
         items: list[QWidget] = [BackButton(dark_mode=False), MenuSpacer(15)]
         self._templates_nav_button = MenuButton(
-            icon=QIcon(":/assets/material-icons/drafts.svg"),
-            label="Templates",
+            icon=QIcon(":/assets/material-icons/micro-app.svg"),
+            label="Micro-App Designer",
         )
         self._templates_nav_button.clicked.connect(self._show_templates_browser)
         items.append(self._templates_nav_button)

@@ -52,9 +52,7 @@ class StateMachineDiagram(QGraphicsView):
         super().__init__(parent=parent)
         self._scene = QGraphicsScene(self)
         self.setScene(self._scene)
-        self.setStyleSheet(
-            "background:#fff;border:1px solid #e0e3ea;border-radius:6px;"
-        )
+        self.setStyleSheet("background:#fff;border:0;")
         self._state_count = 0
 
     @property

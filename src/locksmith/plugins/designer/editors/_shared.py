@@ -44,7 +44,7 @@ def make_section(title: str) -> QFrame:
         "border-radius:4px;padding:6px 8px;}"
         "#editor-section QLineEdit:read-only, "
         "#editor-section QPlainTextEdit:read-only{"
-        "background:#f6f7f9;color:#444;}"
+        "background:#f6f7f9;color:#444;border:0;}"
     )
     lay = QVBoxLayout(frame)
     lay.setContentsMargins(0, 0, 0, 4)

@@ -55,7 +55,15 @@ class PrimitiveEditorShell(QWidget):
         root.setSpacing(0)
 
         strip = QFrame()
-        strip.setStyleSheet("background:#fff;border-bottom:1px solid #e0e3ea;")
+        strip.setObjectName("editor-identity-strip")
+        # Mock shows the strip flush with the page (no hairline). Drop
+        # the border-bottom + use a descendant rule so QLabels inside
+        # the strip render transparent on macOS instead of inheriting
+        # the system Window palette fill.
+        strip.setStyleSheet(
+            "#editor-identity-strip{background:#fff;}"
+            "#editor-identity-strip QLabel{background:transparent;}"
+        )
         strip_lay = QHBoxLayout(strip)
         strip_lay.setContentsMargins(16, 10, 16, 10)
         self.back_button = QPushButton("← Back")
@@ -140,7 +148,11 @@ class PrimitiveEditorShell(QWidget):
 
         rail_panel = QFrame()
         rail_panel.setFixedWidth(260)
-        rail_panel.setStyleSheet("background:#fff;border-right:1px solid #e0e3ea;")
+        rail_panel.setObjectName("editor-rail-panel")
+        rail_panel.setStyleSheet(
+            "#editor-rail-panel{background:#fff;}"
+            "#editor-rail-panel QLabel{background:transparent;}"
+        )
         rail_lay = QVBoxLayout(rail_panel)
         rail_lay.setContentsMargins(0, 0, 0, 0)
         rail_lay.setSpacing(0)
@@ -166,7 +178,7 @@ class PrimitiveEditorShell(QWidget):
         self.side_panel_container = QFrame()
         self.side_panel_container.setFixedWidth(320)
         self.side_panel_container.setStyleSheet(
-            "background:#fff;border-left:1px solid #e0e3ea;"
+            "background:#fff;"
         )
         side_lay = QVBoxLayout(self.side_panel_container)
         side_lay.setContentsMargins(0, 0, 0, 0)
@@ -181,7 +193,7 @@ class PrimitiveEditorShell(QWidget):
         body_holder_lay.addLayout(body, 1)
         self.bottom_panel_container = QFrame()
         self.bottom_panel_container.setStyleSheet(
-            "background:#fff;border-top:1px solid #e0e3ea;"
+            "background:#fff;"
         )
         self.bottom_panel_container.setFixedHeight(240)
         bottom_lay = QVBoxLayout(self.bottom_panel_container)

@@ -52,6 +52,10 @@ class _ProjectionSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
         self._crossrefs = crossrefs
+        self.setObjectName("designer-section-pane")
+        self.setStyleSheet(
+            "#designer-section-pane QLabel{background:transparent;}"
+        )
         self._build()
 
     def _build(self) -> None:

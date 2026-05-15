@@ -56,6 +56,17 @@ class _CommandSectionPane(QWidget):
     def __init__(self, crossrefs: CrossRefIndex, parent=None):
         super().__init__(parent=parent)
         self._crossrefs = crossrefs
+        # Defense in depth: every QLabel inside this pane renders
+        # transparent. Without this, macOS Qt paints labels with the
+        # system Window palette fill, defeating the global QLabel rule
+        # in ui/styles.py wherever a per-widget setStyleSheet sets only
+        # color/font and omits background. Chip widgets with explicit
+        # `background:` in their stylesheet still win and keep their
+        # tinted fills.
+        self.setObjectName("designer-section-pane")
+        self.setStyleSheet(
+            "#designer-section-pane QLabel{background:transparent;}"
+        )
         self._build()
 
     def _build(self) -> None:
