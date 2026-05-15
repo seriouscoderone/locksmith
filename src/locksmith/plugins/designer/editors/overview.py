@@ -93,6 +93,17 @@ def _qualifier_for_workflow(entry: dict) -> str | None:
     return " · ".join(parts) if parts else None
 
 
+def _entry_label_for(kind: str, entry: dict) -> str:
+    # Credentials are user-facing ACDC labels — prefer the human name.
+    # All other primitives are protocol-internal identifiers — show the
+    # raw id verbatim so what the SME sees matches what gets serialized.
+    if kind in ("imports", "exports"):
+        return (entry.get("name") or entry.get("display_name")
+                or entry.get("id") or entry.get("title") or "(unnamed)")
+    return (entry.get("id") or entry.get("name")
+            or entry.get("display_name") or entry.get("title") or "(unnamed)")
+
+
 def _entries_for(kind: str, items: list[dict]) -> list:
     # Show up to 4 entries per card (matches v1 mock's "I DO" with 4
     # commands). Per-entry qualifier sublines only fire for the
@@ -103,7 +114,7 @@ def _entries_for(kind: str, items: list[dict]) -> list:
     # mock density.
     out = []
     for e in items[:4]:
-        label = entry_label(e)
+        label = _entry_label_for(kind, e)
         if kind == "exports":
             q = _qualifier_for_export(e)
         elif kind == "aggregates":
@@ -174,12 +185,55 @@ class TemplateOverviewPage(QWidget):
         root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
 
+        # Slim page-chrome strip above the header card holds the global
+        # utility toggles (validation panel, JSON source, kebab) so they
+        # don't crowd the header card's SAID/CTA column.
+        chrome_strip = QFrame()
+        chrome_strip.setObjectName("overview-chrome-strip")
+        chrome_strip.setStyleSheet(
+            "#overview-chrome-strip{background:#fff;}"
+            "#overview-chrome-strip QPushButton{background:transparent;}"
+        )
+        chrome_lay = QHBoxLayout(chrome_strip)
+        chrome_lay.setContentsMargins(20, 6, 20, 0)
+        chrome_lay.setSpacing(6)
+        chrome_lay.addStretch(1)
+        self.panel_toggle = QPushButton("⚠")
+        self.panel_toggle.setCheckable(True)
+        self.panel_toggle.setToolTip("Validation panel")
+        self.panel_toggle.setFixedSize(28, 28)
+        self.panel_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:13px;border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.panel_toggle.toggled.connect(self._on_panel_toggled)
+        chrome_lay.addWidget(self.panel_toggle)
+        self.json_toggle = QPushButton("{ }")
+        self.json_toggle.setCheckable(True)
+        self.json_toggle.setToolTip("JSON source view")
+        self.json_toggle.setFixedSize(36, 28)
+        self.json_toggle.setStyleSheet(
+            "QPushButton{color:#666;font-size:11px;font-family:monospace;"
+            "border:0;border-radius:4px;}"
+            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
+            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
+        )
+        self.json_toggle.toggled.connect(self._on_json_toggled)
+        chrome_lay.addWidget(self.json_toggle)
+        self.kebab_button = KebabButton()
+        chrome_lay.addWidget(self.kebab_button)
+        root.addWidget(chrome_strip)
+
         header_strip = QFrame()
+        header_strip.setObjectName("overview-header-strip")
         header_strip.setStyleSheet(
-            "background:#fff;border-bottom:1px solid #e0e3ea;"
+            "#overview-header-strip{background:#fff;}"
+            "#overview-header-strip QLabel{background:transparent;}"
+            "#overview-header-strip QPushButton{background:transparent;}"
         )
         h = QHBoxLayout(header_strip)
-        h.setContentsMargins(20, 14, 20, 14)
+        h.setContentsMargins(20, 8, 20, 14)
         h.setSpacing(14)
 
         self.role_badge = RoleIconBadge(kind=role.get("kind", ""), size=52)
@@ -227,14 +281,14 @@ class TemplateOverviewPage(QWidget):
         right_col.setSpacing(6)
         right_col.setAlignment(Qt.AlignTop)
 
-        top_right_row = QHBoxLayout()
-        top_right_row.addStretch(1)
         said_block = QVBoxLayout()
         said_block.setSpacing(0)
+        said_block.setAlignment(Qt.AlignRight)
         said_title = QLabel("SAID")
         said_title.setStyleSheet(
             "font-size:9px;color:#888;font-weight:600;letter-spacing:0.5px;"
         )
+        said_title.setAlignment(Qt.AlignRight)
         said_block.addWidget(said_title)
         short = (said[:4] + "…" + said[-4:]) if len(said) >= 8 else said
         self.said_label = QLabel(short)
@@ -242,39 +296,16 @@ class TemplateOverviewPage(QWidget):
             "color:#666;background:#f6f7f9;padding:2px 8px;border-radius:6px;"
             "font-size:10px;font-family:monospace;"
         )
+        self.said_label.setAlignment(Qt.AlignRight)
         said_block.addWidget(self.said_label)
-        top_right_row.addLayout(said_block)
-        self.panel_toggle = QPushButton("⚠")
-        self.panel_toggle.setCheckable(True)
-        self.panel_toggle.setToolTip("Validation panel")
-        self.panel_toggle.setFixedSize(28, 28)
-        self.panel_toggle.setStyleSheet(
-            "QPushButton{color:#666;font-size:13px;border:0;border-radius:4px;}"
-            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
-            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
-        )
-        self.panel_toggle.toggled.connect(self._on_panel_toggled)
-        top_right_row.addWidget(self.panel_toggle)
-        self.json_toggle = QPushButton("{ }")
-        self.json_toggle.setCheckable(True)
-        self.json_toggle.setToolTip("JSON source view")
-        self.json_toggle.setFixedSize(36, 28)
-        self.json_toggle.setStyleSheet(
-            "QPushButton{color:#666;font-size:11px;font-family:monospace;"
-            "border:0;border-radius:4px;}"
-            "QPushButton:hover{background:#f6f7f9;color:#1A1C20;}"
-            "QPushButton:checked{background:#0ABFB0;color:#fff;}"
-        )
-        self.json_toggle.toggled.connect(self._on_json_toggled)
-        top_right_row.addWidget(self.json_toggle)
-        self.kebab_button = KebabButton()
-        top_right_row.addWidget(self.kebab_button)
-        right_col.addLayout(top_right_row)
+        right_col.addLayout(said_block)
 
         self.walkthrough_button = QPushButton("Walk me through it")
+        # Explicit QPushButton selector so the strip's descendant
+        # transparent rule doesn't override the orange fill.
         self.walkthrough_button.setStyleSheet(
-            "background:#d97757;color:#fff;font-weight:600;"
-            "padding:6px 12px;border-radius:4px;"
+            "QPushButton{background:#d97757;color:#fff;font-weight:600;"
+            "padding:6px 12px;border-radius:4px;}"
         )
         right_col.addWidget(self.walkthrough_button)
 
@@ -285,8 +316,12 @@ class TemplateOverviewPage(QWidget):
         scroll.setWidgetResizable(True)
         scroll.setStyleSheet("border:0;background:#f6f7f9;")
         host = QWidget()
-        grid = QGridLayout(host)
-        grid.setContentsMargins(20, 20, 20, 20)
+        host_lay = QVBoxLayout(host)
+        host_lay.setContentsMargins(0, 0, 0, 0)
+        host_lay.setSpacing(0)
+        grid_container = QWidget()
+        grid = QGridLayout(grid_container)
+        grid.setContentsMargins(20, 20, 20, 8)
         grid.setSpacing(14)
         self._grid = grid
 
@@ -313,13 +348,11 @@ class TemplateOverviewPage(QWidget):
             grid.addWidget(card, row, col)
             self._cards[kind] = card
 
-        # Trailing stretch row absorbs extra vertical space so the 2 card
-        # rows sit at the top of the scroll area without stretching to
-        # fill the viewport height.
-        grid.setRowStretch(2, 1)
         # Equal column widths so cards in the same row align in width.
         for c in range(4):
             grid.setColumnStretch(c, 1)
+
+        host_lay.addWidget(grid_container)
 
         scroll.setWidget(host)
 
@@ -343,6 +376,16 @@ class TemplateOverviewPage(QWidget):
         side_lay.setContentsMargins(0, 0, 0, 0)
         side_lay.setSpacing(0)
         self._validation_panel = ValidationPanel()
+        # Initial population — without this the panel renders just its
+        # "Validation" header on first open. set_report covers both the
+        # populated and empty-state ("No issues — template is valid.")
+        # paths.
+        from locksmith.plugins.designer.validation import ValidationReport
+        report = (
+            getattr(self._model, "last_validation_report", lambda: None)()
+            or ValidationReport(errors=(), warnings=())
+        )
+        self._validation_panel.set_report(report)
         side_lay.addWidget(self._validation_panel)
         self.side_panel_container.setVisible(False)
         body_row.addWidget(self.side_panel_container)
@@ -355,16 +398,30 @@ class TemplateOverviewPage(QWidget):
             ValidationPill,
         )
 
+        # Bottom metadata strip lives INSIDE the scroll host so it sits
+        # flush below the card grid (mock parity) rather than docking to
+        # the viewport bottom and leaving a vertical dead-zone above it.
         bottom = QFrame()
+        bottom.setObjectName("overview-bottom-strip")
         bottom.setStyleSheet(
-            "background:#fff;border-top:1px solid #e0e3ea;"
+            "#overview-bottom-strip{background:#f6f7f9;}"
+            "#overview-bottom-strip QLabel{background:transparent;}"
         )
         b = QHBoxLayout(bottom)
-        b.setContentsMargins(20, 12, 20, 12)
-        b.setSpacing(20)
+        b.setContentsMargins(20, 6, 20, 20)
+        b.setSpacing(10)
 
-        eco = QVBoxLayout()
-        eco.setSpacing(2)
+        # Eco affinity cell — white card.
+        eco_cell = QFrame()
+        eco_cell.setObjectName("overview-eco-cell")
+        eco_cell.setStyleSheet(
+            "#overview-eco-cell{background:#fff;border:1px solid #e0e3ea;"
+            "border-radius:6px;}"
+            "#overview-eco-cell QLabel{background:transparent;}"
+        )
+        eco = QVBoxLayout(eco_cell)
+        eco.setContentsMargins(14, 10, 14, 10)
+        eco.setSpacing(4)
         eco_title = QLabel("ECOSYSTEM AFFINITY")
         eco_title.setStyleSheet(
             "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
@@ -379,14 +436,23 @@ class TemplateOverviewPage(QWidget):
             eco_chips_row.addWidget(chip)
         if not self._ecosystem_tags:
             none_chip = QLabel("(none)")
-            none_chip.setStyleSheet("font-size:11px;color:#aaa;font-style:italic;")
+            none_chip.setStyleSheet("font-size:11px;color:#aaa;")
             eco_chips_row.addWidget(none_chip)
         eco_chips_row.addStretch(1)
         eco.addLayout(eco_chips_row)
-        b.addLayout(eco, 1)
+        b.addWidget(eco_cell, 1)
 
-        lin = QVBoxLayout()
-        lin.setSpacing(2)
+        # Lineage cell — white card.
+        lin_cell = QFrame()
+        lin_cell.setObjectName("overview-lin-cell")
+        lin_cell.setStyleSheet(
+            "#overview-lin-cell{background:#fff;border:1px solid #e0e3ea;"
+            "border-radius:6px;}"
+            "#overview-lin-cell QLabel{background:transparent;}"
+        )
+        lin = QVBoxLayout(lin_cell)
+        lin.setContentsMargins(14, 10, 14, 10)
+        lin.setSpacing(4)
         lin_title = QLabel("LINEAGE")
         lin_title.setStyleSheet(
             "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
@@ -402,30 +468,50 @@ class TemplateOverviewPage(QWidget):
             self.lineage_label = QLabel("No parent template")
         self.lineage_label.setStyleSheet("font-size:11px;color:#666;")
         lin.addWidget(self.lineage_label)
-        b.addLayout(lin, 1)
+        b.addWidget(lin_cell, 1)
 
-        val = QVBoxLayout()
-        val.setSpacing(2)
-        val_title = QLabel("✓ VALIDATION")
-        val_title.setStyleSheet(
-            "font-size:10px;color:#0ABFB0;font-weight:600;letter-spacing:0.5px;"
-        )
-        val.addWidget(val_title)
+        # Validation cell — tinted by severity. Whole card carries the
+        # color so a valid template visually celebrates; warning/invalid
+        # surface their state at the same grain.
         report = getattr(self._model, "last_validation_report", lambda: None)()
         if report is None:
             err = warn = 0
         else:
-            err = sum(1 for i in report.issues
-                      if getattr(i, "severity", "error") == "error")
-            warn = sum(1 for i in report.issues
-                       if getattr(i, "severity", "error") == "warning")
+            err = len(report.errors)
+            warn = len(report.warnings)
+        if err > 0:
+            val_bg, val_border, val_title_color = "#fce8ea", "#f5c6c1", "#a52a2a"
+            val_title_text = "VALIDATION"
+        elif warn > 0:
+            val_bg, val_border, val_title_color = "#fdf3e7", "#ffe0b2", "#a5641a"
+            val_title_text = "VALIDATION"
+        else:
+            val_bg, val_border, val_title_color = "#e8f5e9", "#c8e6c9", "#1b5e20"
+            val_title_text = "✓ VALIDATION"
+        val_cell = QFrame()
+        val_cell.setObjectName("overview-val-cell")
+        val_cell.setStyleSheet(
+            f"#overview-val-cell{{background:{val_bg};border:1px solid {val_border};"
+            "border-radius:6px;}"
+            "#overview-val-cell QLabel{background:transparent;}"
+        )
+        val = QVBoxLayout(val_cell)
+        val.setContentsMargins(14, 10, 14, 10)
+        val.setSpacing(4)
+        val_title = QLabel(val_title_text)
+        val_title.setStyleSheet(
+            f"font-size:10px;color:{val_title_color};font-weight:600;"
+            "letter-spacing:0.5px;"
+        )
+        val.addWidget(val_title)
         self.bottom_validation_pill = ValidationPill(
             error_count=err, warning_count=warn,
         )
         val.addWidget(self.bottom_validation_pill)
-        b.addLayout(val, 1)
+        b.addWidget(val_cell, 1)
 
-        root.addWidget(bottom)
+        host_lay.addWidget(bottom)
+        host_lay.addStretch(1)
 
         self.bottom_panel_container = QFrame()
         self.bottom_panel_container.setStyleSheet(
@@ -436,6 +522,8 @@ class TemplateOverviewPage(QWidget):
         bottom_lay.setContentsMargins(0, 0, 0, 0)
         bottom_lay.setSpacing(0)
         self._json_source_view = JsonSourceView()
+        # Populate so the editor isn't a blank dark slab on first open.
+        self._json_source_view.set_doc(self._model.doc)
         bottom_lay.addWidget(self._json_source_view)
         self.bottom_panel_container.setVisible(False)
         root.addWidget(self.bottom_panel_container)

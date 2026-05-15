@@ -6,7 +6,13 @@ from locksmith.plugins.designer.widgets.ecosystem_chip import (
 def test_ecosystem_chip_renders_tag_text(qapp):
     c = EcosystemChip("insurance")
     assert c.text() == "insurance"
-    assert "#f0f2f5" in c.styleSheet()
+    # Matches the rule-type chip family: light-grey pill, teal accent
+    # text, bold font weight — so "ECOSYSTEM AFFINITY" and "I'M BOUND
+    # BY" read as siblings rather than two different chip systems.
+    ss = c.styleSheet()
+    assert "#f6f7f9" in ss
+    assert "#0e9488" in ss
+    assert "font-weight:600" in ss
 
 
 def test_cross_template_pairs_with(qapp):

@@ -23,7 +23,7 @@ from dataclasses import dataclass
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QVBoxLayout,
+    QFrame, QHBoxLayout, QLabel, QSizePolicy, QVBoxLayout,
 )
 
 
@@ -74,6 +74,14 @@ class FirstPersonCard(QFrame):
         self.setStyleSheet(
             "#fpcard{background:#fff;border:1px solid #e0e3ea;border-radius:8px;}"
             "#fpcard:hover{border:1px solid #d97757;}"
+            # Defense in depth: every QLabel/QPushButton inside the card
+            # inherits a transparent background. Without this, macOS Qt
+            # paints labels with a system-default fill that shows as a
+            # grey rectangle on each entry / qualifier / empty-state
+            # line. Per-widget setStyleSheet calls below set color/size
+            # but no background — this descendant rule fills the gap.
+            "#fpcard QLabel{background:transparent;}"
+            "#fpcard QPushButton{background:transparent;}"
         )
         # Expand to fill the grid cell so cards in the same row line up
         # vertically (matching their row's max-content height). The
@@ -136,30 +144,42 @@ class FirstPersonCard(QFrame):
                 outer.addWidget(main)
                 parts.append(entry.label)
                 if entry.qualifier:
+                    # Wrap qualifier in HBox with leading 16px indent so
+                    # it visually clusters under its item label rather
+                    # than reading as an orphan line at the card's left
+                    # edge. QSS margin-left on QLabel is unreliable.
+                    sub_row = QHBoxLayout()
+                    sub_row.setContentsMargins(0, 0, 0, 0)
+                    sub_row.setSpacing(0)
+                    sub_row.addSpacing(16)
                     sub = QLabel(entry.qualifier)
                     sub.setStyleSheet(
-                        "font-size:10px;color:#888;margin-left:8px;"
+                        "font-size:10px;color:#666;"
                     )
                     sub.setWordWrap(True)
-                    outer.addWidget(sub)
+                    sub_row.addWidget(sub, 1)
+                    outer.addLayout(sub_row)
                     parts.append(entry.qualifier)
             self._entries_text_cache = " ".join(parts)
         else:
+            # Empty-state copy is semantically different from qualifier
+            # sub-lines: this is "no data here" prose, not metadata about
+            # an item. Italic + leading em-dash distinguish it from
+            # qualifier lines (which are upright, indented, factual).
             msg = empty_message or "(none yet)"
-            empty = QLabel(msg)
-            empty.setStyleSheet("font-size:11px;color:#aaa;font-style:italic;")
+            empty = QLabel(f"— {msg}")
+            empty.setStyleSheet(
+                "font-size:11px;color:#888;font-style:italic;"
+            )
             empty.setWordWrap(True)
             outer.addWidget(empty)
             self._entries_text_cache = msg
 
-        add = QPushButton("+ Add")
-        add.setFlat(True)
-        add.setStyleSheet(
-            "QPushButton{color:#666;text-align:left;border:0;padding:0;font-size:11px;}"
-            "QPushButton:hover{color:#d97757;}"
-        )
-        add.clicked.connect(self.add_clicked.emit)
-        outer.addWidget(add)
+        # Trailing stretch absorbs extra vertical space when the grid row
+        # is taller than this card's content — keeps line spacing
+        # consistent across cards in the same row (no rubber-band
+        # stretching between items in shorter cards).
+        outer.addStretch(1)
 
     def entries_text(self) -> str:
         return self._entries_text_cache
