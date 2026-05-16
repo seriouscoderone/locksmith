@@ -65,6 +65,14 @@ def set_global_styles(app: QApplication):
             color: {colors.TEXT_PRIMARY};
             letter-spacing: 0.8px;
         }}
+        /* macOS Qt renders QLabel with the system-default fill when no
+           background is set — appears as a light grey backplate on top
+           of white card surfaces. Force transparent so labels inherit
+           their parent's color. Buttons and inputs keep their own
+           backgrounds via their per-widget stylesheets. */
+        QLabel {{
+            background: transparent;
+        }}
 
         .monospace {{
             font-family: "{MONOSPACE_FONT_FAMILY}", monospace;

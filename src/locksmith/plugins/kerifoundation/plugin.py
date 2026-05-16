@@ -29,7 +29,7 @@ from locksmith.plugins.kerifoundation.onboarding.service import (
     KFOnboardingService,
     KFVaultDeletionService,
 )
-from locksmith.ui.vault.menu import MenuButton, MenuSpacer
+from locksmith.ui.vault.menu import MenuButton, MenuSpacer, PluginSectionHeader
 from locksmith.ui.vault.identifiers.rotate import RotateIdentifierDialog
 from locksmith.ui.toolkit.widgets.buttons import BackButton
 
@@ -344,7 +344,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
         # Witnesses nav button
         self._wit_btn = MenuButton(
-            icon=QIcon(":/assets/material-icons/witness1.svg"),
+            icon=QIcon(":/assets/material-icons/notary.svg"),
             label="Witnesses",
         )
         self._wit_btn.clicked.connect(self._show_witnesses)
@@ -352,7 +352,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
         # Watchers nav button
         self._wat_btn = MenuButton(
-            icon=QIcon(":/assets/material-icons/watcher.svg"),
+            icon=QIcon(":/assets/material-icons/auditor.svg"),
             label="Watchers",
         )
         self._wat_btn.clicked.connect(self._show_watchers)
@@ -640,28 +640,13 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         )
 
     def _build_logo_widget(self):
-        """Build a small logo + text widget for the plugin submenu header."""
-        widget = QWidget()
-        widget.setFixedHeight(72)
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(12, 8, 12, 4)
-        layout.setSpacing(4)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
+        """Build the plugin submenu section header (logo + 'KERI Foundation').
 
-        icon_label = QLabel()
-        pixmap = QPixmap(":/assets/custom/SymbolLogo.svg")
-        if not pixmap.isNull():
-            icon_label.setPixmap(pixmap.scaled(
-                40, 40,
-                Qt.AspectRatioMode.KeepAspectRatio,
-                Qt.TransformationMode.SmoothTransformation,
-            ))
-        icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(icon_label)
-
-        text_label = QLabel("KERI Foundation")
-        text_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #333;")
-        text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        layout.addWidget(text_label)
-
-        return widget
+        Delegates to the shared ``PluginSectionHeader`` toolkit widget so
+        the caption hides cleanly in collapsed sidebar mode without each
+        plugin reimplementing the ``set_label_visible`` contract.
+        """
+        return PluginSectionHeader(
+            logo_path=":/assets/custom/SymbolLogo.svg",
+            caption="KERI Foundation",
+        )

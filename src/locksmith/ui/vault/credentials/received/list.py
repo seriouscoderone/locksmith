@@ -205,6 +205,13 @@ class ReceivedCredentialsListPage(BaseListPage):
             logger.info(f"Credential received: {data.get('schema')}, refreshing list")
             self._load_received_credentials_data()
 
+        # Refresh list when a credential is issued to a same-vault AID — the Reger's
+        # subjs index makes it visible immediately under the holder's view without
+        # an IPEX exchange, but the page doesn't know to reload on its own.
+        elif doer_name == "IssueCredentialDoer" and event_type == "credential_issued":
+            logger.info(f"Credential issued: {data.get('schema')}, refreshing received list for same-vault recipient case")
+            self._load_received_credentials_data()
+
         # Refresh list when a credential is deleted
         elif doer_name == "DeleteReceivedCredential" and event_type == "credential_deleted":
             logger.info(f"Received credential deleted: {data.get('schema')}, refreshing list")

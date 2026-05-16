@@ -36,6 +36,11 @@ class HoverIconButton(QToolButton):
         self.icon_normal = f":/{icon_normal}" if not icon_normal.startswith(":/") else icon_normal
         self.icon_hover = f":/{icon_hover}" if not icon_hover.startswith(":/") else icon_hover
         self.is_active = False  # Track if button should stay in active/hover state
+        # Track real mouse hover so set_icons (called externally to swap the
+        # pair to a different toggle state) picks the correct variant. Without
+        # this, a click that swaps the icon pair would always land on the
+        # non-hover variant even while the mouse is still on the button.
+        self.is_hovered = False
 
         # Set initial icon
         self.setIcon(QIcon(self.icon_normal))
@@ -63,6 +68,21 @@ class HoverIconButton(QToolButton):
                 background-color: {colors.BACKGROUND_NEUTRAL_HOVER};
             }}
         """)
+
+    def set_icons(self, icon_normal: str, icon_hover: str):
+        """Replace the (normal, hover) icon pair and refresh the displayed icon.
+
+        Picks the hover variant if either ``is_active`` is set (forced "on"
+        affordance, used by Vaults button) OR the mouse is currently inside
+        the button — so toggle buttons that swap pairs on click immediately
+        show the new pair's hover variant rather than reverting to normal.
+        """
+        self.icon_normal = f":/{icon_normal}" if not icon_normal.startswith(":/") else icon_normal
+        self.icon_hover = f":/{icon_hover}" if not icon_hover.startswith(":/") else icon_hover
+        if self.is_active or self.is_hovered:
+            self.setIcon(QIcon(self.icon_hover))
+        else:
+            self.setIcon(QIcon(self.icon_normal))
 
     def set_active(self, active: bool):
         """
@@ -112,12 +132,14 @@ class HoverIconButton(QToolButton):
 
     def enterEvent(self, event):
         """Handle mouse enter event by switching to hover icon."""
+        self.is_hovered = True
         if not self.is_active:
             self.setIcon(QIcon(self.icon_hover))
         super().enterEvent(event)
 
     def leaveEvent(self, event):
         """Handle mouse leave event by switching back to normal icon."""
+        self.is_hovered = False
         if not self.is_active:
             self.setIcon(QIcon(self.icon_normal))
         super().leaveEvent(event)
@@ -229,10 +251,11 @@ class LocksmithInvertedButton(QPushButton):
 
 class BackButton(QPushButton):
     """
-    A back navigation button with arrow icon and "Back" text.
-    
-    Supports both dark mode (white icon/text for dark backgrounds) and
-    light mode (dark icon/text for light backgrounds).
+    A back navigation button rendered as a single arrow_back glyph.
+
+    No accompanying "Back" label — the arrow alone carries the affordance
+    and the tooltip surfaces the verbose description on hover. Same
+    visual in expanded and collapsed sidebar states.
     """
 
     def __init__(self, dark_mode: bool = False, parent=None):
@@ -240,40 +263,38 @@ class BackButton(QPushButton):
         Initialize the BackButton.
 
         Args:
-            dark_mode: If True, use white icon/text for dark backgrounds.
-                       If False, use dark icon/text for light backgrounds.
+            dark_mode: If True, use a white-tinted arrow for dark backgrounds.
+                       If False, use the icon's native dark color for light
+                       backgrounds.
             parent: Parent widget.
         """
         super().__init__(parent)
         self.dark_mode = dark_mode
-        
+
         self.setMinimumHeight(40)
         self.setFixedHeight(40)  # Fixed height for layout stability
         self.setCursor(Qt.CursorShape.PointingHandCursor)
-        
-        # Create layout for icon + text
+        self.setToolTip("Back to menu")
+
+        # 18px horizontal margins match MenuButton's setContentsMargins
+        # so the arrow lines up directly above the 32×32 menu-item icons
+        # in expanded mode rather than floating mid-column.
         layout = QHBoxLayout(self)
-        layout.setContentsMargins(10, 8, 10, 8)
-        layout.setSpacing(5)
-        
-        # Arrow icon
-        arrow_label = QLabel()
-        icon_pixmap = self._create_colored_icon()
+        layout.setContentsMargins(18, 8, 18, 8)
+        layout.setSpacing(0)
+
+        # Arrow icon — 32×32 so it reads as a peer of the menu icons below.
+        self._arrow_label = QLabel()
+        icon_pixmap = self._create_colored_icon(size=32)
         if icon_pixmap and not icon_pixmap.isNull():
-            arrow_label.setPixmap(icon_pixmap)
-        arrow_label.setFixedSize(16, 16)
-        arrow_label.setStyleSheet("background-color: transparent; border: none;")
-        
-        # Text label
-        text_color = colors.WHITE if dark_mode else colors.TEXT_MENU
-        text_label = QLabel("Back")
-        text_label.setStyleSheet(
-            f"font-size: 12px; font-weight: bold; color: {text_color}; "
-            "background-color: transparent; border: none;"
-        )
-        
-        layout.addWidget(arrow_label)
-        layout.addWidget(text_label)
+            self._arrow_label.setPixmap(icon_pixmap)
+        self._arrow_label.setFixedSize(32, 32)
+        self._arrow_label.setStyleSheet("background-color: transparent; border: none;")
+
+        # Left-aligned (vertically centered) — keeps the arrow in the
+        # same x-position as the menu icons in both collapsed and
+        # expanded sidebar states.
+        layout.addWidget(self._arrow_label, alignment=Qt.AlignmentFlag.AlignVCenter)
         layout.addStretch()
         
         # Style based on dark_mode
@@ -306,32 +327,42 @@ class BackButton(QPushButton):
                 }
             """)
     
-    def _create_colored_icon(self) -> QPixmap | None:
-        """Create a colored version of the chevron_left icon."""
-        original_pixmap = QPixmap(":/assets/material-icons/chevron_left.svg")
-        
+    def _create_colored_icon(self, size: int = 32) -> QPixmap | None:
+        """Create a colored version of the arrow_back icon at ``size``×``size``."""
+        original_pixmap = QPixmap(":/assets/material-icons/arrow_back.svg")
+
         if original_pixmap.isNull():
             return None
-        
-        # Scale to 16x16
-        scaled = original_pixmap.scaled(16, 16, Qt.AspectRatioMode.KeepAspectRatio, 
+
+        scaled = original_pixmap.scaled(size, size, Qt.AspectRatioMode.KeepAspectRatio,
                                         Qt.TransformationMode.SmoothTransformation)
-        
+
         # For dark mode, recolor to white
         if self.dark_mode:
             colored_pixmap = QPixmap(scaled.size())
             colored_pixmap.fill(Qt.GlobalColor.transparent)
-            
+
             painter = QPainter(colored_pixmap)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_Source)
             painter.drawPixmap(0, 0, scaled)
             painter.setCompositionMode(QPainter.CompositionMode.CompositionMode_SourceIn)
             painter.fillRect(colored_pixmap.rect(), QColor("white"))
             painter.end()
-            
+
             return colored_pixmap
-        
+
         return scaled
+
+    def set_label_visible(self, visible: bool):
+        """No-op kept for interface symmetry with MenuButton.
+
+        BackButton no longer carries a text label — the arrow glyph alone
+        is the affordance — so toggling between expanded/collapsed sidebar
+        states leaves the button visually unchanged. Method is retained so
+        the parent menu can iterate any submenu item uniformly via
+        ``hasattr(item, "set_label_visible")``.
+        """
+        return
 
     def set_hidden(self, hidden: bool):
         """

@@ -2,12 +2,26 @@
     <qresource prefix="/">
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
+        <file>assets/material-icons/app_shortcut.svg</file>
+        <file>assets/material-icons/mediation.svg</file>
+        <file>assets/material-icons/credential_received.svg</file>
+        <file>assets/material-icons/settings_shield.svg</file>
+        <file>assets/material-icons/add_link.svg</file>
+        <file>assets/material-icons/auditor.svg</file>
         <file>assets/material-icons/out-badge.svg</file>
+        <file>assets/material-icons/account_tree.svg</file>
         <file>assets/material-icons/public.svg</file>
+        <file>assets/material-icons/witness.svg</file>
+        <file>assets/material-icons/add_to_drive.svg</file>
+        <file>assets/material-icons/said_fingerprint.svg</file>
         <file>assets/material-icons/all_inbox.svg</file>
+        <file>assets/material-icons/shield_person.svg</file>
         <file>assets/material-icons/step-next.svg</file>
+        <file>assets/material-icons/person.svg</file>
         <file>assets/material-icons/witness1.svg</file>
         <file>assets/material-icons/export.svg</file>
+        <file>assets/material-icons/micro-app.svg</file>
+        <file>assets/material-icons/notary.svg</file>
         <file>assets/material-icons/arrow_back.svg</file>
         <file>assets/material-icons/visibility.svg</file>
         <file>assets/material-icons/notifications_blue.svg</file>
@@ -16,7 +30,9 @@
         <file>assets/material-icons/swords.svg</file>
         <file>assets/material-icons/adjust-unread.svg</file>
         <file>assets/material-icons/witness2.svg</file>
+        <file>assets/material-icons/add_card.svg</file>
         <file>assets/material-icons/remove_moderator.svg</file>
+        <file>assets/material-icons/spoke.svg</file>
         <file>assets/material-icons/lock.svg</file>
         <file>assets/material-icons/vault-drawer-hover.svg</file>
         <file>assets/material-icons/group_add.svg</file>
@@ -25,6 +41,9 @@
         <file>assets/material-icons/last_page.svg</file>
         <file>assets/material-icons/vault-drawer.svg</file>
         <file>assets/material-icons/mail.svg</file>
+        <file>assets/material-icons/shield.svg</file>
+        <file>assets/material-icons/hub.svg</file>
+        <file>assets/material-icons/targeting_untargeted.svg</file>
         <file>assets/material-icons/notifications_unread_hover.svg</file>
         <file>assets/material-icons/in-badge.svg</file>
         <file>assets/material-icons/chevron_right.svg</file>
@@ -40,6 +59,7 @@
         <file>assets/material-icons/settings-hover.svg</file>
         <file>assets/material-icons/call_received.svg</file>
         <file>assets/material-icons/drafts.svg</file>
+        <file>assets/material-icons/add_business.svg</file>
         <file>assets/material-icons/enable.svg</file>
         <file>assets/material-icons/add.svg</file>
         <file>assets/material-icons/first_page.svg</file>
@@ -49,29 +69,48 @@
         <file>assets/material-icons/subtract.svg</file>
         <file>assets/material-icons/inbox_active.svg</file>
         <file>assets/material-icons/refresh.svg</file>
+        <file>assets/material-icons/fingerprint_off.svg</file>
+        <file>assets/material-icons/privacy_public.svg</file>
         <file>assets/material-icons/chevron_up.svg</file>
+        <file>assets/material-icons/settings_video_camera.svg</file>
         <file>assets/material-icons/badge.svg</file>
         <file>assets/material-icons/browse.svg</file>
         <file>assets/material-icons/content_copy.svg</file>
+        <file>assets/material-icons/device_hub.svg</file>
         <file>assets/material-icons/p2p.svg</file>
         <file>assets/material-icons/delegate.svg</file>
+        <file>assets/material-icons/issuer_sigil.svg</file>
         <file>assets/material-icons/send.svg</file>
+        <file>assets/material-icons/ecosystem_diamond.svg</file>
         <file>assets/material-icons/interact.svg</file>
+        <file>assets/material-icons/remote_contact.svg</file>
         <file>assets/material-icons/notifications_hover.svg</file>
+        <file>assets/material-icons/groups.svg</file>
         <file>assets/material-icons/security.svg</file>
+        <file>assets/material-icons/lan.svg</file>
         <file>assets/material-icons/launch-proxy.svg</file>
+        <file>assets/material-icons/extension.svg</file>
+        <file>assets/material-icons/targeting_targeted.svg</file>
         <file>assets/material-icons/visibility_off.svg</file>
         <file>assets/material-icons/edit.svg</file>
         <file>assets/material-icons/api.svg</file>
+        <file>assets/material-icons/dock_to_left_off-hover.svg</file>
         <file>assets/material-icons/chevron_down.svg</file>
         <file>assets/material-icons/step-check.svg</file>
         <file>assets/material-icons/big_notifications.svg</file>
+        <file>assets/material-icons/local_police.svg</file>
         <file>assets/material-icons/schema.svg</file>
+        <file>assets/material-icons/credential_issued.svg</file>
         <file>assets/material-icons/delete.svg</file>
+        <file>assets/material-icons/dock_to_left_on.svg</file>
         <file>assets/material-icons/rotate_right.svg</file>
+        <file>assets/material-icons/fit_to_content.svg</file>
+        <file>assets/material-icons/unresolved.svg</file>
+        <file>assets/material-icons/privacy_private.svg</file>
         <file>assets/material-icons/profile.svg</file>
         <file>assets/material-icons/share.svg</file>
         <file>assets/material-icons/view.svg</file>
+        <file>assets/material-icons/settings_b_roll.svg</file>
         <file>assets/material-icons/tune.svg</file>
         <file>assets/material-icons/notifications.svg</file>
         <file>assets/material-icons/cloud.svg</file>
@@ -80,12 +119,15 @@
         <file>assets/material-icons/balance.svg</file>
         <file>assets/material-icons/more_vert.svg</file>
         <file>assets/material-icons/inbox_hover.svg</file>
+        <file>assets/material-icons/dock_to_left_off.svg</file>
         <file>assets/material-icons/notifications_unread.svg</file>
         <file>assets/material-icons/hive.svg</file>
         <file>assets/material-icons/menu.svg</file>
         <file>assets/material-icons/mail_shield.svg</file>
         <file>assets/material-icons/authenticate.svg</file>
         <file>assets/material-icons/person_add.svg</file>
+        <file>assets/material-icons/dock_to_left_on-hover.svg</file>
+        <file>assets/material-icons/fingerprint.svg</file>
         <file>assets/material-icons/green_check_circle.svg</file>
         <file>assets/fonts/SourceCodePro-LightItalic.ttf</file>
         <file>assets/fonts/SourceCodePro-SemiBold.ttf</file>
@@ -127,60 +169,5 @@
         <file>assets/custom/flags/au.svg</file>
         <file>assets/custom/flags/us.svg</file>
         <file>assets/custom/flags/de.svg</file>
-        <file>assets/custom/ExportsDarker/.DS_Store</file>
-        <file>assets/custom/ExportsDarker/SVG/NameLogoBlack.svg</file>
-        <file>assets/custom/ExportsDarker/SVG/SymbolLogo.svg</file>
-        <file>assets/custom/ExportsDarker/SVG/FullLogo.svg</file>
-        <file>assets/custom/ExportsDarker/SVG/SymbolLogoBlack.svg</file>
-        <file>assets/custom/ExportsDarker/SVG/FullLogoBlack.svg</file>
-        <file>assets/custom/ExportsDarker/SVG/NameLogo.svg</file>
-        <file>assets/custom/ExportsDarker/0.5x/FullLogoBlack@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/0.5x/NameLogo@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/0.5x/SymbolLogoBlack@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/0.5x/FullLogo@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/0.5x/NameLogoBlack@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/0.5x/SymbolLogo@0.5x.png</file>
-        <file>assets/custom/ExportsDarker/3x/NameLogo@3x.png</file>
-        <file>assets/custom/ExportsDarker/3x/SymbolLogoBlack@3x.png</file>
-        <file>assets/custom/ExportsDarker/3x/SymbolLogo@3x.png</file>
-        <file>assets/custom/ExportsDarker/3x/FullLogoBlack@3x.png</file>
-        <file>assets/custom/ExportsDarker/3x/NameLogoBlack@3x.png</file>
-        <file>assets/custom/ExportsDarker/3x/FullLogo@3x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/FullLogo@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/NameLogoBlack@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/SymbolLogo@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/FullLogoBlack@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/NameLogo@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/1.5x/SymbolLogoBlack@1.5x.png</file>
-        <file>assets/custom/ExportsDarker/PDF/NameLogoBlack.pdf</file>
-        <file>assets/custom/ExportsDarker/PDF/SymbolLogo.pdf</file>
-        <file>assets/custom/ExportsDarker/PDF/NameLogo.pdf</file>
-        <file>assets/custom/ExportsDarker/PDF/FullLogoBlack.pdf</file>
-        <file>assets/custom/ExportsDarker/PDF/FullLogo.pdf</file>
-        <file>assets/custom/ExportsDarker/PDF/SymbolLogoBlack.pdf</file>
-        <file>assets/custom/ExportsDarker/4x/FullLogoBlack@.75x.png</file>
-        <file>assets/custom/ExportsDarker/4x/NameLogo@.75x.png</file>
-        <file>assets/custom/ExportsDarker/4x/SymbolLogoBlack@.75x.png</file>
-        <file>assets/custom/ExportsDarker/4x/SymbolLogo@.75x.png</file>
-        <file>assets/custom/ExportsDarker/4x/FullLogo@.75x.png</file>
-        <file>assets/custom/ExportsDarker/4x/NameLogoBlack@.75x.png</file>
-        <file>assets/custom/ExportsDarker/0.75x/FullLogo@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/0.75x/NameLogoBlack@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/0.75x/SymbolLogo@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/0.75x/SymbolLogoBlack@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/0.75x/FullLogoBlack@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/0.75x/NameLogo@1x.jpg</file>
-        <file>assets/custom/ExportsDarker/2x/NameLogo@2x.png</file>
-        <file>assets/custom/ExportsDarker/2x/FullLogoBlack@2x.png</file>
-        <file>assets/custom/ExportsDarker/2x/SymbolLogo@2x.png</file>
-        <file>assets/custom/ExportsDarker/2x/SymbolLogoBlack@2x.png</file>
-        <file>assets/custom/ExportsDarker/2x/NameLogoBlack@2x.png</file>
-        <file>assets/custom/ExportsDarker/2x/FullLogo@2x.png</file>
-        <file>assets/custom/ExportsDarker/1x/FullLogo@1x.png</file>
-        <file>assets/custom/ExportsDarker/1x/NameLogoBlack@1x.png</file>
-        <file>assets/custom/ExportsDarker/1x/SymbolLogo@1x.png</file>
-        <file>assets/custom/ExportsDarker/1x/SymbolLogoBlack@1x.png</file>
-        <file>assets/custom/ExportsDarker/1x/FullLogoBlack@1x.png</file>
-        <file>assets/custom/ExportsDarker/1x/NameLogo@1x.png</file>
     </qresource>
 </RCC>

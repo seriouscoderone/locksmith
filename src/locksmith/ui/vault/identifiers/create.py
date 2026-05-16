@@ -4,6 +4,8 @@ locksmith.ui.vaults.create module
 
 Dialog for creating new vaults
 """
+import re
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButtonGroup
@@ -16,7 +18,8 @@ from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
     FloatingLabelLineEdit,
     LocksmithButton,
-    LocksmithInvertedButton
+    LocksmithInvertedButton,
+    LocksmithTextListWidget,
 )
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton, LocksmithCheckbox
 from locksmith.ui.toolkit.widgets.collapsible import CollapsibleSection
@@ -24,6 +27,9 @@ from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, Locksmith
 from locksmith.ui.vault.shared.delegation_mixin import DelegationMixin
 
 logger = help.ogler.getLogger(__name__)
+
+# 44-char base64url AID prefix
+AID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{44}$')
 
 
 class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
@@ -221,7 +227,32 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         self.local_delegation_radio.toggled.connect(self._on_delegation_radio_changed)
         self.remote_delegation_radio.toggled.connect(self._on_delegation_radio_changed)
 
-        advanced_config_layout.addSpacing(10)
+        advanced_config_layout.addSpacing(15)
+
+        # Witnesses section
+        witnesses_label = QLabel("Witnesses")
+        witnesses_label.setStyleSheet("font-weight: 600; font-size: 15px;")
+        advanced_config_layout.addWidget(witnesses_label)
+
+        witnesses_help = QLabel(
+            "Enter witness AID prefixes (44-character base64url). Each witness's "
+            "KEL must already be resolved into this wallet via Contacts → Add OOBI; "
+            "otherwise inception will fail. Witnesses must be non-transferable AIDs."
+        )
+        witnesses_help.setWordWrap(True)
+        witnesses_help.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        advanced_config_layout.addWidget(witnesses_help)
+
+        advanced_config_layout.addSpacing(8)
+
+        self.witnesses_list = LocksmithTextListWidget(
+            label="Witness AID prefix",
+            parent=self,
+            max_height=150,
+        )
+        advanced_config_layout.addWidget(self.witnesses_list)
+
+        advanced_config_layout.addSpacing(15)
 
         toad_layout = QHBoxLayout()
         toad_label = QLabel("Threshold of Acceptable Duplicity:  ")
@@ -243,6 +274,8 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
 
         # Link collapsible section to dialog for synchronized resize animations
         self.advanced_config.set_dialog(self)
+        # Same coordination for the witnesses list so add/remove animations resize the dialog
+        self.witnesses_list.set_dialog(self)
         layout.addStretch() # Always add stretch after collapsible sections
 
         # Connect to vault signal bridge if available
@@ -269,14 +302,59 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         else:
             key_type = 'salty'
 
+        # Collect and validate witnesses. Each entered prefix must:
+        #  1. Match the 44-char base64url AID format
+        #  2. Already be in this wallet's Habery (KEL resolved via OOBI ahead of time)
+        #  3. Be non-transferable (KERI requirement: witnesses cannot rotate)
+        wits = self.witnesses_list.get_items()
+        if wits:
+            invalid: list[str] = []
+            kevers = self.app.vault.hby.kevers if self.app and self.app.vault else {}
+            for wit_pre in wits:
+                if not AID_PATTERN.match(wit_pre):
+                    invalid.append(f"{wit_pre} — not a valid 44-char AID prefix")
+                    continue
+                if wit_pre not in kevers:
+                    invalid.append(
+                        f"{wit_pre} — KEL not resolved in this wallet "
+                        f"(add via Contacts → Add OOBI first)"
+                    )
+                    continue
+                if kevers[wit_pre].transferable:
+                    invalid.append(
+                        f"{wit_pre} — transferable AID; witnesses must be non-transferable"
+                    )
+            if invalid:
+                msg = "Invalid witnesses:\n  • " + "\n  • ".join(invalid)
+                logger.error(msg)
+                self.show_error(msg)
+                return
+
+        # Sanity-check TOAD against witness count up front; keripy will validate
+        # more rigorously, but a clear message here is friendlier than its trace.
+        try:
+            toad = int(self.toad_field.text() or '0')
+        except ValueError:
+            self.show_error("Threshold of Acceptable Duplicity must be an integer")
+            return
+        if toad < 0:
+            self.show_error("Threshold of Acceptable Duplicity must be ≥ 0")
+            return
+        if toad > len(wits):
+            self.show_error(
+                f"Threshold of Acceptable Duplicity ({toad}) cannot exceed the "
+                f"number of witnesses ({len(wits)})"
+            )
+            return
+
         # Build parameters
         params = {
             'icount': self.num_signing_keys_field.text() or '1',
             'isith': self.signing_threshold_field.text() or '1',
             'ncount': self.num_rotation_keys_field.text() or '1',
             'nsith': self.rotation_threshold_field.text() or '1',
-            'toad': self.toad_field.text() or '0',
-            'wits': [],  # Will add witness support later
+            'toad': str(toad),
+            'wits': wits,
             'estOnly': self.establishment_only_checkbox.isChecked(),
             'DnD': self.do_not_delegate_checkbox.isChecked(),
         }

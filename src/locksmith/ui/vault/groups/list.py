@@ -65,7 +65,7 @@ class GroupIdentifierListPage(BaseListPage):
         self.setAutoFillBackground(True)
 
         # Create table widget
-        self.icon_path = ":/assets/material-icons/group.svg"
+        self.icon_path = ":/assets/material-icons/groups.svg"
         self.table = PaginatedTableWidget(
             columns=["Alias", "Prefix", "Seq No.", "Witnesses", "Actions"],
             column_widths={"Alias": 250, "Witnesses": 150, "Seq No.": 150, "Actions": 50},

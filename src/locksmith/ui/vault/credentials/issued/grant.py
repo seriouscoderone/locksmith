@@ -238,7 +238,7 @@ class GrantCredentialDialog(LocksmithDialog):
 
             if self.recipient_dropdown.count() == 0:
                 # No remote identifiers available
-                self.recipient_dropdown.addItem("No remote identifiers available")
+                self.recipient_dropdown.addItem("No contacts available")
                 self.recipient_dropdown.setCurrentIndex(0)
                 self.recipient_dropdown.setEnabled(False)
 

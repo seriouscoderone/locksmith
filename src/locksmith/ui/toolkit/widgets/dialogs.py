@@ -7,7 +7,7 @@ This module contains reusable custom dialog widget components.
 from typing import cast
 
 from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QSize
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QGuiApplication
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGraphicsOpacityEffect, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton
@@ -16,6 +16,9 @@ from keri import help
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithIconButton
+
+MAX_ERROR_BANNER_HEIGHT = 240
 
 logger = help.ogler.getLogger(__name__)
 
@@ -274,18 +277,38 @@ class LocksmithDialog(QDialog):
         banner_layout.setContentsMargins(16, 12, 16, 12)
         banner_layout.setSpacing(10)
 
-        # Error icon
+        # Error icon (top-aligned so it sits next to the first line of long messages)
         error_icon = QLabel()
         error_pixmap = QIcon(":/assets/material-icons/error.svg").pixmap(QSize(20, 20))
         error_icon.setPixmap(error_pixmap)
         error_icon.setFixedSize(20, 20)
-        banner_layout.addWidget(error_icon)
+        banner_layout.addWidget(error_icon, 0, Qt.AlignmentFlag.AlignTop)
 
-        # Error message
+        # Error message wrapped in a scroll area so long messages don't push the dialog off-screen
         self.error_label = QLabel()
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet(f"color: {colors.DANGER}; font-size: 13px;")
-        banner_layout.addWidget(self.error_label, 1)
+        self.error_label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard
+        )
+        self.error_label.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignLeft)
+
+        self.error_scroll = QScrollArea()
+        self.error_scroll.setWidget(self.error_label)
+        self.error_scroll.setWidgetResizable(True)
+        self.error_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.error_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.error_scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+        self.error_scroll.viewport().setStyleSheet("background: transparent;")
+        banner_layout.addWidget(self.error_scroll, 1)
+
+        # Copy-to-clipboard button
+        self.error_copy_button = LocksmithIconButton(
+            ":/assets/material-icons/content_copy.svg", tooltip="Copy error"
+        )
+        self.error_copy_button.clicked.connect(self._copy_error_to_clipboard)
+        banner_layout.addWidget(self.error_copy_button, 0, Qt.AlignmentFlag.AlignTop)
 
         main_layout.addWidget(self.error_banner)
 
@@ -523,11 +546,12 @@ class LocksmithDialog(QDialog):
 
         self.error_label.setText(message)
 
-        # Calculate the natural height the banner needs
-        # Temporarily remove height constraint to measure
+        # Calculate the natural height the banner needs, capped so very long
+        # messages stay scrollable within the banner instead of pushing the
+        # dialog off-screen.
         self.error_banner.setMaximumHeight(16777215)  # Qt's QWIDGETSIZE_MAX
         self.error_banner.adjustSize()
-        banner_height = self.error_banner.sizeHint().height()
+        banner_height = min(self.error_banner.sizeHint().height(), MAX_ERROR_BANNER_HEIGHT)
         self.error_banner.setMaximumHeight(0)  # Reset for animation
 
         # Disable scrollbars during animation
@@ -583,6 +607,10 @@ class LocksmithDialog(QDialog):
                 self._dialog_resize_animation.setStartValue(self.height())
                 self._dialog_resize_animation.setEndValue(self._base_height)
                 self._dialog_resize_animation.start()
+
+    def _copy_error_to_clipboard(self):
+        """Copy the current error message to the system clipboard."""
+        QGuiApplication.clipboard().setText(self.error_label.text())
 
     def show_success(self, message: str):
         """
