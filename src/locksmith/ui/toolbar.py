@@ -30,6 +30,7 @@ class LocksmithToolbar(QToolBar):
     lock_clicked = Signal()
     home_clicked = Signal()
     notifications_clicked = Signal()
+    plugins_clicked = Signal()
 
     def __init__(self, app, parent=None):
         """
@@ -110,6 +111,17 @@ class LocksmithToolbar(QToolBar):
         # Add spacer to push next items to the right
         self.addWidget(create_spacer(expanding=True))
 
+        # Plugins button — leftmost tool; visible in both logged-out
+        # and logged-in states.
+        self.plugins_button = HoverIconButton(
+            icon_normal="assets/material-icons/extension.svg",
+            icon_hover="assets/material-icons/extension-hover.svg",
+            tooltip="Plugins"
+        )
+        self.plugins_button.setObjectName("toolbar_plugins_button")
+        self.plugins_button.clicked.connect(self.plugins_clicked.emit)
+        self.plugins_action = self.addWidget(self.plugins_button)
+
         # Notifications button (with dropdown) - initially hidden
         self.notifications_button = NotificationsButton(self.app, self)
         self.notifications_button.clicked.connect(self.notifications_clicked.emit)
@@ -156,6 +168,11 @@ class LocksmithToolbar(QToolBar):
         """
         if hasattr(self, 'vaults_button'):
             self.vaults_button.set_active(active)
+
+    def set_plugins_active(self, active: bool):
+        """Set the active state of the Plugins toolbar button."""
+        if hasattr(self, 'plugins_button'):
+            self.plugins_button.set_active(active)
 
     def update_for_config(self, config: dict):
         """

@@ -52,7 +52,9 @@ class LocksmithApplication:
         self.db = None
 
         # Plugin manager
-        self.plugin_manager = PluginManager(self)
+        self.plugin_manager = PluginManager(
+            self, keri_base=Path(getattr(self.config, "base", None) or (Path.home() / ".keri")),
+        )
 
     @property
     def protectedUrl(self) -> str:
