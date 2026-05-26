@@ -142,7 +142,7 @@ class LocksmithTextListWidget(QWidget):
         self.itemsChanged.emit(self.get_items())
 
         # Resize dialog if integrated
-        if self._dialog:
+        if self._dialog and hasattr(self._dialog, "_resize_to_content"):
             self._dialog._resize_to_content()
 
     def _add_item_to_list(self, text: str):
@@ -208,7 +208,7 @@ class LocksmithTextListWidget(QWidget):
         self.itemsChanged.emit(self.get_items())
 
         # Resize dialog if integrated
-        if self._dialog:
+        if self._dialog and hasattr(self._dialog, "_resize_to_content"):
             self._dialog._resize_to_content()
 
     def get_items(self) -> list[str]:
@@ -260,7 +260,7 @@ class LocksmithTextListWidget(QWidget):
         self.itemsChanged.emit([])
 
         # Resize dialog if integrated
-        if self._dialog:
+        if self._dialog and hasattr(self._dialog, "_resize_to_content"):
             self._dialog._resize_to_content()
 
     def set_dialog(self, dialog):
