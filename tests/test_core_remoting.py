@@ -67,6 +67,132 @@ def test_resolve_oobi_blocking_waits_for_live_oobi_resolution(monkeypatch):
     assert vault.org.get("AID_1")["alias"] == "witness-1"
 
 
+def test_resolve_oobi_blocking_waits_for_kevers_after_roobi_marker():
+    """
+    Regression for issue #75: keripy ≥ 2.0's Oobiery writes a `roobi` record
+    with state='resolved' as soon as the HTTP fetch completes, before Kevery
+    has finished routing into hby.kevers. The resolver must wait for the
+    *positive* kevers signal, not the early Oobiery marker.
+    """
+    roobi = _FakeStore()
+    oobis = _FakeStore()
+    db = SimpleNamespace(roobi=roobi, oobis=oobis)
+    hby = SimpleNamespace(db=db, kevers={})
+    vault = SimpleNamespace(hby=hby, org=_FakeOrg())
+    app = SimpleNamespace(vault=vault, qtask=SimpleNamespace(run=lambda: None))
+
+    oobi = "http://example.test/oobi/AID_RACE/controller"
+
+    # Drop the Oobiery marker early; only populate kevers later. Pre-fix the
+    # loop would exit on the marker alone and fail the post-loop kevers check.
+    def write_marker():
+        roobi.put(keys=(oobi,), val=SimpleNamespace(state="resolved"))
+
+    def populate_kevers():
+        hby.kevers["AID_RACE"] = object()
+
+    marker_timer = threading.Timer(0.05, write_marker)
+    kevers_timer = threading.Timer(0.30, populate_kevers)
+    marker_timer.start()
+    kevers_timer.start()
+    try:
+        resolved = remoting.resolve_oobi_blocking(
+            app,
+            pre="AID_RACE",
+            oobi=oobi,
+            alias="race-witness",
+            timeout_seconds=1.0,
+            tock=0.05,
+        )
+    finally:
+        marker_timer.cancel()
+        kevers_timer.cancel()
+
+    assert resolved is True
+    assert vault.org.get("AID_RACE")["alias"] == "race-witness"
+
+
+def test_resolve_oobi_blocking_times_out_when_only_marker_arrives():
+    """
+    Regression for issue #75: if the Oobiery marker is written but kevers
+    never populates (the full failure shape the user observed), the resolver
+    must time out — not return success on the marker.
+    """
+    roobi = _FakeStore()
+    oobis = _FakeStore()
+    db = SimpleNamespace(roobi=roobi, oobis=oobis)
+    hby = SimpleNamespace(db=db, kevers={})
+    vault = SimpleNamespace(hby=hby, org=_FakeOrg())
+    app = SimpleNamespace(vault=vault, qtask=SimpleNamespace(run=lambda: None))
+
+    oobi = "http://example.test/oobi/AID_STUCK/controller"
+    roobi.put(keys=(oobi,), val=SimpleNamespace(state="resolved"))
+
+    resolved = remoting.resolve_oobi_blocking(
+        app,
+        pre="AID_STUCK",
+        oobi=oobi,
+        alias="stuck-witness",
+        timeout_seconds=0.2,
+        tock=0.05,
+    )
+
+    assert resolved is False
+    # Nothing should have been written to the org because we never got kevers.
+    assert vault.org.get("AID_STUCK") is None
+
+
+def test_resolve_oobi_doer_waits_for_kevers_after_roobi_marker():
+    """
+    Regression for issue #75 against the async Doer path (qtask=None).
+    Drives a real ResolveOobiDoer through a Doist; populates the roobi
+    marker early and kevers only later. The doer should report resolved=True.
+    """
+    import time
+
+    from hio.base import doing
+
+    roobi = _FakeStore()
+    oobis = _FakeStore()
+    db = SimpleNamespace(roobi=roobi, oobis=oobis)
+    hby = SimpleNamespace(db=db, kevers={})
+    vault = SimpleNamespace(hby=hby, org=_FakeOrg())
+    # qtask intentionally omitted so resolve_oobi_blocking takes the Doer path.
+    app = SimpleNamespace(vault=vault)
+
+    oobi = "http://example.test/oobi/AID_DOER/controller"
+    started = time.monotonic()
+
+    def write_marker():
+        roobi.put(keys=(oobi,), val=SimpleNamespace(state="resolved"))
+
+    def populate_kevers():
+        hby.kevers["AID_DOER"] = object()
+
+    marker_timer = threading.Timer(0.05, write_marker)
+    kevers_timer = threading.Timer(0.30, populate_kevers)
+    marker_timer.start()
+    kevers_timer.start()
+    try:
+        doer = remoting.ResolveOobiDoer(
+            app=app,
+            pre="AID_DOER",
+            oobi=oobi,
+            alias="doer-witness",
+            timeout_seconds=1.0,
+        )
+        doing.Doist(tock=0.05, real=True).do(doers=[doer], limit=2.0)
+    finally:
+        marker_timer.cancel()
+        kevers_timer.cancel()
+
+    assert doer.resolved is True
+    # Must have waited at least until kevers populated (~0.30s), not exited
+    # on the marker (~0.05s).
+    assert time.monotonic() - started >= 0.25
+    assert vault.org.get("AID_DOER")["alias"] == "doer-witness"
+
+
 def test_resolve_oobi_blocking_times_out_without_live_resolution():
     roobi = _FakeStore()
     oobis = _FakeStore()

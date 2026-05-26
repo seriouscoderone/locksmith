@@ -397,20 +397,15 @@ def resolve_oobi_blocking(
     timeout_delta = datetime.timedelta(seconds=timeout_seconds)
     sleep_interval = max(tock, 0.05)
 
-    while not app.vault.hby.db.roobi.get(keys=(oobi,)) and pre not in app.vault.hby.kevers:
+    # keripy ≥ 2.0 writes the `roobi` record with state='resolved' as soon as
+    # the Oobiery finishes the HTTP fetch — before Kevery has routed the
+    # parsed CESR events into hby.kevers. Wait for the positive signal
+    # (presence in kevers), not the Oobiery marker.
+    while pre not in app.vault.hby.kevers:
         if helping.nowUTC() > start_time + timeout_delta:
             logger.warning("OOBI resolve timeout for %s (%s)", alias, oobi)
             return False
         time.sleep(sleep_interval)
-
-    if pre not in app.vault.hby.kevers:
-        logger.error(
-            "OOBI resolution failed for alias %s and OOBI %s, %s not found in KERI DB.",
-            alias,
-            oobi,
-            pre,
-        )
-        return False
 
     upsert_remote_id_metadata(
         app,
@@ -506,11 +501,17 @@ class ResolveOobiDoer(doing.DoDoer):
             self.app.vault.hby.db.oobis.put(keys=(self.oobi,), val=obr)
             logger.info(f"OOBI written to database: {self.alias} ({self.oobi})")
 
-            # Wait for OOBI resolution with timeout
+            # Wait for the AID to land in hby.kevers, or for a true timeout.
+            #
+            # The keripy ≥ 2.0 Oobiery writes a `roobi` record with
+            # state='resolved' as soon as it finishes the HTTP fetch — before
+            # Kevery has routed the parsed CESR events into hby.kevers. So
+            # `roobi.get()` returning truthy is NOT a signal that the AID is
+            # usable yet; the only positive signal is presence in kevers.
             start_time = helping.nowUTC()
             timeout_delta = datetime.timedelta(seconds=self.timeout_seconds)
 
-            while not self.app.vault.hby.db.roobi.get(keys=(self.oobi,)) and self.pre not in self.app.vault.hby.kevers:
+            while self.pre not in self.app.vault.hby.kevers:
                 if helping.nowUTC() > start_time + timeout_delta:
                     logger.warning(f'OOBI resolve timeout for {self.alias} ({self.oobi})')
 
@@ -530,29 +531,6 @@ class ResolveOobiDoer(doing.DoDoer):
                     return
 
                 yield self.tock
-
-            # Verify the prefix is now in kevers
-            if self.pre not in self.app.vault.hby.kevers:
-                logger.error(
-                    f'OOBI Resolution failed for alias {self.alias} and OOBI {self.oobi}, '
-                    f'{self.pre} not found in KERI DB after resolution.'
-                )
-
-                # Signal failure to UI
-                if self.signal_bridge:
-                    self.signal_bridge.emit_doer_event(
-                        doer_name="ResolveOobiDoer",
-                        event_type="oobi_resolution_failed",
-                        data={
-                            'alias': self.alias,
-                            'pre': self.pre,
-                            'oobi': self.oobi,
-                            'error': 'Prefix not found in KERI DB',
-                            'success': False
-                        }
-                    )
-                self.completed = True
-                return
 
             upsert_remote_id_metadata(
                 self.app,
