@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
     QFrame,
     QHBoxLayout,
     QLabel,
+    QPushButton,
     QSizePolicy,
     QVBoxLayout,
     QWidget,
@@ -88,10 +89,23 @@ class PluginsContent(QWidget):
     class EmptyStateLabel(QLabel):
         pass
 
+    class UpgradeButton(QPushButton):
+        pass
+
+    class UpdateStateLabel(QLabel):
+        pass
+
     def __init__(self, app: Any, parent: QWidget | None = None):
         super().__init__(parent)
         self.app = app
         self.setObjectName("PluginsContent")
+        # Subscribe to update-checker notifications. The check runs on the
+        # Qt main thread (driven by QTimer), so the callback can directly
+        # touch widgets without marshalling.
+        self._update_unsubscribe = None
+        checker = getattr(self.app, "plugin_update_checker", None)
+        if checker is not None:
+            self._update_unsubscribe = checker.subscribe(self._refresh)
         self._build_ui()
         self._refresh()
 
@@ -150,6 +164,12 @@ class PluginsContent(QWidget):
         self._install_panel.source_chosen.connect(self.install_requested)
         self._install_panel.trusted.connect(self.install_trusted)
         outer.addWidget(self._install_panel)
+
+        # "Check now" button — manual refresh of the update cache.
+        self._check_now_button = QPushButton("Check now")
+        self._check_now_button.setObjectName("PluginsCheckNowButton")
+        self._check_now_button.clicked.connect(self._on_check_now_clicked)
+        outer.addWidget(self._check_now_button)
 
         # Dashed-border install tile — rendered as a sibling of the scroll area
         # so it always appears immediately below the last plugin card.
@@ -315,12 +335,64 @@ class PluginsContent(QWidget):
                 self.uninstall_clicked.emit(pid)
             )
             bottom_row.addWidget(uninstall_btn)
+
+        # Update-state hint + Upgrade button, driven from the update cache.
+        checker = getattr(self.app, "plugin_update_checker", None)
+        is_github = state.source.get("type") == "github" if state.source else False
+        if checker is not None and is_github:
+            cache = checker.cache()
+            entry = cache.get("plugins", {}).get(state.plugin_id, {})
+            state_label = self.UpdateStateLabel()
+            state_label.setObjectName(f"_update_state_label_{state.plugin_id}")
+            if entry.get("last_error"):
+                state_label.setText("couldn't check ⚠")
+                state_label.setToolTip(entry["last_error"])
+                bottom_row.addWidget(state_label)
+            elif entry.get("update_available"):
+                state_label.setText("update available")
+                bottom_row.addWidget(state_label)
+                upgrade_btn = self.UpgradeButton("Upgrade")
+                upgrade_btn.setObjectName(f"_upgrade_btn_{state.plugin_id}")
+                upgrade_btn.clicked.connect(
+                    lambda _checked=False, pid=state.plugin_id: self._on_upgrade_clicked(pid),
+                )
+                bottom_row.addWidget(upgrade_btn)
+
         v.addLayout(bottom_row)
         return card
 
     # ------------------------------------------------------------------
     # Install panel show/hide flow
     # ------------------------------------------------------------------
+
+    def _on_upgrade_clicked(self, plugin_id: str) -> None:
+        """Run installer.upgrade(plugin_id), then show the restart banner."""
+        from locksmith.plugins.installer import InstallError, PluginInstaller
+
+        installer = PluginInstaller()
+        try:
+            installer.upgrade(plugin_id)
+        except InstallError as e:
+            from PySide6.QtWidgets import QMessageBox
+            QMessageBox.warning(self, "Upgrade failed", str(e))
+            return
+        # Surface the global restart banner.
+        window = self.window()
+        banner = getattr(window, "upgrade_banner", None)
+        if banner is not None:
+            banner.show_banner()
+        self._refresh()
+
+    def _on_check_now_clicked(self) -> None:
+        checker = getattr(self.app, "plugin_update_checker", None)
+        if checker is None:
+            return
+        self._check_now_button.setEnabled(False)
+        try:
+            checker.check_now()
+        finally:
+            self._check_now_button.setEnabled(True)
+        self._refresh()
 
     def _on_install_button_clicked(self) -> None:
         self._install_panel.set_source_mode()
@@ -361,6 +433,12 @@ class PluginsContent(QWidget):
 
     def on_show(self) -> None:
         self._refresh()
+
+    def closeEvent(self, ev):  # noqa: N802
+        if self._update_unsubscribe is not None:
+            self._update_unsubscribe()
+            self._update_unsubscribe = None
+        super().closeEvent(ev)
 
 
 class PluginsPage(QWidget):

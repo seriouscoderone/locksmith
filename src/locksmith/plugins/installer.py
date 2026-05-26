@@ -118,6 +118,118 @@ class PluginInstaller:
         storage.write_index(idx)
         logger.info("plugin.uninstall.completed plugin_id=%s", plugin_id)
 
+    def upgrade(self, plugin_id: str) -> dict[str, Any]:
+        """Re-fetch latest commit for a github-source plugin via sidecar
+        clone + atomic swap. Returns the new index record.
+
+        Raises InstallError on failure; the existing clone is left intact.
+        See docs/superpowers/specs/2026-05-25-plugin-upgrade-design.md.
+        """
+        logger.info("plugin.upgrade.requested plugin_id=%s", plugin_id)
+        idx = storage.read_index()
+        record = next(
+            (p for p in idx.get("plugins", []) if p["plugin_id"] == plugin_id),
+            None,
+        )
+        if record is None:
+            raise InstallError(f"plugin not installed: {plugin_id}")
+
+        source_dict = record.get("source", {})
+        if source_dict.get("type") != "github":
+            raise InstallError(
+                f"plugin '{plugin_id}' has source type "
+                f"'{source_dict.get('type')}' — upgrade only supports github sources; "
+                f"uninstall and reinstall to pick up changes."
+            )
+
+        source = SourceDescriptor(
+            type="github",
+            user_repo=source_dict.get("user_repo"),
+            ref=source_dict.get("ref"),
+        )
+
+        staging = storage.plugin_staging_dir(plugin_id)
+        previous = storage.plugin_previous_dir(plugin_id)
+        final = storage.plugin_clone_dir(plugin_id)
+        old_sha = record["commit"]
+
+        # Stage fresh clone
+        if staging.exists():
+            shutil.rmtree(staging)
+        try:
+            storage.plugin_root().mkdir(parents=True, exist_ok=True)
+            staging.mkdir()
+            new_sha = self._fetch_into(source, staging)
+            manifest = self._parse_manifest_in(staging)
+            if manifest.plugin_id != plugin_id:
+                raise InstallError(
+                    f"new manifest declares plugin_id={manifest.plugin_id!r}, "
+                    f"expected {plugin_id!r}"
+                )
+        except InstallError:
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            raise
+        except Exception as e:
+            if staging.exists():
+                shutil.rmtree(staging, ignore_errors=True)
+            logger.exception("plugin.upgrade.staging_failure plugin_id=%s", plugin_id)
+            raise InstallError(f"upgrade staging failed: {e}") from e
+
+        # Atomic swap
+        if previous.exists():
+            shutil.rmtree(previous)
+        try:
+            final.rename(previous)
+        except OSError as e:
+            shutil.rmtree(staging, ignore_errors=True)
+            raise InstallError(f"could not move old clone aside: {e}") from e
+
+        try:
+            staging.rename(final)
+        except OSError as e:
+            try:
+                previous.rename(final)
+            except OSError:
+                logger.exception(
+                    "plugin.upgrade.swap_unrecoverable plugin_id=%s "
+                    "previous=%s staging=%s final=%s",
+                    plugin_id, previous, staging, final,
+                )
+            shutil.rmtree(staging, ignore_errors=True)
+            raise InstallError(f"could not swap new clone into place: {e}") from e
+
+        # Update index
+        with storage.index_write_lock():
+            idx = storage.read_index()
+            for p in idx.get("plugins", []):
+                if p["plugin_id"] == plugin_id:
+                    p["commit"] = new_sha
+                    p["installed_at"] = (
+                        datetime.datetime.utcnow().isoformat(timespec="seconds") + "Z"
+                    )
+                    p["manifest_snapshot"] = manifest.to_dict()
+                    p["previous_commit"] = old_sha
+                    break
+            storage.write_index(idx)
+            new_record = next(p for p in idx["plugins"] if p["plugin_id"] == plugin_id)
+
+        # Update cache: reflect new installed_commit, clear update_available
+        cache = storage.read_update_cache()
+        if plugin_id in cache.get("plugins", {}):
+            entry = cache["plugins"][plugin_id]
+            entry["installed_commit"] = new_sha
+            entry["latest_commit"] = new_sha
+            entry["update_available"] = False
+            entry["last_error"] = None
+        storage.write_update_cache(cache)
+
+        logger.info(
+            "plugin.upgrade.completed plugin_id=%s old=%s new=%s",
+            plugin_id, old_sha[:7], new_sha[:7],
+        )
+        return new_record
+
     # ------------------- internals ----------------------------------
 
     def _fetch_into(self, source: SourceDescriptor, dest: Path) -> str:

@@ -53,6 +53,21 @@ def enable_list_path(keri_base: Path) -> Path:
     return Path(keri_base) / "locksmith" / "plugin-enable.json"
 
 
+def update_cache_path() -> Path:
+    """Path to the per-plugin update-check cache (background poll output)."""
+    return plugin_root() / "update-cache.json"
+
+
+def plugin_staging_dir(plugin_id: str) -> Path:
+    """Sidecar directory used by Installer.upgrade() during clone+swap."""
+    return plugin_root() / f"{plugin_id}.staging"
+
+
+def plugin_previous_dir(plugin_id: str) -> Path:
+    """One-generation rollback breadcrumb left after a successful upgrade."""
+    return plugin_root() / f"{plugin_id}.previous"
+
+
 def index_lock_path() -> Path:
     """Lockfile used to serialise concurrent read-modify-write operations on the index."""
     return plugin_root() / "index.lock"
@@ -87,6 +102,31 @@ def _default_index() -> dict[str, Any]:
 
 def _default_enable_list() -> dict[str, Any]:
     return {"format": 1, "excluded": []}
+
+
+def _default_update_cache() -> dict[str, Any]:
+    return {"format": 1, "interval_hours": 6, "plugins": {}}
+
+
+def read_update_cache() -> dict[str, Any]:
+    """Read the update-check cache. Returns default if missing or malformed."""
+    path = update_cache_path()
+    if not path.exists():
+        return _default_update_cache()
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (json.JSONDecodeError, OSError) as e:
+        logger.warning("plugin.update_cache.read_failed path=%s error=%s", path, e)
+        return _default_update_cache()
+
+
+def write_update_cache(payload: dict[str, Any]) -> None:
+    """Atomically replace the update-check cache."""
+    _atomic_write_json(update_cache_path(), payload)
+    logger.info(
+        "plugin.update_cache.written path=%s plugins=%d",
+        update_cache_path(), len(payload.get("plugins", {})),
+    )
 
 
 def read_index() -> dict[str, Any]:

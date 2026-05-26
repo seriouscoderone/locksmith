@@ -4,11 +4,12 @@ locksmith.ui.window module
 
 This module contains the main window for the Locksmith application.
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
     QStackedWidget,
 )
 from keri import help
@@ -68,7 +69,20 @@ class LocksmithWindow(QMainWindow):
         # Create central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        outer_layout = QVBoxLayout(central_widget)        # was QHBoxLayout
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Global restart banner — hidden until a plugin upgrade lands.
+        from locksmith.ui.plugins.upgrade_banner import UpgradeBanner
+        self.upgrade_banner = UpgradeBanner(parent=central_widget)
+        self.upgrade_banner.restart_requested.connect(self._handle_restart_requested)
+        outer_layout.addWidget(self.upgrade_banner)
+
+        # Horizontal container holds the page stack (preserves the original layout shape).
+        stack_holder = QWidget()
+        outer_layout.addWidget(stack_holder)
+        main_layout = QHBoxLayout(stack_holder)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
@@ -134,6 +148,22 @@ class LocksmithWindow(QMainWindow):
 
         # Start on home page
         self.nav_manager.navigate_to(Pages.HOME)
+
+        # --- Plugin update polling ---
+        # Fires check_now() every interval_seconds via QTimer. Immediate check
+        # at startup if the cache is stale (or missing).
+        self.plugin_update_timer = QTimer(self)
+        self.plugin_update_timer.setInterval(
+            self.app.plugin_update_checker.interval_seconds * 1000,
+        )
+        self.plugin_update_timer.timeout.connect(
+            self.app.plugin_update_checker.check_now,
+        )
+        self.plugin_update_timer.start()
+
+        if self.app.plugin_update_checker.should_check_now():
+            QTimer.singleShot(0, self.app.plugin_update_checker.check_now)
+        # --- end plugin update polling ---
 
         # Run app-lifecycle hooks for any AppPlugin instances loaded above.
         # Done last so plugins see a fully-constructed window.

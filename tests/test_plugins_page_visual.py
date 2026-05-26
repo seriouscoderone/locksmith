@@ -47,6 +47,7 @@ def fake_app_with_states():
         ),
     ]
     app = MagicMock()
+    app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = states
     return app
 
@@ -83,6 +84,7 @@ def test_page_renders_all_states(qapp, fake_app_with_states):
 
 def test_empty_state(qapp):
     app = MagicMock()
+    app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = []
     page = PluginsPage(app)
     page.resize(900, 700)
@@ -286,6 +288,7 @@ def test_pending_install_appears_when_disk_has_plugin_not_in_manager(qapp, tmp_p
         }],
     })
     app = MagicMock()
+    app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = []  # nothing loaded in-memory
     page = PluginsPage(app)
     page.resize(900, 700)
@@ -313,6 +316,7 @@ def test_pending_row_has_only_remove_button(qapp, tmp_path, monkeypatch):
         }],
     })
     app = MagicMock()
+    app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = []
     page = PluginsPage(app)
     page.show()
@@ -340,6 +344,7 @@ def test_pending_row_emits_uninstall_signal(qapp, tmp_path, monkeypatch):
         }],
     })
     app = MagicMock()
+    app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = []
     page = PluginsPage(app)
     page.show()
