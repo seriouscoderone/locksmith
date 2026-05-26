@@ -12,6 +12,7 @@ from locksmith.core.configing import LocksmithConfig
 from locksmith.core.vaulting import Vault
 from locksmith.db.basing import LocksmithBaser
 from locksmith.plugins.manager import PluginManager
+from locksmith.plugins.updates import PluginUpdateChecker
 
 logger = help.ogler.getLogger(__name__)
 
@@ -52,7 +53,15 @@ class LocksmithApplication:
         self.db = None
 
         # Plugin manager
-        self.plugin_manager = PluginManager(self)
+        self.plugin_manager = PluginManager(
+            self, keri_base=Path(getattr(self.config, "base", None) or (Path.home() / ".keri")),
+        )
+
+        self.plugin_update_checker = PluginUpdateChecker(manager=self.plugin_manager)
+        logger.info(
+            "plugin_update_checker.constructed interval_hours=%d",
+            self.plugin_update_checker.interval_seconds // 3600,
+        )
 
     @property
     def protectedUrl(self) -> str:

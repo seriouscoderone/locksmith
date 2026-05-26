@@ -1,5 +1,6 @@
 <RCC>
     <qresource prefix="/">
+        <file>assets/.DS_Store</file>
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
         <file>assets/material-icons/out-badge.svg</file>
@@ -60,6 +61,7 @@
         <file>assets/material-icons/notifications_hover.svg</file>
         <file>assets/material-icons/security.svg</file>
         <file>assets/material-icons/launch-proxy.svg</file>
+        <file>assets/material-icons/extension.svg</file>
         <file>assets/material-icons/visibility_off.svg</file>
         <file>assets/material-icons/edit.svg</file>
         <file>assets/material-icons/api.svg</file>
@@ -82,6 +84,7 @@
         <file>assets/material-icons/inbox_hover.svg</file>
         <file>assets/material-icons/notifications_unread.svg</file>
         <file>assets/material-icons/hive.svg</file>
+        <file>assets/material-icons/extension-hover.svg</file>
         <file>assets/material-icons/menu.svg</file>
         <file>assets/material-icons/mail_shield.svg</file>
         <file>assets/material-icons/authenticate.svg</file>

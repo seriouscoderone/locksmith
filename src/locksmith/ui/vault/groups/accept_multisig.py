@@ -322,7 +322,7 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
             logger.exception(f"Failed to start MultisigJoinDoer: {e}")
             self.accept_button.setEnabled(True)
             self.cancel_button.setEnabled(True)
-            self.accept_button.setText("Accept & Join")
+            self.accept_button.setText("Accept && Join")
 
     def _on_doer_event(self, doer_name: str, event_type: str, data: dict):
         """Handle doer events from the signal bridge."""
@@ -338,5 +338,5 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
             logger.error(f"Failed to join group: {data.get('error')}")
             self.accept_button.setEnabled(True)
             self.cancel_button.setEnabled(True)
-            self.accept_button.setText("Accept & Join")
+            self.accept_button.setText("Accept && Join")
             # TODO: Show error message to user

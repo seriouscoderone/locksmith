@@ -5,7 +5,9 @@ locksmith.plugins package
 Plugin architecture for Locksmith wallet extensions.
 """
 from locksmith.plugins.base import (
-    PluginBase,
+    PluginCore,
+    AppPlugin,
+    VaultPlugin,
     AccountProviderPlugin,
     IdentifierUploadProviderPlugin,
     WitnessProviderPlugin,
@@ -14,7 +16,9 @@ from locksmith.plugins.base import (
 )
 
 __all__ = [
-    "PluginBase",
+    "PluginCore",
+    "AppPlugin",
+    "VaultPlugin",
     "AccountProviderPlugin",
     "IdentifierUploadProviderPlugin",
     "WitnessProviderPlugin",

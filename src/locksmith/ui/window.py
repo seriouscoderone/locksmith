@@ -4,11 +4,12 @@ locksmith.ui.window module
 
 This module contains the main window for the Locksmith application.
 """
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
     QHBoxLayout,
+    QVBoxLayout,
     QStackedWidget,
 )
 from keri import help
@@ -44,6 +45,9 @@ class LocksmithWindow(QMainWindow):
 
         self.app = LocksmithApplication(config=config)
 
+        # Staged-install tracking: set to plugin_id between install() and trust.
+        self._pending_trust_install: str | None = None
+
         # Window setup
         self.setWindowTitle("Locksmith")
         self.setMinimumSize(1280, 1024)
@@ -59,12 +63,26 @@ class LocksmithWindow(QMainWindow):
         self.toolbar.lock_clicked.connect(self.on_lock_vault)
         self.toolbar.home_clicked.connect(self.on_home)
         self.toolbar.notifications_clicked.connect(self.on_notifications)
+        self.toolbar.plugins_clicked.connect(self.on_plugins)
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, self.toolbar)
 
         # Create central widget and main layout
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        main_layout = QHBoxLayout(central_widget)
+        outer_layout = QVBoxLayout(central_widget)        # was QHBoxLayout
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.setSpacing(0)
+
+        # Global restart banner — hidden until a plugin upgrade lands.
+        from locksmith.ui.plugins.upgrade_banner import UpgradeBanner
+        self.upgrade_banner = UpgradeBanner(parent=central_widget)
+        self.upgrade_banner.restart_requested.connect(self._handle_restart_requested)
+        outer_layout.addWidget(self.upgrade_banner)
+
+        # Horizontal container holds the page stack (preserves the original layout shape).
+        stack_holder = QWidget()
+        outer_layout.addWidget(stack_holder)
+        main_layout = QHBoxLayout(stack_holder)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
 
@@ -73,16 +91,44 @@ class LocksmithWindow(QMainWindow):
         self.main_stack.setContentsMargins(0, 0, 0, 0)
 
         # Create pages
+        from locksmith.ui.plugins.page import PluginsPage
         self.pages = {}
         self.pages[Pages.HOME] = HomePage(self)
+        self.pages[Pages.PLUGINS] = PluginsPage(self.app, self)
         self.pages[Pages.VAULT] = VaultPage(self)
+
+        # Wire PluginsPage signals
+        plugins_page = self.pages[Pages.PLUGINS]
+        plugins_page.install_requested.connect(self._handle_install_requested)
+        plugins_page.install_trusted.connect(self._handle_install_trusted)
+        plugins_page.uninstall_clicked.connect(self._handle_uninstall)
+        plugins_page.exclude_toggled.connect(self._handle_exclude_toggle)
+        plugins_page.restart_requested.connect(self._handle_restart_requested)
+        # Cancel: page collapses its panel, window rolls back pre-trust installs.
+        plugins_page._install_panel.cancelled.connect(self._handle_install_cancelled)
 
         # Store VaultPage reference for plugin access
         vault_page = self.pages[Pages.VAULT]
         self.app._vault_page = vault_page
 
-        # Discover and initialize plugins (registers pages and menus)
-        self.app.plugin_manager.discover_and_initialize(vault_page, vault_page.nav_menu)
+        # Wire the vault-hosted PluginsContent signals to the same handlers as
+        # the top-level PluginsPage so install/uninstall/exclude work from both
+        # surfaces.
+        vault_plugins = vault_page.get_plugins_content()
+        if vault_plugins is not None:
+            vault_plugins.install_requested.connect(self._handle_install_requested)
+            vault_plugins.install_trusted.connect(self._handle_install_trusted)
+            vault_plugins.uninstall_clicked.connect(self._handle_uninstall)
+            vault_plugins.exclude_toggled.connect(self._handle_exclude_toggle)
+            vault_plugins.restart_requested.connect(self._handle_restart_requested)
+            vault_plugins._install_panel.cancelled.connect(self._handle_install_cancelled)
+
+        # Discover plugins from the index + entry-points and call initialize on each.
+        self.app.plugin_manager.discover()
+        # Register vault-plugin pages and menus into the VaultPage.
+        self.app.plugin_manager.discover_and_initialize_vault_ui(
+            vault_page, vault_page.nav_menu,
+        )
 
         # Add pages to stack
         for page in self.pages.values():
@@ -102,6 +148,26 @@ class LocksmithWindow(QMainWindow):
 
         # Start on home page
         self.nav_manager.navigate_to(Pages.HOME)
+
+        # --- Plugin update polling ---
+        # Fires check_now() every interval_seconds via QTimer. Immediate check
+        # at startup if the cache is stale (or missing).
+        self.plugin_update_timer = QTimer(self)
+        self.plugin_update_timer.setInterval(
+            self.app.plugin_update_checker.interval_seconds * 1000,
+        )
+        self.plugin_update_timer.timeout.connect(
+            self.app.plugin_update_checker.check_now,
+        )
+        self.plugin_update_timer.start()
+
+        if self.app.plugin_update_checker.should_check_now():
+            QTimer.singleShot(0, self.app.plugin_update_checker.check_now)
+        # --- end plugin update polling ---
+
+        # Run app-lifecycle hooks for any AppPlugin instances loaded above.
+        # Done last so plugins see a fully-constructed window.
+        self.app.plugin_manager.on_app_started(window=self)
 
         logger.info("LocksmithHome initialized")
 
@@ -136,6 +202,9 @@ class LocksmithWindow(QMainWindow):
             logger.info(f"Toolbar config: {toolbar_config}")
             self.toolbar.update_for_config(toolbar_config)
 
+            # Sync Plugins toolbar button active state.
+            self.toolbar.set_plugins_active(page_enum == Pages.PLUGINS)
+
             # Update page-specific UI elements
             self._update_page_ui(page_enum)
 
@@ -163,6 +232,17 @@ class LocksmithWindow(QMainWindow):
                 self.toolbar.height()
             )
             # Disconnect toast signals when leaving vault
+            self._disconnect_toast_signals()
+
+        elif page == Pages.PLUGINS:
+            # Plugins page (top-level): vault drawer is available so users
+            # can switch vaults from anywhere. Same geometry as home.
+            self.vault_drawer.show_drawer_widgets()
+            self.vault_drawer.handle_resize(
+                self.width(),
+                self.height(),
+                self.toolbar.height()
+            )
             self._disconnect_toast_signals()
 
         elif page == Pages.VAULT:
@@ -233,6 +313,31 @@ class LocksmithWindow(QMainWindow):
                 self.height(),
                 self.toolbar.height()
             )
+
+    def on_plugins(self) -> None:
+        """Handle plugins button click.
+
+        When a vault is open AND we are on the vault page, show Plugins as a
+        vault sub-page (sidebar persists, toolbar config stays vault-config).
+        When logged out OR on Pages.HOME/PLUGINS top-level, use the existing
+        top-level toggle behavior.
+        """
+        vault_page = self.pages.get(Pages.VAULT)
+        if (
+            self.app.is_vault_open
+            and self.main_stack.currentWidget() is vault_page
+        ):
+            vault_page.show_plugins()
+            return
+
+        # Existing toggle behavior for top-level (no vault open).
+        if self.nav_manager.get_current_page() == Pages.PLUGINS:
+            if self.nav_manager.can_navigate_back():
+                self.nav_manager.go_back()
+            else:
+                self.nav_manager.navigate_to(Pages.HOME)
+            return
+        self.nav_manager.navigate_to(Pages.PLUGINS)
 
     def on_settings(self):
         """Handle settings button click."""
@@ -358,3 +463,143 @@ class LocksmithWindow(QMainWindow):
         vault_page = self.pages.get(Pages.VAULT)
         if vault_page and self.main_stack.currentWidget() == vault_page:
             vault_page.show_notifications()
+
+    def _handle_restart_requested(self) -> None:
+        """Restart the wallet — close vault, spawn a new process, quit this one."""
+        import sys
+        from PySide6.QtCore import QProcess
+        from PySide6.QtWidgets import QApplication
+
+        logger.info("plugin.restart.initiated")
+
+        # Best-effort close-vault before relaunch. Plugin lifecycle hooks
+        # (on_app_stopping + service.stop) fire in closeEvent which Qt will
+        # invoke as part of QApplication.quit() below.
+        if self.app.vault is not None:
+            try:
+                self.app.close_vault()
+            except Exception:
+                logger.exception("plugin.restart.close_vault_failed")
+
+        # Spawn a new instance of ourselves with the same launch line. The
+        # `-m locksmith.main` form is used because that's how the wallet is
+        # currently launched in development; a frozen-binary path goes
+        # through sys.argv directly.
+        if getattr(sys, "frozen", False):
+            QProcess.startDetached(sys.executable, sys.argv[1:])
+        else:
+            QProcess.startDetached(sys.executable, ["-m", "locksmith.main"] + sys.argv[1:])
+        logger.info("plugin.restart.spawned_new_process")
+
+        # Quit this instance. Qt will call closeEvent on the window, which
+        # already calls plugin_manager.on_app_stopping().
+        QApplication.quit()
+
+    # ------------------- Plugin install/uninstall/exclude handlers ---
+
+    def _refresh_all_plugin_views(self, restart_required: bool | None = True) -> None:
+        """Refresh both the top-level PluginsPage and the vault sub-page PluginsContent.
+
+        ``restart_required`` semantics:
+        - True  → turn the banner on.
+        - False → clear the banner.
+        - None  → leave the banner state alone (just re-render rows).
+        """
+        surfaces = [self.pages[Pages.PLUGINS]]
+        vault_page = self.pages.get(Pages.VAULT)
+        if vault_page is not None and hasattr(vault_page, "get_plugins_content"):
+            content = vault_page.get_plugins_content()
+            if content is not None:
+                surfaces.append(content)
+        for surface in surfaces:
+            surface._refresh()
+            if restart_required is not None:
+                surface.set_restart_required(restart_required)
+
+    def _surface_for_signal(self):
+        """Return the PluginsPage / PluginsContent that emitted the current signal.
+
+        Falls back to the top-level page if the sender can't service the API
+        (e.g. tests calling these handlers directly with no signal context).
+        """
+        s = self.sender()
+        if s is not None and hasattr(s, "show_trust_step"):
+            return s
+        return self.pages[Pages.PLUGINS]
+
+    def _handle_install_requested(self, source) -> None:
+        from locksmith.plugins.installer import InstallError, PluginInstaller
+        surface = self._surface_for_signal()
+        installer = PluginInstaller()
+        try:
+            record = installer.install(source)
+        except InstallError as e:
+            # Stay in source mode, render error inline. No popup.
+            surface.show_install_error(str(e))
+            return
+        surface.show_trust_step(
+            manifest_snapshot=record["manifest_snapshot"],
+            source=record["source"],
+            commit=record["commit"],
+        )
+        # Cache the staged record so we can roll it back if the user cancels trust.
+        self._pending_trust_install = record["plugin_id"]
+
+    def _handle_install_trusted(self, plugin_id: str) -> None:
+        logger.info("plugin.trust.accepted plugin_id=%s", plugin_id)
+        self._pending_trust_install = None
+        self._surface_for_signal().collapse_install_panel()
+        self._refresh_all_plugin_views(restart_required=True)
+
+    def _handle_install_cancelled(self) -> None:
+        # The page already collapsed its panel before emitting this.
+        # If we have a pending trust-stage install, roll it back.
+        from locksmith.plugins.installer import InstallError, PluginInstaller
+        pid = self._pending_trust_install
+        if pid:
+            try:
+                PluginInstaller().uninstall(pid)
+            except InstallError:
+                logger.exception("plugin.rollback_failed plugin_id=%s", pid)
+            self._pending_trust_install = None
+            # Rollback restored on-disk state to match the running manager —
+            # no pending changes, clear the restart banner.
+            self._refresh_all_plugin_views(restart_required=False)
+        else:
+            # Source-mode cancel: nothing changed on disk, leave banner alone.
+            self._refresh_all_plugin_views(restart_required=None)
+
+    def _handle_uninstall(self, plugin_id: str) -> None:
+        from locksmith.plugins.installer import InstallError, PluginInstaller
+        try:
+            PluginInstaller().uninstall(plugin_id)
+        except InstallError as e:
+            self._show_error("Uninstall failed", str(e))
+            return
+        self._refresh_all_plugin_views(restart_required=True)
+
+    def _handle_exclude_toggle(self, plugin_id: str, now_excluded: bool) -> None:
+        from pathlib import Path
+        from locksmith.plugins import storage
+        keri_base = Path(getattr(self.app.config, "base", None) or (Path.home() / ".keri"))
+        current = storage.read_enable_list(keri_base)
+        excluded = set(current.get("excluded", []))
+        if now_excluded:
+            excluded.add(plugin_id)
+        else:
+            excluded.discard(plugin_id)
+        storage.write_enable_list(keri_base, {"format": 1, "excluded": sorted(excluded)})
+        self._refresh_all_plugin_views(restart_required=True)
+
+    def _show_error(self, title: str, message: str) -> None:
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(self, title, message)
+
+    # ------------------- Window lifecycle ----------------------------
+
+    def closeEvent(self, event) -> None:
+        try:
+            self.app.plugin_manager.on_app_stopping()
+        except Exception:
+            logger.exception("plugin.on_app_stopping.dispatch_failed")
+        super().closeEvent(event)

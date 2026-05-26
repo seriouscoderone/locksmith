@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QWidget, QLabel, QVBoxLayout, QDialog
 from PySide6.QtCore import Qt, QEvent, QObject
 from keri import help
 
-from locksmith.plugins.base import AccountProviderPlugin, PluginBase, WitnessProviderPlugin
+from locksmith.plugins.base import AccountProviderPlugin, VaultPlugin, WitnessProviderPlugin
 from locksmith.plugins.kerifoundation.db.basing import (
     ACCOUNT_STATUS_FAILED,
     ACCOUNT_STATUS_ONBOARDED,
@@ -42,7 +42,7 @@ from locksmith.plugins.kerifoundation.watchers.register import WatcherRegisterPa
 logger = help.ogler.getLogger(__name__)
 
 
-class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlugin):
+class KeriFoundationPlugin(VaultPlugin, WitnessProviderPlugin, AccountProviderPlugin):
     """KERI Foundation witness/watcher provider plugin.
 
     Entry is gated by a plugin-local account record. Until the record

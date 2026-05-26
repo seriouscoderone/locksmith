@@ -16,6 +16,7 @@ logger = help.ogler.getLogger(__name__)
 class Pages(Enum):
     """Enumeration of available pages in the application."""
     HOME = "home"
+    PLUGINS = "plugins"
     VAULT = "vault"
 
 

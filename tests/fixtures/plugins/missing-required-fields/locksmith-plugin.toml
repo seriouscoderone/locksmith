@@ -1,0 +1,5 @@
+# plugin_id and entry_point are intentionally absent.
+manifest_version = 1
+name = "Incomplete"
+version = "0.0.1"
+description = "Missing required fields on purpose."

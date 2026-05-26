@@ -1,0 +1,12 @@
+plugin_id = "echo_app"
+entry_point = "echo_app.plugin:EchoAppPlugin"
+manifest_version = 1
+name = "Echo App"
+version = "0.1.0"
+description = "Test fixture: a minimal AppPlugin used by Stage 1 tests."
+author = "Locksmith Test Suite"
+requires_locksmith = ">=0.0.1"
+capabilities = ["app.service"]
+
+[capabilities_detail]
+"app.service" = "Logs lifecycle events for test assertions."

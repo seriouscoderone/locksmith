@@ -18,6 +18,7 @@ from locksmith.ui.vault.identifiers.list import IdentifierListPage
 from locksmith.ui.vault.groups.list import GroupIdentifierListPage
 from locksmith.ui.vault.menu import VaultNavMenu
 from locksmith.ui.vault.notifications import NotificationsListPage
+from locksmith.ui.plugins.page import PluginsContent
 from locksmith.ui.vault.remotes.list import RemoteIdentifierListPage
 from locksmith.ui.vault.settings.page import SettingsPage
 
@@ -94,6 +95,7 @@ class VaultPage(BasePage):
         self.register_page("received_credentials", ReceivedCredentialsListPage(self))
         self.register_page("schema", SchemaListPage(self))
         self.register_page("notifications", NotificationsListPage(self))
+        self.register_page("plugins", PluginsContent(self.app, parent=self))
 
     def register_page(self, key: str, widget: QWidget) -> None:
         """Register a page widget under a string key.
@@ -229,6 +231,18 @@ class VaultPage(BasePage):
         if notifications_page and hasattr(notifications_page, "on_show"):
             notifications_page.on_show()
 
+    def show_plugins(self):
+        """Show plugins page as a vault sub-page — called from toolbar when vault is open."""
+        logger.info("Showing plugins sub-page")
+        self._show_page("plugins")
+        plugins_page = self._pages.get("plugins")
+        if plugins_page and hasattr(plugins_page, "on_show"):
+            plugins_page.on_show()
+
+    def get_plugins_content(self) -> "PluginsContent | None":
+        """Return the vault-hosted PluginsContent instance, or None if not registered."""
+        return self._pages.get("plugins")  # type: ignore[return-value]
+
     # -------------------------------------------------------------------------
     # Vault deletion
     # -------------------------------------------------------------------------
@@ -255,11 +269,18 @@ class VaultPage(BasePage):
         }
 
     def on_show(self, **params):
+        # Capture the sub-page to restore BEFORE any menu-reset side effects.
+        # nav_menu.pop_to_vault_menu() below triggers _show_page("identifiers")
+        # as part of resetting the menu's active state, which clobbers
+        # _current_page_key. Read it first so back-navigation from Plugins
+        # returns to the exact sub-page the user left.
+        restore_key = self._current_page_key or "identifiers"
+
         super().on_show(**params)
         self.vault_name = params.get('vault_name', 'Unknown Vault')
         logger.info(f"VaultPage showing for vault: {self.vault_name}")
 
-        # Reset nav menu to vault menu
+        # Reset nav menu to vault menu (side-effect: clobbers _current_page_key)
         self.nav_menu.pop_to_vault_menu()
 
         # Update nav menu with vault name
@@ -270,8 +291,8 @@ class VaultPage(BasePage):
             if hasattr(page, "set_vault_name"):
                 page.set_vault_name(self.vault_name)
 
-        # Show Identifiers sub-page by default
-        self._show_page("identifiers")
+        # Apply the captured restore key, overriding whatever pop_to_vault_menu set.
+        self._show_page(restore_key)
 
     def on_hide(self):
         super().on_hide()
