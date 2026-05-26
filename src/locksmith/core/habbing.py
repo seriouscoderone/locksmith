@@ -653,8 +653,12 @@ class InceptDoer(doing.DoDoer):
             # Create the identifier
             hab = self.hby.makeHab(name=self.alias, **self.creation_kwargs)
 
-            # Get witness and receiptor doers from vault
-            wit_doer = self.app.vault.witDoer
+            # Receiptor collects witness receipts and ingests them into
+            # baser.wigs. (Was `vault.witDoer` — a keri.app.agenting.WitnessReceiptor
+            # instance — which over HTTP silently drops receipts because its
+            # underlying HTTPMessenger has no Parser wired. See
+            # keri-foundation/locksmith#77.)
+            receiptor = self.app.vault.receiptor
 
             # Handle delegation if present
             if hab.kever.delpre:
@@ -668,10 +672,10 @@ class InceptDoer(doing.DoDoer):
             # Handle witness receipts if present
             elif hab.kever.wits:
                 logger.info(f"Waiting for witness receipts for {hab.pre}...")
-                wit_doer.msgs.append(dict(pre=hab.pre))
+                receiptor.msgs.append(dict(pre=hab.pre, sn=hab.kever.sner.num))
 
-                # Wait for witness receipts
-                while not wit_doer.cues:
+                # Wait for the receiptor to push a completion cue
+                while not receiptor.cues:
                     _ = yield self.tock
 
             # Send event to delegator if needed

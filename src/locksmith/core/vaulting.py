@@ -98,7 +98,6 @@ class Vault(doing.DoDoer):
         self.receiptor = LocksmithReceiptor(hby=hby)
         self.postman = forwarding.Poster(hby=hby)
         self.witPub = agenting.WitnessPublisher(hby=self.hby)
-        self.witDoer = agenting.WitnessReceiptor(hby=self.hby)
 
         # Mailbox and storage
         from keri.app import storing
@@ -174,7 +173,6 @@ class Vault(doing.DoDoer):
             self.rep,
             self.swain,
             self.counselor,
-            self.witDoer,
             *oobiery.doers,
             watchmen,
             kva,
