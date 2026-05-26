@@ -14,6 +14,7 @@ from keri import help
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import load_scaled_pixmap, create_spacer
+from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 from locksmith.ui.vaults.create import CreateVaultDialog
 from locksmith.ui.vaults.open import OpenVaultDialog
 
@@ -131,6 +132,27 @@ class VaultDrawer(QWidget):
         divider.setObjectName("vault-header-divider")
         divider.setFrameShape(QFrame.Shape.HLine)
         drawer_layout.addWidget(divider)
+
+        # Search filter input
+        search_row = QHBoxLayout()
+        search_row.setContentsMargins(12, 8, 12, 8)
+        self.search_field = LocksmithLineEdit(
+            placeholder_text="Search vaults",
+            leading_icon=":/assets/material-icons/search.svg",
+        )
+        self.search_field.setClearButtonEnabled(True)
+        self.search_field.textChanged.connect(self._filter_vaults)
+        search_row.addWidget(self.search_field)
+        drawer_layout.addLayout(search_row)
+
+        # Empty-state label (shown when filter has zero matches)
+        self.empty_state_label = QLabel("")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 14px; padding: 16px;"
+        )
+        self.empty_state_label.hide()
+        drawer_layout.addWidget(self.empty_state_label)
 
         # New vault button in its own list widget with custom styling
         new_vault_button_container = QListWidget()
@@ -348,24 +370,91 @@ class VaultDrawer(QWidget):
         Show the drawer widgets (but keep drawer closed).
         Used when navigating to pages that use the drawer.
         """
+        # Clear any prior filter query on each drawer-show.
+        if hasattr(self, "search_field"):
+            self.search_field.clear()
+
         # Refresh the vault list to pick up any changes (e.g., deleted vaults)
         self._refresh_vault_list()
-        
+
         # Don't show overlay (it's only shown when drawer is toggled open)
         # But show the drawer frame (positioned off-screen, ready to slide in)
         self.vault_drawer.show()
 
     def _refresh_vault_list(self):
-        """Refresh the list of vaults."""
+        """Refresh the list of vaults, preserving any active filter query."""
         self.vault_list.clear()
 
         vault_font = QFont()
         vault_font.setPointSize(15)
 
-        for vault_name in self.app.environments():
+        # Sort vaults alphabetically so the prefix/substring grouping below
+        # produces a stable order within each group.
+        for vault_name in sorted(self.app.environments(), key=str.lower):
             vault_item = QListWidgetItem(QIcon(":/assets/custom/vault.png"), vault_name)
             vault_item.setFont(vault_font)
             self.vault_list.addItem(vault_item)
+
+        # Re-apply the active filter so add/delete don't desync the visible list.
+        query = self.search_field.text() if hasattr(self, "search_field") else ""
+        self._filter_vaults(query)
+
+    def _filter_vaults(self, query: str):
+        """
+        Filter the vault list to names containing ``query`` (case-insensitive).
+
+        Prefix matches sort above non-prefix substring matches; non-matches
+        are hidden. Empty-state label is shown when nothing matches.
+        """
+        q = query.strip().lower()
+
+        # First pass: assign a sort key (0=prefix, 1=substring, 2=hidden) per item.
+        annotated: list[tuple[int, str, QListWidgetItem]] = []
+        for i in range(self.vault_list.count()):
+            item = self.vault_list.item(i)
+            name_lower = item.text().lower()
+            if not q:
+                rank = 0
+            elif name_lower.startswith(q):
+                rank = 0
+            elif q in name_lower:
+                rank = 1
+            else:
+                rank = 2
+            annotated.append((rank, item.text().lower(), item))
+
+        # Stable sort: prefix matches first, then substring matches, then hidden.
+        # Within each group preserve the alphabetical order set in _refresh_vault_list.
+        annotated.sort(key=lambda t: (t[0], t[1]))
+
+        # Re-order rows by taking items out and re-adding in the new sequence.
+        # takeItem clears selection and ownership cleanly.
+        self.vault_list.blockSignals(True)
+        for i in range(self.vault_list.count() - 1, -1, -1):
+            self.vault_list.takeItem(i)
+        match_count = 0
+        for rank, _name, item in annotated:
+            self.vault_list.addItem(item)
+            if rank == 2:
+                item.setHidden(True)
+            else:
+                item.setHidden(False)
+                match_count += 1
+        self.vault_list.blockSignals(False)
+
+        # Empty-state label
+        if q and match_count == 0:
+            self.empty_state_label.setText(f"No vaults match “{query}”")
+            self.empty_state_label.show()
+            self.vault_list.hide()
+        else:
+            self.empty_state_label.hide()
+            self.vault_list.show()
+
+        logger.info(
+            f"VaultDrawer filter applied: query={query!r} matches={match_count} "
+            f"total={self.vault_list.count()}"
+        )
 
 
     def show_create_vault_dialog(self):
