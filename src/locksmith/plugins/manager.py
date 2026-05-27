@@ -152,9 +152,14 @@ class PluginManager:
 
         module_name, _, class_name = entry_point.partition(":")
 
-        clone_str = str(clone)
-        if clone_str not in sys.path:
-            sys.path.insert(0, clone_str)
+        # Support both flat-layout (<clone>/<pkg>/) and src-layout
+        # (<clone>/src/<pkg>/) plugins. Add src/ first if present so it
+        # takes priority; clone-root stays as a fallback for flat-layout.
+        src_dir = clone / "src"
+        for candidate in (src_dir, clone) if src_dir.is_dir() else (clone,):
+            cand_str = str(candidate)
+            if cand_str not in sys.path:
+                sys.path.insert(0, cand_str)
 
         module = importlib.import_module(module_name)
         cls = getattr(module, class_name)
