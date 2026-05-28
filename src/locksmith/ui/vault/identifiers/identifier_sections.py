@@ -298,7 +298,7 @@ class IdentifierViewSectionsMixin:
         role_row.addWidget(oobi_label)
 
         self.oobi_role_dropdown = FloatingLabelComboBox("Role")
-        self.oobi_role_dropdown.addItems(["Witness", "Controller", "Mailbox"])
+        self.oobi_role_dropdown.addItems(["Witness", "Controller", "Mailbox", "Peer"])
         self.oobi_role_dropdown.setCurrentText("Witness")
         self.oobi_role_dropdown.currentTextChanged.connect(self._on_oobi_role_changed)
         role_row.addWidget(self.oobi_role_dropdown)
@@ -311,8 +311,71 @@ class IdentifierViewSectionsMixin:
         self.oobi_display_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.oobi_display_container)
 
+        # Per-AID "Expose this AID over peer mode" toggle (same visual
+        # row as the role dropdown; appears regardless of selected role
+        # so the user can flip it on without first picking "Peer").
+        peer_row = QHBoxLayout()
+        peer_label = QLabel("Expose over peer mode:")
+        peer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        peer_row.addWidget(peer_label)
+        self.peer_expose_toggle = QCheckBox()
+        self.peer_expose_toggle.setChecked(self._is_peer_exposed())
+        self.peer_expose_toggle.toggled.connect(self._on_peer_expose_toggled)
+        peer_row.addWidget(self.peer_expose_toggle)
+        peer_row.addStretch()
+        layout.addLayout(peer_row)
+
         # Generate initial OOBI
         self._generate_oobi("witness")
+
+    def _vault(self):
+        return getattr(self.app, "vault", None) if hasattr(self, "app") else None
+
+    def _is_peer_exposed(self) -> bool:
+        vault = self._vault()
+        if vault is None or not hasattr(self, "hab") or self.hab is None:
+            return False
+        exposed = getattr(vault, "_peer_exposed_aids", None)
+        if exposed is None:
+            return False
+        return self.hab.pre in exposed
+
+    def _on_peer_expose_toggled(self, checked: bool) -> None:
+        vault = self._vault()
+        if vault is None or not hasattr(self, "hab") or self.hab is None:
+            return
+        exposed = getattr(vault, "_peer_exposed_aids", None)
+        if exposed is None:
+            exposed = set()
+            vault._peer_exposed_aids = exposed
+        if checked:
+            exposed.add(self.hab.pre)
+            self._publish_peer_role()
+            logger.info(f"peer.role.enabled aid={self.hab.pre}")
+        else:
+            exposed.discard(self.hab.pre)
+            logger.info(f"peer.role.disabled aid={self.hab.pre}")
+
+    def _publish_peer_role(self) -> None:
+        """Publish role=peer endpoint authorization on this AID's KEL.
+
+        Uses keripy's makeLocScheme + makeEndRole pattern. The controller
+        is its own endpoint id (eid=hab.pre) since we are the peer.
+        """
+        from keri import kering
+        from locksmith.peer.records import PeerModeSettings
+
+        vault = self._vault()
+        if vault is None:
+            return
+        settings = vault.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        host = settings.advertised_host or "127.0.0.1"
+        url = f"tcp://{host}:{settings.port}"
+        try:
+            self.hab.makeLocScheme(url=url, eid=self.hab.pre, scheme=kering.Schemes.tcp)
+            self.hab.makeEndRole(eid=self.hab.pre, role=kering.Roles.peer)
+        except Exception as e:  # noqa: BLE001 — log + swallow to keep UI alive
+            logger.warning(f"peer.role.publish_failed aid={self.hab.pre} err={e}")
 
     def _build_refresh_keystate_section(self, layout: QVBoxLayout) -> None:
         """Build the refresh key state section for group multisig."""
@@ -350,7 +413,8 @@ class IdentifierViewSectionsMixin:
         role_map = {
             "Witness": "witness",
             "Controller": "controller",
-            "Mailbox": "mailbox"
+            "Mailbox": "mailbox",
+            "Peer": "peer",
         }
         role = role_map.get(role_text, "witness")
         self._generate_oobi(role)
