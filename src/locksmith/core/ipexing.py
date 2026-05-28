@@ -7,6 +7,8 @@ Dialog for granting (sending or saving) issued credentials.
 from hio.base import doing
 from keri import help
 from keri.app import organizing, signing, grouping, forwarding, habbing, agenting
+
+from locksmith.peer.posting import PeerAwarePoster
 from keri.app.notifying import Notifier
 from keri.core import serdering, coring, parsing, eventing
 from keri.help import helping
@@ -398,11 +400,12 @@ class SendGrantDoer(doing.DoDoer):
             # Check if we are lead (always true for single-sig, determined by multisig for groups)
             if self.exc.lead(hab, said=exn.said):
 
-                postman = forwarding.StreamPoster(
+                postman = PeerAwarePoster(
                     hby=self.hby,
                     hab=sender,
                     recp=recp,
-                    topic="credential"
+                    baser=self.app.vault.db,
+                    topic="credential",
                 )
 
                 # Send credential artifacts (issuer KEL, issuee KEL, etc.)
@@ -784,11 +787,12 @@ class AdmitDoer(doing.DoDoer):
                     )
 
                 # Send admit message to grantor
-                postman = forwarding.StreamPoster(
+                postman = PeerAwarePoster(
                     hby=self.hby,
                     hab=sender,
                     recp=recp,
-                    topic="credential"
+                    baser=self.app.vault.db,
+                    topic="credential",
                 )
 
                 # Serialize and send admit message with attachments
