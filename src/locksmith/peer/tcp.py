@@ -19,8 +19,8 @@ class TCPServer(Server):
         self._log_host = host
         self._log_port = port
 
-    def reopen(self) -> bool:
-        ok = super().reopen()
+    def reopen(self, **kwa) -> bool:
+        ok = super().reopen(**kwa)
         if ok:
             logger.info(
                 f"peer.listener.started host={self._log_host} port={self._log_port}"
