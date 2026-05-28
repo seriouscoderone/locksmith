@@ -313,11 +313,15 @@ class SettingsPage(QWidget):
         """Mount the Direct peer mode section.
 
         The SettingsPage is built once at app startup, before a vault is
-        open, so we can't access `self.app.vault` yet. Stash the layout
-        and finish mounting in `set_vault_name` once the vault exists.
+        open, so we can't access `self.app.vault` yet. Insert a
+        placeholder QFrame here so the layout position is reserved, then
+        swap its contents in `set_vault_name` once the vault exists.
         """
         self.peer_section = None
-        self._peer_section_layout = parent_layout
+        self._peer_section_placeholder = QFrame()
+        self._peer_section_placeholder_layout = QVBoxLayout(self._peer_section_placeholder)
+        self._peer_section_placeholder_layout.setContentsMargins(0, 0, 0, 0)
+        parent_layout.addWidget(self._peer_section_placeholder)
         self._mount_peer_section_if_ready()
 
     def _mount_peer_section_if_ready(self):
@@ -325,13 +329,10 @@ class SettingsPage(QWidget):
             return
         if not self.app or not self.app.vault:
             return
-        if self._peer_section_layout is None:
+        if self._peer_section_placeholder is None:
             return
         self.peer_section = PeerSettingsSection(vault=self.app.vault)
-        # Insert before the trailing stretch + version, so it renders
-        # inline with the other sections rather than at the very bottom.
-        # If the layout has appended a stretch, we live with placement.
-        self._peer_section_layout.addWidget(self.peer_section)
+        self._peer_section_placeholder_layout.addWidget(self.peer_section)
 
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""

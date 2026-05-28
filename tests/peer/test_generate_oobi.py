@@ -3,33 +3,29 @@ from unittest.mock import MagicMock
 from locksmith.core import habbing
 
 
-def test_generate_oobi_peer_role_with_tcp_endpoint():
-    """When an AID has a witness-served tcp peer endpoint, generate_oobi
-    returns the witness-served URL with role=peer.
+def test_generate_oobi_peer_role_uses_witness_serving():
+    """The peer-role OOBI URL is witness-served (spec §4a.i). For an AID
+    with a witness whose HTTP URL is known, generate_oobi builds
+    `<wit_http>/oobi/<aid>/peer/<wit_aid>`.
     """
     hab = MagicMock()
     hab.pre = "EAID_ALICE"
-    # fetchRoleUrls returns {role: {eid: {scheme: url}}}
-    hab.fetchRoleUrls.return_value = {
-        "peer": {
-            "EWIT1": {
-                "http": "http://witness.keri.host:5642"
-            }
-        }
-    }
+    hab.kever.wits = ["BWIT1"]
+    hab.fetchUrls.return_value = {"http": "http://witness.keri.host:5642"}
 
     app = MagicMock()
     result = habbing.generate_oobi(app, hab, role="peer")
 
     assert result["success"] is True
-    assert result["oobi"].endswith("/oobi/EAID_ALICE/peer/EWIT1")
+    assert result["oobi"].endswith("/oobi/EAID_ALICE/peer/BWIT1")
     assert "http://witness.keri.host" in result["oobi"]
 
 
-def test_generate_oobi_peer_role_no_authorization_returns_failure():
+def test_generate_oobi_peer_role_with_no_witness_returns_failure():
+    """No witness means no host to serve the OOBI — gracefully fails."""
     hab = MagicMock()
     hab.pre = "EAID_ALICE"
-    hab.fetchRoleUrls.return_value = {}
+    hab.kever.wits = []
 
     app = MagicMock()
     result = habbing.generate_oobi(app, hab, role="peer")
