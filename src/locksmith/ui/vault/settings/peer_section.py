@@ -1,12 +1,14 @@
 """Vault settings: 'Direct peer mode' section (vault-level listener config)."""
 from __future__ import annotations
 
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QPushButton, QSpinBox,
-    QVBoxLayout,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QPushButton, QSpinBox, QVBoxLayout,
 )
 from keri import help
 
+from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerModeSettings
 
 logger = help.ogler.getLogger(__name__)
@@ -65,6 +67,23 @@ class PeerSettingsSection(QFrame):
             self.bind_combo.addItem(ip, ip)
             self.advertised_combo.addItem(ip, ip)
 
+        # Paired peers — inline list + Add button (faster than threading a
+        # separate top-level navigation entry for MVP)
+        peers_header = QHBoxLayout()
+        peers_label = QLabel("Paired peers")
+        peers_label.setStyleSheet("font-weight: 600; font-size: 13px; margin-top: 12px;")
+        peers_header.addWidget(peers_label)
+        self.add_peer_button = QPushButton("+ Add peer")
+        self.add_peer_button.clicked.connect(self._on_add_peer)
+        peers_header.addWidget(self.add_peer_button)
+        peers_header.addStretch()
+        layout.addLayout(peers_header)
+
+        self.peers_list = QListWidget()
+        self.peers_list.setMaximumHeight(120)
+        layout.addWidget(self.peers_list)
+        self._refresh_peers_list()
+
     def _load(self) -> None:
         rec = self._vault.db.peerSettings.get(keys=("default",))
         if rec is None:
@@ -93,6 +112,24 @@ class PeerSettingsSection(QFrame):
 
     def update_status(self, text: str) -> None:
         self.status_label.setText(text)
+
+    def _on_add_peer(self) -> None:
+        from locksmith.ui.vault.peers.add_dialog import AddPeerDialog
+        dialog = AddPeerDialog(vault=self._vault, parent=self)
+        dialog.peer_added.connect(self._refresh_peers_list)
+        dialog.open()
+
+    def _refresh_peers_list(self) -> None:
+        self.peers_list.clear()
+        try:
+            records = PeerAllowlist(self._vault.db).list()
+        except AttributeError:
+            # peerAllowlist not registered yet (running on an older Komer)
+            return
+        for rec in records:
+            item = QListWidgetItem(f"{rec.label}  —  {rec.aid[:24]}…  —  {rec.endpoint_url}")
+            item.setData(Qt.UserRole, rec.aid)
+            self.peers_list.addItem(item)
 
 
 def _detect_interface_ips() -> list[str]:
