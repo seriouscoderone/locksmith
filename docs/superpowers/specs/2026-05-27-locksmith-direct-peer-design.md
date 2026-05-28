@@ -244,7 +244,7 @@ One line per event, key=value pairs:
 - Default port `5621` is a placeholder. Worth checking IANA assignments and common port collisions before merging.
 - The CESR-blob OOBI (witness-less pairing) is deferred but worth scoping as v2 once `mailbox.keri.host` and peer mode are both shipped.
 - Multi-witness controllers: when an opted-in AID has multiple witnesses, the peer-OOBI URL has to pick one to be served from. Trivial — pick the first available — but worth noting.
-- `tcp://host:port` is the URL scheme used in the role authorization. KERI/keripy currently standardizes on `http://` for role endpoints; introducing `tcp://` for direct-mode peer endpoints is a small spec extension worth flagging upstream.
+(none currently open beyond the above)
 
 ## Files touched (summary)
 
