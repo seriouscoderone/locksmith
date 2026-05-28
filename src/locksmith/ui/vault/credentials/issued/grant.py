@@ -420,6 +420,15 @@ class GrantCredentialDialog(LocksmithDialog):
 
             note = data.get('note', '')
             success_msg = f"Credential sent to {recipient[:15]}..."
+            # Surface the transport channel so the user knows whether the
+            # credential traveled peer-to-peer or via the mailbox path.
+            channel = data.get('channel')
+            if channel == 'peer':
+                success_msg += "  •  via direct peer connection"
+            elif channel == 'peer→mailbox':
+                success_msg += "  •  peer unreachable, sent via mailbox"
+            elif channel == 'mailbox':
+                success_msg += "  •  via mailbox"
             if note:
                 success_msg += f"\n{note}"
 
