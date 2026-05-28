@@ -236,6 +236,33 @@ class Vault(doing.DoDoer):
         self.db.mbx.rem(keys=(mailbox_eid,))
         self.mbx.remove_poller(hab=hab, mailbox=mailbox_eid)
 
+    def restart_peer_mode(self):
+        """Stop the current peer doer (if any) and re-construct from
+        current peerSettings. Safe to call when the doer is None.
+
+        Implementation note: hio's DoDoer doesn't support clean removal
+        of nested doers at runtime. We close the underlying socket so
+        the inner doers go inert, then drop the reference. The dead doer
+        stays in the parent's doers list but does nothing (it polls a
+        closed socket).
+        """
+        if self.peer_doer is not None and self.peer_doer.server is not None:
+            self.peer_doer.server.close()
+            self.peer_doer = None
+
+        settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        if not settings.enabled:
+            return
+
+        self.peer_doer = PeerDoer(
+            hby=self.hby,
+            baser=self.db,
+            settings=settings,
+            exchanger=self.exc,
+            is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+        )
+        self.extend(self.peer_doer.doers)
+
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:
             return None

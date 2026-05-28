@@ -23,6 +23,7 @@ from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithIconB
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
 from locksmith.ui.toolkit.widgets.toggle import ToggleSwitch
 from locksmith.ui.vault.settings.delete_dialog import DeleteVaultDialog
+from locksmith.ui.vault.settings.peer_section import PeerSettingsSection
 
 logger = help.ogler.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class SettingsPage(QWidget):
 
         # Add the actual settings content
         self._create_general_settings_section(content_layout)
+        self._create_peer_mode_section(content_layout)
         self._create_danger_zone_section(content_layout)
         
         # Push version to bottom
@@ -306,6 +308,13 @@ class SettingsPage(QWidget):
         # Update vault turret settings
         self.app.vault.update_plugin_identifier(text)
         logger.info(f"Plugin identifier updated: {text}")
+
+    def _create_peer_mode_section(self, parent_layout: QVBoxLayout):
+        """Mount the Direct peer mode section, gated on having a vault open."""
+        if not self.app or not self.app.vault:
+            return
+        self.peer_section = PeerSettingsSection(vault=self.app.vault)
+        parent_layout.addWidget(self.peer_section)
 
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""
