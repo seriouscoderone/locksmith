@@ -22,6 +22,13 @@ class TCPServer(Server):
     def reopen(self, **kwa) -> bool:
         ok = super().reopen(**kwa)
         if ok:
+            # hio's Acceptor.open updates self.ha to the post-bind sockname
+            # but leaves self.eha at the user-requested (host, port). When
+            # port=0 is requested, eha[1] stays 0 and serviceAxes raises
+            # because the accepted socket's sockname has a real port. Sync
+            # eha to the resolved ha so port=0 (OS-assign) works.
+            self.eha = self.ha
+            self._log_port = self.ha[1]
             logger.info(
                 f"peer.listener.started host={self._log_host} port={self._log_port}"
             )
