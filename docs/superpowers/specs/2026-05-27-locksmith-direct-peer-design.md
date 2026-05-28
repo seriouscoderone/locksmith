@@ -213,20 +213,29 @@ Three layers. Integration tests must hit real components — no DB mocks. UI tes
 
 ### Integration tests — two real vaults, no mocks
 
-Reuse the dual-vault pattern already in use (HOME isolation). Tests live in `tests/integration/peer/`.
+Tests live in `tests/integration/peer/`. Driven by the two dev wallets we already have running side-by-side:
 
-- **Pairing happy path** — vault A and vault B each have an AID with witness W. A's wallet calls "Add peer" with B's peer-OOBI → allowlist contains B → and vice-versa. Verified by reading the allowlist Komer after the resolve.
-- **End-to-end IPEX over peer mode** — pairing done, A grants a credential to B with mailbox bind skipped. Verify B's `Exchanger` cues fire and a notification queues. A's outbound badge in the structured log = `peer`.
-- **Auto-fallback** — pairing done, B's listener stopped. A grants → connect fails → A retries via mailbox. Outbound badge in A's log = `peer→mailbox`. B receives via mailbox.
-- **Sender rejection** — A connects to B's listener with an AID B never paired. B drops the exn, logs `peer.gate.sender_rejected` with sender AID + remote IP, no notification.
-- **Destination rejection** — A is paired with B, but the destination AID on B has `role=peer` toggled off. B drops the exn, logs `peer.gate.destination_not_exposed`, no notification.
+- **Wallet A** — `HOME=$HOME` (default `/Users/seriouscoderone`). KERI base at `~/keri/`. Dev-control socket at `~/.locksmith-control.sock`. Plugins installed at `~/.locksmith/plugins/` (includes `ui_tester`).
+- **Wallet B** — `HOME=/tmp/test001`. KERI base at `/tmp/test001/keri/`. Dev-control socket at `/tmp/test001/.locksmith-control.sock`. Plugins installed at `/tmp/test001/.locksmith/plugins/` (includes `ui_tester`).
+
+Both wallets are launched with `.venv/bin/python -m locksmith.main` and the env var differentiates them. Both already have `locksmith-ui-tester` installed, so the integration tests drive each wallet through its own dev-control socket — Wallet A via `~/.locksmith-control.sock`, Wallet B via `/tmp/test001/.locksmith-control.sock`. Each test asserts via the `devctl` op set + structured log lines from `/tmp/locksmith-main.log` (Wallet A) and `/tmp/locksmith-temp001.log` (Wallet B).
+
+Test cases:
+
+- **Pairing happy path** — A and B each have an AID with the same witness (`witness.keri.host`). The test drives Wallet A's UI to copy its peer-OOBI, drives Wallet B's UI to paste it into Add Peer, and verifies B's allowlist Komer contains A. Symmetric step for B → A.
+- **End-to-end IPEX over peer mode** — pairing done, A grants a credential to B. Outbound on A logs `peer.send.peer_ok`; inbound on B logs `peer.recv.delivered`. Notification appears in B's UI (asserted via `devctl tree` queries against B's socket).
+- **Auto-fallback** — pairing done, then B's listener stopped via toggle in §5a. A grants → `peer.send.peer_failed` then `peer.send.fallback_mailbox` in A's log. Outbound badge in A's UI = `peer→mailbox`. B receives via mailbox.
+- **Sender rejection** — A connects to B's listener with an AID B never paired. B logs `peer.gate.sender_rejected` with sender AID + remote IP; no notification raised (asserted by inspecting B's notifications page via the harness).
+- **Destination rejection** — A is paired with B; the destination AID on B has `role=peer` toggled off via §5b. B logs `peer.gate.destination_not_exposed`; no notification raised.
 
 ### UI smoke via `locksmith-ui-tester`
 
-- Open vault → toggle peer mode on → assert log `peer.listener.started port=5621`.
-- Open identifier → toggle Peer role on → assert log `peer.role.enabled aid=…`.
-- Click "Add peer" → paste OOBI → assert log `peer.pair.success aid=… endpoint=…` and the row appears in the Paired Peers list (queryable via the harness).
-- Toggle peer mode off → assert log `peer.listener.stopped`.
+Driven through the same two sockets above. Each step is a `devctl` call against the appropriate socket:
+
+- Wallet A unlocked → toggle peer mode on in §5a → assert log `peer.listener.started port=5621` in `/tmp/locksmith-main.log`.
+- Wallet A — open identifier → toggle Peer role on → assert log `peer.role.enabled aid=…`.
+- Wallet A — click "Add peer" → paste Wallet B's OOBI → assert log `peer.pair.success aid=… endpoint=…` and the row appears in the Paired Peers list (queryable via `devctl tree` against `~/.locksmith-control.sock`).
+- Wallet A — toggle peer mode off → assert log `peer.listener.stopped`.
 
 ### Structured log lines (added for testability)
 
