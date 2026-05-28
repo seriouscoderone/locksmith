@@ -35,6 +35,8 @@ from locksmith.core.signals import DoerSignalBridge
 from locksmith.core.tasking import QtTask
 from locksmith.core.turretting import TurretDoer
 from locksmith.db.basing import LocksmithBaser, MailboxListener, BrowserPluginSettings
+from locksmith.peer.doer import PeerDoer
+from locksmith.peer.records import PeerModeSettings
 
 logger = help.ogler.getLogger(__name__)
 
@@ -164,6 +166,21 @@ class Vault(doing.DoDoer):
                                            self.pluginSettings.locksmith_alias,
                                            self.pluginSettings.plugin_identifier)
 
+        # Peer-mode listener (vault-wide). The destination allowlist
+        # (`_peer_exposed_aids`) is populated by the per-AID `Peer` role
+        # toggle in the identifier UI.
+        self.peer_doer: PeerDoer | None = None
+        self._peer_exposed_aids: set[str] = set()
+        peer_settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        if peer_settings.enabled:
+            self.peer_doer = PeerDoer(
+                hby=self.hby,
+                baser=self.db,
+                settings=peer_settings,
+                exchanger=self.exc,
+                is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+            )
+
         # Assemble all doers
         self.doers = [
             self.hbyDoer,
@@ -181,6 +198,8 @@ class Vault(doing.DoDoer):
         ]
         if self.turrent_doer is not None:
             self.doers.append(self.turrent_doer)
+        if self.peer_doer is not None:
+            self.doers.append(self.peer_doer)
         # Initialize DoDoer with always=True to keep running
         super(Vault, self).__init__(doers=self.doers, always=True)
 
