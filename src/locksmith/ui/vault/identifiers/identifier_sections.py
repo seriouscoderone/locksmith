@@ -298,7 +298,9 @@ class IdentifierViewSectionsMixin:
         role_row.addWidget(oobi_label)
 
         self.oobi_role_dropdown = FloatingLabelComboBox("Role")
-        self.oobi_role_dropdown.addItems(["Witness", "Controller", "Mailbox", "Peer"])
+        self.oobi_role_dropdown.addItems([
+            "Witness", "Controller", "Mailbox", "Peer", "Peer (offline)",
+        ])
         self.oobi_role_dropdown.setCurrentText("Witness")
         self.oobi_role_dropdown.currentTextChanged.connect(self._on_oobi_role_changed)
         role_row.addWidget(self.oobi_role_dropdown)
@@ -411,6 +413,9 @@ class IdentifierViewSectionsMixin:
 
     def _on_oobi_role_changed(self, role_text: str) -> None:
         """Handle OOBI role dropdown change."""
+        if role_text == "Peer (offline)":
+            self._generate_peer_blob()
+            return
         role_map = {
             "Witness": "witness",
             "Controller": "controller",
@@ -419,6 +424,45 @@ class IdentifierViewSectionsMixin:
         }
         role = role_map.get(role_text, "witness")
         self._generate_oobi(role)
+
+    def _generate_peer_blob(self) -> None:
+        """Render a witness-less peer-OOBI blob the user can copy/share."""
+        from locksmith.peer.cesr_blob import export_peer_blob
+
+        if not self.oobi_display_layout:
+            return
+        while self.oobi_display_layout.count():
+            child = self.oobi_display_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        try:
+            token = export_peer_blob(self.hab)
+        except Exception as e:  # noqa: BLE001
+            err = QLabel(f"Couldn't generate peer blob: {e}")
+            err.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-style: italic;")
+            err.setWordWrap(True)
+            self.oobi_display_layout.addWidget(err)
+            return
+
+        intro = QLabel(
+            "Witness-less peer-OOBI. Send this single token to the peer; "
+            "they paste it into their Add Peer dialog. No witness round-trip."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+        self.oobi_display_layout.addWidget(intro)
+
+        token_row = QHBoxLayout()
+        token_label = QLabel(token)
+        token_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        token_label.setWordWrap(True)
+        token_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        token_row.addWidget(token_label, 1)
+        copy_button = LocksmithCopyButton()
+        copy_button.set_copy_content(token)
+        token_row.addWidget(copy_button)
+        self.oobi_display_layout.addLayout(token_row)
 
     def _generate_oobi(self, role: str) -> None:
         """Generate and display OOBI for the selected role."""

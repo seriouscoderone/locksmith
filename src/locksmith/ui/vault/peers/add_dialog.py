@@ -44,19 +44,20 @@ class AddPeerDialog(QDialog):
         layout.setSpacing(12)
 
         intro = QLabel(
-            "Paste the peer's OOBI URL. Ask the other wallet to copy its "
-            "Peer OOBI from the identifier detail page."
+            "Paste either a witness-served OOBI URL or a witness-less "
+            "peer-OOBI blob (starting with `locksmith-peer-oobi:v1:`) "
+            "copied from the other wallet's identifier detail page."
         )
         intro.setWordWrap(True)
         layout.addWidget(intro)
 
-        oobi_label = QLabel("Peer OOBI URL")
+        oobi_label = QLabel("Peer OOBI URL or blob")
         oobi_label.setStyleSheet("font-weight: 600;")
         layout.addWidget(oobi_label)
         self.oobi_input = QLineEdit()
         self.oobi_input.setObjectName("peer_dialog_oobi_input")
         self.oobi_input.setPlaceholderText(
-            "https://witness.example.com/oobi/EAID.../peer/EWIT..."
+            "https://witness.example.com/oobi/… or locksmith-peer-oobi:v1:…"
         )
         layout.addWidget(self.oobi_input)
 
@@ -64,10 +65,10 @@ class AddPeerDialog(QDialog):
         endpoint_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
         layout.addWidget(endpoint_label)
         endpoint_help = QLabel(
-            "The tcp://host:port the peer is listening on. The OOBI verifies "
-            "the AID; the endpoint tells this wallet where to send messages. "
-            "On a LAN/VPN, the peer's wallet shows this in its peer-mode "
-            "settings."
+            "The tcp://host:port the peer is listening on. Optional when "
+            "using a witness-less blob (the endpoint is embedded). Required "
+            "for witness-served URLs since witnesses don't propagate role "
+            "endpoint authorizations today."
         )
         endpoint_help.setWordWrap(True)
         endpoint_help.setStyleSheet("color: #6E7074; font-size: 11px;")
@@ -111,12 +112,57 @@ class AddPeerDialog(QDialog):
 
     def _on_pair_clicked(self) -> None:
         from locksmith.core.remoting import ResolveOobiDoer
+        from locksmith.peer.cesr_blob import (
+            PeerBlobError, import_peer_blob, is_peer_blob,
+        )
 
         url = self.oobi_input.text().strip()
         endpoint = self.endpoint_input.text().strip()
         if not url:
-            self.error_label.setText("OOBI URL is required.")
+            self.error_label.setText(
+                "Paste either a peer OOBI URL or a witness-less peer-OOBI blob."
+            )
             return
+
+        # Witness-less path: blob carries KEL + role auth + endpoint.
+        # No witness round-trip needed and no separate endpoint entry.
+        if is_peer_blob(url):
+            try:
+                aid = import_peer_blob(self._vault.hby, url)
+            except PeerBlobError as e:
+                logger.warning(
+                    f"peer.pair.failed reason={e.reason} kind=blob"
+                )
+                self.error_label.setText(str(e))
+                return
+            if self._allowlist.contains(aid):
+                self.error_label.setText(
+                    "This peer is already paired with this vault."
+                )
+                return
+            # Endpoint comes from the blob itself (locs Komer is now
+            # populated). If the user also typed one, prefer theirs
+            # (override / on-network address).
+            from keri import kering
+            loc = self._vault.hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
+            endpoint_url = endpoint if endpoint else (loc.url if loc else "")
+            if not endpoint_url:
+                self.error_label.setText(
+                    "Blob parsed but no tcp endpoint is published. "
+                    "Provide a TCP endpoint manually."
+                )
+                return
+            self._allowlist.add(PeerRecord(
+                aid=aid,
+                label=self.label_input.text().strip() or aid[:12],
+                endpoint_url=endpoint_url,
+                paired_at=datetime.now(timezone.utc).isoformat(),
+            ))
+            self.peer_added.emit()
+            self.accept()
+            return
+
+        # URL path: witness-served OOBI + manual endpoint
         if not endpoint:
             self.error_label.setText(
                 "Peer's TCP endpoint is required (e.g. tcp://192.168.1.42:5621)."
