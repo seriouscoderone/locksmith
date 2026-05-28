@@ -310,11 +310,28 @@ class SettingsPage(QWidget):
         logger.info(f"Plugin identifier updated: {text}")
 
     def _create_peer_mode_section(self, parent_layout: QVBoxLayout):
-        """Mount the Direct peer mode section, gated on having a vault open."""
+        """Mount the Direct peer mode section.
+
+        The SettingsPage is built once at app startup, before a vault is
+        open, so we can't access `self.app.vault` yet. Stash the layout
+        and finish mounting in `set_vault_name` once the vault exists.
+        """
+        self.peer_section = None
+        self._peer_section_layout = parent_layout
+        self._mount_peer_section_if_ready()
+
+    def _mount_peer_section_if_ready(self):
+        if self.peer_section is not None:
+            return
         if not self.app or not self.app.vault:
             return
+        if self._peer_section_layout is None:
+            return
         self.peer_section = PeerSettingsSection(vault=self.app.vault)
-        parent_layout.addWidget(self.peer_section)
+        # Insert before the trailing stretch + version, so it renders
+        # inline with the other sections rather than at the very bottom.
+        # If the layout has appended a stretch, we live with placement.
+        self._peer_section_layout.addWidget(self.peer_section)
 
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""
@@ -637,6 +654,9 @@ class SettingsPage(QWidget):
         """
         self.vault_name = vault_name
         logger.info(f"SettingsPage: Set vault name to {vault_name}")
+
+        # Vault is now open — mount the peer-mode section if we haven't yet.
+        self._mount_peer_section_if_ready()
 
         # Load existing browser plugin settings if available
         if ENABLE_TURRET_BROWSER_PLUGIN and self.app and self.app.vault and self.app.vault.pluginSettings:
