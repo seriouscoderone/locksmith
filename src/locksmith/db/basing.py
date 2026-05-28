@@ -10,6 +10,8 @@ from dataclasses import dataclass
 
 from keri.db import dbing, koming
 
+from locksmith.peer.records import PeerModeSettings, PeerRecord
+
 
 @dataclass
 class OTPSecret:
@@ -91,6 +93,10 @@ class LocksmithBaser(dbing.LMDBer):
         # Browser plugin settings
         self.pluginSettings = None
 
+        # Peer-mode allowlist + listener settings
+        self.peerAllowlist = None
+        self.peerSettings = None
+
         super(LocksmithBaser, self).__init__(name=name, headDirPath=headDirPath, reopen=reopen, **kwa)
 
     def reopen(self, **kwa):  # type: ignore[override]
@@ -110,6 +116,14 @@ class LocksmithBaser(dbing.LMDBer):
             db=self,
             subkey='pluginSettings.',
             klas=BrowserPluginSettings
+        )
+
+        # Peer-mode storage
+        self.peerAllowlist = koming.Komer(
+            db=self, subkey='peer.', klas=PeerRecord
+        )
+        self.peerSettings = koming.Komer(
+            db=self, subkey='peerSettings.', klas=PeerModeSettings
         )
 
         return self.env
