@@ -875,6 +875,21 @@ def generate_oobi(app, hab, role='witness'):
                         up = urlparse(url)
                         oobis.append(urljoin(up.geturl(), f'/oobi/{hab.pre}/agent/{eid}'))
 
+        elif role == 'peer':
+            # Peer endpoints are witness-served, mirroring the agent role
+            # pattern but with role=peer. The peer endpoint URL itself is
+            # tcp://host:port, but the OOBI is HTTP-fetched from the witness.
+            roleUrls = hab.fetchRoleUrls(
+                hab.pre, scheme=kering.Schemes.http, role='peer'
+            ) or hab.fetchRoleUrls(hab.pre, scheme=kering.Schemes.https, role='peer')
+
+            if roleUrls and 'peer' in roleUrls:
+                for eid, urls in roleUrls['peer'].items():
+                    url = urls.get(kering.Schemes.http) or urls.get(kering.Schemes.https)
+                    if url:
+                        up = urlparse(url)
+                        oobis.append(urljoin(up.geturl(), f'/oobi/{hab.pre}/peer/{eid}'))
+
         if not oobis:
             return {
                 'success': False,
