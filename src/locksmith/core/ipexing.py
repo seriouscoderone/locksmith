@@ -429,7 +429,13 @@ class SendGrantDoer(doing.DoDoer):
                 while not doer.done:
                     yield self.tock
 
-                logger.info(f"Grant message {exn.said} sent successfully to {recp}")
+                channel = (
+                    postman.last_outcome.value if postman.last_outcome else "mailbox"
+                )
+                logger.info(
+                    f"Grant message {exn.said} sent successfully to {recp} "
+                    f"channel={channel}"
+                )
 
                 # Signal success
                 if self.signal_bridge:
@@ -440,7 +446,8 @@ class SendGrantDoer(doing.DoDoer):
                             'success': True,
                             'credential_said': self.credential_said,
                             'recipient': recp,
-                            'grant_said': exn.said
+                            'grant_said': exn.said,
+                            'channel': channel,
                         }
                     )
             else:

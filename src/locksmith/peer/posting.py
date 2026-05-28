@@ -41,6 +41,11 @@ class PeerAwarePoster:
             headers=headers, **kwa,
         )
         self._evts: list[dict] = []
+        #: SendOutcome of the most recent deliver() call, or None if
+        #: deliver() hasn't been called yet. Read this from outside to
+        #: surface the transport channel in the UI (e.g. notification
+        #: toast badges "peer", "mailbox", "peer→mailbox").
+        self.last_outcome: SendOutcome | None = None
 
     def send(self, serder, attachment=None):
         """Mirror StreamPoster.send: enqueue the serder + attachment.
@@ -73,6 +78,7 @@ class PeerAwarePoster:
             logger.info(
                 f"peer.outbound.no_record recipient={self.recp} → mailbox"
             )
+            self.last_outcome = SendOutcome.MAILBOX
             return self._inner.deliver()
 
         body = self._materialize_bytes()
@@ -87,9 +93,14 @@ class PeerAwarePoster:
         )
 
         if outcome is SendOutcome.PEER:
+            logger.info(
+                f"peer.outbound.peer_ok recipient={self.recp} "
+                f"bytes={len(body)} events={len(self._evts)}"
+            )
             # Successful peer delivery — clear the inner queue so the
             # mailbox doer doesn't double-send.
             self._inner.evts = decking.Deck()
+            self.last_outcome = SendOutcome.PEER
             return []
 
         # Peer attempt failed or no peer record was usable. Fall back
@@ -97,6 +108,7 @@ class PeerAwarePoster:
         logger.info(
             f"peer.outbound.fallback recipient={self.recp} outcome={outcome.value}"
         )
+        self.last_outcome = SendOutcome.FALLBACK
         return self._inner.deliver()
 
     def _materialize_bytes(self) -> bytes:
