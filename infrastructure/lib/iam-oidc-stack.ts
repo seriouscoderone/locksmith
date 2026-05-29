@@ -2,6 +2,7 @@ import { Stack, StackProps, CfnOutput } from 'aws-cdk-lib';
 import { Construct } from 'constructs';
 import {
   OpenIdConnectProvider,
+  IOpenIdConnectProvider,
   Role,
   WebIdentityPrincipal,
   PolicyStatement,
@@ -13,6 +14,12 @@ import { ReleasesConfig } from './config';
 export interface IamOidcStackProps extends StackProps {
   readonly config: ReleasesConfig;
   readonly releasesBucket: Bucket;
+  /**
+   * If set, import the existing GitHub OIDC provider at this ARN instead of creating a new one.
+   * AWS only allows one OIDC provider per issuer per account, so set this if the account
+   * already has a GitHub OIDC provider from a prior project.
+   */
+  readonly existingOidcProviderArn?: string;
 }
 
 export class IamOidcStack extends Stack {
@@ -21,10 +28,12 @@ export class IamOidcStack extends Stack {
   constructor(scope: Construct, id: string, props: IamOidcStackProps) {
     super(scope, id, props);
 
-    const provider = new OpenIdConnectProvider(this, 'GithubOidc', {
-      url: 'https://token.actions.githubusercontent.com',
-      clientIds: ['sts.amazonaws.com'],
-    });
+    const provider: IOpenIdConnectProvider = props.existingOidcProviderArn
+      ? OpenIdConnectProvider.fromOpenIdConnectProviderArn(this, 'GithubOidc', props.existingOidcProviderArn)
+      : new OpenIdConnectProvider(this, 'GithubOidc', {
+          url: 'https://token.actions.githubusercontent.com',
+          clientIds: ['sts.amazonaws.com'],
+        });
 
     const principal = new WebIdentityPrincipal(provider.openIdConnectProviderArn, {
       StringEquals: {

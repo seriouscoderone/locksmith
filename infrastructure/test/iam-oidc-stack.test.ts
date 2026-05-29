@@ -62,4 +62,25 @@ describe('IamOidcStack', () => {
       }),
     });
   });
+
+  test('uses an existing OIDC provider when existingOidcProviderArn is given', () => {
+    const app = new App();
+    const cfg = new ReleasesConfig({ account: '111122223333', primaryRegion: 'us-east-1' });
+    const support = new Stack(app, 'Support2', { env: { account: cfg.account, region: cfg.primaryRegion } });
+    const bucket = new Bucket(support, 'B2', { bucketName: cfg.domainName });
+    const stack = new IamOidcStack(app, 'TestImportOidcStack', {
+      config: cfg,
+      releasesBucket: bucket,
+      existingOidcProviderArn: 'arn:aws:iam::111122223333:oidc-provider/token.actions.githubusercontent.com',
+      env: { account: cfg.account, region: cfg.primaryRegion },
+    });
+    const t = Template.fromStack(stack);
+    // No new OIDC provider should be created in this stack
+    t.resourceCountIs('AWS::IAM::OIDCProvider', 0);
+    t.resourceCountIs('Custom::AWSCDKOpenIdConnectProvider', 0);
+    // The role still exists
+    t.hasResourceProperties('AWS::IAM::Role', {
+      RoleName: 'gha-locksmith-release-publisher',
+    });
+  });
 });

@@ -48,6 +48,7 @@ dns.addDependency(cdn);
 const iamOidc = new IamOidcStack(app, 'LocksmithReleasesIamOidc', {
   config,
   releasesBucket: bucket.bucket,
+  existingOidcProviderArn: process.env.LOCKSMITH_EXISTING_OIDC_PROVIDER_ARN,
   env: primaryEnv,
 });
 iamOidc.addDependency(bucket);
