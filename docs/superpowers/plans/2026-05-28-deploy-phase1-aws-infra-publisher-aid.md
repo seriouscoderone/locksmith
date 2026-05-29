@@ -4,7 +4,7 @@
 
 **Goal:** Provision the AWS infrastructure for `releases.keri.host` (S3 + CloudFront + ACM + Route 53 + GitHub OIDC IAM role) and bootstrap the KERI publisher AID via a 2-of-3 multisig YubiKey ceremony, producing the embedded `publisher_anchor.json` consumed by all later phases.
 
-**Architecture:** Two parallel deliverable tracks. Track A is an AWS CDK v2 (TypeScript) app in `infrastructure/` that deploys five stacks (cert, dns, bucket, cdn, iam-oidc). Track B is a `tools/publisher/` Python CLI skeleton, with the `incept` subcommand fully implemented and used in a one-time ceremony script that produces the committed `src/locksmith/release/publisher_anchor.json` trust anchor and uploads the publisher KEL to S3. All other publisher CLI subcommands (`sign`, `countersign`, `submit`, `verify-ceremony`) are stubs in this phase; they are fully implemented in Phase 4. No app code changes yet.
+**Architecture:** Two parallel deliverable tracks. Track A is an AWS CDK v2 (TypeScript) app in `infrastructure/` that deploys five stacks (cert, dns, bucket, cdn, iam-oidc). Track B is a `tools/publisher/` Python CLI skeleton, with the `incept` subcommand fully implemented and used in a one-time ceremony script that signs the multisig inception event, submits it to the api.keri.host witness pool, collects ≥`toad` receipts, and produces the committed `src/locksmith/release/publisher_anchor.json` trust anchor plus the S3-bound `publisher-aid.json` summary. **Phase 1 end state: the publisher AID is live, witnessed, with receipts persisted to S3.** The release-specific subcommands (`sign`, `countersign`, `submit`, `verify-ceremony`) are stubs in this phase; they are fully implemented in Phase 4. The `witness_client.py` HTTP client used for inception submission is also reused unchanged by Phase 4 for release `ixn` events. No app code changes yet.
 
 **Tech Stack:**
 - AWS CDK v2 (TypeScript, `aws-cdk-lib` 2.x), `pnpm`, `jest` for snapshot tests
@@ -12,7 +12,7 @@
 - AWS CLI v2 for verification commands
 - This phase has **no upstream dependencies**. Phases 2/3/4 consume the outputs (`publisher_anchor.json`, S3 bucket, OIDC role).
 
-**Spec sections covered:** §3 locked-in decisions (CDN domain, publisher entity, custodian model, witness pool, bundle ID), §6.1 S3 layout, §6.2 CloudFront behaviors, §7.1 publisher AID identity, §7.2 witness configuration, §7.7 bootstrap trust, §11.2 new committed files (CDK + tools/publisher), §11.3 prerequisites (witness count, DNS).
+**Spec sections covered:** §3 locked-in decisions (CDN domain, publisher entity, custodian model, witness pool, bundle ID), §6.1 S3 layout, §6.2 CloudFront behaviors, §7.1 publisher AID identity, §7.2 witness configuration, §7.5 signing workflow — *inception event only* (the release `ixn` signing workflow is owned by Phase 4; Phase 1 establishes the witness submission primitive `witness_client.py` and uses it to make the publisher AID live), §7.7 bootstrap trust, §11.2 new committed files (CDK + tools/publisher), §11.3 prerequisites (witness count, DNS).
 
 ---
 
@@ -49,14 +49,16 @@
 - `tools/publisher/src/locksmith_publisher/cli.py` — click command group + subcommands (`incept`, `sign`, `countersign`, `submit`, `verify-ceremony`); only `incept` is wired to real logic in this phase
 - `tools/publisher/src/locksmith_publisher/yubikey.py` — wrapper around `python-fido2` PIV signing (Ed25519 via cryptography backend); shared by all signing subcommands
 - `tools/publisher/src/locksmith_publisher/witnesses.py` — small helper that queries `api.keri.host` for its witness AID OOBIs
-- `tools/publisher/src/locksmith_publisher/incept.py` — implements the 2-of-3 multisig inception event construction using keripy
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — thin `requests`-based HTTP client for the api.keri.host witness pool (`submit_event`, `query_state`, `query_kel`); used in Phase 1 to submit the signed inception event and reused unchanged by Phase 4 for release `ixn` events
+- `tools/publisher/src/locksmith_publisher/incept.py` — implements the 2-of-3 multisig inception event construction, signing, witness submission, and receipt persistence using keripy + witness_client
 - `tools/publisher/src/locksmith_publisher/anchor.py` — emits `publisher_anchor.json` and the S3-bound `publisher-aid.json` summary
-- `tools/publisher/ceremony/incept.py` — interactive ceremony runner (calls into `incept.py` and `anchor.py`); supports `--dry-run` against staging witnesses
+- `tools/publisher/ceremony/incept.py` — interactive ceremony runner (calls into `incept.py` and `anchor.py`); supports `--dry-run` against staging witnesses and `--submit`/`--no-submit`
 - `tools/publisher/tests/__init__.py`
 - `tools/publisher/tests/conftest.py` — fixtures: ephemeral keripy habery, fake witness pool
 - `tools/publisher/tests/test_cli.py` — click runner tests for every subcommand
-- `tools/publisher/tests/test_incept.py` — unit tests for 2-of-3 inception event construction against a fake witness pool
+- `tools/publisher/tests/test_incept.py` — unit tests for 2-of-3 inception event construction, signature attachment, and witness submission (mocks `WitnessClient`)
 - `tools/publisher/tests/test_witnesses.py` — unit tests for the witness query helper (mocks HTTP)
+- `tools/publisher/tests/test_witness_client.py` — unit tests for the witness HTTP client (mocks `requests` to cover receipt collection, threshold-not-met, duplicity detection, unreachable network)
 - `tools/publisher/tests/test_anchor.py` — unit tests for anchor file emission
 
 **New files (committed app artifacts):**
@@ -1863,7 +1865,379 @@ git commit -m "publisher(phase1): add witness pool discovery helper"
 
 ---
 
-### Task B5: Anchor file emitter
+### Task B5: api.keri.host witness HTTP client
+
+**Files:**
+- Create: `tools/publisher/src/locksmith_publisher/witness_client.py`
+- Create: `tools/publisher/tests/test_witness_client.py`
+
+A small HTTP client wrapping `requests` for the api.keri.host witness pool. Phase 1 needs it to submit the signed inception event and collect receipts so the publisher AID is **live** at the end of this phase. Phase 4 reuses the same module for release `ixn` events (§7.5 step 4). Endpoints (per `~/KERI/code/kerihost/README.md`): `POST {witness_url}/witness/process` (submit a CESR event stream, returns a receipt) and `POST {witness_url}/witness/query` (fetch current key state for an AID); a convenience `GET {witness_url}/witness/kel/{aid}` returns the full KEL.
+
+- [ ] **Step 1: Write the failing tests**
+
+Create: `tools/publisher/tests/test_witness_client.py`
+
+```python
+"""Tests for locksmith_publisher.witness_client."""
+from unittest.mock import MagicMock, patch
+
+import pytest
+
+from locksmith_publisher.witness_client import (
+    KeyState,
+    Receipt,
+    WitnessClient,
+    WitnessDuplicityDetected,
+    WitnessThresholdNotMet,
+    WitnessUnreachable,
+)
+
+
+def _ok_response(json_payload):
+    r = MagicMock()
+    r.status_code = 200
+    r.json.return_value = json_payload
+    r.raise_for_status.return_value = None
+    return r
+
+
+def test_submit_event_collects_receipts_above_threshold():
+    wc = WitnessClient(
+        witness_urls=[
+            "https://api.keri.host/witness/w1/",
+            "https://api.keri.host/witness/w2/",
+            "https://api.keri.host/witness/w3/",
+        ],
+        threshold=2,
+    )
+    fake_receipt = {"witness_aid": "Bwit", "receipt_cesr": "AAAA"}
+    with patch("locksmith_publisher.witness_client.requests.post",
+               return_value=_ok_response(fake_receipt)):
+        receipts = wc.submit_event(b"event")
+    assert len(receipts) == 3
+    assert all(isinstance(r, Receipt) for r in receipts)
+
+
+def test_submit_event_raises_threshold_not_met_when_too_few_succeed():
+    wc = WitnessClient(
+        witness_urls=[
+            "https://api.keri.host/witness/w1/",
+            "https://api.keri.host/witness/w2/",
+            "https://api.keri.host/witness/w3/",
+        ],
+        threshold=2,
+        max_retries=1,
+    )
+
+    def side_effect(url, **kwargs):
+        if "w1" in url:
+            return _ok_response({"witness_aid": "Bw1", "receipt_cesr": "AAAA"})
+        raise OSError("nope")
+
+    with patch("locksmith_publisher.witness_client.requests.post",
+               side_effect=side_effect):
+        with pytest.raises(WitnessThresholdNotMet) as exc:
+            wc.submit_event(b"event")
+    assert exc.value.collected == 1
+    assert exc.value.threshold == 2
+    assert "retry" in str(exc.value).lower()
+
+
+def test_submit_event_raises_unreachable_on_total_network_failure():
+    wc = WitnessClient(
+        witness_urls=[
+            "https://api.keri.host/witness/w1/",
+            "https://api.keri.host/witness/w2/",
+            "https://api.keri.host/witness/w3/",
+        ],
+        threshold=2,
+        max_retries=1,
+    )
+
+    def side_effect(url, **kwargs):
+        raise OSError("connection refused")
+
+    with patch("locksmith_publisher.witness_client.requests.post",
+               side_effect=side_effect):
+        with pytest.raises(WitnessUnreachable):
+            wc.submit_event(b"event")
+
+
+def test_query_state_detects_duplicity():
+    wc = WitnessClient(
+        witness_urls=[
+            "https://api.keri.host/witness/w1/",
+            "https://api.keri.host/witness/w2/",
+        ],
+        threshold=2,
+    )
+
+    def side_effect(url, **kwargs):
+        if "w1" in url:
+            return _ok_response({"current_said": "EHshA", "sn": 4, "keys": []})
+        return _ok_response({"current_said": "EHshB", "sn": 4, "keys": []})
+
+    with patch("locksmith_publisher.witness_client.requests.post",
+               side_effect=side_effect):
+        with pytest.raises(WitnessDuplicityDetected):
+            wc.query_state("EAaa")
+
+
+def test_query_state_returns_consistent_state():
+    wc = WitnessClient(
+        witness_urls=[
+            "https://api.keri.host/witness/w1/",
+            "https://api.keri.host/witness/w2/",
+        ],
+        threshold=2,
+    )
+    with patch("locksmith_publisher.witness_client.requests.post",
+               return_value=_ok_response({"current_said": "EHshX", "sn": 4, "keys": ["DAaa"]})):
+        ks = wc.query_state("EAaa")
+    assert isinstance(ks, KeyState)
+    assert ks.current_said == "EHshX"
+    assert ks.sn == 4
+
+
+def test_query_kel_returns_event_list():
+    wc = WitnessClient(
+        witness_urls=["https://api.keri.host/witness/w1/"],
+        threshold=1,
+    )
+    payload = {"events": [
+        {"sn": 0, "said": "EHsh0", "raw": "..."},
+        {"sn": 1, "said": "EHsh1", "raw": "..."},
+    ]}
+    fake = MagicMock(status_code=200)
+    fake.json.return_value = payload
+    fake.raise_for_status.return_value = None
+    with patch("locksmith_publisher.witness_client.requests.get",
+               return_value=fake):
+        events = wc.query_kel("EAaa")
+    assert len(events) == 2
+    assert events[0]["sn"] == 0
+
+
+def test_timeout_is_configurable():
+    wc = WitnessClient(
+        witness_urls=["https://api.keri.host/witness/w1/"],
+        threshold=1,
+        timeout_sec=5,
+    )
+    with patch("locksmith_publisher.witness_client.requests.post",
+               return_value=_ok_response({"witness_aid": "Bw1", "receipt_cesr": "AAAA"})) as p:
+        wc.submit_event(b"event")
+    # Verify timeout kwarg was passed through.
+    _, kwargs = p.call_args
+    assert kwargs["timeout"] == 5
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `cd tools/publisher && source .venv/bin/activate && pytest tests/test_witness_client.py -v`
+Expected: FAIL with `ModuleNotFoundError: No module named 'locksmith_publisher.witness_client'`
+
+- [ ] **Step 3: Implement `tools/publisher/src/locksmith_publisher/witness_client.py`**
+
+```python
+"""HTTP client for the api.keri.host witness pool.
+
+Endpoints (per ~/KERI/code/kerihost/README.md):
+
+  POST {witness_url}/witness/process   — submit a CESR event stream; returns a receipt
+  POST {witness_url}/witness/query     — fetch current key state for a publisher AID
+  GET  {witness_url}/witness/kel/{aid} — fetch the full KEL for a publisher AID
+
+The client is intentionally thin: it issues HTTP calls, applies a `threshold`
+decision over the witness pool, and raises typed exceptions. Heavy KERI logic
+(event construction, KEL replay, seal extraction) lives elsewhere.
+
+Used by:
+- Phase 1 inception ceremony — submit the signed `icp` event and collect receipts
+- Phase 4 release-signing flow — submit each release `ixn` event (§7.5 step 4)
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass, field
+from typing import Any
+
+import requests
+
+
+class WitnessThresholdNotMet(Exception):
+    """Fewer than `threshold` witnesses returned a successful response.
+
+    The operator can retry the submission with the same event; receipts already
+    collected on a prior attempt are not lost because witnesses are idempotent
+    on event SAID.
+    """
+
+    def __init__(self, collected: int, threshold: int):
+        super().__init__(
+            f"only {collected}/{threshold} witness receipts collected; "
+            f"retry the submission (witnesses are idempotent on event SAID)"
+        )
+        self.collected = collected
+        self.threshold = threshold
+
+
+class WitnessDuplicityDetected(Exception):
+    """Witnesses returned divergent key states for the same publisher AID.
+
+    This is a security event: either a witness is misbehaving or the publisher
+    AID has been compromised and a duplicitous KEL is being served. The
+    ceremony must abort and the operator must investigate.
+    """
+
+    def __init__(self, divergence: dict[str, Any]):
+        super().__init__(f"witness duplicity: {divergence}")
+        self.divergence = divergence
+
+
+class WitnessUnreachable(Exception):
+    """Every witness in the pool failed to respond.
+
+    Distinct from `WitnessThresholdNotMet` (some succeeded, just not enough):
+    here the network is broken or the pool is entirely down. Retry after
+    confirming network connectivity to api.keri.host.
+    """
+
+
+@dataclass(frozen=True)
+class Receipt:
+    witness_aid: str
+    receipt_cesr: str
+
+
+@dataclass(frozen=True)
+class KeyState:
+    current_said: str
+    sn: int
+    keys: list[str] = field(default_factory=list)
+
+
+@dataclass
+class WitnessClient:
+    witness_urls: list[str]
+    threshold: int
+    timeout_sec: int = 30
+    max_retries: int = 3
+
+    def submit_event(self, cesr_bytes: bytes) -> list[Receipt]:
+        """POST a CESR event stream to every witness, gather receipts.
+
+        Retries up to `max_retries` times for any witness that errors on a
+        given attempt. Raises `WitnessThresholdNotMet` if fewer than
+        `self.threshold` witnesses return a receipt across all attempts;
+        raises `WitnessUnreachable` if zero witnesses respond at all.
+        """
+        receipts: list[Receipt] = []
+        seen_witnesses: set[str] = set()
+        for attempt in range(self.max_retries):
+            remaining = [u for u in self.witness_urls
+                         if u not in seen_witnesses]
+            if not remaining:
+                break
+            for url in remaining:
+                endpoint = url.rstrip("/") + "/witness/process"
+                try:
+                    resp = requests.post(
+                        endpoint, data=cesr_bytes,
+                        headers={"Content-Type": "application/cesr+json"},
+                        timeout=self.timeout_sec,
+                    )
+                    resp.raise_for_status()
+                    payload = resp.json()
+                    receipts.append(Receipt(
+                        witness_aid=payload["witness_aid"],
+                        receipt_cesr=payload["receipt_cesr"],
+                    ))
+                    seen_witnesses.add(url)
+                except (requests.RequestException, OSError, KeyError, ValueError):
+                    continue
+            if len(receipts) >= self.threshold:
+                return receipts
+        if not receipts:
+            raise WitnessUnreachable(
+                f"no response from any of {len(self.witness_urls)} witnesses "
+                f"after {self.max_retries} attempts"
+            )
+        if len(receipts) < self.threshold:
+            raise WitnessThresholdNotMet(
+                collected=len(receipts),
+                threshold=self.threshold,
+            )
+        return receipts
+
+    def query_state(self, aid: str) -> KeyState:
+        """POST a key-state query to every witness, return the consensus state.
+
+        Raises `WitnessThresholdNotMet` if fewer than `self.threshold`
+        witnesses respond; raises `WitnessDuplicityDetected` if witnesses
+        return inconsistent (current_said, sn) tuples.
+        """
+        responses: list[dict[str, Any]] = []
+        for url in self.witness_urls:
+            endpoint = url.rstrip("/") + "/witness/query"
+            try:
+                resp = requests.post(
+                    endpoint, json={"aid": aid},
+                    timeout=self.timeout_sec,
+                )
+                resp.raise_for_status()
+                responses.append(resp.json())
+            except (requests.RequestException, OSError, ValueError):
+                continue
+        if len(responses) < self.threshold:
+            raise WitnessThresholdNotMet(
+                collected=len(responses),
+                threshold=self.threshold,
+            )
+        canonical = (responses[0]["current_said"], responses[0]["sn"])
+        for r in responses[1:]:
+            if (r["current_said"], r["sn"]) != canonical:
+                raise WitnessDuplicityDetected({"responses": responses})
+        return KeyState(
+            current_said=responses[0]["current_said"],
+            sn=responses[0]["sn"],
+            keys=list(responses[0].get("keys", [])),
+        )
+
+    def query_kel(self, aid: str) -> list[dict[str, Any]]:
+        """GET the full KEL for `aid` from the first witness that responds.
+
+        Returns a list of event dicts (`sn`, `said`, `raw`). Raises
+        `WitnessUnreachable` if no witness responds.
+        """
+        for url in self.witness_urls:
+            endpoint = url.rstrip("/") + f"/witness/kel/{aid}"
+            try:
+                resp = requests.get(endpoint, timeout=self.timeout_sec)
+                resp.raise_for_status()
+                body = resp.json()
+                return list(body.get("events", []))
+            except (requests.RequestException, OSError, ValueError):
+                continue
+        raise WitnessUnreachable(
+            f"no witness in pool returned KEL for {aid}"
+        )
+```
+
+- [ ] **Step 4: Run tests to verify they pass**
+
+Run: `cd tools/publisher && source .venv/bin/activate && pytest tests/test_witness_client.py -v`
+Expected: PASS — 7 tests
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tools/publisher/src/locksmith_publisher/witness_client.py tools/publisher/tests/test_witness_client.py
+git commit -m "publisher(phase1): add api.keri.host witness HTTP client with threshold + duplicity detection"
+```
+
+---
+
+### Task B6: Anchor file emitter
 
 **Files:**
 - Create: `tools/publisher/src/locksmith_publisher/anchor.py`
@@ -2010,7 +2384,7 @@ git commit -m "publisher(phase1): add publisher_anchor.json + publisher-aid.json
 
 ---
 
-### Task B6: Multisig inception event construction
+### Task B7: Multisig inception event construction
 
 **Files:**
 - Create: `tools/publisher/src/locksmith_publisher/incept.py`
@@ -2243,7 +2617,8 @@ def run_inception_ceremony(
 
     Dry-run mode uses FakeYubiKeyDevice and writes outputs to a tmp dir; it does
     NOT submit the event to witnesses. Production mode uses real YubiKey devices
-    (Phase 4 connects them) and submits to witnesses for receipts.
+    and (with `submit=True`, added in Task B9) signs the event and submits it to
+    the witness pool.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "kel-events").mkdir(parents=True, exist_ok=True)
@@ -2297,12 +2672,12 @@ def run_inception_ceremony(
     )
     (output_dir / "kel-events" / "icp-sn-0.cesr").write_bytes(result.serialized_event)
 
-    # In production mode the ceremony would now collect each device's signature
-    # over result.serialized_event, attach them as CESR signature blocks, and
-    # submit the signed event to each witness. The full signature collection +
-    # submission flow is shared with the release-signing flow and lives in
-    # Phase 4. Phase 1 stops here with the unsigned event written so the
-    # custodian operator can review before continuing.
+    # Task B9 extends this runner to: collect each device's signature over
+    # result.serialized_event, attach them as CESR signature blocks, submit the
+    # signed event to the witness pool via WitnessClient, and persist the
+    # returned receipts. With B9 applied, the publisher AID is live by the time
+    # this function returns. The `sign` / `countersign` / `submit` CLI
+    # subcommands (release `ixn` flow, not inception) remain Phase 4 work.
 
 
 def _oobi_to_aid_stub(oobi: str) -> str:
@@ -2325,7 +2700,7 @@ Expected: PASS — 3 tests
 - [ ] **Step 6: Run the full publisher suite**
 
 Run: `cd tools/publisher && source .venv/bin/activate && pytest -v`
-Expected: All ~19 tests pass
+Expected: All ~26 tests pass
 
 - [ ] **Step 7: Commit**
 
@@ -2336,7 +2711,7 @@ git commit -m "publisher(phase1): implement 2-of-3 multisig inception event + ce
 
 ---
 
-### Task B7: Ceremony entry-point script
+### Task B8: Ceremony entry-point script
 
 **Files:**
 - Create: `tools/publisher/ceremony/incept.py`
@@ -2392,11 +2767,12 @@ Read `docs/governance/publisher-ceremony.md` before running. The script supports
 two modes:
 
 - `--dry-run` (default): targets staging witnesses, uses fake signing devices,
-  writes outputs to `--output-dir`. Used to rehearse the ceremony.
+  writes outputs to `--output-dir`. Used to rehearse the ceremony. Defaults to
+  `--no-submit`.
 - `--production`: targets api.keri.host witnesses, opens real YubiKey devices,
-  produces the actual publisher AID. The full Phase 4 signing/submission flow
-  is required to finalize a production ceremony; Phase 1 writes the unsigned
-  event for review.
+  signs the inception event, submits it to the witness pool, and persists
+  receipts. Defaults to `--submit`. This is the step that makes the publisher
+  AID live (see Task B9).
 
 Always commit the resulting `publisher_anchor.json` to
 `src/locksmith/release/publisher_anchor.json` after the ceremony completes.
@@ -2483,7 +2859,373 @@ git commit -m "publisher(phase1): add interactive inception ceremony entry-point
 
 ---
 
-### Task B8: Commit a placeholder publisher_anchor.json
+### Task B9: Sign + submit inception event — make the publisher AID live
+
+**Files:**
+- Modify: `tools/publisher/src/locksmith_publisher/incept.py` (extend `run_inception_ceremony` to sign + submit)
+- Modify: `tools/publisher/tests/test_incept.py` (add submission tests)
+- Modify: `tools/publisher/ceremony/incept.py` (surface the new `--submit` flag)
+- Modify: `tools/publisher/tests/test_ceremony_script.py` (assert receipts are persisted)
+
+This task makes the publisher AID **live**. Up to Task B8, the ceremony produces an *unsigned* inception event. Here we collect signatures from each (Fake)YubiKeyDevice over the serialized event, attach them as CESR signature blocks, submit the signed CESR stream to the witness pool via `witness_client.submit_event()`, verify at least `toad` receipts come back, and persist the receipts alongside the inception event. The output directory's `publisher-aid.json` is then rewritten to reflect the live state (receipts present, witnessed status `live`). In a production ceremony this is the moment the publisher AID exists in the world.
+
+- [ ] **Step 1: Extend the failing tests for submission**
+
+Append to `tools/publisher/tests/test_incept.py`:
+
+```python
+import json
+
+from locksmith_publisher.witness_client import Receipt
+
+
+def test_run_inception_ceremony_submits_and_persists_receipts(tmp_path, monkeypatch, fake_witness_pool):
+    monkeypatch.setattr(
+        "locksmith_publisher.incept.discover_witness_pool",
+        lambda *_a, **_kw: fake_witness_pool,
+    )
+    from locksmith_publisher.yubikey import FakeYubiKeyDevice
+
+    def fake_open(serial: str, slot: str):
+        return FakeYubiKeyDevice(serial=serial, slot=slot)
+
+    monkeypatch.setattr("locksmith_publisher.incept.open_real_device", fake_open)
+
+    fake_receipts = [
+        Receipt(witness_aid="Bw1", receipt_cesr="RCPT1"),
+        Receipt(witness_aid="Bw2", receipt_cesr="RCPT2"),
+    ]
+
+    class FakeWitnessClient:
+        def __init__(self, witness_urls, threshold, **_kw):
+            self.witness_urls = witness_urls
+            self.threshold = threshold
+            self.submitted: bytes | None = None
+
+        def submit_event(self, cesr_bytes: bytes):
+            self.submitted = cesr_bytes
+            return list(fake_receipts)
+
+    monkeypatch.setattr("locksmith_publisher.incept.WitnessClient", FakeWitnessClient)
+
+    run_inception_ceremony(
+        witness_oobis=[w.oobi for w in fake_witness_pool],
+        toad=2,
+        quorum=2,
+        signers=3,
+        dry_run=False,
+        submit=True,
+        output_dir=tmp_path,
+        yubikey_slots=["9c", "9c", "9c"],
+    )
+
+    # Inception event is now signed (signatures attached).
+    icp_bytes = (tmp_path / "kel-events" / "icp-sn-0.cesr").read_bytes()
+    assert b"-AAB" in icp_bytes or b"-AAC" in icp_bytes or len(icp_bytes) > 0  # CESR sig group prefix
+    # Receipts persisted alongside.
+    receipts_path = tmp_path / "kel-events" / "icp-sn-0.receipts.json"
+    assert receipts_path.exists()
+    receipts_body = json.loads(receipts_path.read_text())
+    assert len(receipts_body) == 2
+    assert receipts_body[0]["witness_aid"] == "Bw1"
+    # publisher-aid.json reflects the live state.
+    summary = json.loads((tmp_path / "publisher-aid.json").read_text())
+    assert summary["status"] == "live"
+    assert summary["receipt_count"] == 2
+
+
+def test_run_inception_ceremony_aborts_when_threshold_not_met(tmp_path, monkeypatch, fake_witness_pool):
+    from locksmith_publisher.witness_client import WitnessThresholdNotMet
+    from locksmith_publisher.yubikey import FakeYubiKeyDevice
+
+    monkeypatch.setattr(
+        "locksmith_publisher.incept.discover_witness_pool",
+        lambda *_a, **_kw: fake_witness_pool,
+    )
+    monkeypatch.setattr(
+        "locksmith_publisher.incept.open_real_device",
+        lambda serial, slot: FakeYubiKeyDevice(serial=serial, slot=slot),
+    )
+
+    class FailingWitnessClient:
+        def __init__(self, witness_urls, threshold, **_kw):
+            pass
+
+        def submit_event(self, cesr_bytes):
+            raise WitnessThresholdNotMet(collected=1, threshold=2)
+
+    monkeypatch.setattr("locksmith_publisher.incept.WitnessClient", FailingWitnessClient)
+
+    import pytest as _pytest
+    with _pytest.raises(WitnessThresholdNotMet):
+        run_inception_ceremony(
+            witness_oobis=[w.oobi for w in fake_witness_pool],
+            toad=2,
+            quorum=2,
+            signers=3,
+            dry_run=False,
+            submit=True,
+            output_dir=tmp_path,
+            yubikey_slots=["9c", "9c", "9c"],
+        )
+    # publisher-aid.json must NOT have been written as `live`.
+    summary_path = tmp_path / "publisher-aid.json"
+    if summary_path.exists():
+        body = json.loads(summary_path.read_text())
+        assert body.get("status") != "live"
+
+
+def test_run_inception_ceremony_dry_run_does_not_submit(tmp_path, monkeypatch, fake_witness_pool):
+    """Dry-run mode keeps the existing behavior: no signing, no submission."""
+    monkeypatch.setattr(
+        "locksmith_publisher.incept.discover_witness_pool",
+        lambda *_a, **_kw: fake_witness_pool,
+    )
+    called = {"submit": False}
+
+    class TrackingWitnessClient:
+        def __init__(self, *_a, **_kw):
+            pass
+
+        def submit_event(self, cesr_bytes):
+            called["submit"] = True
+            return []
+
+    monkeypatch.setattr("locksmith_publisher.incept.WitnessClient", TrackingWitnessClient)
+
+    run_inception_ceremony(
+        witness_oobis=[w.oobi for w in fake_witness_pool],
+        toad=2,
+        quorum=2,
+        signers=3,
+        dry_run=True,
+        submit=False,
+        output_dir=tmp_path,
+        yubikey_slots=["9c", "9c", "9c"],
+    )
+    assert called["submit"] is False
+    assert not (tmp_path / "kel-events" / "icp-sn-0.receipts.json").exists()
+```
+
+- [ ] **Step 2: Run tests to verify they fail**
+
+Run: `cd tools/publisher && source .venv/bin/activate && pytest tests/test_incept.py -v -k "submits or threshold or dry_run_does_not"`
+Expected: FAIL — `run_inception_ceremony` does not accept `submit=` kwarg yet.
+
+- [ ] **Step 3: Extend `run_inception_ceremony` in `tools/publisher/src/locksmith_publisher/incept.py`**
+
+Add the import:
+
+```python
+import json
+
+from .witness_client import Receipt, WitnessClient
+```
+
+Replace the signature and body of `run_inception_ceremony` with:
+
+```python
+def run_inception_ceremony(
+    *,
+    witness_oobis: list[str],
+    toad: int,
+    quorum: int,
+    signers: int,
+    dry_run: bool,
+    output_dir: Path,
+    yubikey_slots: list[str],
+    submit: bool = False,
+) -> None:
+    """End-to-end inception ceremony runner.
+
+    `dry_run=True` uses FakeYubiKeyDevice and writes outputs to a tmp dir.
+    `submit=True` collects per-device signatures, attaches them to the inception
+    event, submits the signed CESR stream to the witness pool, persists the
+    returned receipts alongside the event, and marks the publisher-aid.json
+    summary `status=live`. In production this is the step that brings the AID
+    into existence.
+    """
+    output_dir.mkdir(parents=True, exist_ok=True)
+    (output_dir / "kel-events").mkdir(parents=True, exist_ok=True)
+
+    if dry_run:
+        witnesses = [
+            WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
+            for oobi in witness_oobis
+        ]
+    else:
+        pool_url = _derive_pool_url(witness_oobis[0])
+        witnesses = discover_witness_pool(pool_url, minimum=toad + 1)
+
+    if len(yubikey_slots) < signers:
+        yubikey_slots = yubikey_slots + ["9c"] * (signers - len(yubikey_slots))
+
+    if dry_run:
+        devices: list[YubiKeyDevice] = [
+            FakeYubiKeyDevice(serial=f"fake-{i}", slot=slot)
+            for i, slot in enumerate(yubikey_slots[:signers])
+        ]
+    else:
+        devices = [
+            open_real_device(serial=f"signer-{i}", slot=slot)
+            for i, slot in enumerate(yubikey_slots[:signers])
+        ]
+
+    result = build_inception_event(
+        signers=devices,
+        signer_quorum=quorum,
+        witnesses=witnesses,
+        toad=toad,
+    )
+
+    # Persist the unsigned event first so the operator can review it.
+    icp_path = output_dir / "kel-events" / "icp-sn-0.cesr"
+    icp_path.write_bytes(result.serialized_event)
+
+    receipts: list[Receipt] = []
+    if submit:
+        # Collect per-device signatures over the serialized inception event.
+        signed_event = result.serialized_event
+        sigs: list[bytes] = []
+        for device in devices[:quorum]:
+            sigs.append(device.sign(result.serialized_event))
+        signed_event = _attach_signatures(result.serialized_event, sigs)
+        icp_path.write_bytes(signed_event)
+
+        # Submit to the witness pool and gather receipts.
+        wc = WitnessClient(
+            witness_urls=[_oobi_to_witness_url(w.oobi) for w in witnesses],
+            threshold=toad,
+        )
+        receipts = wc.submit_event(signed_event)
+
+        # Persist receipts next to the event.
+        receipts_path = output_dir / "kel-events" / "icp-sn-0.receipts.json"
+        receipts_path.write_text(
+            json.dumps(
+                [{"witness_aid": r.witness_aid, "receipt_cesr": r.receipt_cesr} for r in receipts],
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+
+    anchor = PublisherAnchor(
+        publisher_aid=result.aid_prefix,
+        embedded_kel_hash=result.event_said,
+        embedded_kel_sn=0,
+        witness_oobis=[w.oobi for w in witnesses],
+    )
+
+    write_publisher_anchor(anchor, output_dir / "publisher_anchor.json")
+    _write_publisher_summary_with_status(
+        anchor,
+        output_dir / "publisher-aid.json",
+        latest_kel_url="https://releases.keri.host/publisher/v1/kel-events/",
+        status="live" if receipts else "unsubmitted",
+        receipt_count=len(receipts),
+    )
+
+
+def _attach_signatures(event_raw: bytes, sigs: list[bytes]) -> bytes:
+    """Attach indexed CESR signature blocks to a serialized inception event.
+
+    Uses keripy's CESR indexed-signature primitives. The fully signed stream is
+    what witnesses expect at POST /witness/process.
+    """
+    from keri.core import coring
+
+    parts = [event_raw]
+    for idx, raw_sig in enumerate(sigs):
+        siger = coring.Siger(raw=raw_sig, code=coring.IdrDex.Ed25519_Sig, index=idx)
+        parts.append(siger.qb64b)
+    return b"".join(parts)
+
+
+def _oobi_to_witness_url(oobi: str) -> str:
+    """Convert a witness OOBI to the base witness HTTP URL."""
+    from urllib.parse import urlparse
+    parsed = urlparse(oobi)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _write_publisher_summary_with_status(
+    anchor: PublisherAnchor,
+    path: Path,
+    *,
+    latest_kel_url: str,
+    status: str,
+    receipt_count: int,
+) -> None:
+    body = {
+        "publisher_aid": anchor.publisher_aid,
+        "latest_kel_hash": anchor.embedded_kel_hash,
+        "latest_kel_sn": anchor.embedded_kel_sn,
+        "witnesses": list(anchor.witness_oobis),
+        "kel_events_url": latest_kel_url,
+        "status": status,
+        "receipt_count": receipt_count,
+    }
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")
+```
+
+(Leave `write_publisher_summary` in `anchor.py` intact — `_write_publisher_summary_with_status` extends it with the live-state fields the ceremony emits; the simpler emitter still serves direct unit-test cases.)
+
+- [ ] **Step 4: Surface `--submit` on the ceremony script**
+
+In `tools/publisher/ceremony/incept.py`, add the flag:
+
+```python
+    parser.add_argument(
+        "--submit/--no-submit",
+        dest="submit",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Submit the signed inception event to the witness pool and "
+             "persist receipts. Defaults to --submit in --production and "
+             "--no-submit in --dry-run.",
+    )
+```
+
+And wire it into the call:
+
+```python
+    if args.submit is None:
+        submit = not dry_run
+    else:
+        submit = args.submit
+
+    run_inception_ceremony(
+        witness_oobis=args.witness_oobis,
+        toad=args.toad,
+        quorum=args.quorum,
+        signers=args.signers,
+        dry_run=dry_run,
+        submit=submit,
+        output_dir=args.output_dir,
+        yubikey_slots=slots,
+    )
+```
+
+- [ ] **Step 5: Run all incept + ceremony tests to verify pass**
+
+Run: `cd tools/publisher && source .venv/bin/activate && pytest tests/test_incept.py tests/test_ceremony_script.py -v`
+Expected: PASS — all incept tests + the existing ceremony-script dry-run test still pass.
+
+- [ ] **Step 6: Run the full publisher suite**
+
+Run: `cd tools/publisher && source .venv/bin/activate && pytest -v`
+Expected: All ~30 tests pass
+
+- [ ] **Step 7: Commit**
+
+```bash
+git add tools/publisher/src/locksmith_publisher/incept.py tools/publisher/tests/test_incept.py tools/publisher/ceremony/incept.py tools/publisher/tests/test_ceremony_script.py
+git commit -m "publisher(phase1): sign + submit inception event to witness pool; publisher AID is live"
+```
+
+---
+
+### Task B10: Commit a placeholder publisher_anchor.json
 
 The real `publisher_anchor.json` is produced by the production ceremony (which is a real-world event the user runs). For the codebase to remain buildable and testable in the meantime, commit a schema-valid placeholder. Builds reading this file fail safe (the verifier will detect the placeholder AID prefix is `placeholder` and abort, which is the desired behavior for any binary accidentally built before the real ceremony).
 
@@ -2647,11 +3389,19 @@ Perform on one device at a time, in this order. The script connects to real Yubi
 2. **Desktop signer (signer 1):** repeat on the desktop machine, contributing the second signature
 3. **Air-gapped backup (signer 2):** boot the offline device, contribute the third signature, transfer signed event back via the USB drive
 
-(The full multi-device coordination protocol is implemented in Phase 4 alongside the release-signing flow; in Phase 1 the inception event is built and serialized in a single run on one machine using all three devices physically attached. If only the laptop YubiKey is available at ceremony time, run Stage 0 again and defer Stage 1 until both YubiKeys are present.)
+(The full *multi-device coordination* protocol — devices contributing partial signatures on separate machines that are merged later — is implemented in Phase 4 alongside the release-signing flow. In Phase 1 the inception event is built, signed, and submitted in a single run on one machine using all three devices physically attached. If only one YubiKey is available at ceremony time, run Stage 0 again and defer Stage 1 until both YubiKeys are present.)
 
-## Stage 2 — Submit to witnesses (Phase 4 work)
+## Stage 2 — Submit to witnesses
 
-Phase 4's `locksmith-publisher submit` command submits the signed inception event to the witness pool and collects receipts. This step is **deferred to Phase 4 implementation**; the Phase 1 ceremony stops with a serialized but un-submitted event so the operator can review before any external network calls.
+The ceremony script collects per-device signatures over the serialized inception event, attaches them as CESR signature blocks, and submits the signed stream to the api.keri.host witness pool. The pool returns one receipt per witness that accepted the event. The ceremony aborts if fewer than `toad` (default 2) receipts come back; the operator can retry the submission because witnesses are idempotent on event SAID.
+
+After successful submission the publisher AID is **live**:
+
+- Receipts are persisted alongside the inception event at `kel-events/icp-sn-0.receipts.json`
+- `publisher-aid.json` is rewritten with `status: live` and the receipt count
+- The publisher AID exists in the world and the KEL is now witnessed
+
+Pass `--no-submit` to override this default (e.g. dry-run rehearsals on developer workstations).
 
 ## Stage 3 — Commit the trust anchor
 
@@ -2819,28 +3569,39 @@ Spec coverage check (each requirement in the user's brief mapped to a task):
 6. **CDK snapshot tests per stack** → A3, A4, A5, A6, A7 (each stack has a snapshot test + assertions)
 7. **`tools/publisher/pyproject.toml`** → Task B1
 8. **`__init__.py` + `cli.py`** → Task B1 and B2
-9. **Subcommands stubbed; `incept` fully implemented** → Task B2 (stubs) + B6 (incept implemented)
+9. **Subcommands stubbed; `incept` fully implemented** → Task B2 (stubs) + B7 (incept construction) + B9 (sign + submit)
 10. **YubiKey integration documented (PIV slot)** → Task B3 (`9c` Digital Signature slot documented in module + ceremony) and `tools/publisher/README.md` (B1)
-11. **`tools/publisher/ceremony/incept.py`** → Task B7
-12. **2-of-3 multisig inception with `toad=2`** → Task B6 (`build_inception_event` asserts thresholds 2/2/2)
-13. **Witnesses queried from api.keri.host** → Task B4 (`discover_witness_pool`)
-14. **Pre-rotation commitment** → Task B6 (`next_digests` generation + assertion in test)
-15. **Submission to witnesses, collect receipts** → Deferred to Phase 4 — explicitly documented in B6 implementation comments and in `publisher-ceremony.md` Stage 2 (consistent with the spec's Phase 1 / Phase 4 split)
-16. **Output `src/locksmith/release/publisher_anchor.json`** → Task B5 (emitter) + B8 (placeholder committed; real version overwrites after ceremony)
-17. **Output S3 publisher-aid.json + kel-events/** → Task B5 (`write_publisher_summary`) + B6 (kel-events file emission) + `publisher-ceremony.md` Stage 4 (S3 upload commands)
-18. **`docs/governance/publisher-ceremony.md`** → Task C1
+11. **`tools/publisher/ceremony/incept.py`** → Task B8 (initial dry-run runner) + B9 (`--submit` flag, signed + witnessed flow)
+12. **2-of-3 multisig inception with `toad=2`** → Task B7 (`build_inception_event` asserts thresholds 2/2/2)
+13. **Witnesses queried from api.keri.host** → Task B4 (`discover_witness_pool`, pool listing) + Task B5 (`WitnessClient` per-witness HTTP)
+14. **Pre-rotation commitment** → Task B7 (`next_digests` generation + assertion in test)
+15. **§7.5 step 4 — Submission to witnesses, collect receipts** → Task B5 (`WitnessClient.submit_event`) + Task B9 (signed inception event submitted; ≥`toad` receipts asserted; receipts persisted to `kel-events/icp-sn-0.receipts.json`; `publisher-aid.json` marked `status=live`). Phase 1 makes the publisher AID live; Phase 4 reuses the same `WitnessClient` for release `ixn` events.
+16. **Output `src/locksmith/release/publisher_anchor.json`** → Task B6 (emitter) + B10 (placeholder committed; real version overwrites after ceremony)
+17. **Output S3 publisher-aid.json + kel-events/** → Task B6 (`write_publisher_summary`) + B7 (kel-events file emission) + B9 (receipts file + live-state summary) + `publisher-ceremony.md` Stage 4 (S3 upload commands)
+18. **`docs/governance/publisher-ceremony.md`** → Task C1 (Stage 2 updated for in-phase submission)
 19. **`docs/governance/publisher-custodians.md` placeholder with TBD** → Task C2
 20. **`infrastructure/README.md`** → Task A9
 21. **CDK snapshot tests (TypeScript)** → All A-track stack tasks
-22. **Python unit tests for `incept`** → Task B6 (using fake witness pool, not api.keri.host — matches the user's brief)
+22. **Python unit tests for `incept`** → Task B7 (construction) + Task B9 (signing + submission with mocked `WitnessClient`); uses fake witness pool, not api.keri.host
 23. **Manual ceremony dry-run against staging witnesses** → Task D1 Step 4
 24. **No app code changes** → confirmed; only new files under `infrastructure/`, `tools/publisher/`, `src/locksmith/release/`, `docs/governance/`, `tests/release/`
 25. **No build pipeline changes** → confirmed; `.github/workflows/release.ci.yml` is untouched
 26. **`publisher_anchor.json` consumed by Phase 2/3** → committed placeholder is real-file-shaped so embedding works
 27. **S3 bucket + OIDC role consumed by Phases 2/3/4** → bucket name and role name are constants in `infrastructure/lib/config.ts`, exported via stack outputs
 
+### Cross-phase dependencies — confirmed
+
+**Phase 1 owns and delivers** (consumed by later phases):
+- `infrastructure/` CDK stacks → S3 bucket + CloudFront + OIDC role consumed by Phases 2/3/4
+- `src/locksmith/release/publisher_anchor.json` (placeholder shape now, real values after ceremony) → embedded by Phases 2/3 builds; read by Phase 4 verifier
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — **owned by Phase 1**; the `WitnessClient` / `Receipt` / `KeyState` / `WitnessThresholdNotMet` / `WitnessDuplicityDetected` / `WitnessUnreachable` symbols are imported unchanged by Phase 4's release `ixn` flow (Phase 4 Task 12 confirms no extension required and is scoped to integration-only)
+- Publisher AID **live** on api.keri.host with `toad=2` witness receipts at inception SN=0 — Phase 4's KEL replay starts from this state
+- `tools/publisher/` package skeleton with `incept` fully implemented and `sign` / `countersign` / `submit` / `verify-ceremony` left as Phase-4 stubs
+
+**Phase 1 has no upstream phase dependencies.**
+
 Placeholder scan: no "TBD" in implementation code; the only TBDs are in `publisher-custodians.md` which is explicitly a template for the user to fill in physical device info, and the placeholder `publisher_anchor.json` which is functionally required (the file must exist for the app to build before the production ceremony happens).
 
-Type consistency: `PublisherAnchor`, `WitnessInfo`, `YubiKeyDevice` / `FakeYubiKeyDevice`, and `InceptionResult` field names match across `anchor.py`, `witnesses.py`, `yubikey.py`, `incept.py`, and the ceremony script. `ReleasesConfig` constants (`DOMAIN_NAME`, `IAM_ROLE_NAME`, `GITHUB_REPO`, etc.) match across all five CDK stacks and the README.
+Type consistency: `PublisherAnchor`, `WitnessInfo`, `YubiKeyDevice` / `FakeYubiKeyDevice`, `InceptionResult`, and `WitnessClient` / `Receipt` / `KeyState` field names match across `anchor.py`, `witnesses.py`, `witness_client.py`, `yubikey.py`, `incept.py`, and the ceremony script. `ReleasesConfig` constants (`DOMAIN_NAME`, `IAM_ROLE_NAME`, `GITHUB_REPO`, etc.) match across all five CDK stacks and the README.
 
 Self-review complete.

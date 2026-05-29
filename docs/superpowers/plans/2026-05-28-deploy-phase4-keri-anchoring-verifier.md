@@ -13,7 +13,7 @@
 **Open question resolution (spec §12 item 7 — publish CI trigger):** This plan uses **manual `workflow_dispatch`** keyed on the version string. EventBridge-triggered automation is a follow-up in Phase 5+. Rationale: deterministic synchronous feedback during early operations; no IAM event-bus surface to design and lock down on day one; the publisher CLI is already interactive (the operator just runs `gh workflow run publish --field version=X.Y.Z` after `submit` completes).
 
 **Cross-phase dependencies:**
-- Depends on Phase 1: `src/locksmith/release/publisher_anchor.json` schema, publisher AID exists on api.keri.host, OIDC role `gha-locksmith-release-publisher`, `tools/publisher/` package skeleton with stubbed `sign`, `countersign`, `submit` subcommands.
+- Depends on Phase 1: `src/locksmith/release/publisher_anchor.json` schema, publisher AID **live** on api.keri.host (inception event submitted, ≥`toad` receipts collected), OIDC role `gha-locksmith-release-publisher`, `tools/publisher/` package skeleton with stubbed `sign`, `countersign`, `submit` subcommands, and `tools/publisher/src/locksmith_publisher/witness_client.py` (already implemented in Phase 1 Task B5; Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged).
 - Depends on Phase 2/3: Actual `Locksmith-X.Y.Z.dmg` / `.msi` artifacts uploaded to `s3://releases-staging.keri.host/candidates/X.Y.Z/`.
 - Phase 5 depends on this phase: imports `locksmith.update.verify.verify_artifact()`; reads `locksmith.update.log` for the verification-history UI.
 
@@ -24,8 +24,10 @@
 **Created:**
 - `tools/publisher/src/locksmith_publisher/ceremony.py` — multisig state machine
 - `tools/publisher/src/locksmith_publisher/anchor.py` — KEL `ixn` event construction
-- `tools/publisher/src/locksmith_publisher/witness_client.py` — HTTP client for api.keri.host
 - `tools/publisher/src/locksmith_publisher/s3_client.py` — boto3 wrappers (OIDC-derived creds)
+
+**Reused from Phase 1 (imported, not created here):**
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — HTTP client for api.keri.host (Phase 1 Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` for release `ixn` submission.
 - `tools/publisher/src/locksmith_publisher/appcast.py` — appcast generator
 - `tools/publisher/src/locksmith_publisher/errors.py` — typed exceptions
 - `src/locksmith/update/__init__.py`
@@ -3062,20 +3064,39 @@ git commit -m "feat(publisher): multisig ceremony state machine"
 
 ---
 
-## Task 12: `tools/publisher/witness_client.py` — api.keri.host HTTP client
+## Task 12: Confirm `witness_client.py` integration with release `ixn` flow
+
+> **Note: `tools/publisher/src/locksmith_publisher/witness_client.py` already exists from Phase 1 Task B5.** It was built to submit the multisig inception event and was scoped as a general api.keri.host witness pool client. Phase 4 reuses it unchanged for release `ixn` event submission. This task is intentionally small — its purpose is to confirm no extension is required and to add an integration smoke test that exercises `WitnessClient.submit_event()` against a release `ixn` payload (the heavy unit coverage — receipt collection, threshold-not-met, duplicity, unreachable — lives in `tools/publisher/tests/test_witness_client.py` from Phase 1 Task B5).
 
 **Files:**
-- Create: `tools/publisher/src/locksmith_publisher/witness_client.py`
-- Test: `tests/unit/publisher/test_witness_client.py`
+- Test: `tests/unit/publisher/test_witness_client_release_integration.py`
 
-Per spec §7.2 / §7.5 step 4: submit signed ixn to each witness, collect receipts, retry if threshold not met, detect duplicity.
+If during Phase 4 implementation it turns out that a release-specific extension *is* needed (for example a higher-level `submit_release_ixn(anchor: IxnAnchor) -> list[Receipt]` convenience wrapper), add it as a small new method on `WitnessClient` and add a unit test for the extension only — do not re-test the base submission/threshold/duplicity behavior already covered by Phase 1's `test_witness_client.py`.
 
-- [ ] **Step 1: Write the failing tests**
+- [ ] **Step 1: Audit the Phase 1 `witness_client.py` against Phase 4 needs**
 
-Create `tests/unit/publisher/test_witness_client.py`:
+Read `tools/publisher/src/locksmith_publisher/witness_client.py` and confirm the following API surface is sufficient for the release `ixn` flow:
+
+- `WitnessClient.submit_event(cesr_bytes: bytes) -> list[Receipt]` — accepts an arbitrary CESR event stream (works for both `icp` and `ixn`)
+- `WitnessClient.query_state(aid: str) -> KeyState` — used by `cli.submit` to confirm key state before signing
+- `WitnessClient.query_kel(aid: str) -> list[dict]` — used by the verifier and by the appcast generator's KEL refresh
+- Typed exceptions: `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable`
+- Configurable `threshold` and `timeout_sec`
+
+If all of the above are present, proceed to Step 2 with no source changes.
+
+- [ ] **Step 2: Write a release-`ixn` integration test**
+
+Create `tests/unit/publisher/test_witness_client_release_integration.py`:
 
 ```python
-"""Tests for locksmith_publisher.witness_client."""
+"""Integration smoke test: submit a release ixn payload via the existing WitnessClient.
+
+The base WitnessClient was added in Phase 1 (Task B5) and already has unit
+coverage in tools/publisher/tests/test_witness_client.py for receipt
+collection, threshold-not-met, duplicity, and network-unreachable. This file
+covers the seam between Phase 4's release ixn anchor and the Phase 1 client.
+"""
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -3083,20 +3104,19 @@ import pytest
 from locksmith_publisher.witness_client import (
     Receipt,
     WitnessClient,
-    WitnessDuplicityDetected,
     WitnessThresholdNotMet,
 )
 
 
-def _ok_response(json_payload: dict):
-    r = MagicMock()
-    r.status_code = 200
-    r.json.return_value = json_payload
+def _ok_response(payload):
+    r = MagicMock(status_code=200)
+    r.json.return_value = payload
     r.raise_for_status.return_value = None
     return r
 
 
-def test_submit_collects_receipts_above_threshold():
+def test_release_ixn_submission_returns_receipts():
+    """A serialized release ixn event submits exactly like an icp event."""
     wc = WitnessClient(
         witness_urls=[
             "https://api.keri.host/witness/w1/",
@@ -3105,36 +3125,16 @@ def test_submit_collects_receipts_above_threshold():
         ],
         threshold=2,
     )
-    fake_receipt = {"witness_aid": "Bwit", "receipt_cesr": "AAAA"}
+    ixn_payload = b'{"v":"KERI...","t":"ixn","sn":"5",...}'  # opaque CESR stream
     with patch("locksmith_publisher.witness_client.requests.post",
-               return_value=_ok_response(fake_receipt)):
-        receipts = wc.submit(event_raw=b"event")
+               return_value=_ok_response({"witness_aid": "Bw", "receipt_cesr": "AAAA"})):
+        receipts = wc.submit_event(ixn_payload)
     assert len(receipts) == 3
     assert all(isinstance(r, Receipt) for r in receipts)
 
 
-def test_submit_retries_partial_failures_until_threshold():
-    wc = WitnessClient(
-        witness_urls=[
-            "https://api.keri.host/witness/w1/",
-            "https://api.keri.host/witness/w2/",
-            "https://api.keri.host/witness/w3/",
-        ],
-        threshold=2,
-        max_retries=2,
-    )
-    # w1, w2 succeed; w3 raises.
-    def side_effect(url, **kwargs):
-        if "w3" in url:
-            raise OSError("connection refused")
-        return _ok_response({"witness_aid": "Bwit", "receipt_cesr": "AAAA"})
-    with patch("locksmith_publisher.witness_client.requests.post",
-               side_effect=side_effect):
-        receipts = wc.submit(event_raw=b"event")
-    assert len(receipts) == 2
-
-
-def test_submit_raises_threshold_not_met_when_too_few_succeed():
+def test_release_ixn_submission_propagates_threshold_not_met():
+    """If too few witnesses respond, the CLI sees WitnessThresholdNotMet."""
     wc = WitnessClient(
         witness_urls=[
             "https://api.keri.host/witness/w1/",
@@ -3144,168 +3144,29 @@ def test_submit_raises_threshold_not_met_when_too_few_succeed():
         threshold=2,
         max_retries=1,
     )
+
     def side_effect(url, **kwargs):
         if "w1" in url:
             return _ok_response({"witness_aid": "Bw1", "receipt_cesr": "AAAA"})
-        raise OSError("nope")
+        raise OSError("connection reset")
+
+    ixn_payload = b'{"v":"KERI...","t":"ixn","sn":"5",...}'
     with patch("locksmith_publisher.witness_client.requests.post",
                side_effect=side_effect):
-        with pytest.raises(WitnessThresholdNotMet) as e:
-            wc.submit(event_raw=b"event")
-    assert e.value.collected == 1
-    assert e.value.threshold == 2
-
-
-def test_query_detects_duplicate_keystate():
-    wc = WitnessClient(
-        witness_urls=["https://api.keri.host/witness/w1/",
-                      "https://api.keri.host/witness/w2/"],
-        threshold=2,
-    )
-    def side_effect(url, **kwargs):
-        if "w1" in url:
-            return _ok_response({"current_said": "EHshA", "sn": 4})
-        return _ok_response({"current_said": "EHshB", "sn": 4})
-    with patch("locksmith_publisher.witness_client.requests.post",
-               side_effect=side_effect):
-        with pytest.raises(WitnessDuplicityDetected):
-            wc.query_keystate(publisher_aid="EAaa")
-
-
-def test_query_returns_consistent_keystate():
-    wc = WitnessClient(
-        witness_urls=["https://api.keri.host/witness/w1/",
-                      "https://api.keri.host/witness/w2/"],
-        threshold=2,
-    )
-    with patch("locksmith_publisher.witness_client.requests.post",
-               return_value=_ok_response({"current_said": "EHshX", "sn": 4})):
-        ks = wc.query_keystate(publisher_aid="EAaa")
-    assert ks["current_said"] == "EHshX"
-    assert ks["sn"] == 4
+        with pytest.raises(WitnessThresholdNotMet):
+            wc.submit_event(ixn_payload)
 ```
 
-- [ ] **Step 2: Run to confirm fail**
+- [ ] **Step 3: Run the integration test**
 
-- [ ] **Step 3: Implement `witness_client.py`**
+Run: `pytest tests/unit/publisher/test_witness_client_release_integration.py -v`
+Expected: 2 PASS.
 
-Create `tools/publisher/src/locksmith_publisher/witness_client.py`:
-
-```python
-"""HTTP client for the api.keri.host witness pool.
-
-Endpoints (per ~/KERI/code/kerihost reference impl):
-
-  POST {witness_url}/process   — submit a CESR event stream; returns a receipt
-  POST {witness_url}/query     — query current key state for a publisher AID
-
-The client gathers responses concurrently across the configured witness pool
-and applies a `threshold` decision. Errors are typed so the CLI can map them
-to operator-friendly messages.
-"""
-from __future__ import annotations
-
-from dataclasses import dataclass
-from typing import Any
-
-import requests
-
-
-class WitnessThresholdNotMet(Exception):
-    def __init__(self, collected: int, threshold: int):
-        super().__init__(f"only {collected}/{threshold} witness receipts collected")
-        self.collected = collected
-        self.threshold = threshold
-
-
-class WitnessDuplicityDetected(Exception):
-    def __init__(self, divergence: dict[str, Any]):
-        super().__init__(f"witness duplicity: {divergence}")
-        self.divergence = divergence
-
-
-@dataclass(frozen=True)
-class Receipt:
-    witness_aid: str
-    receipt_cesr: str
-
-
-@dataclass
-class WitnessClient:
-    witness_urls: list[str]
-    threshold: int
-    timeout_sec: int = 30
-    max_retries: int = 3
-
-    def submit(self, *, event_raw: bytes) -> list[Receipt]:
-        receipts: list[Receipt] = []
-        errors: list[str] = []
-        for attempt in range(self.max_retries):
-            remaining = [u for u in self.witness_urls
-                         if not any(r.witness_aid for r in receipts
-                                    if u.rstrip("/").endswith(r.witness_aid))]
-            for url in remaining:
-                endpoint = url.rstrip("/") + "/process"
-                try:
-                    resp = requests.post(
-                        endpoint, data=event_raw,
-                        headers={"Content-Type": "application/cesr+json"},
-                        timeout=self.timeout_sec,
-                    )
-                    resp.raise_for_status()
-                    payload = resp.json()
-                    receipts.append(Receipt(
-                        witness_aid=payload["witness_aid"],
-                        receipt_cesr=payload["receipt_cesr"],
-                    ))
-                except (requests.RequestException, OSError, KeyError) as ex:
-                    errors.append(f"{url}: {ex}")
-            if len(receipts) >= self.threshold:
-                return receipts
-        if len(receipts) < self.threshold:
-            raise WitnessThresholdNotMet(
-                collected=len(receipts),
-                threshold=self.threshold,
-            )
-        return receipts
-
-    def query_keystate(self, *, publisher_aid: str) -> dict[str, Any]:
-        responses: list[dict[str, Any]] = []
-        for url in self.witness_urls:
-            endpoint = url.rstrip("/") + "/query"
-            try:
-                resp = requests.post(
-                    endpoint, json={"aid": publisher_aid},
-                    timeout=self.timeout_sec,
-                )
-                resp.raise_for_status()
-                responses.append(resp.json())
-            except (requests.RequestException, OSError) as ex:
-                continue
-        if len(responses) < self.threshold:
-            raise WitnessThresholdNotMet(
-                collected=len(responses),
-                threshold=self.threshold,
-            )
-        # Compare on (current_said, sn).
-        canonical = (responses[0]["current_said"], responses[0]["sn"])
-        for r in responses[1:]:
-            if (r["current_said"], r["sn"]) != canonical:
-                raise WitnessDuplicityDetected({
-                    "responses": responses,
-                })
-        return responses[0]
-```
-
-- [ ] **Step 4: Run & commit**
-
-Run: `pytest tests/unit/publisher/test_witness_client.py -v`
-Expected: 5 PASS.
+- [ ] **Step 4: Commit**
 
 ```bash
-git add tools/publisher/src/locksmith_publisher/witness_client.py \
-        tests/unit/publisher/test_witness_client.py
-git commit -m "feat(publisher): witness HTTP client with threshold + duplicity"
+git add tests/unit/publisher/test_witness_client_release_integration.py
+git commit -m "test(publisher): release-ixn integration smoke against Phase 1 WitnessClient"
 ```
 
 ---
@@ -3612,7 +3473,7 @@ def submit_cmd(signed: Path, version: str) -> None:
     event_raw = signed.read_bytes()
     wc = _witness_client()
     try:
-        receipts = wc.submit(event_raw=event_raw)
+        receipts = wc.submit_event(event_raw)
     except WitnessThresholdNotMet as ex:
         raise click.ClickException(
             f"witness threshold not met: {ex.collected}/{ex.threshold}"
@@ -4047,16 +3908,16 @@ This section captures a final pass over the Phase 4 plan after the last commit, 
 | §6.3 Appcast schema | Parser, `Release` dataclass, schema validation | Task 4 |
 | §6.3 Appcast schema | Generator emits matching schema with full history | Task 14 |
 | §7.1 Publisher AID identity | Embedded `publisher_anchor.json` consumed by verifier | Task 6, Task 9 |
-| §7.2 Witness configuration | `toad` threshold enforced per-event | Task 5, Task 12 |
+| §7.2 Witness configuration | `toad` threshold enforced per-event | Task 5; Phase 1 Task B5 owns the `WitnessClient`; Task 12 is integration only |
 | §7.3 Release anchoring (ixn) | `IxnAnchor.build()` produces release `ixn` events | Task 10 |
 | §7.4 Anchored seal schema | `build_release_seal()` with field-order assertions | Task 10 |
-| §7.5 Signing workflow (sign/countersign/submit) | Multisig state machine + CLI subcommands + witness submit | Tasks 11, 12, 13 |
+| §7.5 Signing workflow (sign/countersign/submit) | Multisig state machine + CLI subcommands + witness submit (release ixn). Inception submission and the base `WitnessClient` are Phase 1 (Tasks B5, B9). | Tasks 11, 13; Task 12 confirms integration; relies on Phase 1 `witness_client.py` |
 | §7.6 Key rotation | KEL replay accepts `rot` events, detects pre-rotation violations | Task 5 |
 | §7.7 Bootstrap trust (embedded anchor) | `verify_artifact()` takes embedded sn/said/aid; CLI loads from `locksmith.release.publisher_anchor` | Tasks 6, 9 |
 | §7.8 TOCTOU mitigation | 0700 staging dir + exclusive lock + re-hash | Task 7 |
 | §9.1 Network failure | `NetworkError` exit code 14; silent retry left to Phase 5 UI | Task 1, Task 9 |
 | §9.2 Verification failure ("install anyway" never offered) | CLI test asserts absence of "install anyway"; verifier raises typed errors | Tasks 6, 9 |
-| §9.3 Witness disagreement | `WitnessDuplicityError` + `WitnessClient.query_keystate` divergence detection | Tasks 1, 12 |
+| §9.3 Witness disagreement | `WitnessDuplicityError` + `WitnessClient.query_state` divergence detection | Tasks 1, 12; `WitnessClient.query_state` defined in Phase 1 Task B5 |
 | §9.4 Publisher key rotation in flight | KEL replay forward from `embedded_kel_sn`; rotation acceptance | Task 5 |
 | §9.6 Logging philosophy (key=value) | `log.py` writes/parses key=value lines | Task 8 |
 | §10.1 Adversarial unit cases (table) | Each row mapped to a test in `test_verify.py` and `test_kel_replay.py` | Tasks 5, 6 |
@@ -4082,7 +3943,7 @@ This section captures a final pass over the Phase 4 plan after the last commit, 
 | `VerificationLogEntry`, `append_entry`, `read_entries`, `default_log_path` | `locksmith.update.log` | Phase 5 UI, tests | OK |
 | `IxnAnchor`, `Anchor`, `build_release_seal` | `locksmith_publisher.anchor` | `cli`, `appcast` generator | OK |
 | `CeremonyState`, `Custodian`, `SigningCeremony` | `locksmith_publisher.ceremony` | `cli` | OK |
-| `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected` | `locksmith_publisher.witness_client` | `cli` | OK |
+| `WitnessClient`, `Receipt`, `KeyState`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` | `locksmith_publisher.witness_client` (defined in Phase 1 Task B5) | `cli` (Phase 4), `incept` (Phase 1) | OK |
 | `S3` | `locksmith_publisher.s3_client` | `cli`, `publish_appcasts` | OK |
 | `GeneratorConfig`, `generate_and_upload_appcasts` | `locksmith_publisher.appcast` | `publish_appcasts` entrypoint | OK |
 
@@ -4092,8 +3953,9 @@ This section captures a final pass over the Phase 4 plan after the last commit, 
 - `src/locksmith/release/publisher_anchor.json` (and the package import path `locksmith.release.publisher_anchor`) — consumed by `cli._load_anchor_and_appcast()` (Task 9) and `publish_appcasts.main()` (Task 15).
 - AWS OIDC role `gha-locksmith-release-publisher` — referenced by `.github/workflows/publish.yml` (Task 15).
 - `s3://releases.keri.host` bucket + CloudFront distribution — written-to by Tasks 13–15.
-- The publisher AID itself, present on `api.keri.host` with `toad=2` and ≥3 witness receipts at inception — Task 5's KEL replay assumes this.
-- `tools/publisher/` package skeleton + `pyproject.toml` with `click` already wired — Tasks 10–13 extend it; Task 13 adds `boto3` and `requests` deps.
+- The publisher AID itself, **live** on `api.keri.host` with `toad=2` and ≥3 witness receipts at inception SN=0 (Phase 1 Task B9 makes the AID live) — Task 5's KEL replay assumes this.
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — **Phase 1 deliverable** (Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `KeyState`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged. Phase 4 Task 12 is scoped to an integration smoke test only; no source changes to `witness_client.py` in this phase. Phase 1's `tools/publisher/tests/test_witness_client.py` is the source of truth for the base HTTP client's unit coverage.
+- `tools/publisher/` package skeleton + `pyproject.toml` with `click`, `requests` (for `witness_client.py`) already wired — Tasks 10–13 extend it; Task 13 adds `boto3` dep.
 
 **Phase 4 depends on Phase 2/3 having provided:**
 - Actual `Locksmith-X.Y.Z.dmg` / `.msi` artifacts staged at `s3://releases-staging.keri.host/candidates/X.Y.Z/` and final-uploaded to `s3://releases.keri.host/releases/X.Y.Z/`. Task 13's `sign` subcommand reads from staging; Task 15's workflow assumes the final bucket layout.
