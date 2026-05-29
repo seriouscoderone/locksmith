@@ -1,7 +1,7 @@
 """Vault settings: 'Direct peer mode' section (vault-level listener config)."""
 from __future__ import annotations
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.peer.allowlist import PeerAllowlist
+from locksmith.peer.reachability import check_reachable
 from locksmith.peer.records import PeerModeSettings
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets.buttons import LocksmithButton
@@ -20,6 +21,7 @@ logger = help.ogler.getLogger(__name__)
 
 _STATUS_DOT_GRAY = "#9CA3AF"
 _STATUS_DOT_GREEN = "#22C55E"
+_STATUS_DOT_AMBER = "#F59E0B"
 _STATUS_DOT_RED = "#DC2626"
 
 
@@ -237,6 +239,30 @@ class PeerSettingsSection(QFrame):
         )
         self._vault.restart_peer_mode()
         self._sync_status_from_doer()
+        if rec.enabled:
+            # Give the listener a beat to bind, then probe ourselves.
+            # 500ms is enough for hio's TCPServer to flip self.opened
+            # in the common path without making the user wait.
+            QTimer.singleShot(500, lambda: self._run_reachability_self_test(rec))
+
+    def _run_reachability_self_test(self, rec: PeerModeSettings) -> None:
+        # Only meaningful if the listener actually came up — if it didn't,
+        # the user already sees the "Couldn't bind" red dot and a TCP
+        # connect probe just produces a noisier duplicate of that signal.
+        doer = getattr(self._vault, "peer_doer", None)
+        if doer is None or doer.server is None or not doer.server.opened:
+            return
+        # Probe the advertised address. If the user left it blank we
+        # surface the invalid_host result so they know to fill it in.
+        result = check_reachable(rec.advertised_host, rec.port, timeout=1.5)
+        if result.ok:
+            self._set_status(
+                "green",
+                f"Listening on {rec.bind_host}:{rec.port} · advertised "
+                f"{rec.advertised_host}:{rec.port} is reachable",
+            )
+        else:
+            self._set_status("amber", result.message)
 
     def _sync_status_from_doer(self) -> None:
         doer = getattr(self._vault, "peer_doer", None)
@@ -254,6 +280,7 @@ class PeerSettingsSection(QFrame):
     def _set_status(self, color_key: str, text: str) -> None:
         color = {
             "green": _STATUS_DOT_GREEN,
+            "amber": _STATUS_DOT_AMBER,
             "red": _STATUS_DOT_RED,
         }.get(color_key, _STATUS_DOT_GRAY)
         self.status_dot.setStyleSheet(
