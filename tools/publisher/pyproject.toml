@@ -1,0 +1,44 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "locksmith-publisher"
+version = "0.1.0"
+description = "KERI publisher signing CLI for Locksmith releases (off-CI, custodian devices only)"
+readme = "README.md"
+requires-python = ">=3.14.0"
+license = { text = "MIT" }
+
+authors = [
+    { name = "Joseph Lee Hunsaker", email = "joseph.hunsaker@usurance.com" }
+]
+
+dependencies = [
+    "click>=8.1",
+    "keri @ git+https://github.com/WebOfTrust/keripy.git",
+    "fido2>=1.1",
+    "boto3>=1.34",
+    "requests>=2.32",
+]
+
+[project.optional-dependencies]
+test = [
+    "pytest>=8.0",
+    "pytest-mock>=3.12",
+    "responses>=0.25",
+]
+
+[project.scripts]
+locksmith-publisher = "locksmith_publisher.cli:cli"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+include = ["locksmith_publisher*"]
+
+[tool.setuptools.package-dir]
+"" = "src"
+
+[tool.pytest.ini_options]
+pythonpath = ["src", "."]
+testpaths = ["tests"]
