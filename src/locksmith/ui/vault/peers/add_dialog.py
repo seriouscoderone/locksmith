@@ -65,10 +65,12 @@ class AddPeerDialog(QDialog):
         endpoint_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
         layout.addWidget(endpoint_label)
         endpoint_help = QLabel(
-            "The tcp://host:port the peer is listening on. Optional when "
-            "using a witness-less blob (the endpoint is embedded). Required "
-            "for witness-served URLs since witnesses don't propagate role "
-            "endpoint authorizations today."
+            "The tcp://host:port the peer is listening on. Optional — the "
+            "endpoint normally comes from the OOBI itself (embedded in a "
+            "witness-less blob, or served by the witness when the peer has "
+            "published their role authorization). Fill this in only as a "
+            "manual override (e.g. an on-LAN address that differs from the "
+            "advertised one, or when the witness is unreachable)."
         )
         endpoint_help.setWordWrap(True)
         endpoint_help.setStyleSheet("color: #6E7074; font-size: 11px;")
@@ -162,13 +164,11 @@ class AddPeerDialog(QDialog):
             self.accept()
             return
 
-        # URL path: witness-served OOBI + manual endpoint
-        if not endpoint:
-            self.error_label.setText(
-                "Peer's TCP endpoint is required (e.g. tcp://192.168.1.42:5621)."
-            )
-            return
-        if not endpoint.startswith("tcp://"):
+        # URL path: witness-served OOBI. Endpoint is optional — if the peer
+        # has published their role+loc rpys to their witness, the resolve
+        # below will populate hby.db.locs and _finalize_pairing will read
+        # the endpoint from there. The manual field stays as an override.
+        if endpoint and not endpoint.startswith("tcp://"):
             self.error_label.setText(
                 "Endpoint must start with tcp:// (e.g. tcp://192.168.1.42:5621)."
             )
@@ -247,14 +247,25 @@ class AddPeerDialog(QDialog):
 
     def _finalize_pairing(self) -> None:
         aid = self._pending_aid
-        endpoint = getattr(self, "_pending_endpoint", None)
-        if aid is None or not endpoint:
+        if aid is None:
             return
-        # Prefer the endpoint from the peer's KEL (locs Komer) if the
-        # witness propagated the role authorization. Most witnesses
-        # today don't, so we fall back to the user-provided endpoint.
+        # Endpoint resolution order: manual override (typed in field) wins,
+        # else the rpy-populated locs Komer (works when the peer published
+        # role+loc rpys to their witness — see PublishPeerRoleDoer).
+        manual = getattr(self, "_pending_endpoint", None) or None
         loc = self._vault.hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
-        endpoint_url = loc.url if (loc is not None and loc.url) else endpoint
+        from_kel = loc.url if (loc is not None and loc.url) else None
+        endpoint_url = manual or from_kel
+        if not endpoint_url:
+            self._reset_pair_button()
+            self.status_label.setText("")
+            self.error_label.setText(
+                "OOBI verified but no tcp endpoint is published for this "
+                "peer. Either ask the peer to enable peer-mode exposure on "
+                "their identifier, or fill in the endpoint field manually."
+            )
+            self._pending_aid = None
+            return
         self._allowlist.add(PeerRecord(
             aid=aid,
             label=self.label_input.text().strip() or aid[:12],

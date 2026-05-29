@@ -63,7 +63,11 @@ New code lives under `src/locksmith/peer/`. Existing files touched are listed at
 ### OOBI plumbing
 
 - Register a new role, `peer`, with the habery's role registry. Each opted-in AID publishes a `role=peer` endpoint authorization on its KEL pointing at `tcp://<advertised-host>:<port>`.
-- The OOBI URL for the peer role takes the standard witness-served form during MVP: `http://<witness>/oobi/<controller-aid>/peer/<endpoint-aid>`. The witness serves the controller's KEL with the role authorization; no Locksmith-side HTTP service is added. This means pairing still touches a witness; the message-carrying hops after pairing do not.
+- Publishing is a **two-step** operation handled by `PublishPeerRoleDoer` (`src/locksmith/peer/publishing.py`):
+  1. Generate the `/loc/scheme` (tcp) and `/end/role/add` (peer) rpys via `hab.reply(...)` and parse them back through the Habery's own `Parser` so they land in `hab.db.locs` / `hab.db.ends` / `hab.db.rpys`. This is what makes the local `replyToOobi` and the CESR-blob export return non-empty.
+  2. Push the same signed bytes to every witness in `hab.kever.wits` via `keri.app.agenting.WitnessPublisher`. Without step 2 the witness has nothing peer-role to serve and step §4a.i below silently degrades to "controller-only OOBI."
+- The OOBI URL for the peer role takes the standard witness-served form during MVP: `http://<witness>/oobi/<controller-aid>/peer/<endpoint-aid>`. The witness, having received the rpys in step 2, serves the controller's KEL inline with the role authorization. No Locksmith-side HTTP service is added. This means pairing still touches a witness; the message-carrying hops after pairing do not.
+- Solo (witness-less) AIDs emit a `no_witnesses` signal so the UI can tell the user the witness-served path won't work for that AID. The CESR-blob path (§4a.ii) is the fallback.
 
 ### UI surfaces
 
@@ -103,9 +107,13 @@ Non-CESR bytes on the socket trip the `Parser`; the connection closes with a DEB
 
 ### OOBI artifact
 
-A new role `peer` registered with habery. Endpoint URL is `tcp://<host>:<port>`. The OOBI URL form during MVP is the standard witness-served URL: `http://<witness>/oobi/<controller-aid>/peer/<endpoint-aid>`. This reuses the URL-based OOBI machinery already wired into KERI/Locksmith.
+A new role `peer` registered with habery. Endpoint URL is `tcp://<host>:<port>`. Two OOBI carriers are supported:
 
-A CESR-blob OOBI (witness-less, fully self-contained) is a strict UX upgrade and is deferred to v2.
+**§4a.i — Witness-served URL form:** `http://<witness>/oobi/<controller-aid>/peer/<endpoint-aid>`. Reuses the URL-based OOBI machinery already wired into KERI/Locksmith. Requires the controller to have **published the role+loc rpys to their witnesses** via `PublishPeerRoleDoer`. The witness then returns the KEL plus the role/loc rpys inline when a peer resolves the OOBI; the receiving Habery's parser writes them into `db.ends` / `db.locs`, and pairing finishes with the endpoint already known.
+
+**§4a.ii — Witness-less CESR-blob form:** `locksmith-peer-oobi:v1:<base64-cesr>`. A self-contained text token containing the controller's KEL + role auth + loc scheme as a CESR stream, base64-encoded. Implemented in `src/locksmith/peer/cesr_blob.py`. Right path when the AID has no witnesses, or witnesses are temporarily unreachable, or for high-trust out-of-band channels (QR code, secure messenger).
+
+Both carriers populate the same `db.locs` entry on the importing side, so downstream code is identical regardless of which form was used.
 
 ### Wire protocol
 

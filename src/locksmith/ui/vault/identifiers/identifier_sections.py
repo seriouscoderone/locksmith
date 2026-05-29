@@ -360,12 +360,17 @@ class IdentifierViewSectionsMixin:
             logger.info(f"peer.role.disabled aid={self.hab.pre}")
 
     def _publish_peer_role(self) -> None:
-        """Publish role=peer endpoint authorization on this AID's KEL.
+        """Publish role=peer + tcp loc rpys locally and to all witnesses.
 
-        Uses keripy's makeLocScheme + makeEndRole pattern. The controller
-        is its own endpoint id (eid=hab.pre) since we are the peer.
+        Local-only publishing is not enough: a remote wallet resolving
+        this AID's witness-served OOBI gets back whatever the witness
+        has stored, so the rpys must reach each witness in hab.kever.wits
+        for spec §4a.i to work.
+
+        The work runs in a doer on the vault's doist (same pattern as
+        ResolveOobiDoer) — dispatch and return; the UI does not block.
         """
-        from keri import kering
+        from locksmith.peer.publishing import PublishPeerRoleDoer
         from locksmith.peer.records import PeerModeSettings
 
         vault = self._vault()
@@ -374,11 +379,14 @@ class IdentifierViewSectionsMixin:
         settings = vault.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
         host = settings.advertised_host or "127.0.0.1"
         url = f"tcp://{host}:{settings.port}"
-        try:
-            self.hab.makeLocScheme(url=url, eid=self.hab.pre, scheme=kering.Schemes.tcp)
-            self.hab.makeEndRole(eid=self.hab.pre, role=kering.Roles.peer)
-        except Exception as e:  # noqa: BLE001 — log + swallow to keep UI alive
-            logger.warning(f"peer.role.publish_failed aid={self.hab.pre} err={e}")
+        signal_bridge = getattr(vault, "signals", None)
+        doer = PublishPeerRoleDoer(
+            hby=vault.hby,
+            hab=self.hab,
+            url=url,
+            signal_bridge=signal_bridge,
+        )
+        vault.extend([doer])
 
     def _build_refresh_keystate_section(self, layout: QVBoxLayout) -> None:
         """Build the refresh key state section for group multisig."""
