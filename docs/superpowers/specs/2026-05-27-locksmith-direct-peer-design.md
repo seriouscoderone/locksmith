@@ -16,7 +16,7 @@ Locksmith already ships most of the building blocks. The `locksmith.turret` modu
 
 ## Non-goals (MVP)
 
-- TLS / on-the-wire encryption. KERI signatures cover integrity and authenticity. Privacy on the link is provided by the deployment context (VPN at L3, trusted L2 on home LAN). TLS is the natural v2.
+- TLS / on-the-wire encryption. KERI signatures cover integrity and authenticity. Privacy on the link is provided by the deployment context (VPN at L3, trusted L2 on home LAN). **Not deferred to v2 — dropped from the roadmap.** Confirmed with the KERI spec via keri.host RAG (2026-05-29): the protocol is intentionally silent on transport encryption because end-verifiability is the security model and CESR has its own encryption primitives for payload confidentiality. Binding a TLS cert to a KEL key would be a layering violation. If a deployment ever needs network-level encryption it should layer plain TLS *orthogonally* (BYO cert, standard PKI), not as part of the peer-mode protocol. If a deployment needs payload confidentiality, encrypted CESR attachment groups are the spec-aligned answer and would be a separate, ACDC-flow-specific design.
 - mDNS / Bonjour auto-discovery. Manual OOBI exchange is sufficient and works across VPN segments.
 - NAT traversal / hole punching. The deployment is assumed to be a network where both wallets can route to each other directly.
 - A standalone mailbox service. `mailbox.keri.host` is a separate effort; this design is compatible with it but does not depend on it.
@@ -176,7 +176,7 @@ The TCP socket itself is not a gate — any peer who knows the port can open a c
 
 Out-of-scope for MVP (plain-TCP consequences):
 
-- Passive sniffing on the link — mitigated by deployment context (VPN encrypts at L3; home LAN is trusted L2). TLS upgrade is v2.
+- Passive sniffing on the link — mitigated by deployment context (VPN encrypts at L3; home LAN is trusted L2). Wire-level encryption is intentionally out of protocol scope per KERI design (see Non-goals above); deployments that need it layer plain TLS or use CESR's payload-encryption primitives at the message layer.
 - DoS by an allowlisted peer — mitigation is unpair. No rate limiting in v1.
 
 ## Error handling & lifecycle
