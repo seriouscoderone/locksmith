@@ -9,9 +9,12 @@ persist anything. To make those rpys discoverable they have to be:
      replyToOobi serve them and what the witness-less CESR blob path
      reads from), and
 
-  2. pushed to each witness in hab.kever.wits via WitnessPublisher so
-     remote wallets resolving a witness-served peer-OOBI get the role
-     + loc rpys back inline with the KEL.
+  2. pushed to each witness in hab.kever.wits — we drive one
+     ``keri.app.agenting.messenger`` per witness directly rather than
+     going through ``WitnessPublisher`` so we can read each
+     ``HTTPMessenger.sent`` deque and surface the HTTP status to the
+     UI / logs. The kerihost #2 / #4 inbox bugs we hit earlier would
+     have been a clear ``status=504`` here instead of a silent success.
 
 Without step 2 the witness has nothing peer-role to serve, which is why
 the dialog has been falling back to a manual endpoint field.
@@ -20,7 +23,7 @@ from __future__ import annotations
 
 from hio.base import doing
 from keri import Vrsn_1_0, help, kering
-from keri.app.agenting import WitnessPublisher
+from keri.app.agenting import messenger
 from keri.core import parsing
 
 logger = help.ogler.getLogger(__name__)
@@ -33,6 +36,17 @@ def _witnesses_for(hab) -> list[str]:
     return list(hab.kever.wits or [])
 
 
+def _is_ok_status(status) -> bool:
+    """Witness inboxes return 200 or 204 on success. Treat any 2xx as OK
+    and everything else (including missing/None when the messenger never
+    got a response) as rejected.
+    """
+    try:
+        return 200 <= int(status) < 300
+    except (TypeError, ValueError):
+        return False
+
+
 class PublishPeerRoleDoer(doing.DoDoer):
     """Land peer role/loc rpys locally and push them to all witnesses.
 
@@ -43,9 +57,12 @@ class PublishPeerRoleDoer(doing.DoDoer):
     this AID is no longer reachable in peer mode.
 
     Emits one of these events via signal_bridge on completion:
-      - 'publish_complete' (witnesses_count > 0, all sent)
-      - 'no_witnesses' (witnesses_count == 0, local-only)
-      - 'publish_failed' (unexpected error)
+      - 'publish_complete' — reached the witness layer; payload includes
+        a per-witness list of dicts ``{wit, status, ok}`` so callers can
+        distinguish "delivered" from "rejected" without re-curling.
+      - 'no_witnesses' — solo AID, nothing to push; local rpys still
+        landed.
+      - 'publish_failed' — exception we couldn't recover from.
     """
 
     def __init__(self, hby, hab, url: str, signal_bridge=None,
@@ -96,14 +113,17 @@ class PublishPeerRoleDoer(doing.DoDoer):
                 self.completed = True
                 return
 
-            publisher = WitnessPublisher(hby=self.hby)
-            self.extend([publisher])
-
-            publisher.msgs.append(dict(pre=hab.pre, msg=bytes(loc_msg)))
-            publisher.msgs.append(dict(pre=hab.pre, msg=bytes(end_msg)))
+            # One messenger per witness; push both rpys onto each.
+            witers: list[tuple[str, object]] = []
+            for wit in wits:
+                witer = messenger(hab, wit)
+                witer.msgs.append(bytearray(loc_msg))
+                witer.msgs.append(bytearray(end_msg))
+                self.extend([witer])
+                witers.append((wit, witer))
 
             elapsed = 0.0
-            while not publisher.idle:
+            while not all(w.idle for _, w in witers):
                 yield self.tock
                 elapsed += self.tock or 0.03125
                 if elapsed > self.timeout_seconds:
@@ -111,21 +131,38 @@ class PublishPeerRoleDoer(doing.DoDoer):
                         f"peer.role.publish_timeout aid={hab.pre} "
                         f"witnesses={len(wits)} url={self.url}"
                     )
-                    self._emit("publish_failed", aid=hab.pre,
-                               witnesses_count=len(wits),
-                               error="timed out reaching one or more witnesses")
-                    self.remove([publisher])
+                    self._emit(
+                        "publish_failed", aid=hab.pre,
+                        witnesses_count=len(wits),
+                        error="timed out reaching one or more witnesses",
+                        witnesses=self._collect_results(witers),
+                    )
+                    self.remove([w for _, w in witers])
                     self.completed = True
                     return
 
-            logger.info(
+            results = self._collect_results(witers)
+            rejected = [r for r in results if not r["ok"]]
+            for r in results:
+                logger.info(
+                    f"peer.role.publish.witness aid={hab.pre} wit={r['wit']} "
+                    f"status={r['status']} ok={r['ok']}"
+                )
+            level_msg = (
                 f"peer.role.{action} aid={hab.pre} witnesses={len(wits)} "
-                f"url={self.url}"
+                f"rejected={len(rejected)} url={self.url}"
             )
-            self._emit("publish_complete", aid=hab.pre,
-                       witnesses_count=len(wits), url=self.url,
-                       allow=self.allow)
-            self.remove([publisher])
+            if rejected:
+                logger.warning(level_msg)
+            else:
+                logger.info(level_msg)
+
+            self._emit(
+                "publish_complete", aid=hab.pre,
+                witnesses_count=len(wits), url=self.url,
+                allow=self.allow, witnesses=results,
+            )
+            self.remove([w for _, w in witers])
             self.completed = True
 
         except Exception as e:  # noqa: BLE001
@@ -133,6 +170,35 @@ class PublishPeerRoleDoer(doing.DoDoer):
             self._emit("publish_failed", aid=hab.pre,
                        witnesses_count=0, error=str(e))
             self.completed = True
+
+    @staticmethod
+    def _collect_results(witers) -> list[dict]:
+        """Read each witer's last HTTP response (if any) and return a
+        list of ``{wit, status, ok}`` dicts. TCP messengers and any
+        messenger that finished without a response surface status=None.
+        """
+        results = []
+        for wit, witer in witers:
+            sent = getattr(witer, "sent", None)
+            status = None
+            if sent:
+                # Real HTTPMessenger.sent holds hio Response namedtuples
+                # with .status. Our fakes do the same. We want the last
+                # response (in case more than one rpy was queued).
+                try:
+                    last = sent[-1]
+                except (IndexError, TypeError):
+                    last = None
+                if last is not None:
+                    status = getattr(last, "status", None)
+                    if status is None and isinstance(last, dict):
+                        status = last.get("status")
+            results.append({
+                "wit": wit,
+                "status": status,
+                "ok": _is_ok_status(status),
+            })
+        return results
 
     def _emit(self, event_type: str, **data) -> None:
         if self.signal_bridge is None:

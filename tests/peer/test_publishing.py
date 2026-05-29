@@ -47,32 +47,10 @@ def test_revoke_publishes_cut_rpy_and_nullifies_loc(monkeypatch, hab_with_witnes
 
     sent_msgs: list[bytes] = []
 
-    class FakePublisher(doing.DoDoer):
-        def __init__(self, hby, **kwa):
-            self.hby = hby
-            self.msgs = []
-            self.cues = []
-            self.posted = 0
-            super().__init__(doers=[doing.doify(self._send_do)], **kwa)
-
-        def _send_do(self, tymth=None, tock=0.0, **opts):
-            self.wind(tymth)
-            self.tock = tock
-            _ = (yield self.tock)
-            while True:
-                while self.msgs:
-                    evt = self.msgs.pop(0)
-                    sent_msgs.append(bytes(evt["msg"]))
-                    self.cues.append(evt)
-                    self.posted += 1
-                yield self.tock
-
-        @property
-        def idle(self):
-            return not self.msgs and self.posted >= 2
-
-    monkeypatch.setattr(publishing, "WitnessPublisher",
-                        lambda hby, **kwa: FakePublisher(hby, **kwa))
+    monkeypatch.setattr(
+        publishing, "messenger",
+        lambda hab, wit: _FakeMessenger(status=204, sent_msgs_sink=sent_msgs),
+    )
 
     captured: list[tuple[str, str, dict]] = []
     bridge = SimpleNamespace(
@@ -161,14 +139,49 @@ def test_publish_no_witnesses_emits_no_witnesses_event(hab_with_witnesses):
     assert data["witnesses_count"] == 0
 
 
-def test_publish_with_witnesses_emits_publish_complete(monkeypatch, hab_with_witnesses):
-    """With one or more witnesses, the doer should hand off the locally-
-    parsed rpys to a WitnessPublisher and emit publish_complete when the
-    publisher signals it sent everything.
+class _FakeMessenger(doing.DoDoer):
+    """Stand-in for keri.app.agenting.HTTPMessenger that records the bytes
+    it would have POSTed and pretends each one got the configured status
+    code as a response. Drives DoDoer the same way as the real messenger:
+    msgs deque to push into, sent deque to read responses from, idle
+    flipping True once all queued messages have been processed.
+    """
+    def __init__(self, status: int = 204, sent_msgs_sink: list[bytes] | None = None):
+        from types import SimpleNamespace
+        self.msgs = []
+        self.sent = []
+        self._status = status
+        self._sink = sent_msgs_sink
+        self._processed = 0
+        super().__init__(doers=[doing.doify(self._run)])
 
-    We monkeypatch WitnessPublisher so the test doesn't try to dial real
-    witness sockets — only the wiring (we feed msgs in, cues come back
-    out) is under test.
+    def _run(self, tymth=None, tock=0.0, **opts):
+        self.wind(tymth)
+        self.tock = tock
+        _ = (yield self.tock)
+        from types import SimpleNamespace
+        while True:
+            while self.msgs:
+                m = self.msgs.pop(0)
+                if self._sink is not None:
+                    self._sink.append(bytes(m))
+                self.sent.append(
+                    SimpleNamespace(status=self._status, reason="",
+                                    errored=False, error=None)
+                )
+                self._processed += 1
+            yield self.tock
+
+    @property
+    def idle(self):
+        # one queued msg per rpy (we always publish 2: loc + end)
+        return not self.msgs and self._processed >= 2
+
+
+def test_publish_with_witnesses_emits_publish_complete(monkeypatch, hab_with_witnesses):
+    """With one or more witnesses, the doer creates an HTTPMessenger per
+    witness via agenting.messenger(), queues the rpys, waits for idle,
+    and emits publish_complete with per-witness status info.
     """
     from locksmith.peer import publishing
 
@@ -178,37 +191,13 @@ def test_publish_with_witnesses_emits_publish_complete(monkeypatch, hab_with_wit
     monkeypatch.setattr(publishing, "_witnesses_for", lambda hab: fake_wits)
 
     sent_msgs: list[bytes] = []
+    created_for_wits: list[str] = []
 
-    class FakePublisher(doing.DoDoer):
-        """A real DoDoer with a worker doer that drains msgs into cues
-        and records them in sent_msgs. The .idle property flips True once
-        both queued messages have been processed.
-        """
-        def __init__(self, hby, **kwa):
-            self.hby = hby
-            self.msgs = []
-            self.cues = []
-            self.posted = 0
-            super().__init__(doers=[doing.doify(self._send_do)], **kwa)
+    def _fake_messenger(hab, wit):
+        created_for_wits.append(wit)
+        return _FakeMessenger(status=204, sent_msgs_sink=sent_msgs)
 
-        def _send_do(self, tymth=None, tock=0.0, **opts):
-            self.wind(tymth)
-            self.tock = tock
-            _ = (yield self.tock)
-            while True:
-                while self.msgs:
-                    evt = self.msgs.pop(0)
-                    sent_msgs.append(bytes(evt["msg"]))
-                    self.cues.append(evt)
-                    self.posted += 1
-                yield self.tock
-
-        @property
-        def idle(self):
-            return not self.msgs and self.posted >= 2  # 2 = loc + end
-
-    monkeypatch.setattr(publishing, "WitnessPublisher",
-                        lambda hby, **kwa: FakePublisher(hby, **kwa))
+    monkeypatch.setattr(publishing, "messenger", _fake_messenger)
 
     captured: list[tuple[str, str, dict]] = []
     bridge = SimpleNamespace(
@@ -227,12 +216,57 @@ def test_publish_with_witnesses_emits_publish_complete(monkeypatch, hab_with_wit
     doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
     doist.do(doers=[doer])
 
-    # Should have queued 2 messages (loc + end) on the publisher
-    assert len(sent_msgs) == 2
+    # 2 witnesses × 2 messages = 4 POSTs
+    assert len(sent_msgs) == 4
+    assert created_for_wits == fake_wits
 
-    # Should have emitted publish_complete with witnesses_count=2
     complete_events = [e for e in captured if e[1] == "publish_complete"]
     assert len(complete_events) == 1
     _, _, data = complete_events[0]
     assert data["aid"] == hab.pre
     assert data["witnesses_count"] == 2
+    # Per-witness status info is what the next sprint item (HTTP-status
+    # capture) actually adds — assert the shape and that all are 2xx.
+    assert "witnesses" in data
+    assert len(data["witnesses"]) == 2
+    for entry in data["witnesses"]:
+        assert entry["wit"] in fake_wits
+        assert entry["status"] == 204
+        assert entry["ok"] is True
+
+
+def test_publish_records_non_2xx_as_rejected(monkeypatch, hab_with_witnesses):
+    """If the witness returns 5xx/4xx (e.g. kerihost's old broken inbox),
+    the doer still completes — but the per-witness entry must be flagged
+    ok=False so callers / logs can distinguish "delivered" from "rejected"
+    without re-curling.
+    """
+    from locksmith.peer import publishing
+
+    hby, hab = hab_with_witnesses
+    fake_wits = ["BWIT_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+    monkeypatch.setattr(publishing, "_witnesses_for", lambda hab: fake_wits)
+
+    def _fake_messenger(hab, wit):
+        return _FakeMessenger(status=504, sent_msgs_sink=None)
+
+    monkeypatch.setattr(publishing, "messenger", _fake_messenger)
+
+    captured: list[tuple[str, str, dict]] = []
+    bridge = SimpleNamespace(
+        emit_doer_event=lambda doer_name, event_type, data: captured.append(
+            (doer_name, event_type, data)
+        )
+    )
+
+    doer = publishing.PublishPeerRoleDoer(
+        hby=hby, hab=hab, url="tcp://10.0.0.5:5621", signal_bridge=bridge,
+    )
+    doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
+    doist.do(doers=[doer])
+
+    complete = [e for e in captured if e[1] == "publish_complete"]
+    assert len(complete) == 1
+    _, _, data = complete[0]
+    assert data["witnesses"][0]["status"] == 504
+    assert data["witnesses"][0]["ok"] is False
