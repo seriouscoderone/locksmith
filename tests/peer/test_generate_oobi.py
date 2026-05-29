@@ -4,9 +4,11 @@ from locksmith.core import habbing
 
 
 def test_generate_oobi_peer_role_uses_witness_serving():
-    """The peer-role OOBI URL is witness-served (spec §4a.i). For an AID
-    with a witness whose HTTP URL is known, generate_oobi builds
-    `<wit_http>/oobi/<aid>/peer/<wit_aid>`.
+    """The peer-role OOBI URL is witness-served (spec §4a.i). The witness
+    hostname is used to address the server, but the eid in the URL path
+    is the controller's own AID — not the witness — because in peer mode
+    the controller IS the endpoint provider, and that's the eid carried
+    in the /end/role/add rpy that PublishPeerRoleDoer publishes.
     """
     hab = MagicMock()
     hab.pre = "EAID_ALICE"
@@ -17,7 +19,7 @@ def test_generate_oobi_peer_role_uses_witness_serving():
     result = habbing.generate_oobi(app, hab, role="peer")
 
     assert result["success"] is True
-    assert result["oobi"].endswith("/oobi/EAID_ALICE/peer/BWIT1")
+    assert result["oobi"].endswith("/oobi/EAID_ALICE/peer/EAID_ALICE")
     assert "http://witness.keri.host" in result["oobi"]
 
 

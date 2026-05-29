@@ -13,7 +13,7 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import QTimer, Signal
 from PySide6.QtWidgets import (
     QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout,
 )
@@ -245,7 +245,20 @@ class AddPeerDialog(QDialog):
             )
             self._pending_aid = None
 
-    def _finalize_pairing(self) -> None:
+    # Up to ~2.5s of poll attempts (every 250ms). The ResolveOobiDoer
+    # fires oobi_resolved as soon as the AID lands in hby.kevers, but
+    # Revery may still be processing /loc/scheme rpys from the same
+    # response — db.locs can lag by a few ticks of the doist.
+    _LOC_POLL_INTERVAL_MS = 250
+    _LOC_POLL_MAX_ATTEMPTS = 10
+
+    def _finalize_pairing(self, attempts_remaining: int | None = None) -> None:
+        if attempts_remaining is None:
+            attempts_remaining = self._LOC_POLL_MAX_ATTEMPTS
+        # Bail if the user closed the dialog while we were polling.
+        if not self.isVisible():
+            self._pending_aid = None
+            return
         aid = self._pending_aid
         if aid is None:
             return
@@ -256,6 +269,12 @@ class AddPeerDialog(QDialog):
         loc = self._vault.hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
         from_kel = loc.url if (loc is not None and loc.url) else None
         endpoint_url = manual or from_kel
+        if not endpoint_url and attempts_remaining > 0:
+            QTimer.singleShot(
+                self._LOC_POLL_INTERVAL_MS,
+                lambda: self._finalize_pairing(attempts_remaining - 1),
+            )
+            return
         if not endpoint_url:
             self._reset_pair_button()
             self.status_label.setText("")

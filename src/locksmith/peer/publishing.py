@@ -36,6 +36,12 @@ def _witnesses_for(hab) -> list[str]:
 class PublishPeerRoleDoer(doing.DoDoer):
     """Land peer role/loc rpys locally and push them to all witnesses.
 
+    allow=True (default): /end/role/add + /loc/scheme(tcp, url=<url>).
+    allow=False: /end/role/cut + /loc/scheme(tcp, url="") — the empty url
+    nullifies the location per Hab.makeLocScheme docs. Used when the
+    user toggles "Expose over peer mode" off, so witnesses learn that
+    this AID is no longer reachable in peer mode.
+
     Emits one of these events via signal_bridge on completion:
       - 'publish_complete' (witnesses_count > 0, all sent)
       - 'no_witnesses' (witnesses_count == 0, local-only)
@@ -43,10 +49,11 @@ class PublishPeerRoleDoer(doing.DoDoer):
     """
 
     def __init__(self, hby, hab, url: str, signal_bridge=None,
-                 timeout_seconds: float = 30.0):
+                 timeout_seconds: float = 30.0, allow: bool = True):
         self.hby = hby
         self.hab = hab
         self.url = url
+        self.allow = allow
         self.signal_bridge = signal_bridge
         self.timeout_seconds = timeout_seconds
         self.completed = False
@@ -59,12 +66,14 @@ class PublishPeerRoleDoer(doing.DoDoer):
 
         hab = self.hab
         try:
+            loc_url = self.url if self.allow else ""
             loc_msg = hab.reply(
                 route="/loc/scheme",
-                data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=self.url),
+                data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=loc_url),
             )
+            end_route = "/end/role/add" if self.allow else "/end/role/cut"
             end_msg = hab.reply(
-                route="/end/role/add",
+                route=end_route,
                 data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre),
             )
 
@@ -75,14 +84,15 @@ class PublishPeerRoleDoer(doing.DoDoer):
                 ims=bytearray(end_msg), kvy=hab.kvy, rvy=hab.rvy,
             )
 
+            action = "published" if self.allow else "revoked"
             wits = _witnesses_for(hab)
             if not wits:
                 logger.info(
-                    f"peer.role.published aid={hab.pre} witnesses=0 "
+                    f"peer.role.{action} aid={hab.pre} witnesses=0 "
                     f"url={self.url}"
                 )
                 self._emit("no_witnesses", aid=hab.pre, witnesses_count=0,
-                           url=self.url)
+                           url=self.url, allow=self.allow)
                 self.completed = True
                 return
 
@@ -109,11 +119,12 @@ class PublishPeerRoleDoer(doing.DoDoer):
                     return
 
             logger.info(
-                f"peer.role.published aid={hab.pre} witnesses={len(wits)} "
+                f"peer.role.{action} aid={hab.pre} witnesses={len(wits)} "
                 f"url={self.url}"
             )
             self._emit("publish_complete", aid=hab.pre,
-                       witnesses_count=len(wits), url=self.url)
+                       witnesses_count=len(wits), url=self.url,
+                       allow=self.allow)
             self.remove([publisher])
             self.completed = True
 

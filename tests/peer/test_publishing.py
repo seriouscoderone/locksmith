@@ -32,6 +32,92 @@ def hab_with_witnesses():
         hby.close()
 
 
+def test_revoke_publishes_cut_rpy_and_nullifies_loc(monkeypatch, hab_with_witnesses):
+    """With allow=False the doer must (a) write /end/role/cut + an empty
+    /loc/scheme rpy locally — these are how keripy expresses "this role
+    is no longer authorized" — and (b) push them to witnesses so the
+    revocation propagates. Empty url='' on a /loc/scheme nullifies the
+    endpoint per Hab.makeLocScheme docs.
+    """
+    from locksmith.peer import publishing
+
+    hby, hab = hab_with_witnesses
+    fake_wits = ["BWIT_AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"]
+    monkeypatch.setattr(publishing, "_witnesses_for", lambda hab: fake_wits)
+
+    sent_msgs: list[bytes] = []
+
+    class FakePublisher(doing.DoDoer):
+        def __init__(self, hby, **kwa):
+            self.hby = hby
+            self.msgs = []
+            self.cues = []
+            self.posted = 0
+            super().__init__(doers=[doing.doify(self._send_do)], **kwa)
+
+        def _send_do(self, tymth=None, tock=0.0, **opts):
+            self.wind(tymth)
+            self.tock = tock
+            _ = (yield self.tock)
+            while True:
+                while self.msgs:
+                    evt = self.msgs.pop(0)
+                    sent_msgs.append(bytes(evt["msg"]))
+                    self.cues.append(evt)
+                    self.posted += 1
+                yield self.tock
+
+        @property
+        def idle(self):
+            return not self.msgs and self.posted >= 2
+
+    monkeypatch.setattr(publishing, "WitnessPublisher",
+                        lambda hby, **kwa: FakePublisher(hby, **kwa))
+
+    captured: list[tuple[str, str, dict]] = []
+    bridge = SimpleNamespace(
+        emit_doer_event=lambda doer_name, event_type, data: captured.append(
+            (doer_name, event_type, data)
+        )
+    )
+
+    doer = publishing.PublishPeerRoleDoer(
+        hby=hby, hab=hab, url="tcp://192.168.1.42:5621",
+        signal_bridge=bridge, allow=False,
+    )
+    doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
+    doist.do(doers=[doer])
+
+    assert len(sent_msgs) == 2
+
+    # Verify the messages are the cut/empty forms by route inspection.
+    import json
+    routes = []
+    for raw in sent_msgs:
+        # CESR stream: JSON SAD followed by `-`-prefixed attachment group.
+        # Walk to the matching closing brace (depth-counted; SAIDs contain
+        # hyphens so splitting on `-` won't work).
+        depth = 0
+        end = 0
+        for i, b in enumerate(raw):
+            if b == 0x7B:
+                depth += 1
+            elif b == 0x7D:
+                depth -= 1
+                if depth == 0:
+                    end = i + 1
+                    break
+        sad = json.loads(raw[:end])
+        assert sad["t"] == "rpy"
+        routes.append(sad["r"])
+        if sad["r"] == "/loc/scheme":
+            assert sad["a"]["url"] == "", "loc rpy must have empty url to nullify"
+    assert set(routes) == {"/loc/scheme", "/end/role/cut"}
+
+    complete_events = [e for e in captured if e[1] == "publish_complete"]
+    assert len(complete_events) == 1
+
+
 def test_publish_no_witnesses_emits_no_witnesses_event(hab_with_witnesses):
     """A solo AID with no witnesses should not block, should land rpys
     locally, and should emit a 'no_witnesses' event so the UI can warn

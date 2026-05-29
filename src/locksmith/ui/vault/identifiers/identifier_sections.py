@@ -353,19 +353,21 @@ class IdentifierViewSectionsMixin:
             vault._peer_exposed_aids = exposed
         if checked:
             exposed.add(self.hab.pre)
-            self._publish_peer_role()
+            self._publish_peer_role(allow=True)
             logger.info(f"peer.role.enabled aid={self.hab.pre}")
         else:
             exposed.discard(self.hab.pre)
+            self._publish_peer_role(allow=False)
             logger.info(f"peer.role.disabled aid={self.hab.pre}")
 
-    def _publish_peer_role(self) -> None:
-        """Publish role=peer + tcp loc rpys locally and to all witnesses.
+    def _publish_peer_role(self, allow: bool = True) -> None:
+        """Publish (allow=True) or revoke (allow=False) role=peer + tcp loc
+        rpys locally and to all witnesses.
 
         Local-only publishing is not enough: a remote wallet resolving
         this AID's witness-served OOBI gets back whatever the witness
         has stored, so the rpys must reach each witness in hab.kever.wits
-        for spec §4a.i to work.
+        for spec §4a.i to work — both for granting and revoking exposure.
 
         The work runs in a doer on the vault's doist (same pattern as
         ResolveOobiDoer) — dispatch and return; the UI does not block.
@@ -385,6 +387,7 @@ class IdentifierViewSectionsMixin:
             hab=self.hab,
             url=url,
             signal_bridge=signal_bridge,
+            allow=allow,
         )
         vault.extend([doer])
 
