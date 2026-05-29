@@ -10,7 +10,7 @@ from dataclasses import dataclass
 
 from keri.db import dbing, koming
 
-from locksmith.peer.records import PeerModeSettings, PeerRecord
+from locksmith.peer.records import PeerHealth, PeerModeSettings, PeerRecord
 
 
 @dataclass
@@ -96,6 +96,7 @@ class LocksmithBaser(dbing.LMDBer):
         # Peer-mode allowlist + listener settings
         self.peerAllowlist = None
         self.peerSettings = None
+        self.peerHealth = None
 
         super(LocksmithBaser, self).__init__(name=name, headDirPath=headDirPath, reopen=reopen, **kwa)
 
@@ -124,6 +125,9 @@ class LocksmithBaser(dbing.LMDBer):
         )
         self.peerSettings = koming.Komer(
             db=self, subkey='peerSettings.', klas=PeerModeSettings
+        )
+        self.peerHealth = koming.Komer(
+            db=self, subkey='peerHealth.', klas=PeerHealth
         )
 
         return self.env

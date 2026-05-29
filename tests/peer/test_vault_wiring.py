@@ -14,6 +14,17 @@ def test_vault_init_declares_peer_doer():
     assert "self.peer_doer" in src, "Vault.__init__ must declare self.peer_doer"
 
 
+def test_vault_init_declares_peer_health_doer():
+    """Health monitor runs regardless of listener state so paired-peer
+    reachability stays observable even when this vault isn't accepting
+    inbound (we still want to know whether the *outbound* peer is up)."""
+    from locksmith.core import vaulting
+
+    src = inspect.getsource(vaulting.Vault.__init__)
+    assert "self.peer_health_doer" in src
+    assert "PeerHealthMonitorDoer" in src
+
+
 def test_peer_doer_constructs_directly(tmp_path):
     """Sanity-check that PeerDoer is import-compatible with the Vault path."""
     from types import SimpleNamespace

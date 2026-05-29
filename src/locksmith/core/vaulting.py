@@ -35,7 +35,9 @@ from locksmith.core.signals import DoerSignalBridge
 from locksmith.core.tasking import QtTask
 from locksmith.core.turretting import TurretDoer
 from locksmith.db.basing import LocksmithBaser, MailboxListener, BrowserPluginSettings
+from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.doer import PeerDoer
+from locksmith.peer.health import PeerHealthMonitorDoer
 from locksmith.peer.records import PeerModeSettings
 
 logger = help.ogler.getLogger(__name__)
@@ -181,6 +183,14 @@ class Vault(doing.DoDoer):
                 is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
             )
 
+        # Background reachability probe for paired peers (always on —
+        # cheap, ~1 TCP connect/peer/minute, and the user can read peer
+        # health without triggering an actual send).
+        self.peer_health_doer = PeerHealthMonitorDoer(
+            allowlist=PeerAllowlist(self.db),
+            db=self.db,
+        )
+
         # Assemble all doers
         self.doers = [
             self.hbyDoer,
@@ -200,6 +210,7 @@ class Vault(doing.DoDoer):
             self.doers.append(self.turrent_doer)
         if self.peer_doer is not None:
             self.doers.append(self.peer_doer)
+        self.doers.append(self.peer_health_doer)
         # Initialize DoDoer with always=True to keep running
         super(Vault, self).__init__(doers=self.doers, always=True)
 
