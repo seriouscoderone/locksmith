@@ -131,6 +131,46 @@ def test_empty_allowlist_is_noop(baser):
     assert list(baser.peerHealth.getTopItemIter()) == []
 
 
+def test_summarize_health_for_ui_handles_missing_record():
+    """No record yet (peer just paired, monitor hasn't run) — surface as
+    gray with a neutral phrase, not an alarm.
+    """
+    from locksmith.peer.health import summarize_health_for_ui
+    color, text = summarize_health_for_ui(None)
+    assert color == "gray"
+    assert "not yet" in text.lower() or "never" in text.lower() or "no" in text.lower()
+
+
+def test_summarize_health_for_ui_reachable_with_relative_time():
+    from locksmith.peer.health import summarize_health_for_ui
+    h = PeerHealth(
+        aid="EAID",
+        last_probed_at=_now(),
+        last_outcome="ok",
+        last_message="",
+        consecutive_successes=5, consecutive_failures=0,
+        probed_count=5,
+    )
+    color, text = summarize_health_for_ui(h)
+    assert color == "green"
+    assert "reachable" in text.lower()
+
+
+def test_summarize_health_for_ui_down_shows_consecutive_failures():
+    from locksmith.peer.health import summarize_health_for_ui
+    h = PeerHealth(
+        aid="EAID",
+        last_probed_at=_now(),
+        last_outcome="refused",
+        last_message="nothing listening",
+        consecutive_successes=0, consecutive_failures=3,
+        probed_count=10,
+    )
+    color, text = summarize_health_for_ui(h)
+    assert color == "red"
+    assert "3" in text  # consecutive_failures count must be visible
+
+
 def test_doer_loop_terminates_on_stop(baser):
     """The hio doer should yield while sleeping and exit cleanly when
     the doist's limit elapses. Guards against busy-loops.

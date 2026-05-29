@@ -31,6 +31,55 @@ def _now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def summarize_health_for_ui(health: PeerHealth | None) -> tuple[str, str]:
+    """Return (color_key, status_phrase) for rendering on the peers list.
+
+    color_key is one of: gray | green | amber | red — matches the status
+    dot palette used elsewhere in the peer section.
+
+    The phrase is short (fits inline next to the peer label). Time is
+    rendered as a coarse relative interval since fine precision is
+    noise at the UX layer — what the user cares about is "currently
+    reachable" vs "recently unreachable" vs "long-down".
+    """
+    if health is None or not health.last_probed_at:
+        return "gray", "not yet probed"
+
+    age = _relative_age(health.last_probed_at)
+    if health.last_outcome == "ok":
+        return "green", f"reachable ({age} ago)"
+
+    # Non-ok: classify down-state severity by streak length. At default
+    # probe cadence (60s ±jitter) 3 misses ≈ 2-4 minutes — long enough
+    # to treat as a real outage worth a red dot. Shorter streaks stay
+    # amber so a single transient timeout doesn't alarm.
+    streak = health.consecutive_failures
+    if streak >= 3:
+        return "red", f"down for {streak} probes ({age} ago)"
+    if streak >= 1:
+        return "amber", f"unreachable: {health.last_outcome} ({streak} in a row)"
+    # streak == 0 but last_outcome != ok — shouldn't really happen, but
+    # keep the UI honest with whatever's there.
+    return "amber", f"{health.last_outcome} ({age} ago)"
+
+
+def _relative_age(iso_ts: str) -> str:
+    """Best-effort 'N s/m/h/d ago' from an ISO-8601 timestamp."""
+    try:
+        then = datetime.fromisoformat(iso_ts)
+    except ValueError:
+        return "unknown"
+    now = datetime.now(timezone.utc)
+    delta = (now - then).total_seconds()
+    if delta < 90:
+        return f"{int(delta)}s"
+    if delta < 90 * 60:
+        return f"{int(delta // 60)}m"
+    if delta < 36 * 3600:
+        return f"{int(delta // 3600)}h"
+    return f"{int(delta // 86400)}d"
+
+
 def _parse_tcp_endpoint(endpoint_url: str) -> tuple[str | None, int | None]:
     """Return (host, port) from a tcp://host:port URL, or (None, None)
     if the URL can't be parsed into both. Used both for the reachability

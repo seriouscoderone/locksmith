@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.peer.allowlist import PeerAllowlist
+from locksmith.peer.health import summarize_health_for_ui
 from locksmith.peer.reachability import check_reachable
 from locksmith.peer.records import PeerModeSettings
 from locksmith.ui import colors
@@ -212,6 +213,15 @@ class PeerSettingsSection(QFrame):
 
         self._refresh_peers_list()
 
+        # PeerHealthMonitorDoer updates db.peerHealth every ~60s. Re-paint
+        # the list a few times a minute so the user sees fresh dots
+        # without having to navigate away and back. Light: same query
+        # path as _refresh_peers_list which is already O(peers).
+        self._health_refresh_timer = QTimer(self)
+        self._health_refresh_timer.setInterval(15_000)
+        self._health_refresh_timer.timeout.connect(self._refresh_peers_list)
+        self._health_refresh_timer.start()
+
     def _load(self) -> None:
         rec = self._vault.db.peerSettings.get(keys=("default",))
         if rec is None:
@@ -306,12 +316,42 @@ class PeerSettingsSection(QFrame):
             return
         for rec in records:
             short_aid = f"{rec.aid[:4]}…{rec.aid[-4:]}" if len(rec.aid) > 12 else rec.aid
+            health = self._vault.db.peerHealth.get(keys=(rec.aid,))
+            color_key, health_phrase = summarize_health_for_ui(health)
             item = QListWidgetItem(
-                f"{rec.label}   {short_aid}   {rec.endpoint_url}"
+                f"{rec.label}   {short_aid}   {rec.endpoint_url}   ·   {health_phrase}"
             )
             item.setData(Qt.UserRole, rec.aid)
             self.peers_list.addItem(item)
+            row_widget = self._build_peer_row(rec, short_aid, color_key, health_phrase)
+            item.setSizeHint(row_widget.sizeHint())
+            self.peers_list.setItemWidget(item, row_widget)
         self._empty_state_label.setVisible(self.peers_list.count() == 0)
+
+    def _build_peer_row(self, rec, short_aid: str, color_key: str,
+                        health_phrase: str) -> QFrame:
+        """Render one row: colored status dot · primary text · muted secondary."""
+        color = {
+            "green": _STATUS_DOT_GREEN,
+            "amber": _STATUS_DOT_AMBER,
+            "red": _STATUS_DOT_RED,
+        }.get(color_key, _STATUS_DOT_GRAY)
+        row = QFrame()
+        h = QHBoxLayout(row)
+        h.setContentsMargins(8, 4, 8, 4)
+        h.setSpacing(10)
+        dot = QFrame()
+        dot.setFixedSize(10, 10)
+        dot.setStyleSheet(f"background-color: {color}; border-radius: 5px;")
+        h.addWidget(dot, 0, Qt.AlignVCenter)
+        primary = QLabel(f"{rec.label}   {short_aid}   {rec.endpoint_url}")
+        primary.setStyleSheet("font-weight: 500;")
+        h.addWidget(primary, 0, Qt.AlignVCenter)
+        h.addStretch()
+        secondary = QLabel(health_phrase)
+        secondary.setStyleSheet("color: #6E7074; font-size: 11px;")
+        h.addWidget(secondary, 0, Qt.AlignVCenter)
+        return row
 
 
 def _detect_interface_ips() -> list[str]:
