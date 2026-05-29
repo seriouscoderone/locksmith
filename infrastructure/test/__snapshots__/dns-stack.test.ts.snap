@@ -1,0 +1,96 @@
+// Jest Snapshot v1, https://goo.gl/fbAQLP
+
+exports[`DnsStack matches snapshot 1`] = `
+{
+  "Mappings": {
+    "MappingCopyAWSCloudFrontPartitionHostedZoneIdMapc838e5cc967a7638f165bad808394aa9341c71898d": {
+      "aws": {
+        "zoneId": "Z2FDTNDATAQYW2",
+      },
+      "aws-cn": {
+        "zoneId": "Z3RFFRIM2A3IF5",
+      },
+    },
+  },
+  "Parameters": {
+    "BootstrapVersion": {
+      "Default": "/cdk-bootstrap/hnb659fds/version",
+      "Description": "Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]",
+      "Type": "AWS::SSM::Parameter::Value<String>",
+    },
+  },
+  "Resources": {
+    "ReleasesA7463A025": {
+      "Properties": {
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::ImportValue": "Support:ExportsOutputFnGetAttDCB28BBFEDomainName8C06CEF5",
+          },
+          "HostedZoneId": {
+            "Fn::FindInMap": [
+              "MappingCopyAWSCloudFrontPartitionHostedZoneIdMapc838e5cc967a7638f165bad808394aa9341c71898d",
+              {
+                "Ref": "AWS::Partition",
+              },
+              "zoneId",
+            ],
+          },
+        },
+        "HostedZoneId": "DUMMY",
+        "Name": "releases.keri.host.",
+        "Type": "A",
+      },
+      "Type": "AWS::Route53::RecordSet",
+    },
+    "ReleasesAAAAFA9DFFFA": {
+      "Properties": {
+        "AliasTarget": {
+          "DNSName": {
+            "Fn::ImportValue": "Support:ExportsOutputFnGetAttDCB28BBFEDomainName8C06CEF5",
+          },
+          "HostedZoneId": {
+            "Fn::FindInMap": [
+              "MappingCopyAWSCloudFrontPartitionHostedZoneIdMapc838e5cc967a7638f165bad808394aa9341c71898d",
+              {
+                "Ref": "AWS::Partition",
+              },
+              "zoneId",
+            ],
+          },
+        },
+        "HostedZoneId": "DUMMY",
+        "Name": "releases.keri.host.",
+        "Type": "AAAA",
+      },
+      "Type": "AWS::Route53::RecordSet",
+    },
+  },
+  "Rules": {
+    "CheckBootstrapVersion": {
+      "Assertions": [
+        {
+          "Assert": {
+            "Fn::Not": [
+              {
+                "Fn::Contains": [
+                  [
+                    "1",
+                    "2",
+                    "3",
+                    "4",
+                    "5",
+                  ],
+                  {
+                    "Ref": "BootstrapVersion",
+                  },
+                ],
+              },
+            ],
+          },
+          "AssertDescription": "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+        },
+      ],
+    },
+  },
+}
+`;
