@@ -1,0 +1,10 @@
+{
+  "publisher_aid": "PLACEHOLDER_BEFORE_FIRST_PRODUCTION_INCEPTION_CEREMONY",
+  "embedded_kel_hash": "PLACEHOLDER",
+  "embedded_kel_sn": 0,
+  "witness_oobis": [
+    "https://api.keri.host/witness/oobi/PLACEHOLDER1",
+    "https://api.keri.host/witness/oobi/PLACEHOLDER2",
+    "https://api.keri.host/witness/oobi/PLACEHOLDER3"
+  ]
+}
