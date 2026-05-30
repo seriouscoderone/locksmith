@@ -24,6 +24,7 @@ keripy v2.0.0-dev6 API notes
 """
 from __future__ import annotations
 
+import json
 import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,6 +34,7 @@ from keri.core import coring
 from keri.core.eventing import incept
 
 from .anchor import PublisherAnchor, write_publisher_anchor, write_publisher_summary
+from .witness_client import Receipt, WitnessClient
 from .witnesses import WitnessInfo, discover_witness_pool
 from .yubikey import FakeYubiKeyDevice, YubiKeyDevice, open_real_device
 
@@ -124,27 +126,26 @@ def run_inception_ceremony(
     dry_run: bool,
     output_dir: Path,
     yubikey_slots: list[str],
+    submit: bool = False,
 ) -> None:
     """End-to-end inception ceremony runner.
 
-    Dry-run mode uses FakeYubiKeyDevice and writes outputs to a tmp dir; it does
-    NOT submit the event to witnesses. Production mode uses real YubiKey devices
-    and (with `submit=True`, added in Task B9) signs the event and submits it to
-    the witness pool.
+    `dry_run=True` uses FakeYubiKeyDevice and writes outputs to a tmp dir.
+    `submit=True` collects per-device signatures, attaches them to the inception
+    event, submits the signed CESR stream to the witness pool, persists the
+    returned receipts alongside the event, and marks the publisher-aid.json
+    summary `status=live`. In production this is the step that brings the AID
+    into existence.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "kel-events").mkdir(parents=True, exist_ok=True)
 
-    # Witness discovery: in dry-run we accept oobis verbatim; in production we
-    # would also query api.keri.host/witness/pool to confirm the witnesses are
-    # currently advertised.
     if dry_run:
         witnesses = [
             WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
             for oobi in witness_oobis
         ]
     else:
-        # Use the first oobi's host as the pool URL.
         pool_url = _derive_pool_url(witness_oobis[0])
         witnesses = discover_witness_pool(pool_url, minimum=toad + 1)
 
@@ -169,6 +170,36 @@ def run_inception_ceremony(
         toad=toad,
     )
 
+    # Persist the unsigned event first so the operator can review it.
+    icp_path = output_dir / "kel-events" / "icp-sn-0.cesr"
+    icp_path.write_bytes(result.serialized_event)
+
+    receipts: list[Receipt] = []
+    if submit:
+        # Collect per-device signatures over the serialized inception event.
+        sigs: list[bytes] = []
+        for device in devices[:quorum]:
+            sigs.append(device.sign(result.serialized_event))
+        signed_event = _attach_signatures(result.serialized_event, sigs)
+        icp_path.write_bytes(signed_event)
+
+        # Submit to the witness pool and gather receipts.
+        wc = WitnessClient(
+            witness_urls=[_oobi_to_witness_url(w.oobi) for w in witnesses],
+            threshold=toad,
+        )
+        receipts = wc.submit_event(signed_event)
+
+        # Persist receipts next to the event.
+        receipts_path = output_dir / "kel-events" / "icp-sn-0.receipts.json"
+        receipts_path.write_text(
+            json.dumps(
+                [{"witness_aid": r.witness_aid, "receipt_cesr": r.receipt_cesr} for r in receipts],
+                indent=2,
+            ) + "\n",
+            encoding="utf-8",
+        )
+
     anchor = PublisherAnchor(
         publisher_aid=result.aid_prefix,
         embedded_kel_hash=result.event_said,
@@ -177,19 +208,13 @@ def run_inception_ceremony(
     )
 
     write_publisher_anchor(anchor, output_dir / "publisher_anchor.json")
-    write_publisher_summary(
+    _write_publisher_summary_with_status(
         anchor,
         output_dir / "publisher-aid.json",
         latest_kel_url="https://releases.keri.host/publisher/v1/kel-events/",
+        status="live" if receipts else "unsubmitted",
+        receipt_count=len(receipts),
     )
-    (output_dir / "kel-events" / "icp-sn-0.cesr").write_bytes(result.serialized_event)
-
-    # Task B9 extends this runner to: collect each device's signature over
-    # result.serialized_event, attach them as CESR signature blocks, submit the
-    # signed event to the witness pool via WitnessClient, and persist the
-    # returned receipts. With B9 applied, the publisher AID is live by the time
-    # this function returns. The `sign` / `countersign` / `submit` CLI
-    # subcommands (release `ixn` flow, not inception) remain Phase 4 work.
 
 
 def _oobi_to_aid_stub(oobi: str) -> str:
@@ -202,3 +227,45 @@ def _derive_pool_url(oobi: str) -> str:
     from urllib.parse import urlparse
     parsed = urlparse(oobi)
     return f"{parsed.scheme}://{parsed.netloc}/witness/pool"
+
+
+def _attach_signatures(event_raw: bytes, sigs: list[bytes]) -> bytes:
+    """Attach indexed CESR signature blocks to a serialized inception event.
+
+    Uses keripy's CESR indexed-signature primitives. The fully signed stream is
+    what witnesses expect at POST /witness/process.
+    """
+    from keri.core.eventing import Siger
+
+    parts = [event_raw]
+    for idx, raw_sig in enumerate(sigs):
+        siger = Siger(raw=raw_sig, code="A", index=idx)  # "A" = Ed25519_Sig
+        parts.append(siger.qb64b)
+    return b"".join(parts)
+
+
+def _oobi_to_witness_url(oobi: str) -> str:
+    """Convert a witness OOBI to the base witness HTTP URL."""
+    from urllib.parse import urlparse
+    parsed = urlparse(oobi)
+    return f"{parsed.scheme}://{parsed.netloc}"
+
+
+def _write_publisher_summary_with_status(
+    anchor: PublisherAnchor,
+    path: Path,
+    *,
+    latest_kel_url: str,
+    status: str,
+    receipt_count: int,
+) -> None:
+    body = {
+        "publisher_aid": anchor.publisher_aid,
+        "latest_kel_hash": anchor.embedded_kel_hash,
+        "latest_kel_sn": anchor.embedded_kel_sn,
+        "witnesses": list(anchor.witness_oobis),
+        "kel_events_url": latest_kel_url,
+        "status": status,
+        "receipt_count": receipt_count,
+    }
+    path.write_text(json.dumps(body, indent=2, sort_keys=True) + "\n", encoding="utf-8")

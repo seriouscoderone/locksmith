@@ -47,6 +47,15 @@ def main(argv: list[str] | None = None) -> int:
     mode = parser.add_mutually_exclusive_group()
     mode.add_argument("--dry-run", action="store_true", default=True)
     mode.add_argument("--production", action="store_true")
+    parser.add_argument(
+        "--submit",
+        dest="submit",
+        action=argparse.BooleanOptionalAction,
+        default=None,
+        help="Submit the signed inception event to the witness pool and "
+             "persist receipts. Defaults to --submit in --production and "
+             "--no-submit in --dry-run.",
+    )
     parser.add_argument("--non-interactive", action="store_true",
                         help="Skip confirmation prompts. Required for automated tests.")
     args = parser.parse_args(argv)
@@ -66,12 +75,18 @@ def main(argv: list[str] | None = None) -> int:
             print("Aborted.", file=sys.stderr)
             return 1
 
+    if args.submit is None:
+        submit = not dry_run
+    else:
+        submit = args.submit
+
     run_inception_ceremony(
         witness_oobis=args.witness_oobis,
         toad=args.toad,
         quorum=args.quorum,
         signers=args.signers,
         dry_run=dry_run,
+        submit=submit,
         output_dir=args.output_dir,
         yubikey_slots=slots,
     )
