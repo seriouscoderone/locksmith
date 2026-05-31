@@ -10,6 +10,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.peer.allowlist import PeerAllowlist
+from locksmith.peer.exposure import count_exposed
 from locksmith.peer.health import summarize_health_for_ui
 from locksmith.peer.reachability import check_reachable
 from locksmith.peer.records import PeerModeSettings
@@ -149,6 +150,25 @@ class PeerSettingsSection(QFrame):
         apply_row.addWidget(self.apply_button)
         card_layout.addLayout(apply_row)
 
+        # No-AID-exposed banner. Shown only when the listener is on but
+        # no identifiers have peer-role published — without at least one
+        # exposed AID the listener accepts no inbound traffic, which is
+        # a silent dead-end the user otherwise has no way to discover.
+        self.exposure_banner = QLabel(
+            "Listener is up, but no identifiers will accept inbound "
+            "connections. Open an identifier and toggle "
+            "“Expose over peer mode” to make it reachable."
+        )
+        self.exposure_banner.setObjectName("peer_exposure_banner")
+        self.exposure_banner.setWordWrap(True)
+        self.exposure_banner.setStyleSheet(
+            f"background-color: #FEF3C7; color: #92400E; "
+            f"border: 1px solid #FCD34D; border-radius: 8px; "
+            f"padding: 10px 14px; margin-top: 14px; font-size: 12px;"
+        )
+        self.exposure_banner.setVisible(False)
+        card_layout.addWidget(self.exposure_banner)
+
         layout.addWidget(card)
 
         # Populate detected interfaces (best-effort)
@@ -212,6 +232,7 @@ class PeerSettingsSection(QFrame):
         layout.addWidget(peers_card)
 
         self._refresh_peers_list()
+        self._refresh_exposure_banner()
 
         # PeerHealthMonitorDoer updates db.peerHealth every ~60s. Re-paint
         # the list a few times a minute so the user sees fresh dots
@@ -220,6 +241,10 @@ class PeerSettingsSection(QFrame):
         self._health_refresh_timer = QTimer(self)
         self._health_refresh_timer.setInterval(15_000)
         self._health_refresh_timer.timeout.connect(self._refresh_peers_list)
+        # Same tick is enough to keep the no-AID-exposed banner in sync —
+        # exposure state changes only when the user flips a per-AID toggle,
+        # which is rare relative to network conditions.
+        self._health_refresh_timer.timeout.connect(self._refresh_exposure_banner)
         self._health_refresh_timer.start()
 
     def _load(self) -> None:
@@ -249,6 +274,7 @@ class PeerSettingsSection(QFrame):
         )
         self._vault.restart_peer_mode()
         self._sync_status_from_doer()
+        self._refresh_exposure_banner()
         if rec.enabled:
             # Give the listener a beat to bind, then probe ourselves.
             # 500ms is enough for hio's TCPServer to flip self.opened
@@ -273,6 +299,30 @@ class PeerSettingsSection(QFrame):
             )
         else:
             self._set_status("amber", result.message)
+
+    def _refresh_exposure_banner(self) -> None:
+        """Show the no-AID-exposed warning only when:
+          - the listener is meant to be running (enabled=True), AND
+          - no AIDs in this vault have peer-role published in their KEL.
+        Disabled-listener and zero-AID cases have other UX surfaces
+        (the listener status line, the new-identifier flow) and don't
+        need to be flagged here.
+        """
+        try:
+            settings = self._vault.db.peerSettings.get(keys=("default",))
+        except AttributeError:
+            settings = None
+        if settings is None or not settings.enabled:
+            self.exposure_banner.setVisible(False)
+            return
+        if not getattr(self._vault, "hby", None):
+            self.exposure_banner.setVisible(False)
+            return
+        exposed = count_exposed(self._vault.hby)
+        # Hide if exposed >0 OR if there are no AIDs at all (nothing
+        # actionable to suggest).
+        any_habs = any(True for _ in self._vault.hby.habs)
+        self.exposure_banner.setVisible(exposed == 0 and any_habs)
 
     def _sync_status_from_doer(self) -> None:
         doer = getattr(self._vault, "peer_doer", None)
