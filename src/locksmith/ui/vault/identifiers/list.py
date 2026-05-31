@@ -10,6 +10,7 @@ from PySide6.QtWidgets import QVBoxLayout, QSizePolicy
 from keri import help
 import keri.app.habbing as keri_habbing
 
+from locksmith.peer.exposure import is_aid_peer_exposed
 from locksmith.ui import colors
 from locksmith.ui.toolkit.tables import PaginatedTableWidget
 from locksmith.core.grouping import check_pending_multisig
@@ -68,8 +69,9 @@ class IdentifierListPage(BaseListPage):
         # Create table widget
         self.icon_path = ":/assets/custom/identifiers.png"
         self.table = PaginatedTableWidget(
-            columns=["Alias", "Prefix", "Seq No.", "Witnesses", "Actions"],
-            column_widths={"Alias": 250, "Witnesses": 150, "Seq No.": 150, "Actions": 50},
+            columns=["Alias", "Prefix", "Seq No.", "Witnesses", "Peer", "Actions"],
+            column_widths={"Alias": 250, "Witnesses": 150, "Seq No.": 150,
+                           "Peer": 60, "Actions": 50},
             title="Local Identifiers",
             icon_path=self.icon_path,
             items_per_page=10,
@@ -122,6 +124,20 @@ class IdentifierListPage(BaseListPage):
                                        "Prefix": prefix,
                                        "Seq No.": "N/A",
                                        "Witnesses": "N/A"}
+
+                # Peer-mode exposure indicator. Reads from db.ends (the
+                # persisted source of truth) so it's correct after
+                # restart without needing the user to open each AID.
+                exposed = is_aid_peer_exposed(self.app.vault.hby, prefix)
+                identifier_dict["Peer"] = "●" if exposed else "○"
+                identifier_dict["Peer_color"] = (
+                    colors.SUCCESS_INDICATOR if exposed else colors.TEXT_MUTED
+                )
+                identifier_dict["Peer_tooltip"] = (
+                    "Exposed for direct peer mode"
+                    if exposed
+                    else "Not exposed for direct peer mode"
+                )
 
                 # Check for pending multisig state
                 is_pending_multisig = False

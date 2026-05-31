@@ -4,13 +4,16 @@ locksmith.ui.toolbar module
 
 This module contains the toolbar component for the Locksmith application.
 """
-from PySide6.QtCore import QSize, Qt, Signal
+from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import QToolBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton
+from PySide6.QtWidgets import (
+    QFrame, QToolBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
+)
 from hio.base import doing
 from keri import help
 
 from locksmith.core.configing import LocksmithConfig
+from locksmith.peer.exposure import count_exposed
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import create_spacer, load_scaled_pixmap
 from locksmith.ui.toolkit.widgets import HoverIconButton, LocksmithDialog, LocksmithButton
@@ -111,6 +114,29 @@ class LocksmithToolbar(QToolBar):
         # Add spacer to push next items to the right
         self.addWidget(create_spacer(expanding=True))
 
+        # Peer-mode network-presence indicator. Always-visible at-a-
+        # glance status for the direct peer listener, so the user
+        # doesn't have to drill into Settings to see whether their
+        # vault is reachable. Hidden until a vault opens — there's no
+        # peer state to report otherwise.
+        self.peer_indicator = QLabel()
+        self.peer_indicator.setObjectName("toolbar_peer_indicator")
+        self.peer_indicator.setFixedSize(14, 14)
+        self.peer_indicator.setStyleSheet(
+            "background-color: #9CA3AF; border-radius: 7px; margin: 0 4px;"
+        )
+        self.peer_indicator.setToolTip("Peer mode: disabled")
+        self.peer_indicator.setVisible(False)
+        self.peer_indicator_action = self.addWidget(self.peer_indicator)
+        self.addWidget(create_spacer(4))
+        # Poll vault state every 5s. The peer doer's bind state changes
+        # only on Apply, but exposure count and reachability shift
+        # over longer timescales; 5s feels live without burning cycles.
+        self._peer_indicator_timer = QTimer(self)
+        self._peer_indicator_timer.setInterval(5_000)
+        self._peer_indicator_timer.timeout.connect(self._refresh_peer_indicator)
+        self._peer_indicator_timer.start()
+
         # Plugins button — leftmost tool; visible in both logged-out
         # and logged-in states.
         self.plugins_button = HoverIconButton(
@@ -173,6 +199,62 @@ class LocksmithToolbar(QToolBar):
         """Set the active state of the Plugins toolbar button."""
         if hasattr(self, 'plugins_button'):
             self.plugins_button.set_active(active)
+
+    def _refresh_peer_indicator(self) -> None:
+        """Compute current peer-mode state and reflect it in the dot.
+
+        States:
+          gray    — no vault open OR listener disabled.
+          green   — listener bound + at least one AID exposed (fully usable).
+          amber   — listener bound but no AIDs exposed (silent dead-end).
+          red     — listener supposed to be running but didn't bind.
+
+        Aligns with the diagnostic banner on the Settings card so the
+        toolbar dot and the banner never disagree.
+        """
+        vault = getattr(self.app, "vault", None)
+        if vault is None or not getattr(vault, "hby", None):
+            self.peer_indicator.setVisible(False)
+            return
+        self.peer_indicator.setVisible(True)
+        try:
+            settings = vault.db.peerSettings.get(keys=("default",))
+        except AttributeError:
+            settings = None
+        if settings is None or not settings.enabled:
+            self._set_peer_indicator("#9CA3AF", "Peer mode: disabled")
+            return
+        doer = getattr(vault, "peer_doer", None)
+        bound = (doer is not None and doer.server is not None
+                 and doer.server.opened)
+        if not bound:
+            self._set_peer_indicator(
+                "#DC2626",
+                "Peer mode: listener failed to bind. Check the Settings "
+                "page — port may already be in use.",
+            )
+            return
+        exposed = count_exposed(vault.hby)
+        port = doer.server.ha[1] if doer.server.ha else "?"
+        if exposed == 0:
+            self._set_peer_indicator(
+                "#F59E0B",
+                f"Peer mode: listening on port {port}, but no identifiers "
+                f"are exposed for inbound peer connections.",
+            )
+        else:
+            noun = "identifier" if exposed == 1 else "identifiers"
+            self._set_peer_indicator(
+                "#22C55E",
+                f"Peer mode: listening on port {port}; {exposed} {noun} "
+                f"exposed for direct peer connections.",
+            )
+
+    def _set_peer_indicator(self, color: str, tooltip: str) -> None:
+        self.peer_indicator.setStyleSheet(
+            f"background-color: {color}; border-radius: 7px; margin: 0 4px;"
+        )
+        self.peer_indicator.setToolTip(tooltip)
 
     def update_for_config(self, config: dict):
         """
