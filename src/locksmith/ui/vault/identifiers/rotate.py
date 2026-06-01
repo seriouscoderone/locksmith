@@ -484,12 +484,22 @@ class RotateIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
             if event_type == "rotation_complete":
                 logger.info(f"Rotation complete: {data.get('alias')} ({data.get('pre')})")
 
-                # Check if witnesses need authentication
-                if data.get('has_witnesses'):
+                # Show the TOTP step only when the rotation doer signaled
+                # `needs_auth=True` — i.e. the bare receipt collection it
+                # already tried didn't pull in enough wigs to meet TOAD.
+                # For pure-KERI / kerox witnesses that accept signed
+                # events without TOTP, needs_auth is False and we close
+                # the dialog clean. Falls back to has_witnesses if an
+                # older code path doesn't carry needs_auth, so we don't
+                # silently regress to "no auth ever".
+                needs_auth = data.get('needs_auth')
+                if needs_auth is None:
+                    needs_auth = data.get('has_witnesses', False)
+                if needs_auth:
                     logger.info("Showing witness authentication step")
                     self._show_auth_step(list(self.hab.kever.wits))
                 else:
-                    logger.info("No witnesses to authenticate, rotation complete")
+                    logger.info("Pure-KERI receipts collected; rotation complete")
                     import asyncio
                     asyncio.ensure_future(self._check_and_spawn_keystate_update())
                     self.accept()
