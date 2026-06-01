@@ -4,8 +4,8 @@ Builds a 2-of-3 multisig KERI `icp` event with:
 - Three signing keys, one per custodian device (laptop YK, desktop YK, air-gapped USB)
 - Signing threshold (`isith`) = 2
 - Pre-rotated next-key digests, rotation threshold (`nsith`) = 2
-- Witness list = the api.keri.host witness pool AIDs
-- toad = 2
+- Witness list = the KERI.host 5-witness federation (hardcoded; no remote discovery)
+- toad = 3 (3-of-5 majority)
 
 Emits:
 - `publisher_anchor.json` (committed to `src/locksmith/release/`)
@@ -35,7 +35,7 @@ from keri.core.eventing import incept
 
 from .anchor import PublisherAnchor, write_publisher_anchor, write_publisher_summary
 from .witness_client import Receipt, WitnessClient
-from .witnesses import WitnessInfo, discover_witness_pool
+from .witnesses import WitnessInfo, default_witness_pool
 from .yubikey import FakeYubiKeyDevice, YubiKeyDevice, open_real_device
 
 
@@ -140,14 +140,24 @@ def run_inception_ceremony(
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "kel-events").mkdir(parents=True, exist_ok=True)
 
-    if dry_run:
-        witnesses = [
-            WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
-            for oobi in witness_oobis
-        ]
+    if witness_oobis:
+        if dry_run:
+            witnesses = [
+                WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
+                for oobi in witness_oobis
+            ]
+        else:
+            witnesses = [
+                WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
+                for oobi in witness_oobis
+            ]
     else:
-        pool_url = _derive_pool_url(witness_oobis[0])
-        witnesses = discover_witness_pool(pool_url, minimum=toad + 1)
+        witnesses = default_witness_pool()
+
+    if len(witnesses) < toad:
+        raise ValueError(
+            f"witness pool has {len(witnesses)} witnesses; need at least {toad} for toad={toad}"
+        )
 
     if len(yubikey_slots) < signers:
         yubikey_slots = yubikey_slots + ["9c"] * (signers - len(yubikey_slots))
@@ -185,7 +195,7 @@ def run_inception_ceremony(
 
         # Submit to the witness pool and gather receipts.
         wc = WitnessClient(
-            witness_urls=[_oobi_to_witness_url(w.oobi) for w in witnesses],
+            witness_urls=[w.base_url for w in witnesses],
             threshold=toad,
         )
         receipts = wc.submit_event(signed_event)
@@ -222,13 +232,6 @@ def _oobi_to_aid_stub(oobi: str) -> str:
     return oobi.rstrip("/").rsplit("/", 1)[-1]
 
 
-def _derive_pool_url(oobi: str) -> str:
-    """Given a witness OOBI URL, derive the witness pool index URL on the same host."""
-    from urllib.parse import urlparse
-    parsed = urlparse(oobi)
-    return f"{parsed.scheme}://{parsed.netloc}/witness/pool"
-
-
 def _attach_signatures(event_raw: bytes, sigs: list[bytes]) -> bytes:
     """Attach indexed CESR signature blocks to a serialized inception event.
 
@@ -242,13 +245,6 @@ def _attach_signatures(event_raw: bytes, sigs: list[bytes]) -> bytes:
         siger = Siger(raw=raw_sig, code="A", index=idx)  # "A" = Ed25519_Sig
         parts.append(siger.qb64b)
     return b"".join(parts)
-
-
-def _oobi_to_witness_url(oobi: str) -> str:
-    """Convert a witness OOBI to the base witness HTTP URL."""
-    from urllib.parse import urlparse
-    parsed = urlparse(oobi)
-    return f"{parsed.scheme}://{parsed.netloc}"
 
 
 def _write_publisher_summary_with_status(

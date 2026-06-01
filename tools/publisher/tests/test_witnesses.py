@@ -1,47 +1,45 @@
-import json
-
-import pytest
-import responses
-
+"""Tests for locksmith_publisher.witnesses (5-witness federation)."""
 from locksmith_publisher.witnesses import (
+    KERI_HOST_FEDERATION,
     WitnessInfo,
-    discover_witness_pool,
-    WitnessDiscoveryError,
+    default_witness_pool,
 )
 
 
-@responses.activate
-def test_discover_witness_pool_returns_three_witnesses():
-    api_url = "https://api.keri.host/witness/pool"
-    payload = {
-        "witnesses": [
-            {"aid": "BAAA", "oobi": "https://api.keri.host/witness/oobi/BAAA"},
-            {"aid": "BBBB", "oobi": "https://api.keri.host/witness/oobi/BBBB"},
-            {"aid": "BCCC", "oobi": "https://api.keri.host/witness/oobi/BCCC"},
-        ]
-    }
-    responses.add(responses.GET, api_url, json=payload, status=200)
-    result = discover_witness_pool(api_url)
-    assert len(result) == 3
-    assert isinstance(result[0], WitnessInfo)
-    assert result[0].aid == "BAAA"
-    assert result[0].oobi.endswith("BAAA")
+def test_federation_has_five_witnesses():
+    assert len(KERI_HOST_FEDERATION) == 5
 
 
-@responses.activate
-def test_discover_witness_pool_raises_when_too_few():
-    api_url = "https://api.keri.host/witness/pool"
-    responses.add(responses.GET, api_url, json={"witnesses": [
-        {"aid": "BAAA", "oobi": "https://api.keri.host/witness/oobi/BAAA"},
-        {"aid": "BBBB", "oobi": "https://api.keri.host/witness/oobi/BBBB"},
-    ]}, status=200)
-    with pytest.raises(WitnessDiscoveryError, match="at least 3"):
-        discover_witness_pool(api_url, minimum=3)
+def test_federation_aids_are_distinct():
+    aids = {w.aid for w in KERI_HOST_FEDERATION}
+    assert len(aids) == 5
 
 
-@responses.activate
-def test_discover_witness_pool_raises_on_http_error():
-    api_url = "https://api.keri.host/witness/pool"
-    responses.add(responses.GET, api_url, status=503)
-    with pytest.raises(WitnessDiscoveryError, match="HTTP 503"):
-        discover_witness_pool(api_url)
+def test_federation_oobi_pattern():
+    for w in KERI_HOST_FEDERATION:
+        assert w.oobi.startswith("https://witness.")
+        assert "/witness/oobi/" in w.oobi
+        assert w.oobi.endswith(w.aid)
+
+
+def test_witness_info_base_url_strips_path():
+    w = WitnessInfo.from_domain("witness.example.com", "BABC")
+    assert w.base_url == "https://witness.example.com"
+
+
+def test_default_witness_pool_returns_fresh_list():
+    a = default_witness_pool()
+    b = default_witness_pool()
+    assert a == b
+    # New list each call (callers may mutate without affecting the constant).
+    a.pop()
+    assert len(default_witness_pool()) == 5
+
+
+def test_specific_federation_members():
+    by_domain = {w.oobi.split("/")[2]: w.aid for w in KERI_HOST_FEDERATION}
+    assert by_domain["witness.keri.host"] == "BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi"
+    assert by_domain["witness.legitim.us"] == "BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP"
+    assert by_domain["witness.goonei.com"] == "BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j"
+    assert by_domain["witness.verdadero.me"] == "BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5"
+    assert by_domain["witness.honest.town"] == "BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV"

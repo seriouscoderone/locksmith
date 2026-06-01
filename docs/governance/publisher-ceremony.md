@@ -21,11 +21,21 @@ Document the physical location of each device in [`publisher-custodians.md`](pub
 
 - `tools/publisher/` installed in a venv on the device performing each step
 - All three devices enrolled (YubiKeys initialized with the chosen PIV PIN/PUK; air-gapped USB prepared)
-- Confirmed witness pool: at least 3 distinct witness AIDs at `api.keri.host`. Query:
+- Confirmed availability of the KERI.host 5-witness federation:
+  - `witness.keri.host` → `BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi`
+  - `witness.legitim.us` → `BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP`
+  - `witness.goonei.com` → `BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j`
+  - `witness.verdadero.me` → `BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5`
+  - `witness.honest.town` → `BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV`
+
+  Verify each is responsive:
   ```
-  curl https://api.keri.host/witness/pool | jq .witnesses
+  for w in witness.keri.host witness.legitim.us witness.goonei.com witness.verdadero.me witness.honest.town; do
+    curl -sI "https://$w/witness" | head -1
+  done
   ```
-  If fewer than 3 are returned, stop and add witnesses to the pool before continuing.
+
+  toad=3 means we need at least 3 of the 5 to respond at submission time.
 - AWS credentials configured (only required for the final upload step)
 
 ## Stage 0 — Staging dry-run
@@ -38,9 +48,9 @@ source .venv/bin/activate
 python ceremony/incept.py \
     --dry-run \
     --output-dir /tmp/locksmith-ceremony-dry-run \
-    --witness-oobi https://staging.keri.host/witness/oobi/Bw1... \
-    --witness-oobi https://staging.keri.host/witness/oobi/Bw2... \
-    --witness-oobi https://staging.keri.host/witness/oobi/Bw3...
+    --toad 3
+# Uses the KERI.host 5-witness federation by default.
+# Override with --witness-oobi <url> --witness-oobi <url> ... to use a different pool.
 ```
 
 Expected outputs in `/tmp/locksmith-ceremony-dry-run/`:
@@ -62,9 +72,7 @@ Perform on one device at a time, in this order. The script connects to real Yubi
      python ceremony/incept.py \
          --production \
          --output-dir ~/locksmith-ceremony/01-laptop \
-         --witness-oobi $(api-keri-host-oobi 1) \
-         --witness-oobi $(api-keri-host-oobi 2) \
-         --witness-oobi $(api-keri-host-oobi 3) \
+         --toad 3 \
          --yubikey-slot 9c
      ```
    - Enter PIV PIN when prompted

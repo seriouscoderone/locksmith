@@ -36,7 +36,7 @@ def test_build_inception_event_pre_rotates_next_keys(fake_witness_pool, fake_dev
 def test_run_inception_ceremony_dry_run_emits_anchor(tmp_path: Path, monkeypatch, fake_witness_pool):
     # Monkeypatch the witness discovery to avoid network in tests.
     monkeypatch.setattr(
-        "locksmith_publisher.incept.discover_witness_pool",
+        "locksmith_publisher.incept.default_witness_pool",
         lambda *_a, **_kw: fake_witness_pool,
     )
     # Monkeypatch the YubiKey opener to return fakes.
@@ -71,7 +71,7 @@ from locksmith_publisher.witness_client import Receipt
 
 def test_run_inception_ceremony_submits_and_persists_receipts(tmp_path, monkeypatch, fake_witness_pool):
     monkeypatch.setattr(
-        "locksmith_publisher.incept.discover_witness_pool",
+        "locksmith_publisher.incept.default_witness_pool",
         lambda *_a, **_kw: fake_witness_pool,
     )
     from locksmith_publisher.yubikey import FakeYubiKeyDevice
@@ -126,7 +126,7 @@ def test_run_inception_ceremony_aborts_when_threshold_not_met(tmp_path, monkeypa
     from locksmith_publisher.yubikey import FakeYubiKeyDevice
 
     monkeypatch.setattr(
-        "locksmith_publisher.incept.discover_witness_pool",
+        "locksmith_publisher.incept.default_witness_pool",
         lambda *_a, **_kw: fake_witness_pool,
     )
     monkeypatch.setattr(
@@ -164,7 +164,7 @@ def test_run_inception_ceremony_aborts_when_threshold_not_met(tmp_path, monkeypa
 def test_run_inception_ceremony_dry_run_does_not_submit(tmp_path, monkeypatch, fake_witness_pool):
     """Dry-run mode keeps the existing behavior: no signing, no submission."""
     monkeypatch.setattr(
-        "locksmith_publisher.incept.discover_witness_pool",
+        "locksmith_publisher.incept.default_witness_pool",
         lambda *_a, **_kw: fake_witness_pool,
     )
     called = {"submit": False}

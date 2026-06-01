@@ -31,10 +31,11 @@ def main(argv: list[str] | None = None) -> int:
         "--witness-oobi",
         action="append",
         dest="witness_oobis",
-        required=True,
-        help="Repeat for each witness (>=3 required).",
+        default=None,
+        help="Repeat for each witness (>=toad required). "
+             "If omitted, uses the KERI.host 5-witness federation.",
     )
-    parser.add_argument("--toad", type=int, default=2)
+    parser.add_argument("--toad", type=int, default=3)
     parser.add_argument("--quorum", type=int, default=2)
     parser.add_argument("--signers", type=int, default=3)
     parser.add_argument(
@@ -66,7 +67,8 @@ def main(argv: list[str] | None = None) -> int:
     if not args.non_interactive:
         print("\n=== Locksmith Publisher AID Inception Ceremony ===")
         print(f"Mode: {'DRY-RUN' if dry_run else 'PRODUCTION'}")
-        print(f"Witnesses: {len(args.witness_oobis)}")
+        witness_count = len(args.witness_oobis) if args.witness_oobis else 5
+        print(f"Witnesses: {witness_count} ({'explicit' if args.witness_oobis else 'KERI.host federation'})")
         print(f"Signer quorum: {args.quorum} of {args.signers}")
         print(f"toad (witness receipts required): {args.toad}")
         print(f"Output directory: {args.output_dir}")
@@ -81,7 +83,7 @@ def main(argv: list[str] | None = None) -> int:
         submit = args.submit
 
     run_inception_ceremony(
-        witness_oobis=args.witness_oobis,
+        witness_oobis=args.witness_oobis or [],
         toad=args.toad,
         quorum=args.quorum,
         signers=args.signers,
