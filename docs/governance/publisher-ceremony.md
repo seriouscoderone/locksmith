@@ -2,6 +2,72 @@
 
 Source of truth for bootstrapping and operating the KERI.host publisher AID that anchors every Locksmith release.
 
+## Bootstrap option: software keys (when YubiKeys aren't available yet)
+
+The ceremony script supports software-backed Ed25519 keys persisted to passphrase-encrypted PEM files. This is the right starting point if you don't yet have YubiKeys — bootstrap the publisher AID now, rotate to hardware later via KERI pre-rotation (Phase 4 flow). The publisher AID prefix is preserved across the rotation; every release signed under either keyset stays verifiable.
+
+**Operational hygiene for software keys:**
+
+| Concern | Mitigation |
+|---------|-----------|
+| Key files at rest | Encrypted PKCS#8 PEM with scrypt-derived AES-256 (industry standard) |
+| File permissions | `0600` (owner read/write only) — enforced by the SoftwareKeyDevice writer |
+| Key files in transit (e.g., moving to cold storage) | Always via encrypted channel; never plaintext over network |
+| Passphrase strength | Minimum 12 characters; use diceware or a password manager generator |
+| Distribution of the 3 keys | After inception, distribute the 3 encrypted files to 3 distinct storage locations |
+| Loading 3 keys into one process | Inevitable for the inception ceremony (one-time event); accept the risk and run on a clean machine. For release signing (Phase 4), implement multi-machine partial-signing so the 3 keys never co-reside in memory again. |
+
+**Recommended storage layout for the 3 software keys (LastPass-based):**
+
+| Key | File storage | Passphrase storage |
+|-----|--------------|--------------------|
+| Key 1 (primary) | Laptop disk: `~/.locksmith-publisher/keys/key-1.enc.pem` | LastPass secure note: "Locksmith publisher key 1 passphrase" |
+| Key 2 (secondary) | Desktop disk: `~/.locksmith-publisher/keys/key-2.enc.pem` | LastPass secure note: "Locksmith publisher key 2 passphrase" (DIFFERENT note, different passphrase from Key 1) |
+| Key 3 (cold backup) | LastPass attachment in secure note "Locksmith publisher key 3 (cold)" | **Memorized OR written on paper, stored physically** — NOT in LastPass. This is your defense in depth: if both your laptop and LastPass are compromised, Key 3 is still safe. |
+
+**LastPass-specific notes:**
+- LastPass supports file attachments in Secure Notes (Advanced item type). For Key 3, upload the encrypted `key-3.enc.pem` file as an attachment.
+- LastPass attachments are encrypted with your LastPass master password — but LastPass has been breached before (2022 incident exposed encrypted vaults). Keeping Key 3's passphrase outside LastPass is meaningful defense in depth.
+- If you upgrade to 1Password or Bitwarden later, migrate using the password manager's export/import; same pattern applies.
+
+**Recovery test (do this BEFORE relying on the keys):**
+
+1. Run the ceremony in dry-run with software keys (see Stage 0 below)
+2. Move the 3 key files to their respective storage locations (laptop, desktop, LastPass)
+3. **Re-run the ceremony in `--dry-run` mode** with `--software-keys` pointing at a fresh directory + the keys downloaded back from each location
+4. Confirm all three key files are loaded without error — proves you can recover. Note: the AID prefix will differ from the first run because KERI self-addressing identifiers bind the prefix to the full inception event (including freshly generated pre-rotation next-key digests). The real inception uses the keys only once; the recovery test validates that you can decrypt and reload each key file.
+
+### Software-key ceremony invocation
+
+Stage 0 (dry-run rehearsal) with software keys:
+```bash
+cd tools/publisher
+source .venv/bin/activate
+mkdir -p ~/.locksmith-publisher/keys-dry-run
+python ceremony/incept.py \
+    --dry-run \
+    --output-dir /tmp/locksmith-ceremony-dry-run \
+    --software-keys ~/.locksmith-publisher/keys-dry-run \
+    --toad 3
+# Prompts interactively for 3 passphrases.
+```
+
+Stage 1 (production inception) with software keys:
+```bash
+mkdir -p ~/.locksmith-publisher/keys-production
+python ceremony/incept.py \
+    --production \
+    --output-dir ~/locksmith-ceremony/output \
+    --software-keys ~/.locksmith-publisher/keys-production \
+    --toad 3
+# Prompts interactively for the 3 production passphrases.
+# After this completes successfully, the publisher AID is live on the
+# 5-witness federation. Immediately distribute the 3 encrypted key files
+# to their respective storage locations (per table above).
+```
+
+---
+
 ## Roles
 
 - **Custodian operator** — runs the ceremony script on each device. Same person can operate all three devices, just one at a time.

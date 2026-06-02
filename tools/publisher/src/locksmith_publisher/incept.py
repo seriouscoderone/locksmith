@@ -34,6 +34,7 @@ from keri.core import coring
 from keri.core.eventing import incept
 
 from .anchor import PublisherAnchor, write_publisher_anchor, write_publisher_summary
+from .software_key import open_software_devices
 from .witness_client import Receipt, WitnessClient
 from .witnesses import WitnessInfo, default_witness_pool
 from .yubikey import FakeYubiKeyDevice, YubiKeyDevice, open_real_device
@@ -127,6 +128,8 @@ def run_inception_ceremony(
     output_dir: Path,
     yubikey_slots: list[str],
     submit: bool = False,
+    software_key_dir: Path | None = None,
+    software_passphrases: list[bytes] | None = None,
 ) -> None:
     """End-to-end inception ceremony runner.
 
@@ -162,8 +165,17 @@ def run_inception_ceremony(
     if len(yubikey_slots) < signers:
         yubikey_slots = yubikey_slots + ["9c"] * (signers - len(yubikey_slots))
 
-    if dry_run:
-        devices: list[YubiKeyDevice] = [
+    if software_key_dir is not None:
+        if software_passphrases is None or len(software_passphrases) < signers:
+            raise ValueError(
+                f"software_key_dir requires {signers} passphrases; "
+                f"got {len(software_passphrases) if software_passphrases else 0}"
+            )
+        devices: list[YubiKeyDevice] = open_software_devices(
+            software_key_dir, software_passphrases[:signers]
+        )
+    elif dry_run:
+        devices = [
             FakeYubiKeyDevice(serial=f"fake-{i}", slot=slot)
             for i, slot in enumerate(yubikey_slots[:signers])
         ]

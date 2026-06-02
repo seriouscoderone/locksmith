@@ -24,6 +24,36 @@ from pathlib import Path
 from locksmith_publisher.incept import run_inception_ceremony
 
 
+def _collect_software_passphrases(*, count: int, env_prefix: str | None) -> list[bytes]:
+    """Collect N passphrases either from env vars or interactive prompt."""
+    import os
+    if env_prefix:
+        passphrases: list[bytes] = []
+        for i in range(1, count + 1):
+            var = f"{env_prefix}_{i}"
+            value = os.environ.get(var)
+            if value is None:
+                print(f"ERROR: environment variable {var} not set", file=sys.stderr)
+                sys.exit(1)
+            passphrases.append(value.encode("utf-8"))
+        return passphrases
+
+    import getpass
+    passphrases = []
+    for i in range(1, count + 1):
+        while True:
+            pw1 = getpass.getpass(f"Passphrase for key {i}: ")
+            pw2 = getpass.getpass(f"Confirm passphrase for key {i}: ")
+            if pw1 == pw2:
+                if len(pw1) < 12:
+                    print("Passphrase too short (minimum 12 chars). Try again.", file=sys.stderr)
+                    continue
+                passphrases.append(pw1.encode("utf-8"))
+                break
+            print("Passphrases don't match. Try again.", file=sys.stderr)
+    return passphrases
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description="Publisher AID inception ceremony")
     parser.add_argument("--output-dir", type=Path, required=True)
@@ -59,10 +89,32 @@ def main(argv: list[str] | None = None) -> int:
     )
     parser.add_argument("--non-interactive", action="store_true",
                         help="Skip confirmation prompts. Required for automated tests.")
+    parser.add_argument(
+        "--software-keys",
+        type=Path,
+        default=None,
+        help="Use software-backed Ed25519 keys persisted to encrypted PEM "
+             "files in this directory (instead of YubiKey hardware). "
+             "BOOTSTRAP ONLY — rotate to hardware later via Phase 4 flow.",
+    )
+    parser.add_argument(
+        "--passphrase-env-prefix",
+        default=None,
+        help="If set, read software-key passphrases from environment variables "
+             "{prefix}_1, {prefix}_2, {prefix}_3 (for automated tests). "
+             "Otherwise prompts interactively.",
+    )
     args = parser.parse_args(argv)
 
     dry_run = not args.production
     slots = args.yubikey_slots or ["9c"] * args.signers
+
+    passphrases: list[bytes] | None = None
+    if args.software_keys is not None:
+        passphrases = _collect_software_passphrases(
+            count=args.signers,
+            env_prefix=args.passphrase_env_prefix,
+        )
 
     if not args.non_interactive:
         print("\n=== Locksmith Publisher AID Inception Ceremony ===")
@@ -91,6 +143,8 @@ def main(argv: list[str] | None = None) -> int:
         submit=submit,
         output_dir=args.output_dir,
         yubikey_slots=slots,
+        software_key_dir=args.software_keys,
+        software_passphrases=passphrases,
     )
     print(f"Ceremony complete. Outputs in {args.output_dir}")
     return 0
