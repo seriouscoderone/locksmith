@@ -28,10 +28,69 @@ from keri import kering
 from keri.core import coring, serdering
 from keri.core.counting import Codens, Counter
 from keri.core.eventing import receipt as eventing_receipt
+from keri.db import dbing
 from keri.kering import Vrsn_1_0
 
 
 logger = help.ogler.getLogger(__name__)
+
+
+def replay_with_evidence(hab, pre):
+    """Build a catch-up replay stream with per-event evidence logging.
+
+    Wire-equivalent to ``hab.replay(pre=pre)`` — the underlying
+    ``db.cloneEvtMsg`` already concatenates any locally-stored wig
+    (witness indexed sig) and rct (non-trans witness receipt) couples
+    to each event's attachment group. What this function adds is
+    deliberate visibility: a structured log line per event surfacing
+    how many wig and rct couples we shipped with it. That's the only
+    way to tell, after a catch-up that returns 204 and never lands
+    the AID on the receiver, whether the wallet had evidence to ship
+    or didn't.
+
+    Observed in the field:
+      - AIDs whose icp was actively witnessed by a now-retired witness
+        and whose receipt was successfully ingested at the time show
+        ``wigs=1`` for the icp. The wig couple ships in the catch-up
+        payload.
+      - Other AIDs show ``wigs=0 rcts=0`` for every event. Either we
+        never collected receipts during inception (deployment race?)
+        or a keripy parse-of-inbound-receipt wiring path didn't land
+        them. Either way, no evidence ships; the receiver's TOAD gate
+        can't be satisfied.
+
+    Why this function exists rather than just calling ``hab.replay()``:
+      The deliberate iteration over ``db.fels.getAllItemIter`` +
+      ``db.cloneEvtMsg`` mirrors what ``hab.replay()`` does internally,
+      so byte-for-byte the wire content is the same. But ``hab.replay()``
+      is a black box for diagnostics — if the receiver silently drops
+      the event there's no signal whether the wallet shipped the
+      evidence it has or didn't. We have logs.
+
+    Returns:
+        (bytearray, int): the assembled stream and the event count.
+    """
+    pre_b = pre.encode("utf-8") if isinstance(pre, str) else pre
+    msgs = bytearray()
+    n_events = 0
+    for keys, fn, dig in hab.db.fels.getAllItemIter(keys=pre_b, on=0):
+        try:
+            msg = hab.db.cloneEvtMsg(pre=pre_b, fn=fn, dig=dig)
+        except Exception as exc:  # noqa: BLE001
+            logger.warning(
+                f"replay.skip_event aid={pre} fn={fn} dig={dig!r} err={exc}"
+            )
+            continue
+        dgkey = dbing.dgKey(pre_b, dig)
+        wigs = hab.db.wigs.get(keys=dgkey) or []
+        rcts = hab.db.rcts.get(keys=dgkey) or []
+        logger.info(
+            f"replay.event aid={pre} fn={fn} bytes={len(msg)} "
+            f"wigs={len(wigs)} rcts={len(rcts)}"
+        )
+        msgs.extend(msg)
+        n_events += 1
+    return msgs, n_events
 
 
 class LocksmithReceiptor(agenting.Receiptor):
@@ -52,17 +111,17 @@ class LocksmithReceiptor(agenting.Receiptor):
             return
         self.extend([client_doer])
 
-        ims = bytearray(hab.replay(pre=pre))
+        ims, n_events = replay_with_evidence(hab, pre)
         replay_bytes = len(ims)
         try:
             sent = httping.streamCESRRequests(
                 client=client,
                 dest=wit,
-                ims=ims,
+                ims=bytearray(ims),
             )
             logger.info(
                 f"witness.catchup.sent aid={pre} wit={wit} "
-                f"events={sent} replay_bytes={replay_bytes}"
+                f"events={sent}/{n_events} replay_bytes={replay_bytes}"
             )
             while len(client.responses) < sent:
                 yield self.tock
