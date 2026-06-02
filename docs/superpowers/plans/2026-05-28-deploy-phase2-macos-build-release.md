@@ -409,9 +409,11 @@ Create `src/locksmith/release/publisher_anchor.json`:
   "embedded_kel_hash": "EHshAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
   "embedded_kel_sn": 0,
   "witness_oobis": [
-    "https://api.keri.host/witness/oobi/BPlaceholder1AAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    "https://api.keri.host/witness/oobi/BPlaceholder2AAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
-    "https://api.keri.host/witness/oobi/BPlaceholder3AAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
+    "https://witness.keri.host/witness/oobi/BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi",
+    "https://witness.legitim.us/witness/oobi/BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP",
+    "https://witness.goonei.com/witness/oobi/BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j",
+    "https://witness.verdadero.me/witness/oobi/BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5",
+    "https://witness.honest.town/witness/oobi/BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV"
   ],
   "_comment": "PLACEHOLDER. Phase 1 will populate with real publisher AID + KEL hash + witness OOBIs."
 }

@@ -14,6 +14,15 @@
 
 **Spec sections covered:** §3 locked-in decisions (CDN domain, publisher entity, custodian model, witness pool, bundle ID), §6.1 S3 layout, §6.2 CloudFront behaviors, §7.1 publisher AID identity, §7.2 witness configuration, §7.5 signing workflow — *inception event only* (the release `ixn` signing workflow is owned by Phase 4; Phase 1 establishes the witness submission primitive `witness_client.py` and uses it to make the publisher AID live), §7.7 bootstrap trust, §11.2 new committed files (CDK + tools/publisher), §11.3 prerequisites (witness count, DNS).
 
+> ⚠️ **Post-execution correction (commit `8020ad1`):** the body of this plan was authored before it was confirmed that the user operates a **5-witness federation across 5 distinct domains** (`witness.keri.host`, `witness.legitim.us`, `witness.goonei.com`, `witness.verdadero.me`, `witness.honest.town`) rather than a single `api.keri.host/witness/pool` endpoint. The implementation has been corrected:
+>
+> - `tools/publisher/src/locksmith_publisher/witnesses.py` is now a hardcoded `KERI_HOST_FEDERATION` constant + `default_witness_pool()` helper (no HTTP discovery)
+> - `toad` is **3** (3-of-5), not 2 (2-of-3)
+> - Ceremony script defaults to the federation; `--witness-oobi` is optional
+> - Placeholder `src/locksmith/release/publisher_anchor.json` uses real federation OOBIs
+>
+> Read the current source of truth (`witnesses.py`, the canonical spec §7.2, and memory `reference_witness_federation.md`) rather than the code examples in this plan body. The plan body is preserved for historical fidelity but is **out of date** in these specific areas.
+
 ---
 
 ## File Structure
@@ -3572,8 +3581,8 @@ Spec coverage check (each requirement in the user's brief mapped to a task):
 9. **Subcommands stubbed; `incept` fully implemented** → Task B2 (stubs) + B7 (incept construction) + B9 (sign + submit)
 10. **YubiKey integration documented (PIV slot)** → Task B3 (`9c` Digital Signature slot documented in module + ceremony) and `tools/publisher/README.md` (B1)
 11. **`tools/publisher/ceremony/incept.py`** → Task B8 (initial dry-run runner) + B9 (`--submit` flag, signed + witnessed flow)
-12. **2-of-3 multisig inception with `toad=2`** → Task B7 (`build_inception_event` asserts thresholds 2/2/2)
-13. **Witnesses queried from api.keri.host** → Task B4 (`discover_witness_pool`, pool listing) + Task B5 (`WitnessClient` per-witness HTTP)
+12. **2-of-3 multisig inception with `toad=2`** → Task B7 (`build_inception_event` asserts thresholds 2/2/2) — **corrected post-execution (see header note):** toad=3, 5-witness inception
+13. **Witnesses queried from api.keri.host** → Task B4 (`discover_witness_pool`, pool listing) + Task B5 (`WitnessClient` per-witness HTTP) — **corrected post-execution (see header note):** witnesses sourced from the hardcoded 5-witness federation in `witnesses.py`. Task B4 originally implemented a `discover_witness_pool` HTTP helper which was later replaced by the `KERI_HOST_FEDERATION` constant + `default_witness_pool()`.
 14. **Pre-rotation commitment** → Task B7 (`next_digests` generation + assertion in test)
 15. **§7.5 step 4 — Submission to witnesses, collect receipts** → Task B5 (`WitnessClient.submit_event`) + Task B9 (signed inception event submitted; ≥`toad` receipts asserted; receipts persisted to `kel-events/icp-sn-0.receipts.json`; `publisher-aid.json` marked `status=live`). Phase 1 makes the publisher AID live; Phase 4 reuses the same `WitnessClient` for release `ixn` events.
 16. **Output `src/locksmith/release/publisher_anchor.json`** → Task B6 (emitter) + B10 (placeholder committed; real version overwrites after ceremony)

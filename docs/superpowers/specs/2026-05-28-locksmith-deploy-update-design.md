@@ -12,7 +12,7 @@
 This document specifies how `seriouscoderone/locksmith` is built, signed, distributed, installed, updated, and cryptographically verified by end users on **macOS and Windows**. The goals are:
 
 1. **Enterprise-grade UX** — install and update feel as polished as Slack, 1Password, Linear desktop. No OS warnings, no terminal commands, no console flashes, no "Allow this app" friction.
-2. **KERI-anchored release authenticity** — every update is cryptographically tied back to a publisher KERI AID whose KEL is witnessed by `api.keri.host`. Users (and external auditors) can independently verify "is this update real?" against the same KERI infrastructure that anchors their other identifiers.
+2. **KERI-anchored release authenticity** — every update is cryptographically tied back to a publisher KERI AID whose KEL is witnessed by the 5-witness KERI.host federation (`witness.keri.host`, `witness.legitim.us`, `witness.goonei.com`, `witness.verdadero.me`, `witness.honest.town`). Users (and external auditors) can independently verify "is this update real?" against the same KERI infrastructure that anchors their other identifiers.
 3. **AWS-native infrastructure** — release artifacts, CDN, DNS, CI auth all on AWS services already used by the user. Migrate away from the legacy DigitalOcean references inherited from the upstream `keri-foundation/locksmith` fork.
 
 The system is composed of six independent subsystems with narrow interfaces. Each can be developed, tested, and reasoned about on its own.
@@ -26,7 +26,7 @@ The system is composed of six independent subsystems with narrow interfaces. Eac
 - MDM / Group Policy / enterprise configuration profiles. Deferred to a later release.
 - Multiple release channels (beta, nightly). Single `stable` channel only.
 - Per-release ACDC credentials. Releases are anchored as KEL interaction events; ACDC issuance is a future enhancement.
-- Multi-witness attestation by third parties. Only `api.keri.host` witnesses (user-operated) attest releases.
+- Multi-witness attestation by third parties. Only the 5-witness KERI.host federation (user-operated) attests releases. Independent third-party witnesses are deferred to a future release.
 - Delta updates / binary diffs. Full artifact download per release; revisit later if download size is a problem.
 
 ---
@@ -44,7 +44,7 @@ The system is composed of six independent subsystems with narrow interfaces. Eac
 | Trust model | Approach B-practical: KERI is the sole trust mechanism. Sparkle/WinSparkle download and stage; a Python verifier gates installation. |
 | Publisher entity | **KERI.host** (user-owned, future non-profit) — see `project_keri_host_publisher_entity` memory |
 | Publisher AID custodian model | Solo developer, 2-of-3 multisig across devices: laptop YubiKey, desktop YubiKey, air-gapped USB backup |
-| Witness pool | `api.keri.host/witness/*` (already operated by the user) |
+| Witness pool | 5-witness KERI.host federation across `witness.keri.host`, `witness.legitim.us`, `witness.goonei.com`, `witness.verdadero.me`, `witness.honest.town` (all user-operated; distinct domains for TLS/DNS/hosting diversity) |
 | Release anchoring | KEL interaction events with anchored seals — **no separate TEL**. Each release = one `ixn` event in the publisher KEL. |
 | Trust anchor bootstrap | `publisher_aid` prefix + KEL hash embedded in each build at build time; OS code signing attests the embedded values |
 | CDN domain | `releases.keri.host` (AWS Route 53 + CloudFront + ACM cert) |
@@ -71,7 +71,8 @@ Six subsystems, each with one clear purpose:
 ┌─────────────────────────────────────────────────────────────────────────┐
 │                       KERI Publisher Service                             │
 │   tools/publisher/ CLI — 2-of-3 multisig ceremony, emits signed ixn      │
-│   event anchored in publisher AID KEL (witnessed by api.keri.host)       │
+│   event anchored in publisher AID KEL (witnessed by the 5-witness        │
+│   KERI.host federation)                                                   │
 └──────────────────────────────────┬──────────────────────────────────────┘
                                    │ release-anchor-X.Y.Z.cesr
                                    ▼
@@ -103,7 +104,7 @@ Six subsystems, each with one clear purpose:
 OS code signature (Apple Developer ID / Authenticode via Azure Trusted Signing)
     └─ proves the installed Locksmith binary was published by KERI.host
         └─ inside that binary: embedded publisher_aid prefix + KEL hash at build time
-            └─ each update is KERI-verified against this AID via api.keri.host
+            └─ each update is KERI-verified against this AID via the 5-witness federation
                 └─ KEL is replayed from the embedded hash forward
                     └─ witness receipts verified for each event up to the release ixn
                         └─ artifact SHA256 matched against the anchored seal
@@ -298,18 +299,27 @@ Operational characteristics:
 
 ### 7.2 Witness configuration
 
-Witnesses are the existing `api.keri.host/witness/*` infrastructure (already operated by the user; documented in `~/KERI/code/kerihost`).
+Witnesses are the **5-witness KERI.host federation**, all user-operated across distinct domains for TLS/DNS/hosting diversity. Hardcoded in `tools/publisher/src/locksmith_publisher/witnesses.py` as the `KERI_HOST_FEDERATION` constant; evolves slowly enough that a build-time constant is correct for v1 (file-based config can come later).
 
-- Inception event lists ≥3 witness AIDs (currently the api.keri.host witness pool has its own AID; if there are not yet 3 distinct witness AIDs at api.keri.host, this is a prerequisite to be tracked in the implementation plan).
-- `toad` (threshold of accountable duplicity) = 2 — i.e., 2 of 3 witness receipts required for each KEL event.
-- Witness OOBIs are written into `publisher_anchor.json` and embedded in the build at build time.
+| Domain | AID |
+|--------|-----|
+| `witness.keri.host` | `BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi` |
+| `witness.legitim.us` | `BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP` |
+| `witness.goonei.com` | `BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j` |
+| `witness.verdadero.me` | `BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5` |
+| `witness.honest.town` | `BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV` |
+
+- Inception event lists all 5 witness AIDs
+- `toad` (threshold of accountable duplicity) = **3** (3-of-5; majority quorum, tolerates 2 simultaneous witness failures)
+- OOBI URL pattern: `https://<witness-domain>/witness/oobi/<aid>`
+- No remote pool discovery endpoint — the federation is a build-time constant
 
 ### 7.3 Release anchoring via KEL interaction events
 
 Each release is a single **interaction (`ixn`)** event in the publisher AID's KEL, with the release metadata as the anchored seal. Example KEL progression:
 
 ```
-sn=0   icp   (inception: publisher_aid created, witnesses=[w1, w2, w3], toad=2)
+sn=0   icp   (inception: publisher_aid created, witnesses=[w1, w2, w3, w4, w5], toad=3)
 sn=1   ixn   anchored seal: { release: { v: "1.0.0", artifacts: {...} } }
 sn=2   ixn   anchored seal: { release: { v: "1.0.1", artifacts: {...} } }
 sn=3   rot   (routine key rotation — 12 months elapsed)
@@ -380,8 +390,8 @@ Ceremony for release X.Y.Z:
    ```
    locksmith-publisher submit --signed release-anchor-1.2.3.cesr
    ```
-   - Submits the signed `ixn` event to the publisher AID's witnesses (api.keri.host)
-   - Waits for witness receipts (2-of-3)
+   - Submits the signed `ixn` event to the publisher AID's witnesses (the 5-witness federation)
+   - Waits for witness receipts (3-of-5)
    - Uploads the final `release-anchor-1.2.3.cesr` (event + receipts) to `s3://releases.keri.host/releases/1.2.3/`
    - Updates `publisher/v1/publisher-aid.json` and pushes the new event to `publisher/v1/kel-events/`
    - Triggers the `publish` CI job (refreshes appcast)
@@ -405,9 +415,11 @@ The embedded `publisher_anchor.json` in each build contains:
   "embedded_kel_hash": "EHsh...",      // SAID of latest KEL event at build time
   "embedded_kel_sn": 17,               // sequence number at build time
   "witness_oobis": [
-    "https://api.keri.host/witness/oobi/Bwit1...",
-    "https://api.keri.host/witness/oobi/Bwit2...",
-    "https://api.keri.host/witness/oobi/Bwit3..."
+    "https://witness.keri.host/witness/oobi/BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi",
+    "https://witness.legitim.us/witness/oobi/BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP",
+    "https://witness.goonei.com/witness/oobi/BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j",
+    "https://witness.verdadero.me/witness/oobi/BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5",
+    "https://witness.honest.town/witness/oobi/BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV"
   ]
 }
 ```
@@ -675,7 +687,7 @@ Each fixture set includes:
 - **Azure Trusted Signing account** — to be created under the KERI.host entity. ~$10/month. CI integration via `Azure/trusted-signing-action`.
 - **Custodian hardware** — 2× YubiKey 5 Series (laptop + desktop). Already in user's possession or to be procured.
 - **Air-gapped backup signer device** — USB drive in fireproof safe; one-time setup.
-- **Witness pool** — `api.keri.host` is live; confirm ≥3 distinct witness AIDs available, or plan to add witnesses to the pool.
+- **Witness pool** — the 5-witness KERI.host federation is live (see §7.2 for the AID list). All 5 services must be health-checked before the inception ceremony; toad=3 means at least 3 of 5 must respond at submit time.
 - **DNS** — `releases.keri.host` to be added to Route 53 zone for `keri.host`.
 - **Bundle ID claim** — `host.keri.locksmith` to be claimed in Apple Developer Program.
 
@@ -686,7 +698,7 @@ Each fixture set includes:
 These are items intentionally left for implementation planning, not gaps in the design:
 
 1. **Domain verification for releases.keri.host** — need to confirm Route 53 zone exists for `keri.host` and ACM cert provisioning is automatable via CDK. If not yet, prerequisite step.
-2. **Witness count at api.keri.host** — design assumes ≥3 witness AIDs at api.keri.host; verify current count and plan additions if needed.
+2. **Witness federation health monitoring** — the 5 witness services should have automated uptime checks (e.g., a CloudWatch synthetic that hits `https://<domain>/witness` every minute) so the ceremony operator knows the pool is healthy before submitting. Out of scope for v1 implementation but worth tracking.
 3. **Sparkle 2 ↔ disabled signature verification configuration** — exact `Info.plist` keys (`SUExpectsDSASignature = NO`, etc.) and Sparkle 2 equivalents to be confirmed during implementation.
 4. **WinSparkle equivalent** — WinSparkle's API for disabling signature verification needs implementation-time verification.
 5. **Sparkle / WinSparkle installer-hook integration point** — exact lifecycle hook used to invoke our Python verifier between "downloaded" and "install" is platform-specific and will be confirmed during the spike phase.
@@ -721,7 +733,7 @@ This design is implemented and ready for first public release when:
 4. A major version update presents a polished "What's New" modal that lets the user choose Install or Remind Tomorrow
 5. The Settings → Updates → Verification log shows a real KERI verification trace for every update the user has applied
 6. The release dry-run process passes on both macOS and Windows
-7. An independent auditor can replay the publisher KEL from witnesses on `api.keri.host` and verify every release matches the artifacts served by `releases.keri.host`
+7. An independent auditor can replay the publisher KEL from the 5-witness federation and verify every release matches the artifacts served by `releases.keri.host`
 
 ---
 

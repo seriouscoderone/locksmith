@@ -2,7 +2,7 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Releases are KERI-anchored via 2-of-3 multisig `ixn` events in a publisher KEL witnessed by api.keri.host; users can independently verify any downloaded artifact via a standalone `locksmith --verify-update <path>` CLI.
+**Goal:** Releases are KERI-anchored via 2-of-3 multisig `ixn` events in a publisher KEL witnessed by the 5-witness KERI.host federation; users can independently verify any downloaded artifact via a standalone `locksmith --verify-update <path>` CLI.
 
 **Architecture:** Two cooperating Python packages: `tools/publisher/` (off-CI multisig signing CLI, never bundled with app) emits signed `release-anchor-X.Y.Z.cesr` events anchored to the publisher AID and refreshes the appcast; `src/locksmith/update/` (bundled with the app) fetches the appcast, replays the publisher KEL from an embedded hash forward against witness receipts, and gates artifact installation by matching SHA256s against the anchored seal. No Sparkle/UI changes in this phase — Phase 5 consumes these.
 
@@ -13,7 +13,7 @@
 **Open question resolution (spec §12 item 7 — publish CI trigger):** This plan uses **manual `workflow_dispatch`** keyed on the version string. EventBridge-triggered automation is a follow-up in Phase 5+. Rationale: deterministic synchronous feedback during early operations; no IAM event-bus surface to design and lock down on day one; the publisher CLI is already interactive (the operator just runs `gh workflow run publish --field version=X.Y.Z` after `submit` completes).
 
 **Cross-phase dependencies:**
-- Depends on Phase 1: `src/locksmith/release/publisher_anchor.json` schema, publisher AID **live** on api.keri.host (inception event submitted, ≥`toad` receipts collected), OIDC role `gha-locksmith-release-publisher`, `tools/publisher/` package skeleton with stubbed `sign`, `countersign`, `submit` subcommands, and `tools/publisher/src/locksmith_publisher/witness_client.py` (already implemented in Phase 1 Task B5; Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged).
+- Depends on Phase 1: `src/locksmith/release/publisher_anchor.json` schema, publisher AID **live** on the 5-witness KERI.host federation (inception event submitted, ≥`toad` receipts collected), OIDC role `gha-locksmith-release-publisher`, `tools/publisher/` package skeleton with stubbed `sign`, `countersign`, `submit` subcommands, and `tools/publisher/src/locksmith_publisher/witness_client.py` (already implemented in Phase 1 Task B5; Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged).
 - Depends on Phase 2/3: Actual `Locksmith-X.Y.Z.dmg` / `.msi` artifacts uploaded to `s3://releases-staging.keri.host/candidates/X.Y.Z/`.
 - Phase 5 depends on this phase: imports `locksmith.update.verify.verify_artifact()`; reads `locksmith.update.log` for the verification-history UI.
 
@@ -27,7 +27,7 @@
 - `tools/publisher/src/locksmith_publisher/s3_client.py` — boto3 wrappers (OIDC-derived creds)
 
 **Reused from Phase 1 (imported, not created here):**
-- `tools/publisher/src/locksmith_publisher/witness_client.py` — HTTP client for api.keri.host (Phase 1 Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` for release `ixn` submission.
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — HTTP client for the 5-witness federation (Phase 1 Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` for release `ixn` submission.
 - `tools/publisher/src/locksmith_publisher/appcast.py` — appcast generator
 - `tools/publisher/src/locksmith_publisher/errors.py` — typed exceptions
 - `src/locksmith/update/__init__.py`
@@ -365,10 +365,10 @@ def make_witness(idx: int, base: Path) -> habbing.Hab:
     return hab, hby
 
 
-def make_publisher(base: Path, wit_prefixes: list[str], toad: int = 2):
+def make_publisher(base: Path, wit_prefixes: list[str], toad: int = 3):
     """Build the multisig publisher AID. For fixtures we use a single-key
     Hab — multisig ceremony state machine is tested separately. Publisher's
-    semantic identity is preserved: the same AID prefix, witnessed by 3."""
+    semantic identity is preserved: the same AID prefix, witnessed by 5."""
     salt = signing.Salter(raw=PUBLISHER_SALTS[0]).qb64
     hby = habbing.Habery(
         name="publisher",
@@ -445,7 +445,7 @@ def anchor_release(hab: habbing.Hab, seal: dict, witnesses: list[habbing.Hab]) -
     serder = serdering.SerderKERI(raw=bytearray(msg))
     # Generate witness receipts by replaying the event through each witness's parser.
     for wit_hab in witnesses:
-        # In a real deployment, witnesses are remote and api.keri.host emits receipts;
+        # In a real deployment, witnesses are remote and the federation emits receipts;
         # for fixtures we directly call receipt() on each witness Hab.
         rserder, _ = eventing.receipt(
             pre=hab.pre,
@@ -475,8 +475,8 @@ def generate_happy_path(out: Path) -> None:
 
     wit_prefixes = [w.pre for w in witnesses]
 
-    # 2. Publisher AID with toad=2.
-    pub, pub_hby = make_publisher(base, wit_prefixes, toad=2)
+    # 2. Publisher AID with toad=3 (3-of-5 federation quorum).
+    pub, pub_hby = make_publisher(base, wit_prefixes, toad=3)
 
     # 3. Release anchors.
     versions = [
@@ -519,9 +519,9 @@ def generate_happy_path(out: Path) -> None:
         "publisher_aid": pub.pre,
         "embedded_kel_hash": pub.kever.serder.said,
         "embedded_kel_sn": pub.kever.sn,
-        "witness_oobis": [f"https://api.keri.host/witness/oobi/{w}" for w in wit_prefixes],
+        "witness_oobis": [f"https://witness.keri.host/witness/oobi/{w}" for w in wit_prefixes],
         "witness_aids": wit_prefixes,
-        "toad": 2,
+        "toad": 3,
         "_releases": release_records,  # convenience for tests
     }
     (out / "publisher_aid.json").write_text(json.dumps(pub_aid_json, indent=2))
@@ -3066,7 +3066,7 @@ git commit -m "feat(publisher): multisig ceremony state machine"
 
 ## Task 12: Confirm `witness_client.py` integration with release `ixn` flow
 
-> **Note: `tools/publisher/src/locksmith_publisher/witness_client.py` already exists from Phase 1 Task B5.** It was built to submit the multisig inception event and was scoped as a general api.keri.host witness pool client. Phase 4 reuses it unchanged for release `ixn` event submission. This task is intentionally small — its purpose is to confirm no extension is required and to add an integration smoke test that exercises `WitnessClient.submit_event()` against a release `ixn` payload (the heavy unit coverage — receipt collection, threshold-not-met, duplicity, unreachable — lives in `tools/publisher/tests/test_witness_client.py` from Phase 1 Task B5).
+> **Note: `tools/publisher/src/locksmith_publisher/witness_client.py` already exists from Phase 1 Task B5.** It was built to submit the multisig inception event and was scoped as a general federation witness client. Phase 4 reuses it unchanged for release `ixn` event submission. This task is intentionally small — its purpose is to confirm no extension is required and to add an integration smoke test that exercises `WitnessClient.submit_event()` against a release `ixn` payload (the heavy unit coverage — receipt collection, threshold-not-met, duplicity, unreachable — lives in `tools/publisher/tests/test_witness_client.py` from Phase 1 Task B5).
 
 **Files:**
 - Test: `tests/unit/publisher/test_witness_client_release_integration.py`
@@ -3119,11 +3119,13 @@ def test_release_ixn_submission_returns_receipts():
     """A serialized release ixn event submits exactly like an icp event."""
     wc = WitnessClient(
         witness_urls=[
-            "https://api.keri.host/witness/w1/",
-            "https://api.keri.host/witness/w2/",
-            "https://api.keri.host/witness/w3/",
+            "https://witness.keri.host",
+            "https://witness.legitim.us",
+            "https://witness.goonei.com",
+            "https://witness.verdadero.me",
+            "https://witness.honest.town",
         ],
-        threshold=2,
+        threshold=3,
     )
     ixn_payload = b'{"v":"KERI...","t":"ixn","sn":"5",...}'  # opaque CESR stream
     with patch("locksmith_publisher.witness_client.requests.post",
@@ -3137,17 +3139,19 @@ def test_release_ixn_submission_propagates_threshold_not_met():
     """If too few witnesses respond, the CLI sees WitnessThresholdNotMet."""
     wc = WitnessClient(
         witness_urls=[
-            "https://api.keri.host/witness/w1/",
-            "https://api.keri.host/witness/w2/",
-            "https://api.keri.host/witness/w3/",
+            "https://witness.keri.host",
+            "https://witness.legitim.us",
+            "https://witness.goonei.com",
+            "https://witness.verdadero.me",
+            "https://witness.honest.town",
         ],
-        threshold=2,
+        threshold=3,
         max_retries=1,
     )
 
     def side_effect(url, **kwargs):
-        if "w1" in url:
-            return _ok_response({"witness_aid": "Bw1", "receipt_cesr": "AAAA"})
+        if "witness.keri.host" in url:
+            return _ok_response({"witness_aid": "BE4B4Cj", "receipt_cesr": "AAAA"})
         raise OSError("connection reset")
 
     ixn_payload = b'{"v":"KERI...","t":"ixn","sn":"5",...}'
@@ -3403,14 +3407,12 @@ def _countersign(partial_raw: bytes) -> bytes:
 
 
 def _witness_client() -> WitnessClient:
-    """Construct the witness client from publisher-anchor metadata."""
+    """Construct the witness client from the hardcoded 5-witness federation."""
+    from locksmith_publisher.witnesses import default_witness_pool
+    pool = default_witness_pool()
     return WitnessClient(
-        witness_urls=[
-            "https://api.keri.host/witness/w1/",
-            "https://api.keri.host/witness/w2/",
-            "https://api.keri.host/witness/w3/",
-        ],
-        threshold=2,
+        witness_urls=[w.base_url for w in pool],
+        threshold=3,
     )
 
 
@@ -3953,8 +3955,8 @@ This section captures a final pass over the Phase 4 plan after the last commit, 
 - `src/locksmith/release/publisher_anchor.json` (and the package import path `locksmith.release.publisher_anchor`) — consumed by `cli._load_anchor_and_appcast()` (Task 9) and `publish_appcasts.main()` (Task 15).
 - AWS OIDC role `gha-locksmith-release-publisher` — referenced by `.github/workflows/publish.yml` (Task 15).
 - `s3://releases.keri.host` bucket + CloudFront distribution — written-to by Tasks 13–15.
-- The publisher AID itself, **live** on `api.keri.host` with `toad=2` and ≥3 witness receipts at inception SN=0 (Phase 1 Task B9 makes the AID live) — Task 5's KEL replay assumes this.
-- `tools/publisher/src/locksmith_publisher/witness_client.py` — **Phase 1 deliverable** (Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `KeyState`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged. Phase 4 Task 12 is scoped to an integration smoke test only; no source changes to `witness_client.py` in this phase. Phase 1's `tools/publisher/tests/test_witness_client.py` is the source of truth for the base HTTP client's unit coverage.
+- The publisher AID itself, **live** on the 5-witness KERI.host federation with `toad=3` and ≥3 witness receipts at inception SN=0 (Phase 1 Task B9 makes the AID live) — Task 5's KEL replay assumes this.
+- `tools/publisher/src/locksmith_publisher/witness_client.py` — **Phase 1 deliverable** (Task B5). Phase 4 imports `WitnessClient`, `Receipt`, `KeyState`, `WitnessThresholdNotMet`, `WitnessDuplicityDetected`, `WitnessUnreachable` unchanged. Phase 4 Task 12 is scoped to an integration smoke test only; no source changes to `witness_client.py` in this phase. Phase 1's `tools/publisher/tests/test_witness_client.py` is the source of truth for the base HTTP client's unit coverage. Note: `WitnessClient` in Phase 4 is initialized from `default_witness_pool()` (the hardcoded 5-witness federation) rather than the `api.keri.host` pool discovery approach originally planned in Phase 1.
 - `tools/publisher/` package skeleton + `pyproject.toml` with `click`, `requests` (for `witness_client.py`) already wired — Tasks 10–13 extend it; Task 13 adds `boto3` dep.
 
 **Phase 4 depends on Phase 2/3 having provided:**
