@@ -519,10 +519,10 @@ class RotateIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
                         "issue receipts and no plugin holds auth material "
                         "to retry — closing dialog without TOTP prompt."
                     )
-                    self.show_error(
-                        "Rotation completed locally, but the witness did "
-                        "not issue a receipt. The new key state is in "
-                        "your KEL; remote parties may not be able to "
+                    self.show_warning(
+                        "Rotation completed locally, but the witness "
+                        "did not issue a receipt. The new key state is "
+                        "in your KEL; remote parties may not be able to "
                         "verify it until the witness side is fixed (see "
                         "kerihost issue #6)."
                     )
