@@ -1,12 +1,12 @@
 {
-  "publisher_aid": "PLACEHOLDER_BEFORE_FIRST_PRODUCTION_INCEPTION_CEREMONY",
-  "embedded_kel_hash": "PLACEHOLDER",
+  "embedded_kel_hash": "ECnJ7jhAxjrduHkIKS_ml56bqPuIJIvSw-i0mpZR_P8p",
   "embedded_kel_sn": 0,
+  "publisher_aid": "ECnJ7jhAxjrduHkIKS_ml56bqPuIJIvSw-i0mpZR_P8p",
   "witness_oobis": [
-    "https://witness.keri.host/witness/oobi/BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi",
-    "https://witness.legitim.us/witness/oobi/BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP",
-    "https://witness.goonei.com/witness/oobi/BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j",
-    "https://witness.verdadero.me/witness/oobi/BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5",
-    "https://witness.honest.town/witness/oobi/BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV"
+    "https://witness.keri.host/oobi/BE4B4CjpxNrCv8_HjLYvcwz-sui6AcJdygO-afEoTpmi/witness",
+    "https://witness.legitim.us/oobi/BFuK9vjfkaGd5DdyAABzd00vmsxQ3bDDnUAAGpxc7ZGP/witness",
+    "https://witness.goonei.com/oobi/BE7l4TEmGGpDAccj5Hc0bcIm5nABU2V2gFTrcF5NfT2j/witness",
+    "https://witness.verdadero.me/oobi/BGR9eydkMxsAniqb3FSJwA24ADRM96STzWE_aaOeiyC5/witness",
+    "https://witness.honest.town/oobi/BKCg06XEU80byz4ioN4Iim-7x2TzuklqKKuWRrViDqGV/witness"
   ]
 }

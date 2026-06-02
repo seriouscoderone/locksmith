@@ -20,12 +20,15 @@ class WitnessInfo:
 
     @classmethod
     def from_domain(cls, domain: str, aid: str) -> "WitnessInfo":
-        return cls(aid=aid, oobi=f"https://{domain}/witness/oobi/{aid}")
+        # Per KERI spec OOBI convention: /oobi/<aid>/<role>
+        # Matches keripy's OOBI_URL_TEMPLATE and the existing mailbox.keri.host
+        # pattern (https://mailbox.keri.host/oobi/<aid>/mailbox).
+        return cls(aid=aid, oobi=f"https://{domain}/oobi/{aid}/witness")
 
     @property
     def base_url(self) -> str:
-        """Witness service base URL (witness_client appends /witness/process etc.)."""
-        # OOBI: https://<domain>/witness/oobi/<aid>  →  base: https://<domain>
+        """Witness service base URL (witness_client appends /receipts etc.)."""
+        # OOBI: https://<domain>/oobi/<aid>/witness  →  base: https://<domain>
         from urllib.parse import urlparse
         parsed = urlparse(self.oobi)
         return f"{parsed.scheme}://{parsed.netloc}"

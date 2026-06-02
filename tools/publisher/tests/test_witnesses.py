@@ -16,10 +16,18 @@ def test_federation_aids_are_distinct():
 
 
 def test_federation_oobi_pattern():
+    """OOBI URLs follow the KERI spec convention /oobi/<aid>/<role>.
+
+    Matches keripy's OOBI_URL_TEMPLATE = "/oobi/{cid}/{role}" and the
+    existing mailbox.keri.host pattern. NOT the kerihost-internal
+    `/witness/oobi/<aid>` API path (which is a different concern).
+    """
     for w in KERI_HOST_FEDERATION:
         assert w.oobi.startswith("https://witness.")
-        assert "/witness/oobi/" in w.oobi
-        assert w.oobi.endswith(w.aid)
+        assert "/oobi/" in w.oobi
+        assert w.oobi.endswith(f"/{w.aid}/witness"), (
+            f"OOBI {w.oobi!r} does not match /<host>/oobi/<aid>/witness pattern"
+        )
 
 
 def test_witness_info_base_url_strips_path():
