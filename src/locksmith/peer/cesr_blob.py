@@ -84,6 +84,12 @@ def import_peer_blob(hby, blob: str) -> str:
     # CPU with no exception ever raised. Same fix as publishing.py.
     parser = parsing.Parser(kvy=kvy, rvy=rvy, version=Vrsn_1_0)
 
+    # Snapshot kevers BEFORE parse: walking hby.kevers after parse hits
+    # local AIDs that already have a peer-role tcp endpoint (the
+    # importer's own exposed AIDs) and returns one of those instead of
+    # the freshly-imported remote AID. Diff to find truly new AIDs.
+    pre_kevers = set(hby.kevers.keys())
+
     try:
         parser.parse(ims=bytearray(cesr), kvy=kvy, rvy=rvy)
     except Exception as e:  # noqa: BLE001
@@ -92,13 +98,8 @@ def import_peer_blob(hby, blob: str) -> str:
             f"Couldn't parse the blob: {e}. The token may be corrupted.",
         )
 
-    # Identify the AID — the inception event's pre is in hby.kevers.
-    # If the blob contained events for an existing AID (rotation), it
-    # will be in kevers already; if new, the parser just added it.
-    # We can't know the "intended" AID without rescanning the events,
-    # so we walk the freshly-populated kevers and pick the one whose
-    # locs has a peer-role tcp endpoint.
-    for pre in hby.kevers.keys():
+    new_pres = [pre for pre in hby.kevers.keys() if pre not in pre_kevers]
+    for pre in new_pres:
         loc = hby.db.locs.get(keys=(pre, kering.Schemes.tcp))
         if loc is not None and loc.url:
             logger.info(

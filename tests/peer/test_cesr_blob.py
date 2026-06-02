@@ -117,6 +117,61 @@ def test_import_peer_blob_roundtrips_v1_kel():
         hby_import.close()
 
 
+def test_import_peer_blob_returns_imported_aid_not_local_peer():
+    """Regression: when the importer already has a LOCAL AID exposed for
+    peer (its own AID with a tcp loc), import_peer_blob used to walk all
+    hby.kevers and return whichever AID came first that had a peer-role
+    tcp endpoint — often the importer's own. Demo bug: pairing reported
+    success but with the wrong AID + wrong endpoint, so peer_send
+    couldn't reach the actual remote.
+
+    Fix: snapshot hby.kevers before parse, only consider freshly-added
+    AIDs.
+    """
+    from hio.base import doing
+    from keri.app import habbing
+    from keri.core import signing
+    from unittest.mock import patch
+
+    from locksmith.peer import publishing
+
+    # Importer has its own exposed AID at port 5621
+    hby_importer = habbing.Habery(
+        name="imp", bran="A" * 21,
+        salt=signing.Salter(raw=b"importer01234567").qb64, temp=True,
+    )
+    # Exporter has alice exposed at port 5622
+    hby_exporter = habbing.Habery(
+        name="exp", bran="B" * 21,
+        salt=signing.Salter(raw=b"exporter01234567").qb64, temp=True,
+    )
+    try:
+        my_aid = hby_importer.makeHab(name="me", isith="1", icount=1, transferable=True)
+        their_aid = hby_exporter.makeHab(name="alice", isith="1", icount=1, transferable=True)
+
+        # Publish peer role for both, on their own habs.
+        with patch.object(publishing, "_witnesses_for", return_value=[]):
+            for hby, hab, url in [
+                (hby_importer, my_aid, "tcp://127.0.0.1:5621"),
+                (hby_exporter, their_aid, "tcp://127.0.0.1:5622"),
+            ]:
+                doer = publishing.PublishPeerRoleDoer(
+                    hby=hby, hab=hab, url=url, signal_bridge=None, allow=True,
+                )
+                doing.Doist(limit=2.0, tock=0.03125, real=False).do(doers=[doer])
+
+        blob = export_peer_blob(their_aid)
+        imported = import_peer_blob(hby_importer, blob)
+
+        assert imported == their_aid.pre, (
+            f"Expected to import remote {their_aid.pre}, got local "
+            f"{my_aid.pre}"
+        )
+    finally:
+        hby_importer.close()
+        hby_exporter.close()
+
+
 def test_import_peer_blob_no_peer_endpoint_raises(tmp_path):
     """Parser runs but no AID has a peer-role tcp endpoint in locs.
     Uses a real Habery so the Revery/Kevery wiring inside import_peer_blob
