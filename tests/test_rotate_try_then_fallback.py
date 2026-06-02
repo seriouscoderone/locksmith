@@ -148,22 +148,26 @@ def test_rotate_skips_auth_dialog_when_bare_receipts_succeed(rotation_env):
     )
 
 
-def test_rotate_falls_back_to_auth_when_bare_receipts_insufficient(rotation_env):
-    """Kerihost-style path: witness ignores the bare request, no wigs
-    land, auth_pending stays True, needs_auth=True is signaled so the
-    dialog shows the TOTP entry step.
+def test_rotate_falls_back_to_auth_when_plugin_has_seed(rotation_env):
+    """Kerihost-style path: witness ignores the bare request (no wigs
+    land) AND a plugin holds TOTP material for one of the witnesses,
+    so the TOTP step can actually unblock the user. needs_auth=True.
     """
     from locksmith.core.rotating import RotateDoer
 
     env = rotation_env
     alice = env["alice"]
 
-    # Stub that pretends to call but plants ZERO wigs (witness rejected)
     def stub_no_wigs(pre, sn=None, auths=None):
         env["receipt_calls"].append({"pre": pre, "sn": sn, "auths": auths or {}})
         return
         yield
     env["app"].vault.receiptor.receipt = stub_no_wigs
+
+    # Plugin manager says: yes, we have auth material for one of these wits
+    env["app"].plugin_manager = SimpleNamespace(
+        has_witness_auth_for_any=lambda vault, hab_pre, wits: True,
+    )
 
     captured: list[tuple[str, str, dict]] = []
     bridge = SimpleNamespace(
@@ -180,15 +184,71 @@ def test_rotate_falls_back_to_auth_when_bare_receipts_insufficient(rotation_env)
     doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
     doist.do(doers=[doer])
 
-    # Bare attempt must have happened
     assert env["receipt_calls"], "bare receipt collection must be attempted"
 
-    # auth_pending should be True so the UI shows the TOTP step
     idm = env["app"].vault.db.idm.get(keys=(alice.pre,))
     assert idm is not None and idm.auth_pending is True
 
-    # Signal payload must say auth is required
     complete = [e for e in captured if e[1] == "rotation_complete"]
     assert len(complete) == 1
     data = complete[0][2]
     assert data.get("needs_auth") is True
+    assert data.get("receipts_collected") is False
+
+
+def test_rotate_does_not_show_auth_modal_when_no_plugin_seed(rotation_env):
+    """Pure-KERI witness path that's *failing* (e.g. kerihost #6 keripy
+    Verfer bug): bare receipts didn't collect AND no plugin has auth
+    material (no TOTP seed registered for these wits). The TOTP modal
+    would be useless — there's no code to type. needs_auth must stay
+    False; receipts_collected=False signals to the dialog that the
+    rotation is locally done but un-receipted, so the UI can show an
+    informational warning rather than prompting for an OTP.
+    """
+    from locksmith.core.rotating import RotateDoer
+
+    env = rotation_env
+    alice = env["alice"]
+
+    def stub_no_wigs(pre, sn=None, auths=None):
+        env["receipt_calls"].append({"pre": pre, "sn": sn, "auths": auths or {}})
+        return
+        yield
+    env["app"].vault.receiptor.receipt = stub_no_wigs
+
+    # Plugin manager says: no plugin has auth material for these wits
+    env["app"].plugin_manager = SimpleNamespace(
+        has_witness_auth_for_any=lambda vault, hab_pre, wits: False,
+    )
+
+    captured: list[tuple[str, str, dict]] = []
+    bridge = SimpleNamespace(
+        emit_doer_event=lambda doer_name, event_type, data: captured.append(
+            (doer_name, event_type, data)
+        )
+    )
+
+    doer = RotateDoer(
+        app=env["app"], hab=alice,
+        isith="1", nsith="1", count=1, toad=1,
+        cuts=[], adds=[], signal_bridge=bridge,
+    )
+    doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
+    doist.do(doers=[doer])
+
+    assert env["receipt_calls"], "bare receipt collection must still be attempted"
+
+    idm = env["app"].vault.db.idm.get(keys=(alice.pre,))
+    # auth_pending must be False — we're not asking the user to fix it
+    assert idm is None or idm.auth_pending is False, (
+        f"auth_pending should be False when no plugin has material; got {idm}"
+    )
+
+    complete = [e for e in captured if e[1] == "rotation_complete"]
+    assert len(complete) == 1
+    data = complete[0][2]
+    assert data.get("needs_auth") is False
+    assert data.get("receipts_collected") is False, (
+        "receipts_collected must distinguish the 'no auth needed because "
+        "receipts succeeded' case from the 'no auth would help' case"
+    )

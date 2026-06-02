@@ -199,6 +199,7 @@ class RotateDoer(doing.DoDoer):
             # extra dialog. If not, fall through to the existing
             # auth_pending=True path so the dialog can collect codes.
             needs_auth = False
+            receipts_collected = not bool(self.hab.kever.wits)  # vacuously true if no wits
             if self.hab.kever.wits:
                 logger.info(
                     f"Attempting bare receipt collection for {self.hab.pre} "
@@ -223,6 +224,7 @@ class RotateDoer(doing.DoDoer):
                         f"({len(wigs)}/{toad_num}) — witness(es) accept "
                         f"pure-KERI flow; no auth needed"
                     )
+                    receipts_collected = True
                     # Make sure auth_pending is cleared in case a prior
                     # rotation attempt left it set.
                     identifier_meta_info = IdentifierMetaInfo(
@@ -230,17 +232,53 @@ class RotateDoer(doing.DoDoer):
                     )
                     self.app.vault.db.idm.pin(keys=(self.hab.pre,), val=identifier_meta_info)
                 else:
-                    logger.info(
-                        f"Bare receipt collection insufficient for {self.hab.pre} "
-                        f"({len(wigs)}/{toad_num}) — witness(es) likely require "
-                        f"auth; surfacing TOTP step to user"
-                    )
-                    needs_auth = True
-                    identifier_meta_info = IdentifierMetaInfo(
-                        prefix=self.hab.pre, auth_pending=True,
-                    )
-                    self.app.vault.db.idm.pin(keys=(self.hab.pre,), val=identifier_meta_info)
-                    logger.info(f"Set auth_pending=True for {self.hab.pre} (witnesses need authentication)")
+                    # The TOTP fallback only helps when some installed
+                    # plugin actually holds auth material (a TOTP seed)
+                    # for one of these witnesses. Without that, the
+                    # modal would prompt for a code the user can't
+                    # provide, and pretend the failure is something
+                    # the user can fix interactively. For pure-KERI
+                    # witnesses (sam-witness, kerox), there's no auth
+                    # material; the rotation completed locally but the
+                    # witness rejected the bare event for spec / Kevery
+                    # reasons (see kerihost #6) — that's not user-fixable.
+                    plugin_manager = getattr(self.app, "plugin_manager", None)
+                    auth_modal_helpful = False
+                    if plugin_manager is not None:
+                        try:
+                            auth_modal_helpful = plugin_manager.has_witness_auth_for_any(
+                                self.app.vault, self.hab.pre, list(self.hab.kever.wits),
+                            )
+                        except Exception as e:  # noqa: BLE001
+                            logger.warning(
+                                f"plugin_manager.has_witness_auth_for_any failed: {e}"
+                            )
+                    if auth_modal_helpful:
+                        logger.info(
+                            f"Bare receipt collection insufficient for {self.hab.pre} "
+                            f"({len(wigs)}/{toad_num}) — plugin has auth material for "
+                            f"at least one witness; surfacing TOTP step to user"
+                        )
+                        needs_auth = True
+                        identifier_meta_info = IdentifierMetaInfo(
+                            prefix=self.hab.pre, auth_pending=True,
+                        )
+                        self.app.vault.db.idm.pin(keys=(self.hab.pre,), val=identifier_meta_info)
+                        logger.info(f"Set auth_pending=True for {self.hab.pre} (witnesses need authentication)")
+                    else:
+                        logger.warning(
+                            f"Bare receipt collection insufficient for {self.hab.pre} "
+                            f"({len(wigs)}/{toad_num}) — no plugin has auth material "
+                            f"for these witnesses, so the TOTP modal would be useless. "
+                            f"Rotation completed locally; receipts not collected. "
+                            f"Likely cause: receiving witness can't verify wig "
+                            f"couples from a non-trans witness it doesn't know "
+                            f"(kerihost #6 / keripy Recorded-vs-Attested gap)."
+                        )
+                        identifier_meta_info = IdentifierMetaInfo(
+                            prefix=self.hab.pre, auth_pending=False,
+                        )
+                        self.app.vault.db.idm.pin(keys=(self.hab.pre,), val=identifier_meta_info)
 
             # Signal rotation complete to UI
             if self.signal_bridge:
@@ -253,6 +291,7 @@ class RotateDoer(doing.DoDoer):
                         'sn': self.hab.kever.sn,
                         'has_witnesses': bool(self.hab.kever.wits),
                         'needs_auth': needs_auth,
+                        'receipts_collected': receipts_collected,
                         'is_delegated': bool(self.hab.kever.delpre),
                         'success': True
                     }
