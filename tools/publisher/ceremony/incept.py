@@ -66,8 +66,8 @@ def main(argv: list[str] | None = None) -> int:
              "If omitted, uses the KERI.host 5-witness federation.",
     )
     parser.add_argument("--toad", type=int, default=3)
-    parser.add_argument("--quorum", type=int, default=2)
-    parser.add_argument("--signers", type=int, default=3)
+    parser.add_argument("--quorum", type=int, default=1)
+    parser.add_argument("--signers", type=int, default=1)
     parser.add_argument(
         "--yubikey-slot",
         action="append",

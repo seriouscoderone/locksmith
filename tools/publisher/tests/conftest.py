@@ -15,8 +15,15 @@ def fake_witness_pool() -> list[WitnessInfo]:
 
 @pytest.fixture
 def fake_devices() -> list[FakeYubiKeyDevice]:
+    """Three-device fixture for multisig ceremony tests."""
     return [
         FakeYubiKeyDevice(serial="laptop-yk", slot="9c"),
         FakeYubiKeyDevice(serial="desktop-yk", slot="9c"),
         FakeYubiKeyDevice(serial="airgapped-usb", slot="9c"),
     ]
+
+
+@pytest.fixture
+def fake_devices_single() -> list[FakeYubiKeyDevice]:
+    """Single-device fixture for single-sig ceremony tests (v1 default)."""
+    return [FakeYubiKeyDevice(serial="laptop-yk", slot="9c")]

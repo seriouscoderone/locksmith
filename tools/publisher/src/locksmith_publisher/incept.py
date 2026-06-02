@@ -1,11 +1,13 @@
 """Publisher AID inception ceremony.
 
-Builds a 2-of-3 multisig KERI `icp` event with:
-- Three signing keys, one per custodian device (laptop YK, desktop YK, air-gapped USB)
-- Signing threshold (`isith`) = 2
-- Pre-rotated next-key digests, rotation threshold (`nsith`) = 2
+Builds a KERI `icp` event with:
+- One signing key by default (single-sig); multi-device multisig is available
+  as a future Phase 4 upgrade via key rotation — see docs/governance/publisher-ceremony.md.
+- Pre-rotated next-key digests computed per KERI spec (Blake2b-256 of the
+  qb64-encoded Verfer of each next public key), committed as real Ed25519
+  keypairs persisted under ``<software_key_dir>/next/``.
 - Witness list = the KERI.host 5-witness federation (hardcoded; no remote discovery)
-- toad = 3 (3-of-5 majority)
+- toad = 3 (3-of-5 majority) for production
 
 Emits:
 - `publisher_anchor.json` (committed to `src/locksmith/release/`)
@@ -18,14 +20,29 @@ keripy v2.0.0-dev6 API notes
 - `incept()` defaults to ``kind='CESR'`` but keripy v2 CESR is only valid for
   major protocol version 2. We force ``kind='JSON'`` so that the v1 event
   serialises correctly.
-- ``coring.MtrDex.Blake3_256`` is the correct pre-rotation digest code.
-- ``coring.MtrDex.Ed25519`` (transferable) is correct for a rotating multisig
-  AID; ``Ed25519N`` (non-transferable) would forbid future rotations.
+- ``coring.MtrDex.Blake3_256`` is the correct self-addressing code for the AID
+  prefix.
+- Pre-rotation digests use Blake2b-256 of the qb64-encoded Verfer (KERI spec
+  convention verified in keripy ``keri.core.eventing``):
+    ``coring.Diger(ser=verfer.qb64b)``
+  NOT ``Diger(raw=random_bytes)`` — that would produce an unrotatable AID.
+- ``coring.MtrDex.Ed25519`` (transferable) is correct for a rotating AID;
+  ``Ed25519N`` (non-transferable) would forbid future rotations.
+
+Software-key directory layout
+------------------------------
+When ``--software-keys <dir>`` is used, the ceremony creates:
+
+    <dir>/current/key-1.enc.pem   — current signing key
+    <dir>/next/key-1.enc.pem      — pre-rotated next key (persisted for rotation)
+
+For multi-signer ceremonies (Phase 4), ``key-2.enc.pem`` etc. appear in each
+subdirectory. Re-running the ceremony with existing files is idempotent: existing
+key files are loaded, not regenerated.
 """
 from __future__ import annotations
 
 import json
-import secrets
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List
@@ -34,7 +51,7 @@ from keri.core import coring
 from keri.core.eventing import incept
 
 from .anchor import PublisherAnchor, write_publisher_anchor, write_publisher_summary
-from .software_key import open_software_devices
+from .software_key import SoftwareKeyDevice, open_software_devices
 from .witness_client import Receipt, WitnessClient
 from .witnesses import WitnessInfo, default_witness_pool
 from .yubikey import FakeYubiKeyDevice, YubiKeyDevice, open_real_device
@@ -49,20 +66,33 @@ class InceptionResult:
     toad: int
     signer_pubkeys: List[bytes] = field(default_factory=list)
     next_digests: List[bytes] = field(default_factory=list)
+    next_pubkeys: List[bytes] = field(default_factory=list)
     serialized_event: bytes = b""
 
 
-def _next_key_digest() -> bytes:
-    """Generate a pre-rotation digest commitment.
+def _generate_persistent_next_keys(
+    next_dir: Path,
+    passphrases: list[bytes],
+    signers: int,
+) -> tuple[list[bytes], list[Path]]:
+    """Generate ``signers`` real Ed25519 keypairs, persist their private halves
+    encrypted to ``next_dir/key-<i>.enc.pem``, and return the raw 32-byte
+    public keys (in signer order) plus the list of file paths.
 
-    For Phase 1, the next-key set is freshly generated and not retained by the
-    ceremony — production inception will record the next-key material to each
-    custodian device's secure storage. The current event commits only to the
-    Blake3 digest of each next key, which is all KERI requires.
+    If a key file already exists, the existing key is loaded (idempotent).
+    The passphrase reuse across current/next keys is intentional: both are in
+    the same operator's custody; separate passphrases add friction without
+    adding meaningful security when the files are co-located.
+
+    The pre-rotation digest committed in the inception event is computed
+    *separately* in ``build_inception_event`` (via ``Diger(ser=verfer.qb64b)``)
+    so that the digest construction stays close to the keripy idiom and is
+    independently testable.
     """
-    raw = secrets.token_bytes(32)
-    digest = coring.Diger(raw=raw, code=coring.MtrDex.Blake3_256)
-    return digest.raw
+    next_devices = open_software_devices(next_dir, passphrases[:signers])
+    next_pubkeys = [d.generate_signing_key() for d in next_devices]
+    next_paths = [d.key_path for d in next_devices]
+    return next_pubkeys, next_paths
 
 
 def build_inception_event(
@@ -71,27 +101,39 @@ def build_inception_event(
     signer_quorum: int,
     witnesses: list[WitnessInfo],
     toad: int,
+    next_pubkeys: list[bytes],
 ) -> InceptionResult:
-    """Build (but do not submit) the multisig inception event."""
+    """Build (but do not submit) the inception event.
+
+    ``next_pubkeys`` must contain one raw 32-byte Ed25519 public key per signer.
+    The pre-rotation digest committed in ``n:`` is computed as
+    ``Blake2b_256(next_verfer.qb64b)`` per KERI spec, ensuring the rotation
+    event can later be signed with the keys whose digest was committed.
+    """
     if len(signers) < signer_quorum:
         raise ValueError(f"need at least {signer_quorum} signer devices; got {len(signers)}")
     if len(witnesses) < toad:
         raise ValueError(f"need at least {toad} witnesses; got {len(witnesses)}")
+    if len(next_pubkeys) != len(signers):
+        raise ValueError(
+            f"next_pubkeys length {len(next_pubkeys)} must equal signers length {len(signers)}"
+        )
 
     signer_pubkeys: list[bytes] = []
     for device in signers:
         pk = device.generate_signing_key()
         signer_pubkeys.append(pk)
 
-    # Pre-rotation: generate fresh ephemeral next-key material and commit to its
-    # Blake3 digest. The raw digest bytes are stored so the caller can verify
-    # they differ from the current signing pubkeys.
-    next_digest_raws: list[bytes] = [_next_key_digest() for _ in signers]
-
     # Build using keripy primitives.
     # Ed25519 (transferable) allows future rotation; Ed25519N would forbid it.
     verfers = [coring.Verfer(raw=pk, code=coring.MtrDex.Ed25519) for pk in signer_pubkeys]
-    digers = [coring.Diger(raw=d, code=coring.MtrDex.Blake3_256) for d in next_digest_raws]
+
+    # Pre-rotation: compute Blake2b-256 digest of the qb64-encoded Verfer for
+    # each next public key.  This is the KERI spec convention (verified in
+    # keripy keri.core.eventing): the digest is computed over the qb64
+    # serialisation of the Verfer, NOT over the raw bytes.
+    next_verfers = [coring.Verfer(raw=pk, code=coring.MtrDex.Ed25519) for pk in next_pubkeys]
+    digers = [coring.Diger(ser=v.qb64b) for v in next_verfers]
 
     # keripy v2.0.0-dev6: signing threshold param is `isith` (not `sith`).
     # kind must be 'JSON' for protocol major version 1 events.
@@ -113,7 +155,8 @@ def build_inception_event(
         rotation_threshold=signer_quorum,
         toad=toad,
         signer_pubkeys=signer_pubkeys,
-        next_digests=next_digest_raws,
+        next_digests=[d.raw for d in digers],
+        next_pubkeys=next_pubkeys,
         serialized_event=serder.raw,
     )
 
@@ -139,21 +182,24 @@ def run_inception_ceremony(
     returned receipts alongside the event, and marks the publisher-aid.json
     summary `status=live`. In production this is the step that brings the AID
     into existence.
+
+    Software-key mode creates two subdirectories:
+      - ``<software_key_dir>/current/`` — signing keys for this inception
+      - ``<software_key_dir>/next/``    — pre-rotated keys committed via digest
+
+    Both subdirectories use the same passphrases (one per signer slot). Reusing
+    the passphrase across current/next is acceptable because both files are in
+    the same operator custody; the only requirement is that the next-key file is
+    stored safely for the future rotation event.
     """
     output_dir.mkdir(parents=True, exist_ok=True)
     (output_dir / "kel-events").mkdir(parents=True, exist_ok=True)
 
     if witness_oobis:
-        if dry_run:
-            witnesses = [
-                WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
-                for oobi in witness_oobis
-            ]
-        else:
-            witnesses = [
-                WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
-                for oobi in witness_oobis
-            ]
+        witnesses = [
+            WitnessInfo(aid=_oobi_to_aid_stub(oobi), oobi=oobi)
+            for oobi in witness_oobis
+        ]
     else:
         witnesses = default_witness_pool()
 
@@ -166,30 +212,62 @@ def run_inception_ceremony(
         yubikey_slots = yubikey_slots + ["9c"] * (signers - len(yubikey_slots))
 
     if software_key_dir is not None:
+        # --- Software-key path ---
+        # Layout: <software_key_dir>/current/key-<i>.enc.pem (current signers)
+        #         <software_key_dir>/next/key-<i>.enc.pem    (pre-rotated next keys)
         if software_passphrases is None or len(software_passphrases) < signers:
             raise ValueError(
                 f"software_key_dir requires {signers} passphrases; "
                 f"got {len(software_passphrases) if software_passphrases else 0}"
             )
+        current_dir = software_key_dir / "current"
+        next_dir = software_key_dir / "next"
+
         devices: list[YubiKeyDevice] = open_software_devices(
-            software_key_dir, software_passphrases[:signers]
+            current_dir, software_passphrases[:signers]
         )
+        # Trigger key generation/load for current devices before next-key gen.
+        for d in devices:
+            d.generate_signing_key()
+
+        # Generate and persist real next-key material.
+        next_pubkeys, _ = _generate_persistent_next_keys(
+            next_dir, software_passphrases, signers
+        )
+
     elif dry_run:
+        # --- Dry-run path (FakeYubiKeyDevice) ---
         devices = [
             FakeYubiKeyDevice(serial=f"fake-{i}", slot=slot)
             for i, slot in enumerate(yubikey_slots[:signers])
         ]
+        # Generate fake next-key pubkeys (fresh ephemeral keys; not persisted).
+        fake_next_devices = [
+            FakeYubiKeyDevice(serial=f"fake-next-{i}", slot=slot)
+            for i, slot in enumerate(yubikey_slots[:signers])
+        ]
+        next_pubkeys = [d.generate_signing_key() for d in fake_next_devices]
+
     else:
+        # --- Real YubiKey path (Phase 4: multi-device multisig) ---
         devices = [
             open_real_device(serial=f"signer-{i}", slot=slot)
             for i, slot in enumerate(yubikey_slots[:signers])
         ]
+        # Phase 4: generate real next-key material on each YubiKey / HSM.
+        # For now raise a clear error so we don't accidentally produce an
+        # unrotatable AID in production with hardware keys.
+        raise NotImplementedError(
+            "Real YubiKey next-key generation is a Phase 4 task. "
+            "Use --software-keys for Phase 1 production inception."
+        )
 
     result = build_inception_event(
         signers=devices,
         signer_quorum=quorum,
         witnesses=witnesses,
         toad=toad,
+        next_pubkeys=next_pubkeys,
     )
 
     # Persist the unsigned event first so the operator can review it.

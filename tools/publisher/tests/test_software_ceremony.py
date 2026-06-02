@@ -22,15 +22,13 @@ def _make_env(**extra: str) -> dict[str, str]:
 
 
 def test_ceremony_with_software_keys_emits_anchor(tmp_path: Path):
-    """Software-key ceremony in dry-run mode produces all expected outputs."""
+    """Single-sig software-key ceremony in dry-run mode produces all expected outputs."""
     script = _PUBLISHER_ROOT / "ceremony" / "incept.py"
     output_dir = tmp_path / "ceremony-output"
     keys_dir = tmp_path / "keys"
 
     env = _make_env(
         LOCKSMITH_PW_1="test-passphrase-one-12345",
-        LOCKSMITH_PW_2="test-passphrase-two-12345",
-        LOCKSMITH_PW_3="test-passphrase-three-12345",
     )
 
     result = subprocess.run(
@@ -53,11 +51,12 @@ def test_ceremony_with_software_keys_emits_anchor(tmp_path: Path):
     assert (output_dir / "publisher-aid.json").exists()
     assert (output_dir / "kel-events" / "icp-sn-0.cesr").exists()
 
-    # Software key files were created
-    for i in (1, 2, 3):
-        assert (keys_dir / f"key-{i}.enc.pem").exists()
-        mode = (keys_dir / f"key-{i}.enc.pem").stat().st_mode & 0o777
-        assert mode == 0o600
+    # Software key files were created under new current/ and next/ subdirs
+    assert (keys_dir / "current" / "key-1.enc.pem").exists(), "current key-1 missing"
+    assert (keys_dir / "next" / "key-1.enc.pem").exists(), "next key-1 missing"
+    for subdir in ("current", "next"):
+        mode = (keys_dir / subdir / "key-1.enc.pem").stat().st_mode & 0o777
+        assert mode == 0o600, f"{subdir}/key-1.enc.pem should be 0600, got {oct(mode)}"
 
     # AID prefix is real (starts with E, not PLACEHOLDER)
     anchor = json.loads((output_dir / "publisher_anchor.json").read_text())
@@ -65,23 +64,78 @@ def test_ceremony_with_software_keys_emits_anchor(tmp_path: Path):
     assert "PLACEHOLDER" not in anchor["publisher_aid"]
 
 
+def test_software_ceremony_next_key_digest_verifiable(tmp_path: Path):
+    """Rotation feasibility: the persisted next key produces the digest committed in n:.
+
+    This is the critical correctness check: load next/key-1.enc.pem with the
+    same passphrase, derive its Verfer, compute Diger(ser=verfer.qb64b), and
+    compare against n:[0] in the inception event.  A mismatch means the AID
+    can never be rotated.
+    """
+    script = _PUBLISHER_ROOT / "ceremony" / "incept.py"
+    output_dir = tmp_path / "ceremony-output"
+    keys_dir = tmp_path / "keys"
+    passphrase_str = "test-passphrase-one-12345"
+
+    env = _make_env(LOCKSMITH_PW_1=passphrase_str)
+
+    result = subprocess.run(
+        [
+            sys.executable, str(script),
+            "--dry-run",
+            "--output-dir", str(output_dir),
+            "--software-keys", str(keys_dir),
+            "--passphrase-env-prefix", "LOCKSMITH_PW",
+            "--non-interactive",
+        ],
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    assert result.returncode == 0, f"stderr: {result.stderr}\nstdout: {result.stdout}"
+
+    # Read the committed digest from the inception event.
+    icp_bytes = (output_dir / "kel-events" / "icp-sn-0.cesr").read_bytes()
+    icp_body = json.loads(icp_bytes)
+    committed_qb64 = icp_body["n"][0]
+
+    # Load the next key and re-derive its digest.
+    # We do this in a subprocess to keep test isolation, but also do it inline
+    # so the assertion message is clear.
+    sys.path.insert(0, _SRC_DIR)
+    from keri.core import coring
+    from locksmith_publisher.software_key import SoftwareKeyDevice
+
+    next_device = SoftwareKeyDevice(
+        serial="sw-1",
+        slot="sw",
+        key_path=keys_dir / "next" / "key-1.enc.pem",
+        passphrase=passphrase_str.encode("utf-8"),
+    )
+    next_pubkey_raw = next_device.generate_signing_key()
+    next_verfer = coring.Verfer(raw=next_pubkey_raw, code=coring.MtrDex.Ed25519)
+    expected_qb64 = coring.Diger(ser=next_verfer.qb64b).qb64
+
+    assert expected_qb64 == committed_qb64, (
+        f"ROTATION FEASIBILITY FAILED.\n"
+        f"  Committed digest in n:[0]: {committed_qb64!r}\n"
+        f"  Blake2b-256(loaded next_verfer.qb64b): {expected_qb64!r}\n"
+        "The inception event cannot be rotated with the stored next-key file."
+    )
+
+
 def test_software_ceremony_reuses_existing_key_files(tmp_path: Path):
     """Re-running the ceremony with existing key files loads them rather than regenerating.
 
-    Note: The AID prefix changes each run because the ceremony generates fresh
-    pre-rotation next-key digests (random by design — KERI self-addressing
-    identifiers bind the prefix to the full inception event content). The
-    meaningful idempotency guarantee is at the key-file level: the encrypted PEM
-    files are not replaced when they already exist.
+    Both current/ and next/ key files must be stable across ceremony re-runs.
+    The AID prefix will differ between runs (KERI self-addressing identifier
+    binds the prefix to the full inception event), but the key material is
+    preserved.
     """
     script = _PUBLISHER_ROOT / "ceremony" / "incept.py"
     keys_dir = tmp_path / "keys"
 
-    env = _make_env(
-        LOCKSMITH_PW_1="test-passphrase-one-12345",
-        LOCKSMITH_PW_2="test-passphrase-two-12345",
-        LOCKSMITH_PW_3="test-passphrase-three-12345",
-    )
+    env = _make_env(LOCKSMITH_PW_1="test-passphrase-one-12345")
 
     def run(output_subdir: str) -> None:
         output_dir = tmp_path / output_subdir
@@ -98,18 +152,18 @@ def test_software_ceremony_reuses_existing_key_files(tmp_path: Path):
         )
         assert result.returncode == 0, f"stderr: {result.stderr}"
 
-    # First run — creates the 3 key files.
+    # First run — creates the key files under current/ and next/.
     run("run-1")
     mtimes_after_first = {
-        i: (keys_dir / f"key-{i}.enc.pem").stat().st_mtime
-        for i in (1, 2, 3)
+        f"{subdir}/key-1": (keys_dir / subdir / "key-1.enc.pem").stat().st_mtime
+        for subdir in ("current", "next")
     }
 
-    # Second run — should succeed using the existing key files without modifying them.
+    # Second run — should succeed loading existing files without modifying them.
     run("run-2")
     mtimes_after_second = {
-        i: (keys_dir / f"key-{i}.enc.pem").stat().st_mtime
-        for i in (1, 2, 3)
+        f"{subdir}/key-1": (keys_dir / subdir / "key-1.enc.pem").stat().st_mtime
+        for subdir in ("current", "next")
     }
 
     assert mtimes_after_first == mtimes_after_second, (
