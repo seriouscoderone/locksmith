@@ -68,9 +68,13 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
         # Resubmit Section (from mixin)
         self._build_resubmit_section(layout, self.details)
 
-        # OOBI Section (if witnesses exist)
-        if len(self.details['witnesses']) > 0:
-            self._build_oobi_section(layout)
+        # OOBI Section. Shown when the AID has witnesses (witness-served
+        # OOBI roles need them) OR always — the section also hosts the
+        # "Expose over peer mode" toggle, which is valid even for
+        # witness-less AIDs via the CESR-blob peer OOBI path
+        # (`Peer (offline)`). The role dropdown handles empty witness
+        # lists gracefully by surfacing only the peer-offline option.
+        self._build_oobi_section(layout)
 
         # Refresh Key State Section (for group multisig)
         if self.details['is_group_multisig']:
