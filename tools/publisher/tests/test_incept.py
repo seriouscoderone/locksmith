@@ -82,8 +82,8 @@ def test_run_inception_ceremony_submits_and_persists_receipts(tmp_path, monkeypa
     monkeypatch.setattr("locksmith_publisher.incept.open_real_device", fake_open)
 
     fake_receipts = [
-        Receipt(witness_aid="Bw1", receipt_cesr="RCPT1"),
-        Receipt(witness_aid="Bw2", receipt_cesr="RCPT2"),
+        Receipt(witness_url="https://witness.keri.host", cesr_bytes=b"-FAB-RCPT1"),
+        Receipt(witness_url="https://witness.legitim.us", cesr_bytes=b"-FAB-RCPT2"),
     ]
 
     class FakeWitnessClient:
@@ -111,11 +111,17 @@ def test_run_inception_ceremony_submits_and_persists_receipts(tmp_path, monkeypa
 
     icp_bytes = (tmp_path / "kel-events" / "icp-sn-0.cesr").read_bytes()
     assert b"-AAB" in icp_bytes or b"-AAC" in icp_bytes or len(icp_bytes) > 0
-    receipts_path = tmp_path / "kel-events" / "icp-sn-0.receipts.json"
-    assert receipts_path.exists()
-    receipts_body = json.loads(receipts_path.read_text())
-    assert len(receipts_body) == 2
-    assert receipts_body[0]["witness_aid"] == "Bw1"
+    # CESR receipts persisted as raw bytes
+    receipts_cesr_path = tmp_path / "kel-events" / "icp-sn-0.receipts.cesr"
+    assert receipts_cesr_path.exists()
+    assert receipts_cesr_path.read_bytes() == b"-FAB-RCPT1-FAB-RCPT2"
+    # JSON index records which witnesses contributed
+    receipts_index_path = tmp_path / "kel-events" / "icp-sn-0.receipts.json"
+    assert receipts_index_path.exists()
+    index = json.loads(receipts_index_path.read_text())
+    assert index["count"] == 2
+    assert index["witnesses"] == ["https://witness.keri.host", "https://witness.legitim.us"]
+    assert index["receipts_cesr_file"] == "icp-sn-0.receipts.cesr"
     summary = json.loads((tmp_path / "publisher-aid.json").read_text())
     assert summary["status"] == "live"
     assert summary["receipt_count"] == 2

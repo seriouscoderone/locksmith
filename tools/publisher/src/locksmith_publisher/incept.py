@@ -213,11 +213,23 @@ def run_inception_ceremony(
         receipts = wc.submit_event(signed_event)
 
         # Persist receipts next to the event.
-        receipts_path = output_dir / "kel-events" / "icp-sn-0.receipts.json"
-        receipts_path.write_text(
+        # The raw CESR bytes preserve the witness signatures end-to-end (each
+        # receipt event in the stream carries its witness AID + signature
+        # internally). The companion JSON index lists which witness URLs
+        # contributed, for operational visibility.
+        receipts_cesr_path = output_dir / "kel-events" / "icp-sn-0.receipts.cesr"
+        receipts_cesr_path.write_bytes(b"".join(r.cesr_bytes for r in receipts))
+
+        receipts_index_path = output_dir / "kel-events" / "icp-sn-0.receipts.json"
+        receipts_index_path.write_text(
             json.dumps(
-                [{"witness_aid": r.witness_aid, "receipt_cesr": r.receipt_cesr} for r in receipts],
+                {
+                    "count": len(receipts),
+                    "witnesses": [r.witness_url for r in receipts],
+                    "receipts_cesr_file": "icp-sn-0.receipts.cesr",
+                },
                 indent=2,
+                sort_keys=True,
             ) + "\n",
             encoding="utf-8",
         )
@@ -247,12 +259,25 @@ def _oobi_to_aid_stub(oobi: str) -> str:
 def _attach_signatures(event_raw: bytes, sigs: list[bytes]) -> bytes:
     """Attach indexed CESR signature blocks to a serialized inception event.
 
-    Uses keripy's CESR indexed-signature primitives. The fully signed stream is
-    what witnesses expect at POST /witness/process.
+    Produces the keripy `messagize`-equivalent stream:
+
+        <event_raw> + Counter(ControllerIdxSigs, count=N).qb64 + N * Siger.qb64
+
+    The Counter prefix is essential — without it, keripy's stream parser
+    treats the trailing sigs as bare bytes and never associates them with
+    the event, so the witness silently drops the signatures and returns 204
+    No Content (no receipt) instead of 200 + receipt.
+
+    Wire format matches `keri.core.eventing.messagize()` (lines 1549-1552
+    in keripy's eventing.py).
     """
     from keri.core.eventing import Siger
+    from keri.core.counting import Counter, Codens, Vrsn_1_0
 
     parts = [event_raw]
+    parts.append(
+        Counter(Codens.ControllerIdxSigs, count=len(sigs), version=Vrsn_1_0).qb64b
+    )
     for idx, raw_sig in enumerate(sigs):
         siger = Siger(raw=raw_sig, code="A", index=idx)  # "A" = Ed25519_Sig
         parts.append(siger.qb64b)
