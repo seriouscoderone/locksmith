@@ -60,6 +60,63 @@ def test_import_peer_blob_rejects_bad_base64():
     assert exc.value.reason == "bad_base64"
 
 
+def test_import_peer_blob_roundtrips_v1_kel():
+    """Real-Habery round-trip: export a blob from a hab with peer role
+    published, import into a fresh Habery, confirm the AID + tcp loc
+    populate.
+
+    Regression: Parser defaults to Vrsn_2_0. `hab.replyToOobi` serializes
+    v1 events. Without `version=Vrsn_1_0`, Parser.allParsator loops
+    forever inside the call — the dialog froze the wallet at 100% CPU.
+    This test would hang (and fail the suite's timeout) without the fix.
+    """
+    from hio.base import doing
+    from keri.app import habbing
+    from keri.core import signing
+
+    from locksmith.peer import publishing
+
+    hby_export = habbing.Habery(
+        name="exporter",
+        bran="A" * 21,
+        salt=signing.Salter(raw=b"export0123456789").qb64,
+        temp=True,
+    )
+    hby_import = habbing.Habery(
+        name="importer",
+        bran="B" * 21,
+        salt=signing.Salter(raw=b"import0123456789").qb64,
+        temp=True,
+    )
+    try:
+        hab = hby_export.makeHab(
+            name="alice", isith="1", icount=1, transferable=True
+        )
+
+        # Publish peer role locally (no wits — skips the messenger path).
+        from unittest.mock import patch
+        with patch.object(publishing, "_witnesses_for", return_value=[]):
+            doer = publishing.PublishPeerRoleDoer(
+                hby=hby_export, hab=hab, url="tcp://127.0.0.1:5622",
+                signal_bridge=None, allow=True,
+            )
+            doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
+            doist.do(doers=[doer])
+
+        blob = export_peer_blob(hab)
+        assert blob.startswith(BLOB_PREFIX)
+
+        imported_pre = import_peer_blob(hby_import, blob)
+        assert imported_pre == hab.pre
+
+        loc = hby_import.db.locs.get(keys=(hab.pre, "tcp"))
+        assert loc is not None
+        assert loc.url == "tcp://127.0.0.1:5622"
+    finally:
+        hby_export.close()
+        hby_import.close()
+
+
 def test_import_peer_blob_no_peer_endpoint_raises(tmp_path):
     """Parser runs but no AID has a peer-role tcp endpoint in locs.
     Uses a real Habery so the Revery/Kevery wiring inside import_peer_blob

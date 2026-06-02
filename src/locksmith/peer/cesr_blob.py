@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import base64
 
-from keri import help, kering
+from keri import Vrsn_1_0, help, kering
 from keri.core import eventing, parsing, routing
 
 logger = help.ogler.getLogger(__name__)
@@ -77,7 +77,12 @@ def import_peer_blob(hby, blob: str) -> str:
     rvy = routing.Revery(db=db)
     kvy = eventing.Kevery(db=db, lax=True, local=False, rvy=rvy)
     kvy.registerReplyRoutes(router=rvy.rtr)
-    parser = parsing.Parser(kvy=kvy, rvy=rvy)
+    # Pin version=Vrsn_1_0: the default Parser version is KERI 2.0; the
+    # blob is built from hab.replyToOobi which serializes v1 events. The
+    # version mismatch causes Parser.allParsator to loop forever on
+    # CESR counter codes that don't exist in v2 — Wallet pegged at 100%
+    # CPU with no exception ever raised. Same fix as publishing.py.
+    parser = parsing.Parser(kvy=kvy, rvy=rvy, version=Vrsn_1_0)
 
     try:
         parser.parse(ims=bytearray(cesr), kvy=kvy, rvy=rvy)
