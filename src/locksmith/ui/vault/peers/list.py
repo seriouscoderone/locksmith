@@ -19,6 +19,7 @@ logger = help.ogler.getLogger(__name__)
 class PairedPeersPage(QWidget):
     def __init__(self, vault, parent=None):
         super().__init__(parent=parent)
+        self.setObjectName("pairedPeersPage")
         self._vault = vault
         self._allowlist = PeerAllowlist(vault.db)
         self._build()
@@ -31,12 +32,14 @@ class PairedPeersPage(QWidget):
 
         toolbar = QHBoxLayout()
         self.add_button = QPushButton("+ Add peer")
+        self.add_button.setObjectName("pairedPeersPage.addButton")
         self.add_button.clicked.connect(self._on_add)
         toolbar.addWidget(self.add_button)
         toolbar.addStretch()
         layout.addLayout(toolbar)
 
         self.list_widget = QListWidget()
+        self.list_widget.setObjectName("pairedPeersPage.peersList")
         layout.addWidget(self.list_widget, 1)
 
     def refresh(self) -> None:

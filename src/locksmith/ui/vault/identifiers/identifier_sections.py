@@ -66,6 +66,7 @@ class IdentifierViewSectionsMixin:
         layout.addLayout(aid_label_row)
 
         aid_field = LocksmithLineEdit("AID")
+        aid_field.setObjectName("viewIdentifierDialog.aidField")
         aid_field.setText(self.details['pre'])
         aid_field.setReadOnly(True)
         aid_field.setCursorPosition(0)
