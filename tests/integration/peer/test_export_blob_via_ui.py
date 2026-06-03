@@ -17,7 +17,7 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (
-    free_port, set_peer_mode_via_ui,
+    create_aid_via_ui, free_port, set_peer_mode_via_ui,
 )
 
 
@@ -32,8 +32,7 @@ def test_expose_and_export_via_view_identifier_dialog(two_wallets):
                name="exptest",
                passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
     assert r.get("ok"), r
-    r = devctl(a["sock"], "peer_create_test_aid", alias="alice")
-    assert r.get("ok"), r
+    create_aid_via_ui(devctl, a["sock"], alias="alice")
     # Enable peer mode through Settings → Peer Mode UI.
     set_peer_mode_via_ui(devctl, a["sock"], port=free_port())
 

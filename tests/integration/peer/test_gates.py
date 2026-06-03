@@ -19,7 +19,7 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (
-    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+    create_aid_via_ui, expose_aid_via_ui, free_port, set_peer_mode_via_ui,
 )
 
 
@@ -32,8 +32,7 @@ def test_garbage_bytes_do_not_reach_handler_stack(two_wallets):
     r = devctl(b["sock"], "peer_open_test_vault",
                name="ptest", passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
     assert r.get("ok") is True, r
-    r = devctl(b["sock"], "peer_create_test_aid", alias="bob")
-    assert r.get("ok") is True, r
+    create_aid_via_ui(devctl, b["sock"], alias="bob")
     port = free_port()
     set_peer_mode_via_ui(devctl, b["sock"], port=port)
     expose_aid_via_ui(devctl, b["sock"], "bob")

@@ -12,7 +12,7 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (
-    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+    create_aid_via_ui, expose_aid_via_ui, free_port, set_peer_mode_via_ui,
 )
 
 
@@ -30,7 +30,7 @@ def test_peer_aware_poster_uses_peer_channel_when_paired(two_wallets):
 
     devctl(a["sock"], "peer_open_test_vault",
            name="ptest", passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
-    devctl(a["sock"], "peer_create_test_aid", alias="alice")
+    create_aid_via_ui(devctl, a["sock"], alias="alice")
     set_peer_mode_via_ui(devctl, a["sock"], port=free_port())
     expose_aid_via_ui(devctl, a["sock"], "alice")
 

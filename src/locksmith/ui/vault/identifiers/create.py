@@ -59,6 +59,7 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         layout.addSpacing(10)
 
         self.name_field = FloatingLabelLineEdit("Alias")
+        self.name_field.setObjectName("createIdentifierDialog.aliasField")
         self.name_field.setFixedWidth(360)
         layout.addWidget(self.name_field)
         layout.addSpacing(15)
@@ -66,9 +67,11 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         # Create button row
         button_row = QHBoxLayout()
         self.cancel_button = LocksmithInvertedButton("Cancel")
+        self.cancel_button.setObjectName("createIdentifierDialog.cancelButton")
         button_row.addWidget(self.cancel_button)
         button_row.addSpacing(10)
         self.create_button = LocksmithButton("Create")
+        self.create_button.setObjectName("createIdentifierDialog.createButton")
         button_row.addWidget(self.create_button)
 
         # Create title content

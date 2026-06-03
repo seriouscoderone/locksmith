@@ -169,6 +169,43 @@ def set_peer_mode_via_ui(
     assert r.get("ok"), f"navigate back to Identifiers: {r}"
 
 
+def create_aid_via_ui(devctl, sock: Path, alias: str) -> None:
+    """Drive the Add Identifier dialog: open via "Add Identifier" toolbar
+    button, type alias into the FloatingLabelLineEdit, click Create.
+
+    Replaces the retired peer_create_test_aid devctl bypass. Uses all
+    dialog defaults (key chain / salty key type, 1 signing key, 1
+    rotation key, no witnesses, toad=0) — same shape as the bypass made.
+    """
+    # The Identifiers page table has an "Add Identifier" LocksmithButton
+    # in its header; click by visible text.
+    r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
+    assert r.get("ok"), r
+    r = devctl(sock, "click", target="Add Identifier")
+    assert r.get("ok"), f"open Add Identifier dialog: {r}"
+
+    r = devctl(sock, "wait_for",
+               target="createIdentifierDialog.aliasField",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"Add Identifier dialog never appeared: {r}"
+
+    r = devctl(sock, "type",
+               target="createIdentifierDialog.aliasField", text=alias)
+    assert r.get("ok"), r
+
+    r = devctl(sock, "click",
+               target="createIdentifierDialog.createButton")
+    assert r.get("ok"), r
+
+    # Dialog closes when InceptDoer signals identifier_created. For a
+    # witness-less AID this is synchronous — usually fast, but give it
+    # a few seconds in case the doist is busy.
+    r = devctl(sock, "wait_for",
+               target="createIdentifierDialog.aliasField",
+               condition="hidden", timeout_ms=5000)
+    assert r.get("ok"), f"create dialog never closed: {r}"
+
+
 def import_peer_blob_via_ui(
     devctl,
     sock: Path,
