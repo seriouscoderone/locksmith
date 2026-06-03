@@ -187,6 +187,13 @@ class AddSchemaDialog(LocksmithDialog):
         self.browse_button.clicked.connect(self._browse_file)
         self.load_button.clicked.connect(self._on_primary_clicked)
         self.oobi_field.line_edit.textChanged.connect(self._on_oobi_changed)
+        # Mirror the OOBI path: typing a file path should auto-extract
+        # SAID just like clicking Browse does. Without this, anyone
+        # entering the path manually (or pasting it) hits "Missing
+        # field: SAID" on Load.
+        self.file_path_field.line_edit.textChanged.connect(
+            self._on_file_path_changed
+        )
         self.create_registry_checkbox.toggled.connect(self._on_registry_checkbox_toggled)
 
         # Populate issuer dropdown with local identifiers
@@ -404,6 +411,26 @@ class AddSchemaDialog(LocksmithDialog):
         except Exception as e:
             logger.warning(f"Failed to parse OOBI: {e}")
             self.said_field.setText("")
+
+    def _on_file_path_changed(self, text: str) -> None:
+        """File path textChanged handler — re-extract SAID on every edit.
+        Quietly clears SAID when the path is empty or the file isn't a
+        readable schema (errors here would be noisy mid-typing)."""
+        text = (text or "").strip()
+        if not text:
+            self.said_field.setText("")
+            return
+        import os
+        if not os.path.isfile(text):
+            self.said_field.setText("")
+            return
+        try:
+            self._extract_said_from_file(text)
+        except Exception:  # noqa: BLE001
+            # _extract_said_from_file already logs + show_error on real
+            # parse failures; this guard is defense-in-depth for the
+            # textChanged path so a typo doesn't pop dialogs.
+            pass
 
     def _extract_said_from_file(self, file_path):
         """

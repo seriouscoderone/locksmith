@@ -86,17 +86,18 @@ class Granter:
         if recp is None:
             raise ValueError("unable to find recipient")
     
-        reg = self.rgy.reger.cloneTvtAt(creder.regid)
         iss = self.rgy.reger.cloneTvtAt(creder.said)
 
         iserder = serdering.SerderKERI(raw=bytes(iss))
         seqner = coring.Seqner(sn=iserder.sn)
-    
+
         serder = self.hby.db.fetchLastSealingEventByEventSeal(creder.sad['i'],
                                                               seal=dict(i=iserder.pre, s=seqner.snh, d=iserder.said))
         anc = self.hby.db.cloneEvtMsg(pre=serder.pre, fn=0, dig=serder.said)
-    
-        exn, atc = protocoling.ipexGrantExn(hab=self.hab, recp=recp, message=message, acdc=acdc, reg=reg,
+
+        # keripy's ipexGrantExn dropped the `reg` kwarg — receiver
+        # reconstructs TEL state from iss + anc.
+        exn, atc = protocoling.ipexGrantExn(hab=self.hab, recp=recp, message=message, acdc=acdc,
                                             iss=iss, anc=anc, dt=timestamp)
         msg = bytearray(exn.raw)
         msg.extend(atc)
@@ -325,17 +326,16 @@ class SendGrantDoer(doing.DoDoer):
             )
             anc = self.hby.db.cloneEvtMsg(pre=serder.pre, fn=0, dig=serder.said)
 
-            # Get registry info
-            reg = self.rgy.reger.cloneTvtAt(creder.regid)
-
-            # Create grant exchange message
+            # Create grant exchange message. keripy's ipexGrantExn no
+            # longer accepts a `reg` kwarg — the receiver reconstructs
+            # TEL state from the issuer's iss event + the anchoring KEL
+            # event included here.
             timestamp = helping.nowIso8601()
             exn, atc = protocoling.ipexGrantExn(
                 hab=hab,
                 recp=recp,
                 message=self.message,
                 acdc=acdc,
-                reg=reg,
                 iss=iss,
                 anc=anc,
                 dt=timestamp
@@ -417,10 +417,13 @@ class SendGrantDoer(doing.DoDoer):
                     credentialing.sendArtifacts(self.hby, self.rgy.reger, postman, source, recp)
                     postman.send(serder=source, attachment=satc)
 
-                # Serialize and send grant message with attachments
-                gatc = exchanging.serializeMessage(self.hby, exn.said)
-                del gatc[:exn.size]
-                postman.send(serder=exn, attachment=gatc)
+                # Send grant message with the attachments returned by
+                # ipexGrantExn (signatures). Round-tripping through
+                # exchanging.serializeMessage hits a CESR alignment
+                # raise in keripy because that helper prepends the
+                # exn.raw to the attachment bytes before quadlet-checking
+                # — exn.raw is JSON, not 4-aligned.
+                postman.send(serder=exn, attachment=atc)
 
                 # Deliver all messages
                 doer = doing.DoDoer(doers=postman.deliver())

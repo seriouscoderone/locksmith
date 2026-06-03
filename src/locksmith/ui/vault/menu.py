@@ -617,6 +617,7 @@ class VaultNavMenu(QFrame):
         """Create credentials submenu items (hidden initially)."""
         # Back button
         self.credentials_back_button = self._create_credentials_back_button()
+        self.credentials_back_button.setObjectName("vaultNavMenu.credentialsBackButton")
         self.layout.addWidget(self.credentials_back_button)
         self.credentials_items.append(self.credentials_back_button)
         self.credentials_back_button.setVisible(False)
@@ -632,6 +633,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_issued"),
             "Issued Credentials"
         )
+        issued_credentials_btn.setObjectName("vaultNavMenu.issuedCredentialsButton")
         issued_credentials_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(issued_credentials_btn, self.issued_credentials_clicked)
         )
@@ -645,6 +647,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_received"),
             "Received Credentials"
         )
+        received_credentials_btn.setObjectName("vaultNavMenu.receivedCredentialsButton")
         received_credentials_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(received_credentials_btn, self.received_credentials_clicked)
         )
@@ -658,6 +661,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_schema"),
             "Schema"
         )
+        schema_btn.setObjectName("vaultNavMenu.schemaButton")
         schema_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(schema_btn, self.schema_clicked)
         )

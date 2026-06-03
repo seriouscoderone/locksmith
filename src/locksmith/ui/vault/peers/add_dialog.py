@@ -154,12 +154,26 @@ class AddPeerDialog(QDialog):
                     "Provide a TCP endpoint manually."
                 )
                 return
+            label = self.label_input.text().strip() or aid[:12]
             self._allowlist.add(PeerRecord(
                 aid=aid,
-                label=self.label_input.text().strip() or aid[:12],
+                label=label,
                 endpoint_url=endpoint_url,
                 paired_at=datetime.now(timezone.utc).isoformat(),
             ))
+            # Also register the AID as a known remote identifier so it
+            # shows up in places that consume vault.org.list() (e.g. the
+            # Issue Credential recipient dropdown). The witness-served
+            # OOBI path gets this for free via ResolveOobiDoer; the
+            # blob path doesn't, so do it explicitly.
+            try:
+                from keri import help as keri_help
+                self._vault.org.update(aid, {
+                    "alias": label,
+                    "last-refresh": keri_help.nowIso8601(),
+                })
+            except Exception as e:  # noqa: BLE001
+                logger.warning(f"peer.pair.org_upsert_failed aid={aid} err={e}")
             self.peer_added.emit()
             self.accept()
             return
