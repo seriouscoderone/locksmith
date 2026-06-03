@@ -66,6 +66,7 @@ class IdentifierViewSectionsMixin:
         layout.addLayout(aid_label_row)
 
         aid_field = LocksmithLineEdit("AID")
+        aid_field.setObjectName("viewIdentifierDialog.aidField")
         aid_field.setText(self.details['pre'])
         aid_field.setReadOnly(True)
         aid_field.setCursorPosition(0)
@@ -298,7 +299,10 @@ class IdentifierViewSectionsMixin:
         role_row.addWidget(oobi_label)
 
         self.oobi_role_dropdown = FloatingLabelComboBox("Role")
-        self.oobi_role_dropdown.addItems(["Witness", "Controller", "Mailbox"])
+        self.oobi_role_dropdown.setObjectName("viewIdentifierDialog.oobiRoleCombo")
+        self.oobi_role_dropdown.addItems([
+            "Witness", "Controller", "Mailbox", "Peer", "Peer (offline)",
+        ])
         self.oobi_role_dropdown.setCurrentText("Witness")
         self.oobi_role_dropdown.currentTextChanged.connect(self._on_oobi_role_changed)
         role_row.addWidget(self.oobi_role_dropdown)
@@ -311,8 +315,83 @@ class IdentifierViewSectionsMixin:
         self.oobi_display_layout.setContentsMargins(0, 0, 0, 0)
         layout.addWidget(self.oobi_display_container)
 
+        # Per-AID "Expose this AID over peer mode" toggle (same visual
+        # row as the role dropdown; appears regardless of selected role
+        # so the user can flip it on without first picking "Peer").
+        peer_row = QHBoxLayout()
+        peer_label = QLabel("Expose over peer mode:")
+        peer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+        peer_row.addWidget(peer_label)
+        self.peer_expose_toggle = QCheckBox()
+        self.peer_expose_toggle.setObjectName("viewIdentifierDialog.exposeToggle")
+        self.peer_expose_toggle.setChecked(self._is_peer_exposed())
+        self.peer_expose_toggle.toggled.connect(self._on_peer_expose_toggled)
+        peer_row.addWidget(self.peer_expose_toggle)
+        peer_row.addStretch()
+        layout.addLayout(peer_row)
+
         # Generate initial OOBI
         self._generate_oobi("witness")
+
+    def _vault(self):
+        return getattr(self.app, "vault", None) if hasattr(self, "app") else None
+
+    def _is_peer_exposed(self) -> bool:
+        vault = self._vault()
+        if vault is None or not hasattr(self, "hab") or self.hab is None:
+            return False
+        exposed = getattr(vault, "_peer_exposed_aids", None)
+        if exposed is None:
+            return False
+        return self.hab.pre in exposed
+
+    def _on_peer_expose_toggled(self, checked: bool) -> None:
+        vault = self._vault()
+        if vault is None or not hasattr(self, "hab") or self.hab is None:
+            return
+        exposed = getattr(vault, "_peer_exposed_aids", None)
+        if exposed is None:
+            exposed = set()
+            vault._peer_exposed_aids = exposed
+        if checked:
+            exposed.add(self.hab.pre)
+            self._publish_peer_role(allow=True)
+            logger.info(f"peer.role.enabled aid={self.hab.pre}")
+        else:
+            exposed.discard(self.hab.pre)
+            self._publish_peer_role(allow=False)
+            logger.info(f"peer.role.disabled aid={self.hab.pre}")
+
+    def _publish_peer_role(self, allow: bool = True) -> None:
+        """Publish (allow=True) or revoke (allow=False) role=peer + tcp loc
+        rpys locally and to all witnesses.
+
+        Local-only publishing is not enough: a remote wallet resolving
+        this AID's witness-served OOBI gets back whatever the witness
+        has stored, so the rpys must reach each witness in hab.kever.wits
+        for spec §4a.i to work — both for granting and revoking exposure.
+
+        The work runs in a doer on the vault's doist (same pattern as
+        ResolveOobiDoer) — dispatch and return; the UI does not block.
+        """
+        from locksmith.peer.publishing import PublishPeerRoleDoer
+        from locksmith.peer.records import PeerModeSettings
+
+        vault = self._vault()
+        if vault is None:
+            return
+        settings = vault.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        host = settings.advertised_host or "127.0.0.1"
+        url = f"tcp://{host}:{settings.port}"
+        signal_bridge = getattr(vault, "signals", None)
+        doer = PublishPeerRoleDoer(
+            hby=vault.hby,
+            hab=self.hab,
+            url=url,
+            signal_bridge=signal_bridge,
+            allow=allow,
+        )
+        vault.extend([doer])
 
     def _build_refresh_keystate_section(self, layout: QVBoxLayout) -> None:
         """Build the refresh key state section for group multisig."""
@@ -347,13 +426,57 @@ class IdentifierViewSectionsMixin:
 
     def _on_oobi_role_changed(self, role_text: str) -> None:
         """Handle OOBI role dropdown change."""
+        if role_text == "Peer (offline)":
+            self._generate_peer_blob()
+            return
         role_map = {
             "Witness": "witness",
             "Controller": "controller",
-            "Mailbox": "mailbox"
+            "Mailbox": "mailbox",
+            "Peer": "peer",
         }
         role = role_map.get(role_text, "witness")
         self._generate_oobi(role)
+
+    def _generate_peer_blob(self) -> None:
+        """Render a witness-less peer-OOBI blob the user can copy/share."""
+        from locksmith.peer.cesr_blob import export_peer_blob
+
+        if not self.oobi_display_layout:
+            return
+        while self.oobi_display_layout.count():
+            child = self.oobi_display_layout.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        try:
+            token = export_peer_blob(self.hab)
+        except Exception as e:  # noqa: BLE001
+            err = QLabel(f"Couldn't generate peer blob: {e}")
+            err.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-style: italic;")
+            err.setWordWrap(True)
+            self.oobi_display_layout.addWidget(err)
+            return
+
+        intro = QLabel(
+            "Witness-less peer-OOBI. Send this single token to the peer; "
+            "they paste it into their Add Peer dialog. No witness round-trip."
+        )
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+        self.oobi_display_layout.addWidget(intro)
+
+        token_row = QHBoxLayout()
+        token_label = QLabel(token)
+        token_label.setObjectName("viewIdentifierDialog.oobiTokenLabel")
+        token_label.setStyleSheet("font-family: monospace; font-size: 10px;")
+        token_label.setWordWrap(True)
+        token_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+        token_row.addWidget(token_label, 1)
+        copy_button = LocksmithCopyButton()
+        copy_button.set_copy_content(token)
+        token_row.addWidget(copy_button)
+        self.oobi_display_layout.addLayout(token_row)
 
     def _generate_oobi(self, role: str) -> None:
         """Generate and display OOBI for the selected role."""

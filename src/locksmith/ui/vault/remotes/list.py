@@ -131,46 +131,71 @@ class RemoteIdentifierListPage(BaseListPage):
         Load actual identifier data from the opened vault's hby.
 
         This method is called after a vault is opened and hby is available.
+
+        Per-row errors are isolated — one malformed Organizer record
+        (missing alias, kever not yet resolved, etc.) must not blank
+        the whole table. Previously the entire loop was inside one
+        try/except, so a single bad record hid every other row.
         """
         logger.info("Loading remote identifier data")
         org = self.app.vault.org
         try:
-            remote_identifier_data_raw = org.list()
             remote_identifier_data = []
-            for rm_id in remote_identifier_data_raw:
-                pre = rm_id["id"]
-                kever = self.app.vault.hby.kevers[pre]
-                sn = "None"
-
-                if kever and kever.sner:
-                    sn = kever.sn
-
+            for rm_id in org.list():
                 try:
-                    oobi = rm_id['oobi']
-                    parsed_oobi = urlparse(oobi)
-                    query_params = parse_qs(parsed_oobi.query)
-                    tags = query_params.get('tag', [])
-                except KeyError:
-                    tags = []
+                    pre = rm_id["id"]
+                    # hby.kevers is a statedict with a read-through cache:
+                    # bracket access falls through to db.states on miss,
+                    # but .get() does not. Use bracket + KeyError so
+                    # persisted-but-not-cached remote KELs land.
+                    try:
+                        kever = self.app.vault.hby.kevers[pre]
+                    except KeyError:
+                        logger.debug(
+                            f"Skipping remote identifier row pending KEL resolution: {pre}"
+                        )
+                        continue
 
-                if not tags:
-                    for (cid, role, eid), end in self.app.hby.db.ends.getTopItemIter():
-                        if eid == rm_id['id'] and end.allowed:
-                            tags.append(str.title(role))
+                    sn = "None"
+                    if kever.sner:
+                        sn = kever.sn
 
-                if not tags:
-                    tags.append("No Roles")
+                    oobi = rm_id.get("oobi")
+                    if oobi:
+                        parsed_oobi = urlparse(oobi)
+                        query_params = parse_qs(parsed_oobi.query)
+                        tags = query_params.get('tag', [])
+                    else:
+                        tags = []
 
-                roles_str = "\n".join(r.title() for r in tags)
+                    if not tags:
+                        for (cid, role, eid), end in self.app.vault.hby.db.ends.getTopItemIter():
+                            if eid == pre and end.allowed:
+                                tags.append(str.title(role))
 
+                    if not tags:
+                        tags.append("No Roles")
 
-                rm_id_dict = {"Alias": rm_id["alias"],
-                              "Prefix": pre,
-                              "Seq No.": sn,
-                              "Roles": roles_str
-                              }
+                    roles_str = "\n".join(r.title() for r in tags)
 
-                remote_identifier_data.append(rm_id_dict)
+                    # Aliasless records (resolved via URL without oobialias,
+                    # or just registered as a witness AID) fall back to the
+                    # short prefix so they still surface in the table.
+                    alias = rm_id.get("alias") or f"{pre[:8]}…{pre[-4:]}"
+
+                    rm_id_dict = {"Alias": alias,
+                                  "Prefix": pre,
+                                  "Seq No.": sn,
+                                  "Roles": roles_str
+                                  }
+
+                    remote_identifier_data.append(rm_id_dict)
+                except Exception as row_err:  # noqa: BLE001
+                    logger.warning(
+                        f"Skipping malformed remote identifier row "
+                        f"{rm_id.get('id', '<no id>')}: {row_err}"
+                    )
+                    continue
 
             # Apply filters if not "both"
             if self.current_identifier_filter != "both":

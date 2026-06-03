@@ -156,7 +156,7 @@ class VaultDrawer(QWidget):
 
         # New vault button in its own list widget with custom styling
         new_vault_button_container = QListWidget()
-        new_vault_button_container.setObjectName("new-vault-button-container")
+        new_vault_button_container.setObjectName("vaultDrawer.newVaultButton")
         new_vault_button_container.setIconSize(QSize(30, 30))
         new_vault_button_container.setStyleSheet(f"""
             QListWidget {{
@@ -187,6 +187,7 @@ class VaultDrawer(QWidget):
 
         # Create vault list widget (store as instance variable for refreshing)
         self.vault_list = QListWidget()
+        self.vault_list.setObjectName("vaultDrawer.vaultList")
         self.vault_list.setIconSize(QSize(36, 36))
         self.vault_list.setCursor(Qt.CursorShape.PointingHandCursor)
         self.vault_list.setStyleSheet(f"""

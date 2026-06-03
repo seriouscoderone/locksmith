@@ -180,5 +180,6 @@ cython_debug/
 
 # Git worktrees (linked worktrees under the project root)
 .worktrees/
+.claude/worktrees/
 
 tests/_screenshots/

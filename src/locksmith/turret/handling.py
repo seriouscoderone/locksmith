@@ -30,7 +30,7 @@ from keri.help import helping
 from locksmith.core import ipexing
 from locksmith.turret.authing import Authenticator
 
-logger = help.ogler.getLogger()
+logger = help.ogler.getLogger(__name__)
 
 
 class IdentifiersHandler:

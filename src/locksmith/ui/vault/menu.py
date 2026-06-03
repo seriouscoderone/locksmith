@@ -429,11 +429,16 @@ class VaultNavMenu(QFrame):
 
     def _add_menu_items(self):
         """Add the navigation menu items."""
-        # Identifiers
+        # Identifiers — objectName-stamped on each nav button so the
+        # harness finds the button (not its inner QLabel, which also
+        # carries the visible text and would otherwise capture the
+        # generic "click by text" lookup, sending the click to a widget
+        # with no click handler).
         identifiers_btn = MenuButton(
             self._create_icon("identifiers"),
             "Identifiers"
         )
+        identifiers_btn.setObjectName("vaultNavMenu.identifiersButton")
         identifiers_btn.clicked.connect(lambda: self._on_nav_button_clicked(identifiers_btn, self.identifiers_clicked))
         self.layout.addWidget(identifiers_btn)
         self.menu_items.append(identifiers_btn)
@@ -444,6 +449,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("remote_identifiers"),
             "Remote Identifiers"
         )
+        remote_identifiers_btn.setObjectName("vaultNavMenu.remoteIdentifiersButton")
         remote_identifiers_btn.clicked.connect(lambda: self._on_nav_button_clicked(remote_identifiers_btn, self.remote_identifiers_clicked))
         self.layout.addWidget(remote_identifiers_btn)
         self.menu_items.append(remote_identifiers_btn)
@@ -454,6 +460,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("group_identifiers"),
             "Group Identifiers"
         )
+        group_identifiers_btn.setObjectName("vaultNavMenu.groupIdentifiersButton")
         group_identifiers_btn.clicked.connect(lambda: self._on_nav_button_clicked(group_identifiers_btn, self.group_identifiers_clicked))
         self.layout.addWidget(group_identifiers_btn)
         self.menu_items.append(group_identifiers_btn)
@@ -464,6 +471,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials"),
             "Credentials"
         )
+        credentials_btn.setObjectName("vaultNavMenu.credentialsButton")
         credentials_btn.is_account_btn = True  # Mark as account button
         credentials_btn.clicked.connect(lambda: self._on_credentials_button_clicked(credentials_btn))
         self.layout.addWidget(credentials_btn)
@@ -474,6 +482,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("settings"),
             "Settings"
         )
+        settings_btn.setObjectName("vaultNavMenu.settingsButton")
         settings_btn.clicked.connect(lambda: self._on_nav_button_clicked(settings_btn, self.settings_clicked))
         self.layout.addWidget(settings_btn)
         self.menu_items.append(settings_btn)
@@ -608,6 +617,7 @@ class VaultNavMenu(QFrame):
         """Create credentials submenu items (hidden initially)."""
         # Back button
         self.credentials_back_button = self._create_credentials_back_button()
+        self.credentials_back_button.setObjectName("vaultNavMenu.credentialsBackButton")
         self.layout.addWidget(self.credentials_back_button)
         self.credentials_items.append(self.credentials_back_button)
         self.credentials_back_button.setVisible(False)
@@ -623,6 +633,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_issued"),
             "Issued Credentials"
         )
+        issued_credentials_btn.setObjectName("vaultNavMenu.issuedCredentialsButton")
         issued_credentials_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(issued_credentials_btn, self.issued_credentials_clicked)
         )
@@ -636,6 +647,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_received"),
             "Received Credentials"
         )
+        received_credentials_btn.setObjectName("vaultNavMenu.receivedCredentialsButton")
         received_credentials_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(received_credentials_btn, self.received_credentials_clicked)
         )
@@ -649,6 +661,7 @@ class VaultNavMenu(QFrame):
             self._create_icon("credentials_schema"),
             "Schema"
         )
+        schema_btn.setObjectName("vaultNavMenu.schemaButton")
         schema_btn.clicked.connect(
             lambda: self._on_credentials_nav_clicked(schema_btn, self.schema_clicked)
         )

@@ -132,6 +132,23 @@ class VaultPlugin(PluginCore):
         """
         return None
 
+    def has_witness_auth_material(
+        self, vault: Any, hab_pre: str, wit_eid: str,
+    ) -> bool:
+        """True if the plugin holds per-controller auth material (e.g. a
+        TOTP seed) for the (hab_pre, wit_eid) pair that would let the
+        wallet satisfy a non-spec witness-side auth gate.
+
+        Used by the rotation flow to decide whether falling back to the
+        TOTP modal would do anything useful — for witnesses that don't
+        require auth at all (pure KERI / sam-witness), no plugin will
+        report material and the wallet skips the modal.
+
+        Default returns False. Override in plugins that broker
+        witness-operator auth (kerifoundation's TOTP onboarding).
+        """
+        return False
+
     def update_witness_state(self, vault: Any, wit_eid: str) -> None:
         """Update witness state after rotation (typically: mark reserved=True).
 

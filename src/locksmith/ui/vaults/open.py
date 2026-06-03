@@ -59,11 +59,13 @@ class OpenVaultDialog(LocksmithDialog):
 
         layout.addSpacing(10)
         self.passcode_field = FloatingLabelLineEdit("Passcode", password_mode=True)
+        self.passcode_field.setObjectName("openVaultDialog.passcodeField")
         self.passcode_field.setFixedWidth(300)
         layout.addWidget(self.passcode_field)
 
         # OTP field (initially hidden, shown if vault has 2FA)
         self.otp_field = FloatingLabelLineEdit("2FA Code")
+        self.otp_field.setObjectName("openVaultDialog.otpField")
         self.otp_field.setFixedWidth(300)
         self.otp_field.setVisible(False)
         layout.addWidget(self.otp_field)
@@ -73,9 +75,11 @@ class OpenVaultDialog(LocksmithDialog):
         # Create button row
         button_row = QHBoxLayout()
         self.cancel_button = LocksmithInvertedButton("Cancel")
+        self.cancel_button.setObjectName("openVaultDialog.cancelButton")
         button_row.addWidget(self.cancel_button)
         button_row.addSpacing(10)
         self.open_button = LocksmithButton("Open")
+        self.open_button.setObjectName("openVaultDialog.openButton")
         button_row.addWidget(self.open_button)
 
         # Create title content
