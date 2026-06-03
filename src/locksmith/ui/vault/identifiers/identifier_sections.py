@@ -323,7 +323,7 @@ class IdentifierViewSectionsMixin:
         peer_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         peer_row.addWidget(peer_label)
         self.peer_expose_toggle = QCheckBox()
-        self.peer_expose_toggle.setObjectName("peer_expose_toggle")
+        self.peer_expose_toggle.setObjectName("viewIdentifierDialog.exposeToggle")
         self.peer_expose_toggle.setChecked(self._is_peer_exposed())
         self.peer_expose_toggle.toggled.connect(self._on_peer_expose_toggled)
         peer_row.addWidget(self.peer_expose_toggle)

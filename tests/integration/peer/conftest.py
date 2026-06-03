@@ -96,6 +96,40 @@ def _devctl(socket_path: Path, op: str, **kwa) -> dict:
     return json.loads(buf.split(b"\n", 1)[0])
 
 
+def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
+    """Drive the View Identifier "Expose over peer mode" toggle the way
+    a user would: click the row action, wait for the dialog, click the
+    toggle, assert it's checked, close the dialog.
+
+    Use this from tests that need an AID exposed for peer mode as setup,
+    when the test isn't itself exercising the expose UI. Equivalent to
+    the retired `peer_expose_aid` devctl bypass, minus the bypass —
+    actually walks the widgets a real user would touch.
+    """
+    r = devctl(sock, "click_row_action", row_text=alias, action="View")
+    assert r.get("ok"), f"open View Identifier dialog for {alias!r}: {r}"
+    r = devctl(sock, "wait_for",
+               target="viewIdentifierDialog.aidField",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"View Identifier dialog never opened for {alias!r}: {r}"
+
+    # If already exposed, leave it (idempotent — matches the bypass).
+    r = devctl(sock, "is_checked", target="viewIdentifierDialog.exposeToggle")
+    assert r.get("ok"), r
+    if not r["checked"]:
+        r = devctl(sock, "click", target="viewIdentifierDialog.exposeToggle")
+        assert r.get("ok"), f"toggle expose for {alias!r}: {r}"
+        r = devctl(sock, "is_checked", target="viewIdentifierDialog.exposeToggle")
+        assert r == {"ok": True, "checked": True}, r
+        # Publish doer needs a beat to write the role/loc rpys.
+        time.sleep(0.5)
+
+    # Close the dialog so subsequent test interactions aren't blocked.
+    r = devctl(sock, "click", target="Close")
+    # Don't assert — some dialog variants close on Escape, not Close button.
+    # The next interaction will fail loudly if the dialog is still modal.
+
+
 @pytest.fixture
 def two_wallets():
     # pytest's tmp_path lives under /private/var/folders/... which on

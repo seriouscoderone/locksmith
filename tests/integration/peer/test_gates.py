@@ -18,6 +18,8 @@ import time
 
 import pytest
 
+from tests.integration.peer.conftest import expose_aid_via_ui
+
 
 @pytest.mark.integration
 def test_garbage_bytes_do_not_reach_handler_stack(two_wallets):
@@ -32,8 +34,7 @@ def test_garbage_bytes_do_not_reach_handler_stack(two_wallets):
     assert r.get("ok") is True, r
     r = devctl(b["sock"], "peer_set_mode", enabled=True, port=0)
     assert r.get("ok") is True, r
-    r = devctl(b["sock"], "peer_expose_aid", alias="bob")
-    assert r.get("ok") is True, r
+    expose_aid_via_ui(devctl, b["sock"], "bob")
 
     port = devctl(b["sock"], "peer_get_port")["port"]
 
