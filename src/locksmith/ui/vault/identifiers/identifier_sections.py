@@ -299,6 +299,7 @@ class IdentifierViewSectionsMixin:
         role_row.addWidget(oobi_label)
 
         self.oobi_role_dropdown = FloatingLabelComboBox("Role")
+        self.oobi_role_dropdown.setObjectName("viewIdentifierDialog.oobiRoleCombo")
         self.oobi_role_dropdown.addItems([
             "Witness", "Controller", "Mailbox", "Peer", "Peer (offline)",
         ])
@@ -467,6 +468,7 @@ class IdentifierViewSectionsMixin:
 
         token_row = QHBoxLayout()
         token_label = QLabel(token)
+        token_label.setObjectName("viewIdentifierDialog.oobiTokenLabel")
         token_label.setStyleSheet("font-family: monospace; font-size: 10px;")
         token_label.setWordWrap(True)
         token_label.setTextInteractionFlags(Qt.TextSelectableByMouse)
