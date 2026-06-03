@@ -17,7 +17,8 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (
-    create_aid_via_ui, free_port, set_peer_mode_via_ui,
+    create_aid_via_ui, free_port,
+    open_test_vault_via_ui, set_peer_mode_via_ui,
 )
 
 
@@ -26,12 +27,7 @@ def test_expose_and_export_via_view_identifier_dialog(two_wallets):
     devctl = two_wallets["devctl"]
     a = two_wallets["a"]
 
-    # --- setup (peer_open_test_vault + peer_create_test_aid are the
-    # remaining bypasses pending later refactor steps) ---
-    r = devctl(a["sock"], "peer_open_test_vault",
-               name="exptest",
-               passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
-    assert r.get("ok"), r
+    open_test_vault_via_ui(devctl, a["sock"], name="exptest")
     create_aid_via_ui(devctl, a["sock"], alias="alice")
     # Enable peer mode through Settings → Peer Mode UI.
     set_peer_mode_via_ui(devctl, a["sock"], port=free_port())

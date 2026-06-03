@@ -23,7 +23,8 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (
-    create_aid_via_ui, expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+    create_aid_via_ui, expose_aid_via_ui, free_port,
+    open_test_vault_via_ui, set_peer_mode_via_ui,
 )
 
 
@@ -35,9 +36,7 @@ def test_force_pair_populates_allowlists_both_directions(two_wallets):
 
     # Bring vaults up on both sides
     for wallet in (a, b):
-        r = devctl(wallet["sock"], "peer_open_test_vault",
-                   name="ptest", passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
-        assert r.get("ok") is True, r
+        open_test_vault_via_ui(devctl, wallet["sock"], name="ptest")
         create_aid_via_ui(devctl, wallet["sock"], alias="alice_or_bob")
         set_peer_mode_via_ui(devctl, wallet["sock"], port=free_port())
         expose_aid_via_ui(devctl, wallet["sock"], "alice_or_bob")

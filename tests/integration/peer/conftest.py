@@ -169,6 +169,81 @@ def set_peer_mode_via_ui(
     assert r.get("ok"), f"navigate back to Identifiers: {r}"
 
 
+DEFAULT_TEST_PASSCODE = "DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07"
+
+
+def open_test_vault_via_ui(
+    devctl,
+    sock: Path,
+    name: str,
+    passcode: str = DEFAULT_TEST_PASSCODE,
+) -> None:
+    """Drive the vault drawer to create + open a vault the way a user
+    would. Two-step on persistent storage:
+
+      1. Click "Initialize New Vault" → CreateVaultDialog.
+      2. Type name + passcode, click Create. Vault gets created on disk
+         and the create dialog closes; the new entry shows up in the
+         drawer's vault_list.
+      3. Click the new vault entry → OpenVaultDialog.
+      4. Type passcode, click Open. Vault page shows.
+
+    Replaces the retired peer_open_test_vault devctl bypass. Same
+    default passcode (the test passcode is a fixture, not a secret —
+    every test wallet uses the same one because the HOME is isolated
+    to a tmpdir).
+    """
+    # --- Step 1+2: create ---
+    r = devctl(sock, "click_list_item", text="Initialize New Vault")
+    assert r.get("ok"), f"click Initialize New Vault: {r}"
+    r = devctl(sock, "wait_for",
+               target="createVaultDialog.nameField",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"Create Vault dialog never appeared: {r}"
+
+    r = devctl(sock, "type",
+               target="createVaultDialog.nameField", text=name)
+    assert r.get("ok"), r
+    r = devctl(sock, "type",
+               target="createVaultDialog.passcodeField", text=passcode)
+    assert r.get("ok"), r
+    r = devctl(sock, "click",
+               target="createVaultDialog.createButton")
+    assert r.get("ok"), r
+
+    # Wait for the create dialog to close.
+    r = devctl(sock, "wait_for",
+               target="createVaultDialog.nameField",
+               condition="hidden", timeout_ms=10000)
+    assert r.get("ok"), f"create dialog never closed: {r}"
+
+    # --- Step 3+4: open ---
+    # The drawer auto-shows the OpenVaultDialog for the new vault
+    # (_on_vault_created → show_open_vault_dialog), so the user doesn't
+    # have to click the new entry. The passcode field appears directly.
+    r = devctl(sock, "wait_for",
+               target="openVaultDialog.passcodeField",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"Open Vault dialog never appeared: {r}"
+    r = devctl(sock, "type",
+               target="openVaultDialog.passcodeField", text=passcode)
+    assert r.get("ok"), r
+    r = devctl(sock, "click",
+               target="openVaultDialog.openButton")
+    assert r.get("ok"), r
+
+    # Wait for the open dialog to close and the vault page to mount
+    # (the Identifiers nav button appears when the vault is up).
+    r = devctl(sock, "wait_for",
+               target="openVaultDialog.passcodeField",
+               condition="hidden", timeout_ms=10000)
+    assert r.get("ok"), f"open dialog never closed: {r}"
+    r = devctl(sock, "wait_for",
+               target="vaultNavMenu.identifiersButton",
+               condition="visible", timeout_ms=5000)
+    assert r.get("ok"), f"vault page never mounted: {r}"
+
+
 def create_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     """Drive the Add Identifier dialog: open via "Add Identifier" toolbar
     button, type alias into the FloatingLabelLineEdit, click Create.

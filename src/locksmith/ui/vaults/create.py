@@ -61,11 +61,13 @@ class CreateVaultDialog(LocksmithDialog):
 
         layout.addSpacing(10)
         self.name_field = FloatingLabelLineEdit("Name")
+        self.name_field.setObjectName("createVaultDialog.nameField")
         self.name_field.setFixedWidth(300)
         self.name_field.line_edit.textChanged.connect(self._on_name_changed)
         layout.addWidget(self.name_field)
 
         self.passcode_field = FloatingLabelLineEdit("Passcode", password_mode=True)
+        self.passcode_field.setObjectName("createVaultDialog.passcodeField")
         self.passcode_field.setFixedWidth(300)
         layout.addWidget(self.passcode_field)
 
@@ -95,9 +97,11 @@ class CreateVaultDialog(LocksmithDialog):
         # Create button row
         button_row = QHBoxLayout()
         self.cancel_button = LocksmithInvertedButton("Cancel")
+        self.cancel_button.setObjectName("createVaultDialog.cancelButton")
         button_row.addWidget(self.cancel_button)
         button_row.addSpacing(10)
         self.create_button = LocksmithButton("Create")
+        self.create_button.setObjectName("createVaultDialog.createButton")
         button_row.addWidget(self.create_button)
 
         # Create title content

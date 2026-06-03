@@ -17,6 +17,7 @@ from tests.integration.peer.conftest import (
     create_aid_via_ui,
     free_port,
     import_peer_blob_via_ui,
+    open_test_vault_via_ui,
     set_peer_mode_via_ui,
 )
 
@@ -31,10 +32,7 @@ def test_pair_via_add_peer_dialog(two_wallets):
     # expose-then-close-then-reopen pattern is avoided because reopening
     # a dialog by row_action in quick succession races against the
     # close animation. ---
-    r = devctl(a["sock"], "peer_open_test_vault",
-               name="ptest",
-               passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
-    assert r.get("ok"), r
+    open_test_vault_via_ui(devctl, a["sock"], name="ptest")
     create_aid_via_ui(devctl, a["sock"], alias="alice")
     set_peer_mode_via_ui(devctl, a["sock"], port=free_port())
 
@@ -68,10 +66,7 @@ def test_pair_via_add_peer_dialog(two_wallets):
     assert blob.startswith("locksmith-peer-oobi:v1:"), blob
 
     # --- B: bring up vault, paste the blob via Add Peer dialog ---
-    r = devctl(b["sock"], "peer_open_test_vault",
-               name="ptest",
-               passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
-    assert r.get("ok"), r
+    open_test_vault_via_ui(devctl, b["sock"], name="ptest")
     set_peer_mode_via_ui(devctl, b["sock"], port=free_port())
 
     import_peer_blob_via_ui(devctl, b["sock"], blob, label="alice@A")
