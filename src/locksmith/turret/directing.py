@@ -13,7 +13,7 @@ from keri.core import eventing, routing
 from keri.core import parsing
 from keri.vdr.eventing import Tevery
 
-logger = help.ogler.getLogger()
+logger = help.ogler.getLogger(__name__)
 
 
 class Director(doing.Doer):
@@ -412,16 +412,24 @@ class Directant(doing.DoDoer):
         yield  # enter context
         while True:
             for ca, ix in list(self.server.ixes.items()):
-                if ix.cutoff:
-                    self.closeConnection(ca)
-                    continue
-
-                if ca not in self.rants:  # create Reactant and extend doers with it
+                # Drain any buffered bytes via a Reactant FIRST, even if
+                # the remote already closed. peer_send opens, writes, and
+                # closes in sub-millisecond; by the next directant tick
+                # ix.rxbs has the payload but ix.cutoff is already True.
+                # The old order (skip-if-cutoff) silently dropped those
+                # bytes — every short-lived peer connection lost data.
+                if ca not in self.rants and (ix.rxbs or not ix.cutoff):
                     rant = Reactant(tymth=self.tymth, hab=self.hab, verifier=self.verifier,
                                     exchanger=self.exchanger, remoter=ix, cues=self.cues)
                     self.rants[ca] = rant
                     # add Reactant (rant) doer to running doers
                     self.extend(doers=[rant])  # open and run rant as doer
+
+                # Now reap cutoff connections that have no remaining
+                # buffered bytes for the Reactant to chew on.
+                if ix.cutoff and not ix.rxbs:
+                    self.closeConnection(ca)
+                    continue
 
                 if ix.tymeout > 0.0 and ix.tymer.expired:
                     self.closeConnection(ca)  # also removes rant

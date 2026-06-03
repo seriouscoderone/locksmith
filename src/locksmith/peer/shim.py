@@ -34,6 +34,15 @@ class PeerExchangerShim:
         try:
             sender = serder.ked.get("i", "")
             recipient = serder.ked.get("rp", "")
+            # keripy's ipexGrantExn (and the rest of the IPEX family)
+            # builds exn messages with rp="" and the actual recipient
+            # AID embedded in the attribute block as a.i. Fall back to
+            # that when rp is empty so the destination-exposed gate
+            # checks the right AID.
+            if not recipient:
+                attrs = serder.ked.get("a") or {}
+                if isinstance(attrs, dict):
+                    recipient = attrs.get("i", "") or recipient
         except AttributeError:
             logger.warning("peer.parser.discarded reason=non_exn_payload")
             return

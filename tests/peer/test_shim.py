@@ -69,6 +69,34 @@ def test_unknown_sender_is_dropped_and_logged(baser, caplog):
                for r in caplog.records)
 
 
+def test_ipex_exn_recipient_falls_back_to_attribute_block_i(baser, caplog):
+    """keripy's ipexGrantExn (and the rest of the IPEX family) builds
+    exn messages with rp="" and the actual recipient AID in the
+    attribute block as a.i. The shim falls back to a.i when rp is
+    empty so the destination-exposed gate sees the real recipient.
+    """
+    al = PeerAllowlist(baser)
+    al.add(PeerRecord(aid="EAID_BOB", label="Bob", endpoint_url="tcp://x:5621",
+                      paired_at=datetime.now(timezone.utc).isoformat()))
+    exchanger = _RecordingExchanger()
+    shim = PeerExchangerShim(allowlist=al, exchanger=exchanger,
+                             is_destination_exposed=lambda aid: aid == "EAID_ALICE")
+
+    # IPEX-shape exn: rp empty, recipient in a.i
+    serder = SimpleNamespace(
+        ked={"i": "EAID_BOB", "rp": "", "a": {"i": "EAID_ALICE", "m": "hi"}},
+        said="SAID_FAKE",
+    )
+    with caplog.at_level(logging.INFO, logger="locksmith.peer.shim"):
+        shim.processEvent(serder)
+
+    assert len(exchanger.calls) == 1, (
+        "shim should deliver to the exchanger when a.i names an exposed "
+        "destination, even though rp is empty"
+    )
+    assert any("peer.recv.delivered" in r.message for r in caplog.records)
+
+
 def test_paired_sender_to_unexposed_destination_is_dropped_and_logged(baser, caplog):
     al = PeerAllowlist(baser)
     al.add(PeerRecord(aid="EAID_BOB", label="Bob", endpoint_url="tcp://x:5621",

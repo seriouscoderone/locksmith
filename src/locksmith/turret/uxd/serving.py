@@ -22,7 +22,7 @@ from contextlib import contextmanager
 from hio import help
 from hio.base import tyming, doing
 
-logger = help.ogler.getLogger()
+logger = help.ogler.getLogger(__name__)
 
 
 @contextmanager
