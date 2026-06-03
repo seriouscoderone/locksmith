@@ -47,6 +47,12 @@ dependencies = [
     'pymongo>=4.11.2',
 ]
 
+[project.optional-dependencies]
+build-macos = [
+    "pyinstaller>=6.6,<7",
+    "dmgbuild>=1.6.1",
+]
+
 [project.entry-points."locksmith.plugins"]
 kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
 
