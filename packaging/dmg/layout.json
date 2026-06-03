@@ -1,0 +1,22 @@
+{
+  "_comment": "DMG layout consumed by packaging/build-macos.sh. Coordinates are in pixels, origin top-left of the DMG window. The background image is 540x380; window is sized to match. Placeholder values — refine after branded background art lands.",
+  "window": {
+    "position": [200, 200],
+    "size": [540, 380]
+  },
+  "icon_size": 96,
+  "background": "background.png",
+  "volume_name": "Locksmith",
+  "icons": [
+    {
+      "name": "Locksmith.app",
+      "pos": [140, 200]
+    },
+    {
+      "name": "Applications",
+      "pos": [400, 200],
+      "type": "symlink",
+      "target": "/Applications"
+    }
+  ]
+}
