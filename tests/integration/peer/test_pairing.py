@@ -22,7 +22,9 @@ import time
 
 import pytest
 
-from tests.integration.peer.conftest import expose_aid_via_ui
+from tests.integration.peer.conftest import (
+    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+)
 
 
 @pytest.mark.integration
@@ -38,8 +40,7 @@ def test_force_pair_populates_allowlists_both_directions(two_wallets):
         assert r.get("ok") is True, r
         r = devctl(wallet["sock"], "peer_create_test_aid", alias="alice_or_bob")
         assert r.get("ok") is True, r
-        r = devctl(wallet["sock"], "peer_set_mode", enabled=True, port=0)
-        assert r.get("ok") is True, r
+        set_peer_mode_via_ui(devctl, wallet["sock"], port=free_port())
         expose_aid_via_ui(devctl, wallet["sock"], "alice_or_bob")
 
     # Read each side's AID pre + bound port

@@ -13,14 +13,16 @@ import time
 
 import pytest
 
-from tests.integration.peer.conftest import expose_aid_via_ui
+from tests.integration.peer.conftest import (
+    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+)
 
 
 def _setup_wallet(devctl, sock, alias):
     devctl(sock, "peer_open_test_vault",
            name="ptest", passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
     devctl(sock, "peer_create_test_aid", alias=alias)
-    devctl(sock, "peer_set_mode", enabled=True, port=0)
+    set_peer_mode_via_ui(devctl, sock, port=free_port())
     expose_aid_via_ui(devctl, sock, alias)
 
 

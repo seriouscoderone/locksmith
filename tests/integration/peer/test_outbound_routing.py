@@ -11,15 +11,13 @@ import time
 
 import pytest
 
-from tests.integration.peer.conftest import expose_aid_via_ui
+from tests.integration.peer.conftest import (
+    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+)
 
 
 def _free_port():
-    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    s.bind(("", 0))
-    port = s.getsockname()[1]
-    s.close()
-    return port
+    return free_port()
 
 
 @pytest.mark.integration
@@ -33,7 +31,7 @@ def test_peer_aware_poster_uses_peer_channel_when_paired(two_wallets):
     devctl(a["sock"], "peer_open_test_vault",
            name="ptest", passcode="DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07")
     devctl(a["sock"], "peer_create_test_aid", alias="alice")
-    devctl(a["sock"], "peer_set_mode", enabled=True, port=0)
+    set_peer_mode_via_ui(devctl, a["sock"], port=free_port())
     expose_aid_via_ui(devctl, a["sock"], "alice")
 
     # Stand up a stub TCP listener Wallet A can reach

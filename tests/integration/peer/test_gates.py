@@ -18,7 +18,9 @@ import time
 
 import pytest
 
-from tests.integration.peer.conftest import expose_aid_via_ui
+from tests.integration.peer.conftest import (
+    expose_aid_via_ui, free_port, set_peer_mode_via_ui,
+)
 
 
 @pytest.mark.integration
@@ -32,11 +34,9 @@ def test_garbage_bytes_do_not_reach_handler_stack(two_wallets):
     assert r.get("ok") is True, r
     r = devctl(b["sock"], "peer_create_test_aid", alias="bob")
     assert r.get("ok") is True, r
-    r = devctl(b["sock"], "peer_set_mode", enabled=True, port=0)
-    assert r.get("ok") is True, r
+    port = free_port()
+    set_peer_mode_via_ui(devctl, b["sock"], port=port)
     expose_aid_via_ui(devctl, b["sock"], "bob")
-
-    port = devctl(b["sock"], "peer_get_port")["port"]
 
     # Connect and send garbage — not valid CESR.
     s = socket.create_connection(("127.0.0.1", port), timeout=3.0)

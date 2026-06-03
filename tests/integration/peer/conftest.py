@@ -96,6 +96,79 @@ def _devctl(socket_path: Path, op: str, **kwa) -> dict:
     return json.loads(buf.split(b"\n", 1)[0])
 
 
+def free_port() -> int:
+    """Allocate a free TCP port. The OS hands one out; we close the
+    probe socket immediately and the port is then race-free as long as
+    the caller binds it promptly.
+    """
+    s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.bind(("", 0))
+    port = s.getsockname()[1]
+    s.close()
+    return port
+
+
+def set_peer_mode_via_ui(
+    devctl,
+    sock: Path,
+    port: int,
+    advertised_host: str = "127.0.0.1",
+    enabled: bool = True,
+) -> None:
+    """Drive Settings → Peer Mode the way a user would: navigate to the
+    Settings page, set the toggle/port/advertised-host fields, click
+    "Save and restart listener". Replaces the retired peer_set_mode
+    devctl bypass.
+
+    The port must be an explicit integer in [1024, 65535]; the QSpinBox
+    range doesn't allow port=0 (OS-assigned). Use ``free_port()`` to
+    get one. After apply, the wallet's peer doer restarts at the chosen
+    port — exactly what restart_peer_mode would do from the bypass.
+    """
+    # Side-nav buttons are stamped with component-scoped objectNames so
+    # the click goes to the QPushButton (not its inner QLabel, which
+    # carries the same visible text but has no click handler).
+    r = devctl(sock, "click", target="vaultNavMenu.settingsButton")
+    assert r.get("ok"), f"navigate to Settings: {r}"
+    r = devctl(sock, "wait_for",
+               target="peerSettingsSection.enabledToggle",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"Settings page never showed the peer card: {r}"
+
+    # Toggle to desired state (idempotent — only clicks if state differs).
+    r = devctl(sock, "is_checked",
+               target="peerSettingsSection.enabledToggle")
+    assert r.get("ok"), r
+    if r["checked"] != enabled:
+        r = devctl(sock, "click",
+                   target="peerSettingsSection.enabledToggle")
+        assert r.get("ok"), r
+
+    # Port: QSpinBox accepts numeric text via type op.
+    r = devctl(sock, "type",
+               target="peerSettingsSection.portSpin", text=str(port))
+    assert r.get("ok"), f"set port: {r}"
+
+    # Advertised host: editable QComboBox — type routes through line_edit.
+    r = devctl(sock, "type",
+               target="peerSettingsSection.advertisedCombo",
+               text=advertised_host)
+    assert r.get("ok"), f"set advertised_host: {r}"
+
+    # Save + restart listener.
+    r = devctl(sock, "click",
+               target="peerSettingsSection.applyButton")
+    assert r.get("ok"), f"click apply: {r}"
+
+    # Listener restart needs a beat (the bypass restart_peer_mode is
+    # synchronous; the UI uses QTimer.singleShot for the self-test).
+    time.sleep(0.6)
+
+    # Return to Identifiers so subsequent expose flows find the table.
+    r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
+    assert r.get("ok"), f"navigate back to Identifiers: {r}"
+
+
 def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     """Drive the View Identifier "Expose over peer mode" toggle the way
     a user would: click the row action, wait for the dialog, click the
