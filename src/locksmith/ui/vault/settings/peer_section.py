@@ -210,14 +210,14 @@ class PeerSettingsSection(QFrame):
 
         toolbar = QHBoxLayout()
         self.add_peer_button = LocksmithButton("Pair new peer")
-        self.add_peer_button.setObjectName("peer_add_button")
+        self.add_peer_button.setObjectName("peerSettingsSection.addPeerButton")
         self.add_peer_button.clicked.connect(self._on_add_peer)
         toolbar.addWidget(self.add_peer_button)
         toolbar.addStretch()
         peers_card_layout.addLayout(toolbar)
 
         self.peers_list = QListWidget()
-        self.peers_list.setObjectName("peer_list")
+        self.peers_list.setObjectName("peerSettingsSection.peersList")
         self.peers_list.setMaximumHeight(180)
         peers_card_layout.addWidget(self.peers_list)
         self._empty_state_label = QLabel(

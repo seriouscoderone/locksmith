@@ -169,6 +169,67 @@ def set_peer_mode_via_ui(
     assert r.get("ok"), f"navigate back to Identifiers: {r}"
 
 
+def import_peer_blob_via_ui(
+    devctl,
+    sock: Path,
+    blob: str,
+    label: str | None = None,
+) -> None:
+    """Drive Settings → "Pair new peer" → paste blob → Pair button.
+
+    Replaces the retired peer_import_blob devctl bypass. The dialog
+    accepts either a witness-served OOBI URL or a witness-less
+    locksmith-peer-oobi:v1: blob; this helper covers the blob path.
+    On success the dialog closes (Pair clicks accept()); on failure the
+    error_label fills in. The caller can check the peer list afterwards.
+    """
+    # Settings holds the Pair-new-peer entry point. Navigate first.
+    r = devctl(sock, "click", target="vaultNavMenu.settingsButton")
+    assert r.get("ok"), f"navigate to Settings: {r}"
+    r = devctl(sock, "wait_for",
+               target="peerSettingsSection.addPeerButton",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), r
+
+    r = devctl(sock, "click",
+               target="peerSettingsSection.addPeerButton")
+    assert r.get("ok"), f"open Add Peer dialog: {r}"
+    r = devctl(sock, "wait_for",
+               target="addPeerDialog.oobiInput",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), f"Add Peer dialog never appeared: {r}"
+
+    r = devctl(sock, "type",
+               target="addPeerDialog.oobiInput", text=blob)
+    assert r.get("ok"), f"paste blob into OOBI input: {r}"
+
+    if label:
+        r = devctl(sock, "type",
+                   target="addPeerDialog.labelInput", text=label)
+        assert r.get("ok"), f"type label: {r}"
+
+    r = devctl(sock, "click", target="addPeerDialog.pairButton")
+    assert r.get("ok"), f"click Pair: {r}"
+
+    # Dialog closes on success; if it stays open, the error_label has
+    # the diagnostic. Wait for it to disappear and surface the error
+    # if it doesn't.
+    r = devctl(sock, "wait_for",
+               target="addPeerDialog.oobiInput",
+               condition="hidden", timeout_ms=3000)
+    if not r.get("ok"):
+        err = devctl(sock, "get_text", target="addPeerDialog.errorLabel")
+        raise AssertionError(
+            f"Pair dialog didn't close — likely error: "
+            f"{err.get('text', '?')!r}"
+        )
+
+    # Return to Identifiers so subsequent UI interactions land on a
+    # familiar page.
+    r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
+    assert r.get("ok"), r
+
+
 def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     """Drive the View Identifier "Expose over peer mode" toggle the way
     a user would: click the row action, wait for the dialog, click the

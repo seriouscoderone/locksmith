@@ -55,7 +55,7 @@ class AddPeerDialog(QDialog):
         oobi_label.setStyleSheet("font-weight: 600;")
         layout.addWidget(oobi_label)
         self.oobi_input = QLineEdit()
-        self.oobi_input.setObjectName("peer_dialog_oobi_input")
+        self.oobi_input.setObjectName("addPeerDialog.oobiInput")
         self.oobi_input.setPlaceholderText(
             "https://witness.example.com/oobi/… or locksmith-peer-oobi:v1:…"
         )
@@ -76,7 +76,7 @@ class AddPeerDialog(QDialog):
         endpoint_help.setStyleSheet("color: #6E7074; font-size: 11px;")
         layout.addWidget(endpoint_help)
         self.endpoint_input = QLineEdit()
-        self.endpoint_input.setObjectName("peer_dialog_endpoint_input")
+        self.endpoint_input.setObjectName("addPeerDialog.endpointInput")
         self.endpoint_input.setPlaceholderText("tcp://192.168.1.42:5621")
         layout.addWidget(self.endpoint_input)
 
@@ -84,18 +84,18 @@ class AddPeerDialog(QDialog):
         label_label.setStyleSheet("font-weight: 600; margin-top: 8px;")
         layout.addWidget(label_label)
         self.label_input = QLineEdit()
-        self.label_input.setObjectName("peer_dialog_label_input")
+        self.label_input.setObjectName("addPeerDialog.labelInput")
         self.label_input.setPlaceholderText("e.g. Alice's laptop")
         layout.addWidget(self.label_input)
 
         self.status_label = QLabel("")
-        self.status_label.setObjectName("peer_dialog_status")
+        self.status_label.setObjectName("addPeerDialog.statusLabel")
         self.status_label.setWordWrap(True)
         self.status_label.setStyleSheet("color: #6E7074; margin-top: 8px;")
         layout.addWidget(self.status_label)
 
         self.error_label = QLabel("")
-        self.error_label.setObjectName("peer_dialog_error")
+        self.error_label.setObjectName("addPeerDialog.errorLabel")
         self.error_label.setWordWrap(True)
         self.error_label.setStyleSheet("color: #DC2626; margin-top: 4px;")
         layout.addWidget(self.error_label)
@@ -104,10 +104,10 @@ class AddPeerDialog(QDialog):
         self.pair_button = buttons.button(QDialogButtonBox.Ok)
         if self.pair_button is not None:
             self.pair_button.setText("Pair")
-            self.pair_button.setObjectName("peer_dialog_pair_button")
+            self.pair_button.setObjectName("addPeerDialog.pairButton")
         cancel_btn = buttons.button(QDialogButtonBox.Cancel)
         if cancel_btn is not None:
-            cancel_btn.setObjectName("peer_dialog_cancel_button")
+            cancel_btn.setObjectName("addPeerDialog.cancelButton")
         buttons.accepted.connect(self._on_pair_clicked)
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
