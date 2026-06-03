@@ -252,10 +252,11 @@ class Vault(doing.DoDoer):
         current peerSettings. Safe to call when the doer is None.
 
         Implementation note: hio's DoDoer doesn't support clean removal
-        of nested doers at runtime. We close the underlying socket so
-        the inner doers go inert, then drop the reference. The dead doer
-        stays in the parent's doers list but does nothing (it polls a
-        closed socket).
+        of nested doers at runtime, so the old PeerDoer stays in the
+        parent's doers list after we close its socket. Its inner
+        GuardedServerDoer.recur() short-circuits once server.opened is
+        False, so the stale doer is harmless — it just yields without
+        touching the dead socket.
         """
         if self.peer_doer is not None and self.peer_doer.server is not None:
             self.peer_doer.server.close()
