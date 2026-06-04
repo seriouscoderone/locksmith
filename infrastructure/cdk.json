@@ -1,0 +1,16 @@
+{
+  "app": "npx ts-node --prefer-ts-exts bin/locksmith-releases.ts",
+  "watch": {
+    "include": ["**"],
+    "exclude": ["README.md", "cdk.*.out", "**/*.d.ts", "**/*.js", "tsconfig.json", "package*.json", "node_modules"]
+  },
+  "context": {
+    "@aws-cdk/aws-iam:minimizePolicies": true,
+    "@aws-cdk/core:stackRelativeExports": true,
+    "@aws-cdk/aws-s3:serverAccessLogsUseBucketPolicy": true,
+    "hosted-zone:account=111122223333:domainName=keri.host:region=us-east-1": {
+      "Id": "/hostedzone/Z0123456789ABC",
+      "Name": "keri.host."
+    }
+  }
+}

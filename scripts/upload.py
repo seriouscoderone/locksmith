@@ -1,40 +1,57 @@
-import boto3
+"""Upload an artifact to AWS S3.
+
+Credentials are picked up from the environment by boto3 (AWS_ACCESS_KEY_ID,
+AWS_SECRET_ACCESS_KEY, AWS_SESSION_TOKEN, AWS_REGION). In CI these are
+populated by aws-actions/configure-aws-credentials@v4 via GitHub Actions
+OIDC; no long-lived secrets are needed.
+"""
+from __future__ import annotations
+
 import argparse
+import sys
+
+import boto3
+from botocore.exceptions import BotoCoreError, ClientError
 
 
-def upload(accessKey, secretKey, region, bucket, objectKey, file):
-    # DigitalOcean Spaces credentials
+def upload(
+    bucket: str,
+    object_key: str,
+    file: str,
+    region: str | None = None,
+    content_type: str | None = None,
+) -> None:
+    s3 = boto3.client("s3", region_name=region) if region else boto3.client("s3")
+    extra_args = {"ContentType": content_type} if content_type else None
+    s3.upload_file(file, bucket, object_key, ExtraArgs=extra_args)
+    print(f"uploaded s3://{bucket}/{object_key}")
 
-    # Initialize the S3 client
-    s3 = boto3.client(
-        's3',
-        region_name=region,
-        endpoint_url=f'https://{region}.digitaloceanspaces.com',
-        aws_access_key_id=accessKey,
-        aws_secret_access_key=secretKey
+
+def main() -> int:
+    ap = argparse.ArgumentParser(description="Upload a file to AWS S3.")
+    ap.add_argument("--bucket", required=True)
+    ap.add_argument("--object-key", required=True)
+    ap.add_argument("--file", required=True)
+    ap.add_argument("--region", default=None, help="optional override; default from env")
+    ap.add_argument(
+        "--content-type",
+        default=None,
+        help="optional Content-Type header (e.g. application/x-apple-diskimage for .dmg)",
     )
-
+    args = ap.parse_args()
     try:
-        s3.upload_file(file, bucket, objectKey)
-        print(f"File '{objectKey}' uploaded successfully.")
+        upload(
+            args.bucket,
+            args.object_key,
+            args.file,
+            args.region,
+            args.content_type,
+        )
+    except (BotoCoreError, ClientError) as exc:
+        print(f"upload failed: {exc}", file=sys.stderr)
+        return 1
+    return 0
 
-    except Exception as e:
-        print(f"Error uploading file: {e}")
 
-
-if __name__ == '__main__':
-    parser = argparse.ArgumentParser(description='Upload a file')
-    parser.add_argument('--access-key', required=True,
-                        help='the path to workspace')
-    parser.add_argument('--secret-key', required=True,
-                        help='path to schema')
-    parser.add_argument('--region', required=True,
-                        help='path to dem')
-    parser.add_argument('--bucket', required=True,
-                        help='path to dem')
-    parser.add_argument('--object-key', required=True,
-                        help='path to dem')
-    parser.add_argument('--file', required=True,
-                        help='path to dem')
-    args = parser.parse_args()
-    upload(args.access_key, args.secret_key, args.region, args.bucket, args.object_key, args.file)
+if __name__ == "__main__":
+    raise SystemExit(main())
