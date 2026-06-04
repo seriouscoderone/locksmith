@@ -182,3 +182,6 @@ cython_debug/
 .worktrees/
 
 tests/_screenshots/
+
+# CDK auto-resolved context (AZ/SSM lookups; regenerated as needed)
+infrastructure/cdk.context.json
