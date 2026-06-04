@@ -346,6 +346,32 @@ class PluginManager:
             if isinstance(plugin, VaultPlugin):
                 plugin.update_witness_state_after_auth(vault, wit_eid)
 
+    def has_witness_auth_for_any(
+        self, vault: Any, hab_pre: str, wit_eids: list[str],
+    ) -> bool:
+        """Return True if any installed plugin reports holding auth
+        material (e.g. a TOTP seed) for at least one of ``wit_eids``
+        under controller ``hab_pre``. Used by the rotation flow to
+        decide whether a witness-auth fallback modal would help —
+        purely-KERI witnesses produce ``False`` here and the wallet
+        skips the modal entirely.
+        """
+        for plugin in self._plugins.values():
+            if not isinstance(plugin, VaultPlugin):
+                continue
+            for wit in wit_eids:
+                try:
+                    if plugin.has_witness_auth_material(vault, hab_pre, wit):
+                        return True
+                except Exception as exc:  # noqa: BLE001
+                    # A misbehaving plugin must never break the core
+                    # rotation flow. Treat raise as "no material here".
+                    logger.warning(
+                        f"plugin {plugin.__class__.__name__}.has_witness_auth_material "
+                        f"raised, treating as False: {exc}"
+                    )
+        return False
+
     # ------------------- legacy shim (removed in Task 13) ----------
 
     def discover_and_initialize(

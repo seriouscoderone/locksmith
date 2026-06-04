@@ -23,6 +23,7 @@ from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithIconB
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
 from locksmith.ui.toolkit.widgets.toggle import ToggleSwitch
 from locksmith.ui.vault.settings.delete_dialog import DeleteVaultDialog
+from locksmith.ui.vault.settings.peer_section import PeerSettingsSection
 
 logger = help.ogler.getLogger(__name__)
 
@@ -89,6 +90,7 @@ class SettingsPage(QWidget):
 
         # Add the actual settings content
         self._create_general_settings_section(content_layout)
+        self._create_peer_mode_section(content_layout)
         self._create_danger_zone_section(content_layout)
         
         # Push version to bottom
@@ -306,6 +308,31 @@ class SettingsPage(QWidget):
         # Update vault turret settings
         self.app.vault.update_plugin_identifier(text)
         logger.info(f"Plugin identifier updated: {text}")
+
+    def _create_peer_mode_section(self, parent_layout: QVBoxLayout):
+        """Mount the Direct peer mode section.
+
+        The SettingsPage is built once at app startup, before a vault is
+        open, so we can't access `self.app.vault` yet. Insert a
+        placeholder QFrame here so the layout position is reserved, then
+        swap its contents in `set_vault_name` once the vault exists.
+        """
+        self.peer_section = None
+        self._peer_section_placeholder = QFrame()
+        self._peer_section_placeholder_layout = QVBoxLayout(self._peer_section_placeholder)
+        self._peer_section_placeholder_layout.setContentsMargins(0, 0, 0, 0)
+        parent_layout.addWidget(self._peer_section_placeholder)
+        self._mount_peer_section_if_ready()
+
+    def _mount_peer_section_if_ready(self):
+        if self.peer_section is not None:
+            return
+        if not self.app or not self.app.vault:
+            return
+        if self._peer_section_placeholder is None:
+            return
+        self.peer_section = PeerSettingsSection(vault=self.app.vault)
+        self._peer_section_placeholder_layout.addWidget(self.peer_section)
 
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""
@@ -628,6 +655,9 @@ class SettingsPage(QWidget):
         """
         self.vault_name = vault_name
         logger.info(f"SettingsPage: Set vault name to {vault_name}")
+
+        # Vault is now open — mount the peer-mode section if we haven't yet.
+        self._mount_peer_section_if_ready()
 
         # Load existing browser plugin settings if available
         if ENABLE_TURRET_BROWSER_PLUGIN and self.app and self.app.vault and self.app.vault.pluginSettings:

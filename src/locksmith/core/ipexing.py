@@ -7,6 +7,8 @@ Dialog for granting (sending or saving) issued credentials.
 from hio.base import doing
 from keri import help
 from keri.app import organizing, signing, grouping, forwarding, habbing, agenting
+
+from locksmith.peer.posting import PeerAwarePoster
 from keri.app.notifying import Notifier
 from keri.core import serdering, coring, parsing, eventing
 from keri.help import helping
@@ -84,17 +86,18 @@ class Granter:
         if recp is None:
             raise ValueError("unable to find recipient")
     
-        reg = self.rgy.reger.cloneTvtAt(creder.regid)
         iss = self.rgy.reger.cloneTvtAt(creder.said)
 
         iserder = serdering.SerderKERI(raw=bytes(iss))
         seqner = coring.Seqner(sn=iserder.sn)
-    
+
         serder = self.hby.db.fetchLastSealingEventByEventSeal(creder.sad['i'],
                                                               seal=dict(i=iserder.pre, s=seqner.snh, d=iserder.said))
         anc = self.hby.db.cloneEvtMsg(pre=serder.pre, fn=0, dig=serder.said)
-    
-        exn, atc = protocoling.ipexGrantExn(hab=self.hab, recp=recp, message=message, acdc=acdc, reg=reg,
+
+        # keripy's ipexGrantExn dropped the `reg` kwarg — receiver
+        # reconstructs TEL state from iss + anc.
+        exn, atc = protocoling.ipexGrantExn(hab=self.hab, recp=recp, message=message, acdc=acdc,
                                             iss=iss, anc=anc, dt=timestamp)
         msg = bytearray(exn.raw)
         msg.extend(atc)
@@ -323,17 +326,16 @@ class SendGrantDoer(doing.DoDoer):
             )
             anc = self.hby.db.cloneEvtMsg(pre=serder.pre, fn=0, dig=serder.said)
 
-            # Get registry info
-            reg = self.rgy.reger.cloneTvtAt(creder.regid)
-
-            # Create grant exchange message
+            # Create grant exchange message. keripy's ipexGrantExn no
+            # longer accepts a `reg` kwarg — the receiver reconstructs
+            # TEL state from the issuer's iss event + the anchoring KEL
+            # event included here.
             timestamp = helping.nowIso8601()
             exn, atc = protocoling.ipexGrantExn(
                 hab=hab,
                 recp=recp,
                 message=self.message,
                 acdc=acdc,
-                reg=reg,
                 iss=iss,
                 anc=anc,
                 dt=timestamp
@@ -398,11 +400,12 @@ class SendGrantDoer(doing.DoDoer):
             # Check if we are lead (always true for single-sig, determined by multisig for groups)
             if self.exc.lead(hab, said=exn.said):
 
-                postman = forwarding.StreamPoster(
+                postman = PeerAwarePoster(
                     hby=self.hby,
                     hab=sender,
                     recp=recp,
-                    topic="credential"
+                    baser=self.app.vault.db,
+                    topic="credential",
                 )
 
                 # Send credential artifacts (issuer KEL, issuee KEL, etc.)
@@ -414,10 +417,13 @@ class SendGrantDoer(doing.DoDoer):
                     credentialing.sendArtifacts(self.hby, self.rgy.reger, postman, source, recp)
                     postman.send(serder=source, attachment=satc)
 
-                # Serialize and send grant message with attachments
-                gatc = exchanging.serializeMessage(self.hby, exn.said)
-                del gatc[:exn.size]
-                postman.send(serder=exn, attachment=gatc)
+                # Send grant message with the attachments returned by
+                # ipexGrantExn (signatures). Round-tripping through
+                # exchanging.serializeMessage hits a CESR alignment
+                # raise in keripy because that helper prepends the
+                # exn.raw to the attachment bytes before quadlet-checking
+                # — exn.raw is JSON, not 4-aligned.
+                postman.send(serder=exn, attachment=atc)
 
                 # Deliver all messages
                 doer = doing.DoDoer(doers=postman.deliver())
@@ -426,7 +432,13 @@ class SendGrantDoer(doing.DoDoer):
                 while not doer.done:
                     yield self.tock
 
-                logger.info(f"Grant message {exn.said} sent successfully to {recp}")
+                channel = (
+                    postman.last_outcome.value if postman.last_outcome else "mailbox"
+                )
+                logger.info(
+                    f"Grant message {exn.said} sent successfully to {recp} "
+                    f"channel={channel}"
+                )
 
                 # Signal success
                 if self.signal_bridge:
@@ -437,7 +449,8 @@ class SendGrantDoer(doing.DoDoer):
                             'success': True,
                             'credential_said': self.credential_said,
                             'recipient': recp,
-                            'grant_said': exn.said
+                            'grant_said': exn.said,
+                            'channel': channel,
                         }
                     )
             else:
@@ -784,11 +797,12 @@ class AdmitDoer(doing.DoDoer):
                     )
 
                 # Send admit message to grantor
-                postman = forwarding.StreamPoster(
+                postman = PeerAwarePoster(
                     hby=self.hby,
                     hab=sender,
                     recp=recp,
-                    topic="credential"
+                    baser=self.app.vault.db,
+                    topic="credential",
                 )
 
                 # Serialize and send admit message with attachments

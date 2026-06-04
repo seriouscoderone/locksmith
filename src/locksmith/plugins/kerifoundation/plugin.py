@@ -401,6 +401,19 @@ class KeriFoundationPlugin(VaultPlugin, WitnessProviderPlugin, AccountProviderPl
                 return record
         return None
 
+    def has_witness_auth_material(
+        self, vault: Any, hab_pre: str, wit_eid: str,
+    ) -> bool:
+        """True iff this controller has a stored TOTP seed for this
+        witness. Drives the rotation dialog's decision on whether to
+        show the TOTP modal — without a stored seed there's nothing
+        for the user to type, so the modal should stay hidden.
+        """
+        if not self._db:
+            return False
+        record = self._db.witnesses.get(keys=(hab_pre, wit_eid))
+        return bool(record and record.totp_seed)
+
     # -------------------------------------------------------------------------
     # Helpers
     # -------------------------------------------------------------------------

@@ -484,15 +484,52 @@ class RotateIdentifierDialog(WitnessRotationMixin, LocksmithDialog):
             if event_type == "rotation_complete":
                 logger.info(f"Rotation complete: {data.get('alias')} ({data.get('pre')})")
 
-                # Check if witnesses need authentication
-                if data.get('has_witnesses'):
+                # Three outcomes after RotateDoer's bare-receipt attempt:
+                #   needs_auth=True  → a plugin holds TOTP material for at
+                #                      least one witness; show the modal
+                #                      so the user can satisfy it.
+                #   receipts_collected=True → pure-KERI witnesses returned
+                #                      enough wigs; rotation is complete
+                #                      end-to-end; close cleanly.
+                #   neither → rotation landed locally but the witness
+                #             rejected the bare event AND no plugin has
+                #             auth material to retry with (a TOTP modal
+                #             would just prompt for a code the user
+                #             can't provide). Warn the user and close so
+                #             they don't see a misleading prompt.
+                needs_auth = data.get('needs_auth')
+                receipts_collected = data.get('receipts_collected', True)
+                if needs_auth is None:
+                    # Legacy code path didn't carry needs_auth; fall back
+                    # to the old has_witnesses heuristic so we don't
+                    # silently regress to "no auth ever."
+                    needs_auth = data.get('has_witnesses', False)
+
+                if needs_auth:
                     logger.info("Showing witness authentication step")
                     self._show_auth_step(list(self.hab.kever.wits))
-                else:
-                    logger.info("No witnesses to authenticate, rotation complete")
+                elif receipts_collected:
+                    logger.info("Pure-KERI receipts collected; rotation complete")
                     import asyncio
                     asyncio.ensure_future(self._check_and_spawn_keystate_update())
                     self.accept()
+                else:
+                    logger.warning(
+                        "Rotation complete locally but witness(es) did not "
+                        "issue receipts and no plugin holds auth material "
+                        "to retry — closing dialog without TOTP prompt."
+                    )
+                    self.show_warning(
+                        "Rotation completed locally, but the witness "
+                        "did not issue a receipt. The new key state is "
+                        "in your KEL; remote parties may not be able to "
+                        "verify it until the witness side is fixed (see "
+                        "kerihost issue #6)."
+                    )
+                    import asyncio
+                    asyncio.ensure_future(self._check_and_spawn_keystate_update())
+                    # Don't auto-close on this path — let the user read
+                    # the message and click Close themselves.
 
             elif event_type == "rotation_failed":
                 logger.error(f"Rotation failed: {data.get('error')}")

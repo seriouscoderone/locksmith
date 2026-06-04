@@ -90,6 +90,7 @@ class GrantCredentialDialog(LocksmithDialog):
         layout.addWidget(recipient_label)
 
         self.recipient_dropdown = FloatingLabelComboBox(label_text="Recipient")
+        self.recipient_dropdown.setObjectName("grantCredentialDialog.recipientCombo")
         self.recipient_dropdown.setFixedWidth(400)
         self._populate_recipients()
         layout.addWidget(self.recipient_dropdown)
@@ -162,11 +163,13 @@ class GrantCredentialDialog(LocksmithDialog):
         button_row.addStretch()
 
         self.cancel_button = LocksmithInvertedButton("Cancel")
+        self.cancel_button.setObjectName("grantCredentialDialog.cancelButton")
         button_row.addWidget(self.cancel_button)
 
         button_row.addSpacing(10)
 
         self.action_button = LocksmithButton("Grant")
+        self.action_button.setObjectName("grantCredentialDialog.grantButton")
         button_row.addWidget(self.action_button)
 
         # Initialize parent dialog
@@ -420,6 +423,15 @@ class GrantCredentialDialog(LocksmithDialog):
 
             note = data.get('note', '')
             success_msg = f"Credential sent to {recipient[:15]}..."
+            # Surface the transport channel so the user knows whether the
+            # credential traveled peer-to-peer or via the mailbox path.
+            channel = data.get('channel')
+            if channel == 'peer':
+                success_msg += "  •  via direct peer connection"
+            elif channel == 'peer→mailbox':
+                success_msg += "  •  peer unreachable, sent via mailbox"
+            elif channel == 'mailbox':
+                success_msg += "  •  via mailbox"
             if note:
                 success_msg += f"\n{note}"
 

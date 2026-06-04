@@ -67,6 +67,7 @@ class IssueCredentialDialog(LocksmithDialog):
         layout.addWidget(schema_label)
 
         self.schema_dropdown = FloatingLabelComboBox("Schema")
+        self.schema_dropdown.setObjectName("issueCredentialDialog.schemaCombo")
         self.schema_dropdown.setFixedWidth(340)
         self._populate_schema_dropdown()
         layout.addWidget(self.schema_dropdown)
@@ -98,6 +99,7 @@ class IssueCredentialDialog(LocksmithDialog):
         layout.addWidget(recipient_id_label)
 
         self.recipient_dropdown = FloatingLabelComboBox("Recipient")
+        self.recipient_dropdown.setObjectName("issueCredentialDialog.recipientCombo")
         self.recipient_dropdown.setFixedWidth(400)
         self._populate_recipient_dropdown()
         layout.addWidget(self.recipient_dropdown)
@@ -114,9 +116,11 @@ class IssueCredentialDialog(LocksmithDialog):
         # Create button row
         button_row = QHBoxLayout()
         self.cancel_button = LocksmithInvertedButton("Cancel")
+        self.cancel_button.setObjectName("issueCredentialDialog.cancelButton")
         button_row.addWidget(self.cancel_button)
         button_row.addSpacing(10)
         self.issue_button = LocksmithButton("Issue Credential")
+        self.issue_button.setObjectName("issueCredentialDialog.issueButton")
         button_row.addWidget(self.issue_button)
 
         # Create title content

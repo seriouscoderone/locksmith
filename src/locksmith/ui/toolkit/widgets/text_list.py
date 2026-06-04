@@ -66,7 +66,7 @@ class LocksmithTextListWidget(QWidget):
         input_row.setSpacing(8)
 
         self.text_input = FloatingLabelLineEdit(label)
-        # self.text_input.returnPressed.connect(self._add_item)  # Enter key support
+        self.text_input.line_edit.returnPressed.connect(self._add_item)
         input_row.addWidget(self.text_input)
 
         self.add_button = LocksmithIconButton(

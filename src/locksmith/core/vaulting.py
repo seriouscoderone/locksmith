@@ -35,6 +35,10 @@ from locksmith.core.signals import DoerSignalBridge
 from locksmith.core.tasking import QtTask
 from locksmith.core.turretting import TurretDoer
 from locksmith.db.basing import LocksmithBaser, MailboxListener, BrowserPluginSettings
+from locksmith.peer.allowlist import PeerAllowlist
+from locksmith.peer.doer import PeerDoer
+from locksmith.peer.health import PeerHealthMonitorDoer
+from locksmith.peer.records import PeerModeSettings
 
 logger = help.ogler.getLogger(__name__)
 
@@ -164,6 +168,29 @@ class Vault(doing.DoDoer):
                                            self.pluginSettings.locksmith_alias,
                                            self.pluginSettings.plugin_identifier)
 
+        # Peer-mode listener (vault-wide). The destination allowlist
+        # (`_peer_exposed_aids`) is populated by the per-AID `Peer` role
+        # toggle in the identifier UI.
+        self.peer_doer: PeerDoer | None = None
+        self._peer_exposed_aids: set[str] = set()
+        peer_settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        if peer_settings.enabled:
+            self.peer_doer = PeerDoer(
+                hby=self.hby,
+                baser=self.db,
+                settings=peer_settings,
+                exchanger=self.exc,
+                is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+            )
+
+        # Background reachability probe for paired peers (always on —
+        # cheap, ~1 TCP connect/peer/minute, and the user can read peer
+        # health without triggering an actual send).
+        self.peer_health_doer = PeerHealthMonitorDoer(
+            allowlist=PeerAllowlist(self.db),
+            db=self.db,
+        )
+
         # Assemble all doers
         self.doers = [
             self.hbyDoer,
@@ -181,6 +208,9 @@ class Vault(doing.DoDoer):
         ]
         if self.turrent_doer is not None:
             self.doers.append(self.turrent_doer)
+        if self.peer_doer is not None:
+            self.doers.append(self.peer_doer)
+        self.doers.append(self.peer_health_doer)
         # Initialize DoDoer with always=True to keep running
         super(Vault, self).__init__(doers=self.doers, always=True)
 
@@ -216,6 +246,34 @@ class Vault(doing.DoDoer):
     def deactivate_mailbox(self, hab, mailbox_eid):
         self.db.mbx.rem(keys=(mailbox_eid,))
         self.mbx.remove_poller(hab=hab, mailbox=mailbox_eid)
+
+    def restart_peer_mode(self):
+        """Stop the current peer doer (if any) and re-construct from
+        current peerSettings. Safe to call when the doer is None.
+
+        Implementation note: hio's DoDoer doesn't support clean removal
+        of nested doers at runtime, so the old PeerDoer stays in the
+        parent's doers list after we close its socket. Its inner
+        GuardedServerDoer.recur() short-circuits once server.opened is
+        False, so the stale doer is harmless — it just yields without
+        touching the dead socket.
+        """
+        if self.peer_doer is not None and self.peer_doer.server is not None:
+            self.peer_doer.server.close()
+            self.peer_doer = None
+
+        settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
+        if not settings.enabled:
+            return
+
+        self.peer_doer = PeerDoer(
+            hby=self.hby,
+            baser=self.db,
+            settings=settings,
+            exchanger=self.exc,
+            is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+        )
+        self.extend(self.peer_doer.doers)
 
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:

@@ -178,6 +178,10 @@ class LocksmithDialog(QDialog):
         # Add error banner section
         self._build_error_banner(main_layout)
 
+        # Add warning banner section (amber — less alarming than error,
+        # for "succeeded but partially / heads-up" states)
+        self._build_warning_banner(main_layout)
+
         # Add success banner section
         self._build_success_banner(main_layout)
 
@@ -293,6 +297,45 @@ class LocksmithDialog(QDialog):
         self.error_animation = QPropertyAnimation(self.error_banner, b"maximumHeight")
         self.error_animation.setDuration(200)
         self.error_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def _build_warning_banner(self, main_layout: QVBoxLayout):
+        """Build collapsible warning banner (amber). Use when an op
+        succeeded but with caveats — distinct from the error banner
+        (red, "this failed") and the success banner (green, "this
+        worked cleanly")."""
+        self.warning_banner = QFrame()
+        self.warning_banner.setObjectName("warning-banner")
+        # Amber palette. BACKGROUND uses a soft yellow-orange fill;
+        # the 4px left border mirrors the error/success banner shape
+        # so the eye reads them as a banner family.
+        self.warning_banner.setStyleSheet("""
+            QFrame#warning-banner {
+                background-color: #FEF3C7;
+                border-left: 4px solid #F59E0B;
+            }
+        """)
+        self.warning_banner.setMaximumHeight(0)  # Start hidden
+
+        banner_layout = QHBoxLayout(self.warning_banner)
+        banner_layout.setContentsMargins(16, 12, 16, 12)
+        banner_layout.setSpacing(10)
+
+        warning_icon = QLabel()
+        warning_pixmap = QIcon(":/assets/material-icons/warning.svg").pixmap(QSize(20, 20))
+        warning_icon.setPixmap(warning_pixmap)
+        warning_icon.setFixedSize(20, 20)
+        banner_layout.addWidget(warning_icon)
+
+        self.warning_label = QLabel()
+        self.warning_label.setWordWrap(True)
+        self.warning_label.setStyleSheet(f"color: {colors.WARNING_TEXT}; font-size: 13px;")
+        banner_layout.addWidget(self.warning_label, 1)
+
+        main_layout.addWidget(self.warning_banner)
+
+        self.warning_animation = QPropertyAnimation(self.warning_banner, b"maximumHeight")
+        self.warning_animation.setDuration(200)
+        self.warning_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
 
     def _build_success_banner(self, main_layout: QVBoxLayout):
         """Build collapsible success banner."""
@@ -513,9 +556,10 @@ class LocksmithDialog(QDialog):
         Args:
             message: Error message to display.
         """
-        # Clear any existing success banner without resizing the dialog
-        # This allows show_error to handle the resize from Current -> Target
+        # Banners are mutually exclusive — clear any existing success
+        # or warning without resizing; this banner handles the resize.
         self.clear_success(resize_dialog=False)
+        self.clear_warning(resize_dialog=False)
 
         # Capture base height on first error
         if self._base_height is None:
@@ -584,6 +628,62 @@ class LocksmithDialog(QDialog):
                 self._dialog_resize_animation.setEndValue(self._base_height)
                 self._dialog_resize_animation.start()
 
+    def show_warning(self, message: str):
+        """Show an amber warning banner. Distinct from show_error
+        (red, "this failed") and show_success (green, "this worked
+        cleanly") — warnings convey "this completed but with caveats."
+        Mirrors show_error's animation/sizing dance exactly.
+        """
+        # Banners are mutually exclusive — clear any existing one
+        # without resizing so this banner handles the height change.
+        self.clear_error(resize_dialog=False)
+        self.clear_success(resize_dialog=False)
+
+        if self._base_height is None:
+            self._base_height = self.height()
+
+        self.warning_label.setText(message)
+
+        self.warning_banner.setMaximumHeight(16777215)
+        self.warning_banner.adjustSize()
+        banner_height = self.warning_banner.sizeHint().height()
+        self.warning_banner.setMaximumHeight(0)
+
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+
+        self.warning_animation.setStartValue(0)
+        self.warning_animation.setEndValue(banner_height)
+        self.warning_animation.start()
+
+        self._current_banner_height = banner_height
+
+        if self._dialog_resize_animation is None:
+            self._dialog_resize_animation = QPropertyAnimation(self, b"dialogHeight")
+            self._dialog_resize_animation.setDuration(200)
+            self._dialog_resize_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+            self._dialog_resize_animation.finished.connect(self._re_enable_scrollbars)
+
+        self._dialog_resize_animation.setStartValue(self.height())
+        self._dialog_resize_animation.setEndValue(self._base_height + banner_height)
+        self._dialog_resize_animation.start()
+
+    def clear_warning(self, resize_dialog: bool = True):
+        if self._base_height is None:
+            return
+        banner_height = getattr(
+            self, "_current_banner_height", self.warning_banner.height()
+        )
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.warning_animation.setStartValue(banner_height)
+        self.warning_animation.setEndValue(0)
+        self.warning_animation.start()
+        if resize_dialog and self._dialog_resize_animation:
+            self._dialog_resize_animation.setStartValue(self.height())
+            self._dialog_resize_animation.setEndValue(self._base_height)
+            self._dialog_resize_animation.start()
+
     def show_success(self, message: str):
         """
         Show success banner with message and animate dialog height.
@@ -594,6 +694,8 @@ class LocksmithDialog(QDialog):
         # Clear any existing error banner without resizing the dialog
         # This allows show_success to handle the resize from Current -> Target
         self.clear_error(resize_dialog=False)
+        # Same for warning banner
+        self.clear_warning(resize_dialog=False)
 
         # Capture base height on first success
         if self._base_height is None:

@@ -66,3 +66,7 @@ include = ["*"]
 
 [tool.pytest.ini_options]
 pythonpath = ["src", "."]
+markers = [
+    "integration: integration tests that spawn real wallet subprocesses (slow; opt-in)",
+    "network: tests that require an outbound network connection",
+]
