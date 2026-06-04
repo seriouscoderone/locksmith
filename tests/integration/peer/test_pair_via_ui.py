@@ -71,12 +71,20 @@ def test_pair_via_add_peer_dialog(two_wallets):
 
     import_peer_blob_via_ui(devctl, b["sock"], blob, label="alice@A")
 
-    # B's allowlist should now contain alice. peer_list is a diagnostic
-    # query (no UI-only equivalent for reading the allowlist with the
-    # endpoint URL attached, so we keep the existing diagnostic).
-    r = devctl(b["sock"], "peer_list")
+    # B's paired-peers list should now show alice. Read it through the
+    # Settings → Peer Mode UI like a user would. The list widget joins
+    # label, AID, and endpoint into one display string per row.
+    r = devctl(b["sock"], "click", target="vaultNavMenu.settingsButton")
     assert r.get("ok"), r
-    peers = r["peers"]
-    assert len(peers) == 1, peers
-    assert peers[0]["label"] == "alice@A", peers[0]
-    assert peers[0]["endpoint_url"].startswith("tcp://"), peers[0]
+    r = devctl(b["sock"], "wait_for",
+               target="peerSettingsSection.peersList",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), r
+    r = devctl(b["sock"], "get_list_items",
+               target="peerSettingsSection.peersList")
+    assert r.get("ok"), r
+    items = r["items"]
+    assert len(items) == 1, items
+    row = items[0]["text"]
+    assert "alice@A" in row, row
+    assert "tcp://" in row, row
