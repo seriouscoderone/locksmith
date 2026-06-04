@@ -19,10 +19,18 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Full clone so `git verify-tag` in the preflight finds the
+          # Full clone so `git verify-tag` in the preflight has the
           # signed-tag object. `fetch-tags: true` collides with the
           # release event's pre-fetched ref; `fetch-depth: 0` does not.
           fetch-depth: 0
+
+      - name: Re-fetch annotated tag object
+        # actions/checkout on a `release` event writes refs/tags/<tag>
+        # as a lightweight ref pointing at the commit, even with
+        # fetch-depth: 0. That makes `git verify-tag` fail with
+        # "non-tag object of type commit". Force-fetch overwrites the
+        # ref with the real annotated tag object from origin.
+        run: git fetch --tags --force origin
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
