@@ -19,10 +19,10 @@ jobs:
       - name: Checkout repository
         uses: actions/checkout@v4
         with:
-          # Need the signed-tag object on disk so `git verify-tag` in the
-          # preflight can read its signature. Default shallow checkout
-          # only fetches the commit, not the tag object.
-          fetch-tags: true
+          # Full clone so `git verify-tag` in the preflight finds the
+          # signed-tag object. `fetch-tags: true` collides with the
+          # release event's pre-fetched ref; `fetch-depth: 0` does not.
+          fetch-depth: 0
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
