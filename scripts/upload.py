@@ -14,9 +14,16 @@ import boto3
 from botocore.exceptions import BotoCoreError, ClientError
 
 
-def upload(bucket: str, object_key: str, file: str, region: str | None = None) -> None:
+def upload(
+    bucket: str,
+    object_key: str,
+    file: str,
+    region: str | None = None,
+    content_type: str | None = None,
+) -> None:
     s3 = boto3.client("s3", region_name=region) if region else boto3.client("s3")
-    s3.upload_file(file, bucket, object_key)
+    extra_args = {"ContentType": content_type} if content_type else None
+    s3.upload_file(file, bucket, object_key, ExtraArgs=extra_args)
     print(f"uploaded s3://{bucket}/{object_key}")
 
 
@@ -26,9 +33,20 @@ def main() -> int:
     ap.add_argument("--object-key", required=True)
     ap.add_argument("--file", required=True)
     ap.add_argument("--region", default=None, help="optional override; default from env")
+    ap.add_argument(
+        "--content-type",
+        default=None,
+        help="optional Content-Type header (e.g. application/x-apple-diskimage for .dmg)",
+    )
     args = ap.parse_args()
     try:
-        upload(args.bucket, args.object_key, args.file, args.region)
+        upload(
+            args.bucket,
+            args.object_key,
+            args.file,
+            args.region,
+            args.content_type,
+        )
     except (BotoCoreError, ClientError) as exc:
         print(f"upload failed: {exc}", file=sys.stderr)
         return 1

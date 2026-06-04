@@ -127,7 +127,8 @@ jobs:
           python scripts/upload.py \
             --bucket "$S3_BUCKET" \
             --object-key "releases/${VERSION}/Locksmith-${VERSION}.dmg" \
-            --file "dist/Locksmith-${VERSION}.dmg"
+            --file "dist/Locksmith-${VERSION}.dmg" \
+            --content-type application/x-apple-diskimage
 
   build-windows:
     runs-on: windows-latest
