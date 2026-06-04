@@ -1,23 +1,76 @@
-import asyncio
+"""Locksmith entrypoint.
+
+The first thing this module does is install a libsodium loader. `keri`
+imports `pysodium` at import time, and pysodium's __init__ raises
+ValueError("Unable to find libsodium") if `ctypes.util.find_library`
+returns None — which it does inside a frozen, notarized .app because
+the system has no libsodium and DYLD_LIBRARY_PATH is stripped by the
+hardened runtime. So before any keri import we (a) load the bundled
+dylib via ctypes, and (b) patch find_library so pysodium picks it up
+through its normal path.
+"""
 import ctypes
-import logging
+import ctypes.util
 import os
 import platform
 import sys
-from ctypes.util import find_library
 from pathlib import Path
 
-from PySide6.QtWidgets import (
-    QApplication
-)
+
+def _bundled_libsodium_path() -> str | None:
+    """Return absolute path to the right libsodium dylib inside the
+    PyInstaller bundle, or None when running unfrozen (dev mode)."""
+    if not getattr(sys, "frozen", False):
+        return None
+    appdir = sys._MEIPASS  # PyInstaller onedir: .app/Contents/Frameworks
+    arch = platform.processor()
+    if arch == "x86_64":
+        sodium_lib = "libsodium.26.x86_64.dylib"
+    elif arch in ("arm", "arm64", "aarch64"):
+        sodium_lib = "libsodium.23.arm.dylib"
+    else:
+        raise OSError(f"Unsupported architecture: {arch}")
+    return str(Path(appdir) / "libsodium" / sodium_lib)
+
+
+def _bootstrap_libsodium() -> None:
+    bundled = _bundled_libsodium_path()
+    if bundled is None:
+        return  # dev mode: rely on system libsodium via Homebrew/etc.
+    if not os.path.exists(bundled):
+        raise FileNotFoundError(f"bundled libsodium missing: {bundled}")
+
+    # Pre-load so the library is in the address space.
+    ctypes.cdll.LoadLibrary(bundled)
+
+    # pysodium calls ctypes.util.find_library('sodium') at *import* time.
+    # In a frozen .app find_library returns None (no /usr/local/lib here),
+    # so we override it to point at our bundled dylib BEFORE pysodium loads.
+    _orig_find_library = ctypes.util.find_library
+
+    def _find_library(name: str):
+        if name in ("sodium", "libsodium"):
+            return bundled
+        return _orig_find_library(name)
+
+    ctypes.util.find_library = _find_library
+
+
+if platform.system() == "Darwin":
+    _bootstrap_libsodium()
+
+# ---- safe to import the rest of the world now ---------------------------
+import asyncio
+import logging
+
+from PySide6.QtWidgets import QApplication
 from keri import help
 from qasync import QEventLoop
 
-# This import is necessary for locating assets via shortened directory paths
-from locksmith import resources_rc
+# Required for resource-path resolution.
+from locksmith import resources_rc  # noqa: F401
 
-# Configure KERI ogler logging
-FORMAT = '%(asctime)s [%(name)s] %(levelname)-8s %(message)s'
+FORMAT = "%(asctime)s [%(name)s] %(levelname)-8s %(message)s"
 LOG_LEVEL = "INFO"
 
 help.ogler.level = logging.getLevelName(LOG_LEVEL)
@@ -27,102 +80,14 @@ help.ogler.baseConsoleHandler.setFormatter(baseFormatter)
 
 logger = help.ogler.getLogger(__name__)
 
-# Custom Libsodium Loader #
-# This code has to be in the main module to avoid a partially initialized module error
-# for the 'locksmith' module.
-# ###########################
-
-def load_custom_libsodium():
-    """
-    Instruct the pysodium library to load a custom libsodium dylib from the appdir/libsodium
-    """
-    if getattr(sys, 'frozen', False):
-        appdir = sys._MEIPASS
-        print(f'Running from frozen bundle at {appdir}')
-    else:
-        return
-
-    set_load_path_or_link(appdir)
-    set_load_env_vars(appdir)
-
-    custom_path = os.path.expanduser(f'{os.path.dirname(os.path.abspath(__file__))}/libsodium/libsodium.dylib')
-    logger.info(f'Loading custom libsodium from {custom_path}')
-    if os.path.exists(custom_path):
-        logger.info(f'Found custom libsodium at {custom_path}')
-        ctypes.cdll.LoadLibrary(custom_path)
-    else:
-        logger.info('Custom libsodium not found, loading from system')
-        libsodium_path = find_library('sodium')
-        if libsodium_path is not None:
-            logger.info(f'Found libsodium at {libsodium_path}')
-            ctypes.cdll.LoadLibrary(libsodium_path)
-            logger.info(f'Loaded libsodium from {libsodium_path}')
-        else:
-            raise OSError('libsodium not found')
-
-
-def set_load_path_or_link(appdir):
-    """
-    Symlinks the correct libsodium dylib based on the architecture of the system.
-    """
-    lib_home = f'{appdir}/libsodium'
-    match platform.processor():
-        case 'x86_64':
-            sodium_lib = 'libsodium.26.x86_64.dylib'
-        case 'arm' | 'arm64' | 'aarch64':
-            sodium_lib = 'libsodium.23.arm.dylib'
-        # doesn't work
-        case 'i386':
-            sodium_lib = 'libsodium.23.i386.dylib'
-        case _:
-            raise OSError(f'Unsupported architecture: {platform.processor()}')
-
-    lib_path = Path(os.path.join(lib_home, sodium_lib))
-
-    logger.info(f'Arch: {platform.processor()} Linking libsodium lib: {sodium_lib} at path: {lib_path}')
-
-    if not lib_path.exists():
-        logger.error(f'libsodium for architecture {platform.processor()} missing at {lib_path}, cannot link')
-        raise FileNotFoundError(f'libsodium for architecture {platform.processor()} missing at {lib_path}')
-
-    link_path = Path(os.path.join(lib_home, 'libsodium.dylib'))
-    logger.info(f'Symlinking {lib_path} to {link_path}')
-    try:
-        os.symlink(f'{lib_path}', f'{link_path}')
-    except FileExistsError:
-        os.remove(f'{link_path}')
-        os.symlink(f'{lib_path}', f'{link_path}')
-    logger.info(f'Linked libsodium dylib: {link_path}')
-
-
-def set_load_env_vars(appdir):
-    """
-    Sets the DYLD_LIBRARY_PATH and LD_LIBRARY_PATH that pysodium uses to find libsodium to the custom libsodium dylib.
-    """
-    local_path = appdir
-
-    logger.info(f'Setting DYLD_LIBRARY_PATH to {local_path}/libsodium')
-    os.environ['DYLD_LIBRARY_PATH'] = f'{local_path}/libsodium'
-
-    logger.info(f'Setting LD_LIBRARY_PATH to {local_path}/libsodium')
-    os.environ['LD_LIBRARY_PATH'] = f'{local_path}/libsodium'
-
-
-# End Custom Libsodium Loader ########
 
 if __name__ == "__main__":
-    # Check if running in MCP server mode (for PyInstaller bundle subprocess)
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp-server":
         logger.info("MCP server mode detected")
         logger.info(f"sys.argv: {sys.argv}")
         logger.info(f"sys.executable: {sys.executable}")
         logger.info(f"Frozen: {getattr(sys, 'frozen', False)}")
 
-
-    if platform.system() == 'Darwin':
-        load_custom_libsodium()
-
-    # from archie import resources_rc
     from locksmith.ui.styles import set_global_styles
     from locksmith.core.configing import LocksmithConfig
     from locksmith.ui.window import LocksmithWindow
