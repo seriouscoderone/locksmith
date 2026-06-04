@@ -84,6 +84,7 @@ PY
 echo "build-macos: creating $DMG_PATH"
 create-dmg \
     --volname "Locksmith" \
+    --volicon "assets/custom/AppIcon.icns" \
     --background "packaging/dmg/background.png" \
     --window-pos 200 200 \
     --window-size "$WIN_W" "$WIN_H" \
