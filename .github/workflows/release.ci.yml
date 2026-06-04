@@ -37,6 +37,11 @@ jobs:
           pip install --upgrade pip setuptools wheel boto3 pyyaml
           pip install -e .[build-macos]
 
+      - name: Configure git to verify SSH-signed tags via .gitsigners
+        run: |
+          git config --global gpg.format ssh
+          git config --global gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.gitsigners"
+
       - name: Preflight — verify tag matches pyproject and is signed
         run: |
           source /tmp/venv/bin/activate
