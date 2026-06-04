@@ -80,7 +80,10 @@ block_cipher = None
 # ---- Analysis ------------------------------------------------------------
 
 a = Analysis(
-    ["src/locksmith/main.py"],
+    # Absolute path: PyInstaller resolves Analysis script paths relative
+    # to SPECPATH, not CWD, so a relative "src/..." would look inside
+    # packaging/ and fail.
+    [str(REPO_ROOT / "src" / "locksmith" / "main.py")],
     pathex=[str(REPO_ROOT / "src")],
     binaries=binaries,
     datas=datas,
