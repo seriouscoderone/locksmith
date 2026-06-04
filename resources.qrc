@@ -1,6 +1,5 @@
 <RCC>
     <qresource prefix="/">
-        <file>assets/.DS_Store</file>
         <file>assets/cloud_lock.svg</file>
         <file>assets/material-icons/search.svg</file>
         <file>assets/material-icons/out-badge.svg</file>

@@ -5,11 +5,25 @@ archie.ui.global module
 This module contains global setting for the Archimedes UI
 """
 import logging
+import sys
+from pathlib import Path
 
 from PySide6.QtGui import QIcon, QFontDatabase
 from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 
 logger = logging.getLogger(__name__)
+
+
+def _asset_root() -> Path:
+    """Directory where `assets/` lives.
+
+    - Dev: the repo root (4 levels up from src/locksmith/ui/styles.py).
+    - Frozen PyInstaller .app: sys._MEIPASS, which is where the spec's
+      datas put the assets tree.
+    """
+    if getattr(sys, "frozen", False):
+        return Path(sys._MEIPASS)
+    return Path(__file__).resolve().parents[3]
 
 # Default monospace font family (updated when custom font loads successfully)
 MONOSPACE_FONT_FAMILY = "monospace"
@@ -38,13 +52,17 @@ class IconSizeProxyStyle(QProxyStyle):
 def set_global_styles(app: QApplication):
     global MONOSPACE_FONT_FAMILY
 
-    app.setWindowIcon(QIcon(':/assets/custom/SymbolLogo.svg'))
+    asset_root = _asset_root()
+
+    icon_path = asset_root / "assets" / "custom" / "AppIcon.icns"
+    if icon_path.exists():
+        app.setWindowIcon(QIcon(str(icon_path)))
+    else:
+        logger.warning(f"App icon not found at {icon_path}; falling back to symbol logo")
+        app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
     app.setApplicationName("Locksmith")
 
-    # Load bundled Source Code Pro font using absolute path to avoid cwd issues
-    from pathlib import Path
-    project_root = Path(__file__).parent.parent.parent.parent
-    font_path = project_root / "assets" / "fonts" / "SourceCodePro-Regular.ttf"
+    font_path = asset_root / "assets" / "fonts" / "SourceCodePro-Regular.ttf"
 
     font_id = QFontDatabase.addApplicationFont(str(font_path))
     if font_id != -1:
