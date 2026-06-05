@@ -14,7 +14,20 @@
 - Logger per module: `from keri import help` then `logger = help.ogler.getLogger(__name__)`.
 - Structured log lines use dot-notation, e.g. `logger.info(f"instance.claim.granted vault={vault}")`.
 - Widget object names use dotted `component.element` (e.g. `vaultDrawer.newInstanceButton`).
-- Run unit tests: `pytest tests/ -v`. Run integration: `pytest -m integration tests/ -v`.
+
+**Test environment (IMPORTANT — established at baseline):**
+- The venv is at the **main repo root**, not the worktree: use
+  `/Users/seriouscoderone/code/locksmith/.venv/bin/python -m pytest` (Python 3.14, pytest 9).
+- There is a **pre-existing, out-of-scope bug**: `tests/packaging/__init__.py` makes `tests/`
+  shadow the real `packaging` PyPI package under pytest's default *prepend* import mode, so any
+  test importing `keri.app` (transitively: `apping`, `open`, `drawer`, `peer_section`) ERRORs at
+  collection. **Do NOT fix this** (it would touch unrelated packaging tests/CI). Route around it:
+  **always run our tests per-file with `--import-mode=importlib`**, e.g.
+  `/Users/seriouscoderone/code/locksmith/.venv/bin/python -m pytest tests/test_instancing.py -v --import-mode=importlib`
+- Each task's listed `pytest ...` command should be run with that python + `--import-mode=importlib`.
+- Baseline (for regression comparison): 134 unit tests pass; 5 pre-existing failures
+  (`test_incept_doer_uses_receiptor`, `test_plugins_manager::test_entry_point_fallback_still_works`,
+  `test_plugins_page_visual` x2, `test_remote_identifiers_list_render`). Do not introduce new ones.
 
 ---
 
