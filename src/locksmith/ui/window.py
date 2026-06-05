@@ -396,6 +396,7 @@ class LocksmithWindow(QMainWindow):
 
         # Reset title
         self.setWindowTitle("Locksmith")
+        self.toolbar.set_vault_name(None)
 
     def on_home(self):
         """Handle home icon click - close vault if open and navigate to home."""

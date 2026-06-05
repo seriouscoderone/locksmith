@@ -638,6 +638,7 @@ class VaultDrawer(QWidget):
             self.toggle()
 
         self.parent.setWindowTitle(f"Locksmith | {vault_name}")
+        self.parent.toolbar.set_vault_name(vault_name)
 
         # Navigate to vault page
         from locksmith.ui.navigation import Pages
