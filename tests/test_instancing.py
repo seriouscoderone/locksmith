@@ -12,6 +12,7 @@ def test_vault_server_name_is_stable_and_unique():
     assert a1 != b                        # different vault -> different name
     assert a1 != c                        # different base -> different name
     assert a1.startswith("host.keri.locksmith.vault.")
+    assert vault_server_name(None, "x") == vault_server_name("", "x")
 
 
 def test_find_free_port_returns_bindable_port():
