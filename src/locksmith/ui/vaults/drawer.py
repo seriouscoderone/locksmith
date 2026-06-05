@@ -129,10 +129,13 @@ class VaultDrawer(QWidget):
         drawer_header_layout.addStretch()
 
         # "＋ New Instance" button — spawns a fresh process with no vault open.
-        self.new_instance_button = LocksmithButton("＋ New Instance")
+        # Compact outline style so it fits beside the "Vaults" title.
+        self.new_instance_button = self._row_button("＋ New Instance", primary=False)
         self.new_instance_button.setObjectName("vaultDrawer.newInstanceButton")
         self.new_instance_button.clicked.connect(self._new_instance)
-        drawer_header_layout.addWidget(self.new_instance_button)
+        drawer_header_layout.addWidget(
+            self.new_instance_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
 
         drawer_layout.addLayout(drawer_header_layout)
 
@@ -199,14 +202,17 @@ class VaultDrawer(QWidget):
         self.vault_list.setObjectName("vaultDrawer.vaultList")
         self.vault_list.setIconSize(QSize(36, 36))
         self.vault_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Each row is a custom widget (setItemWidget) that fills the item
+        # width; keep horizontal scrolling off so wide rows never bleed
+        # past the drawer edge.
+        self.vault_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.vault_list.setStyleSheet(f"""
             QListWidget {{
                 border: none;
                 background: transparent;
             }}
             QListWidget::item {{
-                padding: 12px;
-                padding-left: 24px;
+                margin: 2px 8px;
                 border-radius: 8px;
             }}
             QListWidget::item:hover {{
@@ -497,67 +503,127 @@ class VaultDrawer(QWidget):
             return "running"
         return "idle"
 
-    def _build_vault_row(self, vault_name: str, state: str) -> QFrame:
-        """Build the per-vault row widget for ``state``.
+    # Status dot colors per row state.
+    _STATE_DOT = {"current": "#22C55E", "running": "#3B82F6", "idle": "#9CA3AF"}
+    _STATE_TEXT = {
+        "current": "Open in this instance",
+        "running": "Running in another instance",
+        "idle": "Not open",
+    }
 
-        - current: name + "● Open in this instance" badge + "current" tag.
-        - running: name + "◆ Running in another instance" badge + Switch to.
-        - idle:    name + "Not open" badge + split Open button (Open + ▾ menu).
+    def _build_vault_row(self, vault_name: str, state: str) -> QFrame:
+        """Build the compact per-vault row widget for ``state``.
+
+        Layout: a two-line left column (vault name + a small colored status
+        line) and a right-aligned, compact action:
+          - current: a muted "Current" pill (no action).
+          - running: a "Switch to" button (raises the owning instance).
+          - idle:    a split "Open" button with a ▾ menu ("Open in New Instance").
         """
         row = QFrame()
         row.setObjectName(f"vaultDrawer.row.{vault_name}")
         h = QHBoxLayout(row)
-        h.setContentsMargins(10, 8, 10, 8)
+        h.setContentsMargins(14, 9, 12, 9)
         h.setSpacing(8)
 
+        # Left: name + status, stacked.
         name_col = QVBoxLayout()
+        name_col.setSpacing(2)
         name_label = QLabel(vault_name)
-        name_font = QFont()
-        name_font.setPointSize(14)
-        name_label.setFont(name_font)
+        name_label.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; font-weight: 600;"
+        )
         name_col.addWidget(name_label)
-        status = QLabel({
-            "current": "● Open in this instance",
-            "running": "◆ Running in another instance",
-            "idle": "Not open",
-        }[state])
+        dot = self._STATE_DOT[state]
+        status = QLabel(f'<span style="color:{dot};">●</span> {self._STATE_TEXT[state]}')
         status.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
         name_col.addWidget(status)
         h.addLayout(name_col)
         h.addStretch()
 
         if state == "current":
-            tag = QLabel("current")
-            tag.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
-            h.addWidget(tag)
+            tag = QLabel("Current")
+            tag.setStyleSheet(
+                "color: #16A34A; background-color: rgba(34,197,94,0.12); "
+                "font-size: 11px; font-weight: 600; border-radius: 10px; "
+                "padding: 3px 10px;"
+            )
+            h.addWidget(tag, 0, Qt.AlignmentFlag.AlignVCenter)
         elif state == "running":
-            switch_btn = LocksmithButton("Switch to")
+            switch_btn = self._row_button("Switch to", primary=False)
             switch_btn.setObjectName(f"vaultDrawer.switchTo.{vault_name}")
             switch_btn.clicked.connect(
                 lambda _=False, v=vault_name: self._switch_to_running(v)
             )
-            h.addWidget(switch_btn)
-        else:  # idle — split button: Open ▾ Open in New Instance
-            open_btn = LocksmithButton("Open")
+            h.addWidget(switch_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        else:  # idle — split "Open" button + ▾ "Open in New Instance"
+            split = QHBoxLayout()
+            split.setSpacing(0)
+            open_btn = self._row_button("Open", primary=True, side="left")
             open_btn.setObjectName(f"vaultDrawer.open.{vault_name}")
             open_btn.clicked.connect(
                 lambda _=False, v=vault_name: self.show_open_vault_dialog(v)
             )
-            h.addWidget(open_btn)
+            split.addWidget(open_btn)
 
             more = QToolButton()
             more.setObjectName(f"vaultDrawer.openMenu.{vault_name}")
             more.setText("▾")
+            more.setFixedHeight(30)
+            more.setCursor(Qt.CursorShape.PointingHandCursor)
             more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            more.setStyleSheet(
+                f"QToolButton {{ background-color: {colors.PRIMARY}; color: white; "
+                f"border: none; border-top-right-radius: 6px; "
+                f"border-bottom-right-radius: 6px; padding: 0 6px; "
+                f"font-size: 12px; }}"
+                f"QToolButton:hover {{ background-color: {colors.PRIMARY_HOVER}; }}"
+                f"QToolButton::menu-indicator {{ image: none; }}"
+            )
             menu = QMenu(more)
             act = menu.addAction("Open in New Instance")
             act.triggered.connect(
                 lambda _=False, v=vault_name: self._open_in_new_instance(v)
             )
             more.setMenu(menu)
-            h.addWidget(more)
+            split.addWidget(more)
+            h.addLayout(split)
 
         return row
+
+    def _row_button(self, text: str, primary: bool = True, side: str = "all"):
+        """A compact row-action button (smaller than the CTA LocksmithButton).
+
+        ``primary`` = filled orange; otherwise an orange outline. ``side``
+        controls which corners are rounded so a button can sit flush against
+        an attached ▾ menu button ("left" rounds only the left corners).
+        """
+        from PySide6.QtWidgets import QPushButton
+        btn = QPushButton(text)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedHeight(30)
+        if side == "left":
+            radius = "border-top-left-radius: 6px; border-bottom-left-radius: 6px;"
+        else:
+            radius = "border-radius: 6px;"
+        if primary:
+            base = (
+                f"background-color: {colors.PRIMARY}; color: white; "
+                f"border: 1px solid {colors.PRIMARY};"
+            )
+            hover = f"background-color: {colors.PRIMARY_HOVER}; border-color: {colors.PRIMARY_HOVER};"
+        else:
+            base = (
+                f"background-color: transparent; color: {colors.PRIMARY}; "
+                f"border: 1px solid {colors.PRIMARY};"
+            )
+            hover = f"background-color: rgba(234,88,12,0.08);"
+        btn.setStyleSheet(
+            f"QPushButton {{ {base} {radius} font-size: 12px; font-weight: 600; "
+            f"padding: 4px 14px; }}"
+            f"QPushButton:hover {{ {hover} }}"
+        )
+        return btn
 
     def _open_in_new_instance(self, vault_name: str) -> None:
         """Spawn a new OS process opened on ``vault_name``."""
