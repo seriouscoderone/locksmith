@@ -132,16 +132,182 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    # `windows-signing` GitHub Environment gates this job on the tag glob v*
+    # and supplies the AZURE_* + ARTIFACT_SIGNING_* variables consumed by
+    # the azure/login and trusted-signing steps below.
+    environment: windows-signing
+    permissions:
+      id-token: write   # required for GitHub Actions OIDC (AWS + Azure)
+      contents: read
+    env:
+      LOCKSMITH_RELEASE_CHANNEL: stable
+      AWS_REGION: us-east-1
+      S3_BUCKET: releases.keri.host
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full clone so `git verify-tag` in the preflight has the
+          # signed-tag object. See Phase 2 macOS job for the gotcha.
+          fetch-depth: 0
+
+      - name: Re-fetch annotated tag object
+        # actions/checkout on a `release` event writes refs/tags/<tag>
+        # as a lightweight ref. Force-fetch overwrites with the real
+        # annotated tag so `git verify-tag` succeeds.
+        shell: bash
+        run: git fetch --tags --force origin
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
-      - name: Phase 3 placeholder
+      - name: Install Python build dependencies
+        shell: bash
         run: |
-          echo "Windows build will land in Phase 3 of the deploy/update plan."
-          exit 0
+          python -m pip install --upgrade pip setuptools wheel boto3
+          pip install -e .[build-windows]
+
+      - name: Configure git to verify SSH-signed tags via .gitsigners
+        shell: bash
+        run: |
+          git config --global gpg.format ssh
+          git config --global gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.gitsigners"
+
+      - name: Preflight — verify tag matches pyproject and is signed
+        shell: bash
+        run: |
+          python scripts/check-version.py --tag "${{ github.event.release.tag_name }}"
+
+      - name: Set version output
+        id: set_version
+        shell: bash
+        run: |
+          version="${{ github.event.release.tag_name }}"
+          if [[ "$version" == v* ]]; then version="${version:1}"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install libsodium (download MSVC build from jedisct1/libsodium)
+        shell: pwsh
+        run: |
+          $version = "1.0.20"
+          $url = "https://github.com/jedisct1/libsodium/releases/download/${version}-RELEASE/libsodium-${version}-msvc.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "libsodium-msvc.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "libsodium-msvc"
+          Write-Host "[install] downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          # Layout inside the zip:
+          #   libsodium/x64/Release/v143/dynamic/libsodium.dll  (and .lib/.exp)
+          # We want the x64 Release dynamic DLL.
+          $candidates = Get-ChildItem -Recurse -Filter libsodium.dll -Path $extract |
+            Where-Object { $_.FullName -match "x64" -and $_.FullName -match "[Rr]elease" -and $_.FullName -match "dynamic" }
+          if (-not $candidates) {
+            Write-Host "[install] no x64 Release dynamic match; tree dump:"
+            Get-ChildItem -Recurse -Path $extract | Select-Object FullName
+            throw "could not locate libsodium.dll inside $extract"
+          }
+          $dll = $candidates[0].FullName
+          Write-Host "[install] libsodium.dll at $dll"
+          New-Item -ItemType Directory -Force -Path "packaging/windows" | Out-Null
+          Copy-Item -LiteralPath $dll -Destination "packaging/windows/libsodium.dll" -Force
+          Get-Item "packaging/windows/libsodium.dll" | Select-Object FullName,Length
+
+      - name: Install WiX Toolset v4
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          & wix --version
+
+      - name: Install WiX UI extension
+        shell: pwsh
+        run: |
+          & wix extension add -g WixToolset.UI.wixext/4.0.5
+          & wix extension list -g
+
+      # ---- Phase 3B: signing ------------------------------------------------
+      # PyInstaller runs first; the produced .exe + .dll + .pyd files are
+      # Authenticode-signed by Azure Artifact Signing; then WiX wraps the
+      # signed tree into an MSI; then the MSI itself is signed. Two distinct
+      # azure/trusted-signing-action calls (one per artifact set).
+
+      - name: Build .exe (PyInstaller stage)
+        shell: pwsh
+        env:
+          LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
+        run: |
+          pwsh packaging/build-windows.ps1 `
+            -Version "${{ steps.set_version.outputs.version }}" `
+            -Stage pyinstaller
+
+      - name: Azure login via GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign PyInstaller binaries (Locksmith.exe + bundled DLLs / PYDs)
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_CERT_PROFILE }}
+          files-folder: dist/Locksmith
+          files-folder-filter: exe,dll,pyd
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build .msi (WiX stage, packages the now-signed binaries)
+        shell: pwsh
+        env:
+          LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
+        run: |
+          pwsh packaging/build-windows.ps1 `
+            -Version "${{ steps.set_version.outputs.version }}" `
+            -Stage msi
+
+      - name: Sign the MSI itself
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_CERT_PROFILE }}
+          files-folder: build/windows
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gha-locksmith-release-publisher
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload MSI to s3://releases.keri.host/releases/<version>/
+        shell: bash
+        env:
+          VERSION: ${{ steps.set_version.outputs.version }}
+          S3_BUCKET: ${{ env.S3_BUCKET }}
+        run: |
+          MSI="build/windows/Locksmith-${VERSION}.msi"
+          if [ ! -f "$MSI" ]; then
+            echo "MSI not found at $MSI" >&2
+            exit 1
+          fi
+          python scripts/upload.py \
+            --bucket "$S3_BUCKET" \
+            --object-key "releases/${VERSION}/Locksmith-${VERSION}.msi" \
+            --file "$MSI" \
+            --content-type application/x-msi
+
+      - name: Capture MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Locksmith-${{ steps.set_version.outputs.version }}-msi
+          path: build/windows/Locksmith-${{ steps.set_version.outputs.version }}.msi
+          retention-days: 7

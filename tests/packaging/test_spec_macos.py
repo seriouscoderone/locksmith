@@ -14,7 +14,9 @@ def test_spec_exists():
 
 def test_spec_references_entry_point():
     s = SPEC.read_text()
-    assert "src/locksmith/main.py" in s
+    # Spec composes the entry path via Path("src") / "locksmith" / "main.py"
+    # to keep it OS-portable, so we look for the tokens not the joined string.
+    assert '"src"' in s and '"locksmith"' in s and '"main.py"' in s
 
 
 def test_spec_includes_libsodium():

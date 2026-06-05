@@ -1,0 +1,16 @@
+# Files to omit from the WiX harvest of dist/Locksmith.
+# Lines are matched as substring globs (case-insensitive on Windows).
+# Used by packaging/build-windows.ps1 to filter the harvested fragment
+# before passing it to `wix build`.
+
+__pycache__
+*.pyc
+*.pyo
+*.pdb
+*.lib
+*.exp
+*.map
+*.log
+*.tmp
+.DS_Store
+Thumbs.db

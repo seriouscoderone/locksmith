@@ -1,0 +1,158 @@
+# -*- mode: python ; coding: utf-8 -*-
+"""PyInstaller spec for Windows — produces dist/Locksmith/Locksmith.exe.
+
+Phase 3 of the deploy/update design. Bundles libsodium.dll, the assets
+directory, qtawesome icon fonts, and the embedded publisher_anchor.json.
+
+Version is read from pyproject.toml so we maintain a single source of truth
+(spec §5.1, §5.5).
+
+Layout:
+    dist/Locksmith/Locksmith.exe       (entry exe; no console)
+    dist/Locksmith/_internal/          (PySide6/Qt/qtawesome/keri deps)
+    dist/Locksmith/_internal/libsodium.dll
+    dist/Locksmith/_internal/assets/
+"""
+from __future__ import annotations
+
+import os
+import sys
+import tomllib
+from pathlib import Path
+
+import qtawesome  # noqa: F401 — bundling its data only
+
+# ---- Resolve paths -------------------------------------------------------
+# Use SPECPATH-relative absolute paths: PyInstaller resolves Analysis script
+# paths relative to SPECPATH (not CWD), so any "src/..." relative would look
+# inside packaging/ and fail.
+REPO_ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 — SPECPATH injected
+SRC_ROOT = REPO_ROOT / "src"
+ASSETS = REPO_ROOT / "assets"
+WIN_ICON = ASSETS / "custom" / "AppIcon.ico"
+
+# ---- Read version --------------------------------------------------------
+
+with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
+    _pyproject = tomllib.load(fh)
+LOCKSMITH_VERSION = _pyproject["project"]["version"]
+LOCKSMITH_RELEASE_CHANNEL = os.environ.get("LOCKSMITH_RELEASE_CHANNEL", "stable")
+
+# ---- Discover qtawesome fonts directory ----------------------------------
+
+import qtawesome as _qta_mod
+_QTA_DIR = Path(_qta_mod.__file__).resolve().parent
+_QTA_FONTS = _QTA_DIR / "fonts"
+
+# ---- Datas: non-code resources bundled into the dist tree ----------------
+
+datas = [
+    # Application asset tree (icons, fonts, mock data, etc.)
+    (str(ASSETS), "assets"),
+    # Embedded KERI publisher trust anchor (Phase 1 placeholder/real)
+    (
+        str(SRC_ROOT / "locksmith" / "release" / "publisher_anchor.json"),
+        "locksmith/release",
+    ),
+    # qtawesome icon fonts (needed at runtime; not auto-collected reliably)
+    (str(_QTA_FONTS), "qtawesome/fonts"),
+]
+
+# ---- Binaries: native libs ----------------------------------------------
+# libsodium.dll is installed via choco in CI and copied into packaging/windows/
+# before pyinstaller runs (see build-windows.ps1 / release.ci.yml). The
+# bootstrap loader in src/locksmith/main.py points pysodium at this DLL via
+# ctypes.util.find_library monkey-patch.
+binaries = []
+_SODIUM_DLL = REPO_ROOT / "packaging" / "windows" / "libsodium.dll"
+if _SODIUM_DLL.is_file():
+    # Place at root of bundle so the loader's first candidate path resolves.
+    binaries.append((str(_SODIUM_DLL), "."))
+else:
+    print(f"[spec] WARNING: {_SODIUM_DLL} not present; build will fail at runtime "
+          "without a bundled libsodium.dll. CI's 'Stage libsodium for PyInstaller' "
+          "step copies it into place before pyinstaller runs.")
+
+# ---- Hidden imports ------------------------------------------------------
+#
+# Mirror the macOS spec's pinned list. Add to this list with a one-line
+# comment ONLY when a runtime ImportError proves the dependency is needed.
+hiddenimports = [
+    # PySide6 plugin scan misses these on some 6.10.x builds:
+    "PySide6.QtPrintSupport",
+    "PySide6.QtSvg",
+    "PySide6.QtNetwork",
+    # qasync needs explicit hint when frozen:
+    "qasync",
+    # keripy uses dynamic imports for codec modules:
+    "keri.core.coring",
+    "keri.core.eventing",
+    "keri.db.basing",
+]
+
+block_cipher = None
+
+# ---- Analysis ------------------------------------------------------------
+
+a = Analysis(
+    [str(SRC_ROOT / "locksmith" / "main.py")],
+    pathex=[str(SRC_ROOT)],
+    binaries=binaries,
+    datas=datas,
+    hiddenimports=hiddenimports,
+    hookspath=[],
+    hooksconfig={},
+    runtime_hooks=[],
+    excludes=[
+        # Slim the bundle — keep tkinter out (we use PySide6)
+        "tkinter",
+        # No tests in the artifact
+        "pytest",
+        "unittest",
+    ],
+    cipher=block_cipher,
+    noarchive=False,
+)
+
+pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
+
+splash = Splash(
+    str(REPO_ROOT / "assets" / "custom" / "SplashScreen.png"),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,       # no progress text overlay; just the logo
+    max_img_size=(600, 360),
+)
+
+exe = EXE(
+    pyz,
+    a.scripts,
+    splash,
+    [],
+    exclude_binaries=True,
+    name="Locksmith",
+    debug=False,
+    bootloader_ignore_signals=False,
+    strip=False,
+    upx=False,           # UPX-compressed binaries fail Authenticode signing
+    console=False,       # GUI app — no terminal window flash
+    disable_windowed_traceback=False,
+    argv_emulation=False,
+    target_arch=None,
+    codesign_identity=None,
+    entitlements_file=None,
+    icon=str(WIN_ICON) if WIN_ICON.is_file() else None,
+    version_file=None,   # MSI carries the version metadata
+)
+
+coll = COLLECT(
+    exe,
+    splash.binaries,
+    a.binaries,
+    a.zipfiles,
+    a.datas,
+    strip=False,
+    upx=False,
+    upx_exclude=[],
+    name="Locksmith",
+)

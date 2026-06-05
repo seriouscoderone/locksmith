@@ -104,6 +104,11 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+# PyInstaller's Splash() is Tcl/Tk-based and explicitly unsupported on
+# macOS (recent macOS dropped system Tcl/Tk). The Dock bounce already
+# provides launch feedback, so the .app skips the splash; Windows has
+# its own Splash() resource in Locksmith.windows.spec where it does work.
+
 exe = EXE(
     pyz,
     a.scripts,
