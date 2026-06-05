@@ -40,6 +40,7 @@ OUT_ICNS = REPO_ROOT / "assets" / "custom" / "AppIcon.icns"
 OUT_ICO = REPO_ROOT / "assets" / "custom" / "AppIcon.ico"
 OUT_WIX_BANNER = REPO_ROOT / "packaging" / "wix" / "banner.png"
 OUT_WIX_DIALOG = REPO_ROOT / "packaging" / "wix" / "dialog.png"
+OUT_SPLASH = REPO_ROOT / "assets" / "custom" / "SplashScreen.png"
 
 # Windows ICO contains nested PNG/BMP frames at well-known sizes.
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
@@ -157,6 +158,38 @@ def build_wix_dialog() -> None:
     print(f"wrote {OUT_WIX_DIALOG.relative_to(REPO_ROOT)}")
 
 
+def build_splash() -> None:
+    """600x360 PNG: cream gradient, centered FullLogo, used by PyInstaller's
+    Splash() resource. Renders BEFORE the Python interpreter starts so it
+    hides the bootloader-unpack period (~3-5s cold start on Windows)."""
+    W, H = 600, 360
+    img = QImage(W, H, QImage.Format.Format_ARGB32_Premultiplied)
+    img.fill(Qt.GlobalColor.transparent)
+
+    painter = QPainter(img)
+    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
+    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
+
+    # Plate with the same cream gradient as the app icon (visual continuity).
+    plate = QPainterPath()
+    radius = 24  # subtle rounding; window managers may clip anyway
+    plate.addRoundedRect(0, 0, W, H, radius, radius)
+    grad = QLinearGradient(0, 0, 0, H)
+    grad.setColorAt(0.0, PLATE_TOP)
+    grad.setColorAt(1.0, PLATE_BOTTOM)
+    painter.fillPath(plate, grad)
+
+    # FullLogo (triquetra + wordmark) centered. Source viewBox is 342x94.
+    logo_w, logo_h = 480, 132  # preserves 342:94 aspect
+    x = (W - logo_w) // 2
+    y = (H - logo_h) // 2 - 12  # nudge up; leave room for status text below
+    QSvgRenderer(str(FULL_SVG)).render(painter, QRectF(x, y, logo_w, logo_h))
+    painter.end()
+
+    img.save(str(OUT_SPLASH), "PNG")
+    print(f"wrote {OUT_SPLASH.relative_to(REPO_ROOT)} ({OUT_SPLASH.stat().st_size:,} bytes)")
+
+
 def build_ico() -> None:
     """Render the squircle plate at ICO_SIZES and pack into a multi-image .ico.
 
@@ -183,6 +216,7 @@ def main() -> int:
     build_ico()
     build_wix_banner()
     build_wix_dialog()
+    build_splash()
     return 0
 
 

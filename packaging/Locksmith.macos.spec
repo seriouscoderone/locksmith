@@ -104,9 +104,18 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
+splash = Splash(
+    str(REPO_ROOT / "assets" / "custom" / "SplashScreen.png"),
+    binaries=a.binaries,
+    datas=a.datas,
+    text_pos=None,       # no progress text overlay; just the logo
+    max_img_size=(600, 360),
+)
+
 exe = EXE(
     pyz,
     a.scripts,
+    splash,
     [],
     exclude_binaries=True,
     name="Locksmith",
@@ -122,6 +131,7 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
+    splash.binaries,
     a.binaries,
     a.zipfiles,
     a.datas,

@@ -123,5 +123,15 @@ if __name__ == "__main__":
     window = LocksmithWindow(config)
     window.show()
 
+    # Tear down the PyInstaller bootloader splash now that Qt is on screen.
+    # pyi_splash is only present in frozen builds whose .spec includes a
+    # Splash() resource — dev mode silently skips this.
+    try:
+        import pyi_splash  # type: ignore[import-not-found]
+        if pyi_splash.is_alive():
+            pyi_splash.close()
+    except ImportError:
+        pass
+
     with loop:
         sys.exit(loop.run_forever())
