@@ -34,3 +34,33 @@ def test_close_vault_releases_the_coordinator_claim(qapp, tmp_path):
 
     # The vault's local-socket server must have been released.
     assert app.coordinator.probe("treasurer") is False
+
+
+def test_delete_vault_releases_the_coordinator_claim(qapp, tmp_path):
+    config = SimpleNamespace(
+        base=str(tmp_path),
+        protected_url="",
+        api_aid="",
+        unprotected_url="",
+    )
+    app = LocksmithApplication(config=config)
+    # Simulate an open vault holding a claim.
+    app.coordinator.claim("treasurer")
+    app.name = "treasurer"
+    app.vault = SimpleNamespace(
+        db=SimpleNamespace(close=lambda *, clear=False: None),
+        rep=None,
+        notifier=None,
+    )
+    app.hby = SimpleNamespace(close=lambda *, clear=False: None)
+    app.rgy = SimpleNamespace(reger=None)
+    app.qtask = SimpleNamespace(shutdown=lambda: None, cleanup=lambda: None)
+    app.plugin_manager = SimpleNamespace(
+        prepare_vault_deletion=lambda v: None,
+        on_vault_closed=lambda v, *, clear=False: None,
+    )
+
+    assert app.delete_vault("treasurer") is True
+
+    # The vault's local-socket server must have been released.
+    assert app.coordinator.probe("treasurer") is False

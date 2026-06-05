@@ -249,6 +249,10 @@ class LocksmithApplication:
         self.hab = None
         self.name = None
 
+        # Release the cross-instance claim. Safe even if we never held it —
+        # release() is a no-op for vaults this coordinator doesn't own.
+        self.coordinator.release(vault_name)
+
         if error_count == 0:
             logger.info(f"Vault '{vault_name}' deleted successfully")
             return True

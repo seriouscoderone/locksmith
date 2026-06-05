@@ -47,6 +47,8 @@ class LocksmithWindow(QMainWindow):
 
         # Let an incoming "open this vault" request from another launch
         # raise this window to the front (VS Code focus-existing behavior).
+        # The coordinator invokes this from QLocalServer.newConnection, which
+        # fires on the Qt event loop, so these GUI calls are thread-safe.
         self.app.coordinator.raise_window = self._raise_to_front
 
         # Staged-install tracking: set to plugin_id between install() and trust.
@@ -180,7 +182,8 @@ class LocksmithWindow(QMainWindow):
         from PySide6.QtWidgets import QApplication
         self.show()
         self.setWindowState(
-            (self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive
         )
         self.raise_()
         self.activateWindow()
