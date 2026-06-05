@@ -45,6 +45,10 @@ class LocksmithWindow(QMainWindow):
 
         self.app = LocksmithApplication(config=config)
 
+        # Let an incoming "open this vault" request from another launch
+        # raise this window to the front (VS Code focus-existing behavior).
+        self.app.coordinator.raise_window = self._raise_to_front
+
         # Staged-install tracking: set to plugin_id between install() and trust.
         self._pending_trust_install: str | None = None
 
@@ -170,6 +174,18 @@ class LocksmithWindow(QMainWindow):
         self.app.plugin_manager.on_app_started(window=self)
 
         logger.info("LocksmithHome initialized")
+
+    def _raise_to_front(self) -> None:
+        """Bring this window to the foreground and request user attention."""
+        from PySide6.QtWidgets import QApplication
+        self.show()
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowMinimized) | Qt.WindowActive
+        )
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)
+        logger.info("instance.window.raised")
 
     def on_page_changed(self, page_name: str, params: dict):
         """

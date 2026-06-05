@@ -9,6 +9,7 @@ from pathlib import Path
 from keri import help
 
 from locksmith.core.configing import LocksmithConfig
+from locksmith.core.instancing import InstanceCoordinator
 from locksmith.core.vaulting import Vault
 from locksmith.db.basing import LocksmithBaser
 from locksmith.plugins.manager import PluginManager
@@ -35,6 +36,13 @@ class LocksmithApplication:
         if config is None:
             config = LocksmithConfig.get_instance()
         self.config = config
+
+        # Cross-instance coordination (single-instance-per-vault). The
+        # window sets `coordinator.raise_window` once it exists so an
+        # incoming "raise" request can bring this window to the front.
+        self.coordinator = InstanceCoordinator(
+            base=getattr(self.config, "base", None)
+        )
 
         # Application state
         self.name = None  # Current vault name
@@ -115,6 +123,7 @@ class LocksmithApplication:
         """Close the currently open vault."""
         if self.qtask is not None:
             logger.info(f"Closing vault: {self.name}")
+            closing_name = self.name
 
             # Notify plugins before teardown
             if self.vault is not None:
@@ -147,6 +156,9 @@ class LocksmithApplication:
             self.rgy = None
             self.hab = None
             self.name = None
+
+            if closing_name is not None:
+                self.coordinator.release(closing_name)
 
             logger.info("Vault closed")
 
