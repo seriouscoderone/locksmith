@@ -109,15 +109,17 @@ if __name__ == "__main__":
 
     config = LocksmithConfig.get_instance()
     window = LocksmithWindow(config)
-    window.show()
 
     target_vault = parse_vault_arg(sys.argv)
+    if target_vault and window.app.coordinator.request_raise(target_vault):
+        # Another instance already owns this vault — raise it and exit
+        # before showing our window, so there's no flash/Dock bounce.
+        logger.info(f"instance.startup.focused_existing vault={target_vault}")
+        sys.exit(0)
+
+    window.show()
+
     if target_vault:
-        # If another instance already owns this vault, raise it and exit —
-        # never open a duplicate (also protects the LMDB single-writer).
-        if window.app.coordinator.request_raise(target_vault):
-            logger.info(f"instance.startup.focused_existing vault={target_vault}")
-            sys.exit(0)
         logger.info(f"instance.startup.opening vault={target_vault}")
         window.open_vault_targeted(target_vault)
 
