@@ -16,9 +16,9 @@ file. Last writer wins; convergence on next restart.
 from __future__ import annotations
 
 import contextlib
-import fcntl
 import json
 import os
+import sys
 import tempfile
 from pathlib import Path
 from typing import Any
@@ -26,6 +26,30 @@ from typing import Any
 from keri import help
 
 logger = help.ogler.getLogger(__name__)
+
+
+# Cross-platform exclusive-file-lock shim. POSIX uses fcntl.flock; Windows uses
+# msvcrt.locking. Both block until the lock is acquired; both auto-release if
+# the process dies. Locking a single byte at offset 0 of the lockfile is enough
+# because the lockfile itself carries no data — it's purely an interlock.
+if sys.platform == "win32":
+    import msvcrt
+
+    def _lock_exclusive(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_LOCK, 1)
+
+    def _lock_release(fd: int) -> None:
+        os.lseek(fd, 0, os.SEEK_SET)
+        msvcrt.locking(fd, msvcrt.LK_UNLCK, 1)
+else:
+    import fcntl
+
+    def _lock_exclusive(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_EX)
+
+    def _lock_release(fd: int) -> None:
+        fcntl.flock(fd, fcntl.LOCK_UN)
 
 
 def _user_home() -> Path:
@@ -77,21 +101,22 @@ def index_lock_path() -> Path:
 def index_write_lock():
     """Acquire an exclusive file lock around index read-modify-write operations.
 
-    Uses ``fcntl.flock`` (POSIX, inherited by forked processes).  Safe for
-    concurrent threads **and** concurrent processes.  The lock is held only
+    POSIX uses ``fcntl.flock``; Windows uses ``msvcrt.locking``. Both are
+    blocking, process-level, auto-released on process death. Safe for
+    concurrent threads **and** concurrent processes. The lock is held only
     for the duration of the read-modify-write cycle, not for the atomic
     ``os.replace`` write itself (which is already atomic at the OS level).
     """
     plugin_root().mkdir(parents=True, exist_ok=True)
     lock_path = index_lock_path()
-    # Open (or create) the lockfile.  Never hold a reference to its data.
+    # Open (or create) the lockfile. Never hold a reference to its data.
     fd = os.open(str(lock_path), os.O_CREAT | os.O_RDWR, 0o644)
     try:
-        fcntl.flock(fd, fcntl.LOCK_EX)
+        _lock_exclusive(fd)
         try:
             yield
         finally:
-            fcntl.flock(fd, fcntl.LOCK_UN)
+            _lock_release(fd)
     finally:
         os.close(fd)
 
