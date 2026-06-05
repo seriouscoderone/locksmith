@@ -50,3 +50,20 @@ def test_open_vault_claims_when_unowned(qapp, tmp_path):
         this_instance.release_all()
         dialog.close()
         parent.close()
+
+
+def test_open_vault_releases_claim_when_open_fails(qapp, tmp_path):
+    this_instance = InstanceCoordinator(base=str(tmp_path))
+    dialog, parent = _make_dialog(qapp, tmp_path, this_instance)
+    try:
+        with patch.object(open_module, "keystore_exists", return_value=True), \
+             patch.object(open_module, "is_vault_encrypted", return_value=False), \
+             patch.object(open_module, "open_hby", side_effect=ValueError("boom")), \
+             patch.object(dialog, "show_error") as show_error:
+            dialog.open_vault()
+            show_error.assert_called_once()                     # surfaced the failure
+            assert this_instance.probe("treasurer") is False   # claim was released
+    finally:
+        this_instance.release_all()
+        dialog.close()
+        parent.close()
