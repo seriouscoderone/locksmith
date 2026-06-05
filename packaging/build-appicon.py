@@ -161,28 +161,29 @@ def build_wix_dialog() -> None:
 def build_splash() -> None:
     """600x360 PNG: cream gradient, centered FullLogo, used by PyInstaller's
     Splash() resource. Renders BEFORE the Python interpreter starts so it
-    hides the bootloader-unpack period (~3-5s cold start on Windows)."""
+    hides the bootloader-unpack period (~3-5s cold start on Windows).
+
+    NOTE: solid rectangle, no rounded corners. PyInstaller's Tcl/Tk splash
+    fakes transparency by color-keying magenta (#FF00FF). Anti-aliased
+    edges from a rounded-corner plate produce 'almost-magenta' pixels
+    that don't key out cleanly — visible as a pink fringe. Solid rect
+    sidesteps the entire keyed-transparency mess."""
     W, H = 600, 360
-    img = QImage(W, H, QImage.Format.Format_ARGB32_Premultiplied)
-    img.fill(Qt.GlobalColor.transparent)
+    img = QImage(W, H, QImage.Format.Format_RGB32)
 
     painter = QPainter(img)
     painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
     painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
 
-    # Plate with the same cream gradient as the app icon (visual continuity).
-    plate = QPainterPath()
-    radius = 24  # subtle rounding; window managers may clip anyway
-    plate.addRoundedRect(0, 0, W, H, radius, radius)
     grad = QLinearGradient(0, 0, 0, H)
     grad.setColorAt(0.0, PLATE_TOP)
     grad.setColorAt(1.0, PLATE_BOTTOM)
-    painter.fillPath(plate, grad)
+    painter.fillRect(0, 0, W, H, grad)
 
     # FullLogo (triquetra + wordmark) centered. Source viewBox is 342x94.
     logo_w, logo_h = 480, 132  # preserves 342:94 aspect
     x = (W - logo_w) // 2
-    y = (H - logo_h) // 2 - 12  # nudge up; leave room for status text below
+    y = (H - logo_h) // 2 - 12
     QSvgRenderer(str(FULL_SVG)).render(painter, QRectF(x, y, logo_w, logo_h))
     painter.end()
 
