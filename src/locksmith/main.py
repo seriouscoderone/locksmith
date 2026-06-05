@@ -18,25 +18,45 @@ from pathlib import Path
 
 
 def _bundled_libsodium_path() -> str | None:
-    """Return absolute path to the right libsodium dylib inside the
+    """Return absolute path to the right libsodium binary inside the
     PyInstaller bundle, or None when running unfrozen (dev mode)."""
     if not getattr(sys, "frozen", False):
         return None
-    appdir = sys._MEIPASS  # PyInstaller onedir: .app/Contents/Frameworks
-    arch = platform.processor()
-    if arch == "x86_64":
-        sodium_lib = "libsodium.26.x86_64.dylib"
-    elif arch in ("arm", "arm64", "aarch64"):
-        sodium_lib = "libsodium.23.arm.dylib"
-    else:
-        raise OSError(f"Unsupported architecture: {arch}")
-    return str(Path(appdir) / "libsodium" / sodium_lib)
+    appdir = sys._MEIPASS  # PyInstaller onedir: .app/Contents/Frameworks (mac) or app dir (win)
+    system = platform.system()
+    if system == "Darwin":
+        arch = platform.processor()
+        if arch == "x86_64":
+            sodium_lib = "libsodium.26.x86_64.dylib"
+        elif arch in ("arm", "arm64", "aarch64"):
+            sodium_lib = "libsodium.23.arm.dylib"
+        else:
+            raise OSError(f"Unsupported architecture: {arch}")
+        return str(Path(appdir) / "libsodium" / sodium_lib)
+    if system == "Windows":
+        # PyInstaller drops bundled DLLs alongside the exe (_internal/ on
+        # onedir, root on onefile). pysodium's ctypes.util.find_library
+        # returns None inside a frozen Windows app because Windows resolves
+        # DLLs via the Activation Context, not LD-style search paths.
+        # We bake libsodium.dll into the bundle via the spec's `binaries`
+        # and search both the _internal dir and the appdir for it.
+        candidates = [
+            Path(appdir) / "libsodium.dll",
+            Path(appdir) / "_internal" / "libsodium.dll",
+            Path(sys.executable).parent / "libsodium.dll",
+            Path(sys.executable).parent / "_internal" / "libsodium.dll",
+        ]
+        for candidate in candidates:
+            if candidate.is_file():
+                return str(candidate)
+        return None
+    return None
 
 
 def _bootstrap_libsodium() -> None:
     bundled = _bundled_libsodium_path()
     if bundled is None:
-        return  # dev mode: rely on system libsodium via Homebrew/etc.
+        return  # dev mode (or platform without bundled libsodium)
     if not os.path.exists(bundled):
         raise FileNotFoundError(f"bundled libsodium missing: {bundled}")
 
@@ -44,8 +64,9 @@ def _bootstrap_libsodium() -> None:
     ctypes.cdll.LoadLibrary(bundled)
 
     # pysodium calls ctypes.util.find_library('sodium') at *import* time.
-    # In a frozen .app find_library returns None (no /usr/local/lib here),
-    # so we override it to point at our bundled dylib BEFORE pysodium loads.
+    # In a frozen bundle find_library returns None (no /usr/local/lib or
+    # %WINDIR%\System32\libsodium.dll), so we override it to point at our
+    # bundled binary BEFORE pysodium loads.
     _orig_find_library = ctypes.util.find_library
 
     def _find_library(name: str):
@@ -56,7 +77,7 @@ def _bootstrap_libsodium() -> None:
     ctypes.util.find_library = _find_library
 
 
-if platform.system() == "Darwin":
+if platform.system() in ("Darwin", "Windows"):
     _bootstrap_libsodium()
 
 # ---- safe to import the rest of the world now ---------------------------
