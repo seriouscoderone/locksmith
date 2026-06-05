@@ -46,7 +46,7 @@
     <Property Id="ARPHELPLINK" Value="https://locksmith.app/support" />
     <Property Id="ARPNOREPAIR" Value="1" />
     <Property Id="ARPNOMODIFY" Value="1" />
-    <Icon Id="LocksmithIcon" SourceFile="!(bindpath.ICON)\AppIcon.ico" />
+    <Icon Id="LocksmithIcon" SourceFile="AppIcon.ico" />
 
     <!-- Install location: %LOCALAPPDATA%\Programs\Locksmith\ -->
     <StandardDirectory Id="LocalAppDataFolder">
@@ -123,9 +123,9 @@
 
     <!-- WixUI dialog flow: minimal but polished. -->
     <ui:WixUI Id="WixUI_InstallDir" InstallDirectory="INSTALLFOLDER" />
-    <WixVariable Id="WixUILicenseRtf" Value="!(bindpath.WIX)\license.rtf" />
-    <WixVariable Id="WixUIBannerBmp" Value="!(bindpath.WIX)\banner.png" />
-    <WixVariable Id="WixUIDialogBmp" Value="!(bindpath.WIX)\dialog.png" />
+    <WixVariable Id="WixUILicenseRtf" Value="license.rtf" />
+    <WixVariable Id="WixUIBannerBmp" Value="banner.png" />
+    <WixVariable Id="WixUIDialogBmp" Value="dialog.png" />
 
   </Package>
 </Wix>

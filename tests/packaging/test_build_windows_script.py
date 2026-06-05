@@ -14,9 +14,10 @@ def test_script_runs_pyinstaller_with_spec():
     assert "Locksmith.windows.spec" in s
 
 
-def test_script_runs_wix_harvest():
+def test_script_runs_harvest():
+    """Build script invokes packaging/wix/harvest.py (our pure-Python harvester)."""
     s = SCRIPT.read_text()
-    assert "wix harvest" in s
+    assert "harvest.py" in s
 
 
 def test_script_runs_wix_build():

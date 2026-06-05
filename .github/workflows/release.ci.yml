@@ -184,27 +184,31 @@ jobs:
           if [[ "$version" == v* ]]; then version="${version:1}"; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Install libsodium (vcpkg-style — choco)
+      - name: Install libsodium (download MSVC build from jedisct1/libsodium)
         shell: pwsh
         run: |
-          choco install libsodium --version=1.0.20.1 --no-progress -y
-          # Chocolatey drops libsodium.dll into:
-          #   C:\ProgramData\chocolatey\lib\libsodium\tools\libsodium.dll
-          $candidates = @(
-            "C:\ProgramData\chocolatey\lib\libsodium\tools\libsodium.dll",
-            "C:\ProgramData\chocolatey\lib\libsodium\bin\libsodium.dll"
-          )
-          $sodiumDll = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
-          if (-not $sodiumDll) {
-            Write-Host "[install] searching choco lib tree for libsodium.dll"
-            $sodiumDll = (Get-ChildItem -Recurse -Filter libsodium.dll -Path "C:\ProgramData\chocolatey\lib" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          $version = "1.0.20"
+          $url = "https://github.com/jedisct1/libsodium/releases/download/${version}-RELEASE/libsodium-${version}-msvc.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "libsodium-msvc.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "libsodium-msvc"
+          Write-Host "[install] downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          # Layout inside the zip:
+          #   libsodium/x64/Release/v143/dynamic/libsodium.dll  (and .lib/.exp)
+          # We want the x64 Release dynamic DLL.
+          $candidates = Get-ChildItem -Recurse -Filter libsodium.dll -Path $extract |
+            Where-Object { $_.FullName -match "x64" -and $_.FullName -match "[Rr]elease" -and $_.FullName -match "dynamic" }
+          if (-not $candidates) {
+            Write-Host "[install] no x64 Release dynamic match; tree dump:"
+            Get-ChildItem -Recurse -Path $extract | Select-Object FullName
+            throw "could not locate libsodium.dll inside $extract"
           }
-          if (-not $sodiumDll) {
-            throw "could not locate libsodium.dll after choco install"
-          }
-          Write-Host "[install] libsodium.dll at $sodiumDll"
+          $dll = $candidates[0].FullName
+          Write-Host "[install] libsodium.dll at $dll"
           New-Item -ItemType Directory -Force -Path "packaging/windows" | Out-Null
-          Copy-Item -LiteralPath $sodiumDll -Destination "packaging/windows/libsodium.dll" -Force
+          Copy-Item -LiteralPath $dll -Destination "packaging/windows/libsodium.dll" -Force
+          Get-Item "packaging/windows/libsodium.dll" | Select-Object FullName,Length
 
       - name: Install WiX Toolset v4
         shell: pwsh

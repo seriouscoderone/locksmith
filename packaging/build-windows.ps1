@@ -83,53 +83,25 @@ if (-not (Test-Path -LiteralPath $exePath)) {
 }
 Write-Host "[build] PyInstaller ok exe=$exePath"
 
-# --- 4. Harvest the dist tree with `wix harvest` ------------------------------
+# --- 4. Harvest the dist tree (pure-Python harvester) ------------------------
+# We don't use `wix harvest` because its CLI surface is unstable across the
+# v4 minor releases. packaging/wix/harvest.py walks the dist tree and emits
+# a wxs fragment with stable Component GUIDs and INSTALLFOLDER-rooted dirs.
 
-Write-Host "[build] harvesting $distDir with wix harvest"
+Write-Host "[build] harvesting $distDir with packaging/wix/harvest.py"
 $harvestedWxs = Join-Path $buildDir "HarvestedComponents.wxs"
-
-# WiX v4 `wix harvest` (formerly heat.exe). Output is a self-contained wxs
-# fragment with a single <ComponentGroup Id="HarvestedComponents"> referenced
-# from Locksmith.wxs.
-& wix harvest dir $distDir `
-    -componentgroup HarvestedComponents `
-    -directoryref INSTALLFOLDER `
-    -srd `
-    -gg `
-    -sfrag `
-    -var var.HarvestSource `
-    -out $harvestedWxs
+& python (Join-Path $wixDir "harvest.py") `
+    --source $distDir `
+    --out $harvestedWxs `
+    --directory-ref INSTALLFOLDER `
+    --group-id HarvestedComponents `
+    --exclusions (Join-Path $wixDir "heat-exclusions.txt")
 if ($LASTEXITCODE -ne 0) {
-    throw "[build] wix harvest exited $LASTEXITCODE"
+    throw "[build] harvest.py exited $LASTEXITCODE"
 }
 if (-not (Test-Path -LiteralPath $harvestedWxs)) {
-    throw "[build] wix harvest did not produce $harvestedWxs"
+    throw "[build] harvest.py did not produce $harvestedWxs"
 }
-
-# Apply heat-exclusions: scrub <Component> nodes whose <File Source=> matches.
-$exclusions = Get-Content (Join-Path $wixDir "heat-exclusions.txt") | Where-Object {
-    $_ -and -not $_.TrimStart().StartsWith("#")
-}
-[xml]$harvestXml = Get-Content -LiteralPath $harvestedWxs
-$ns = New-Object Xml.XmlNamespaceManager($harvestXml.NameTable)
-$ns.AddNamespace("w", "http://wixtoolset.org/schemas/v4/wxs")
-$removed = 0
-foreach ($fileNode in @($harvestXml.SelectNodes("//w:File", $ns))) {
-    foreach ($pattern in $exclusions) {
-        # Normalise glob to plain substring; we don't need full glob semantics.
-        $needle = $pattern.Trim().TrimStart("*").TrimEnd("*")
-        if ($needle -and $fileNode.Source -like "*$needle*") {
-            $component = $fileNode.ParentNode
-            if ($component -and $component.ParentNode) {
-                $component.ParentNode.RemoveChild($component) | Out-Null
-                $removed++
-            }
-            break
-        }
-    }
-}
-$harvestXml.Save($harvestedWxs)
-Write-Host "[build] heat ok ($removed components excluded)"
 
 # --- 5. wix build -> MSI ------------------------------------------------------
 
@@ -139,17 +111,16 @@ Write-Host "[build] linking $msiPath"
 
 Push-Location $wixDir
 try {
-    # -bindpath WIX=<dir>    resolves !(bindpath.WIX)\... in WixVariables
-    # -bindpath ICON=<dir>   resolves !(bindpath.ICON)\AppIcon.ico
-    # -bindvariable HarvestSource=<dist-tree>   resolves $(var.HarvestSource)
+    # -d NAME=VAL    compile-time variable; resolves $(var.NAME) in wxs sources
+    # -bindpath DIR  file lookup path; first hit wins for relative SourceFile refs
     & wix build `
         "Locksmith.wxs" $harvestedWxs `
         -ext WixToolset.UI.wixext `
         -arch x64 `
-        -define "Version=$Version" `
-        -bindvariable "HarvestSource=$distDir" `
-        -bindpath "WIX=$wixDir" `
-        -bindpath "ICON=$iconSourceDir" `
+        -d "Version=$Version" `
+        -d "HarvestSource=$distDir" `
+        -bindpath $wixDir `
+        -bindpath $iconSourceDir `
         -out $msiPath
     if ($LASTEXITCODE -ne 0) {
         throw "[build] wix build exited $LASTEXITCODE"
