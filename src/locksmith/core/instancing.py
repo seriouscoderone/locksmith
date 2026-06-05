@@ -175,7 +175,7 @@ class InstanceLauncher:
                 # sys.executable -> .../Locksmith.app/Contents/MacOS/Locksmith
                 app_bundle = str(Path(sys.executable).parents[2])
                 QProcess.startDetached("open", ["-n", app_bundle, "--args"] + extra)
-                logger.info(f"instance.launch.spawned platform=macos vault={vault}")
+                logger.info(f"instance.launch.spawned platform={sys.platform} vault={vault}")
                 return
             QProcess.startDetached(sys.executable, sys.argv[1:] + extra)
         else:
