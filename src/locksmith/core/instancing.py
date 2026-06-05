@@ -89,8 +89,10 @@ class InstanceCoordinator:
             sock.waitForBytesWritten(_CONNECT_TIMEOUT_MS)
             sock.disconnectFromServer()
             sock.close()
+            sock.deleteLater()  # reclaim the parentless socket on next event loop pass
             return True
         sock.abort()
+        sock.deleteLater()  # reclaim the parentless socket on next event loop pass
         return False
 
     def claim(self, vault: str) -> bool:
@@ -102,8 +104,9 @@ class InstanceCoordinator:
             logger.info(f"instance.claim.denied vault={vault}")
             return False
         name = self._name(vault)
-        # Clear a stale socket file left by a crashed owner; safe because
-        # no live listener answered request_raise above.
+        # The connect-first check above means any socket file here is stale
+        # (crashed owner), so removing it is safe; the LMDB single-writer
+        # lock (later task) is the backstop for the simultaneous-claim race.
         QLocalServer.removeServer(name)
         server = QLocalServer()
         if not server.listen(name):
@@ -138,6 +141,7 @@ class InstanceCoordinator:
         ok = sock.waitForConnected(_CONNECT_TIMEOUT_MS)
         sock.abort()
         sock.close()
+        sock.deleteLater()  # reclaim the parentless socket on next event loop pass
         return ok
 
     def release(self, vault: str) -> None:
