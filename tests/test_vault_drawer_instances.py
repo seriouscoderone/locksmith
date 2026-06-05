@@ -16,6 +16,14 @@ def _live_row_count(drawer):
     )
 
 
+def _row_names(drawer):
+    return {
+        w.objectName()
+        for w in drawer.vault_list.viewport().findChildren(QFrame)
+        if w.objectName().startswith("vaultDrawer.row.")
+    }
+
+
 def _make_window(vaults, current, probe_running):
     win = QMainWindow()
     coord = SimpleNamespace(
@@ -68,6 +76,42 @@ def test_switch_to_raises_running_instance(qapp):
     try:
         drawer._switch_to_running("auditor")
         coord.request_raise.assert_called_once_with("auditor")
+    finally:
+        drawer.deleteLater()
+        win.close()
+
+
+def test_open_refreshes_vault_list(qapp):
+    """Opening the drawer must re-enumerate vaults.
+
+    The drawer is built once at startup; another instance can create a
+    vault afterward. Opening the drawer (toggle → slide-in) must re-read
+    app.environments() so the new vault's row appears, instead of showing
+    the stale construction-time set.
+    """
+    vaults = ["treasurer"]
+    win, coord = _make_window(vaults, current=None, probe_running=set())
+    win.resize(800, 600)
+    # toggle()'s slide-in branch calls toolbar_ref.raise_() (z-order); the
+    # real toolbar is a QWidget. Stub it as a no-op for this unit test.
+    toolbar = SimpleNamespace(height=lambda: 0, raise_=lambda: None)
+    drawer = VaultDrawer(parent=win, toolbar_ref=toolbar)
+    try:
+        # Built with one vault; no row for the not-yet-existing "auditor".
+        assert _live_row_count(drawer) == 1
+        assert _row_names(drawer) == {"vaultDrawer.row.treasurer"}
+
+        # Another instance creates "auditor" after construction.
+        vaults.append("auditor")
+
+        # Opening the drawer must pick it up.
+        drawer.toggle()
+        qapp.processEvents()
+
+        assert drawer.vault_list.count() == 2
+        assert _live_row_count(drawer) == 2
+        # The newly-created vault's row now exists in the drawer.
+        assert "vaultDrawer.row.auditor" in _row_names(drawer)
     finally:
         drawer.deleteLater()
         win.close()

@@ -289,6 +289,13 @@ class VaultDrawer(QWidget):
             self.drawer_closed.emit()
         else:
             # Slide in (show)
+            # Re-enumerate on-disk vaults AND re-probe per-instance running
+            # state every time the drawer opens. The drawer is built once at
+            # startup, so without this an instance never sees vaults that
+            # another instance created (or running-elsewhere state changes)
+            # after construction. Probe cost for a handful of vaults is fine.
+            self._refresh_vault_list()
+
             start_rect = QRect(
                 window_width,
                 toolbar_height,
@@ -396,46 +403,81 @@ class VaultDrawer(QWidget):
         self.vault_drawer.show()
 
     def _refresh_vault_list(self):
-        """Refresh the vault list with per-instance state and actions.
+        """Re-read the on-disk vaults + per-instance state, then rebuild rows.
 
-        Each row uses a custom widget (state badge + state-appropriate
-        buttons) via ``setItemWidget``. The item's TEXT is still set to
-        ``vault_name`` so ``_filter_vaults`` (which reads ``item.text()``)
-        keeps working unchanged — the text is hidden behind the row widget.
+        All cross-instance probes happen here, once, and the resulting
+        ``(name, state)`` list is cached on ``self._vault_states`` so that
+        keystroke filtering rebuilds rows WITHOUT re-probing.
         """
+        # probe() spins a nested Qt event loop (QLocalSocket.waitForConnected);
+        # do every probe here, up front, never interleaved with list mutation.
+        self._vault_states = [
+            (name, self._vault_state(name))
+            for name in sorted(self.app.environments(), key=str.lower)
+        ]
+        query = self.search_field.text() if hasattr(self, "search_field") else ""
+        self._rebuild_vault_rows(query)
+
+    def _rebuild_vault_rows(self, query: str):
+        """Rebuild the visible rows from the cached ``self._vault_states``,
+        keeping only names matching ``query`` (prefix matches first, then
+        substring matches).
+
+        Full rebuild — NOT takeItem()/addItem() reordering. ``takeItem`` on an
+        item carrying a ``setItemWidget`` row deletes that row widget in C++,
+        so reordering items and reattaching a stashed widget pointer is a
+        use-after-free (it segfaults in ``QListWidgetItem::data`` →
+        ``getWrapperForQObject``). Rebuilding from scratch keeps widget
+        ownership trivial: each refresh/filter creates fresh rows and releases
+        the old ones, and no item ever references a freed widget.
+        """
+        q = (query or "").strip().lower()
+
         # QListWidget.clear() does NOT free widgets installed via
-        # setItemWidget — they stay parented to the list's viewport and
-        # accumulate on every refresh (the drawer refreshes on every open).
-        # Release them explicitly before clearing. Safe when the list is empty.
+        # setItemWidget — release them explicitly first (otherwise they
+        # accumulate, since the drawer rebuilds on every open/keystroke).
         for i in range(self.vault_list.count()):
             item = self.vault_list.item(i)
-            row = self.vault_list.itemWidget(item) or item.data(Qt.ItemDataRole.UserRole)
+            row = self.vault_list.itemWidget(item)
             self.vault_list.removeItemWidget(item)
             if row is not None:
                 row.setParent(None)
                 row.deleteLater()
-            item.setData(Qt.ItemDataRole.UserRole, None)
         self.vault_list.clear()
 
-        # Sort vaults alphabetically so the prefix/substring grouping in
-        # _filter_vaults produces a stable order within each group.
-        for vault_name in sorted(self.app.environments(), key=str.lower):
-            state = self._vault_state(vault_name)
-            # Keep vault_name as the item text so the search filter still
-            # matches on it; the row widget visually covers the text.
-            item = QListWidgetItem(vault_name)
-            row = self._build_vault_row(vault_name, state)
+        # Rank matches: 0 = prefix (or no query), 1 = substring; drop non-matches.
+        ranked = []
+        for name, state in getattr(self, "_vault_states", []):
+            name_lower = name.lower()
+            if not q or name_lower.startswith(q):
+                ranked.append((0, name_lower, name, state))
+            elif q in name_lower:
+                ranked.append((1, name_lower, name, state))
+        # Stable: prefix group first, then substring group; alphabetical within.
+        ranked.sort(key=lambda t: (t[0], t[1]))
+
+        for _rank, _nl, name, state in ranked:
+            # vault_name is also the item text so any text-based selector/filter
+            # still resolves it; the row widget visually covers the text.
+            item = QListWidgetItem(name)
+            row = self._build_vault_row(name, state)
             item.setSizeHint(row.sizeHint())
-            # Stash the row widget on the item itself. _filter_vaults reorders
-            # by takeItem()/addItem(), which drops the setItemWidget binding;
-            # it reattaches from this stored reference afterward.
-            item.setData(Qt.ItemDataRole.UserRole, row)
             self.vault_list.addItem(item)
             self.vault_list.setItemWidget(item, row)
 
-        # Re-apply the active filter so add/delete don't desync the visible list.
-        query = self.search_field.text() if hasattr(self, "search_field") else ""
-        self._filter_vaults(query)
+        match_count = len(ranked)
+        if q and match_count == 0:
+            self.empty_state_label.setText(f"No vaults match “{(query or '').strip()}”")
+            self.empty_state_label.show()
+            self.vault_list.hide()
+        else:
+            self.empty_state_label.hide()
+            self.vault_list.show()
+
+        logger.info(
+            "VaultDrawer filter applied: query=%r matches=%d total=%d"
+            % (q, match_count, len(getattr(self, "_vault_states", [])))
+        )
 
     def _vault_state(self, vault_name: str) -> str:
         """Classify a vault row: 'current', 'running', or 'idle'.
@@ -537,63 +579,12 @@ class VaultDrawer(QWidget):
         Filter the vault list to names containing ``query`` (case-insensitive).
 
         Prefix matches sort above non-prefix substring matches; non-matches
-        are hidden. Empty-state label is shown when nothing matches.
+        are omitted. Empty-state label is shown when nothing matches. Rebuilds
+        rows from the cached vault states (no probing) — see
+        ``_rebuild_vault_rows`` for why this is a full rebuild rather than an
+        in-place reorder.
         """
-        q = query.strip().lower()
-
-        # First pass: assign a sort key (0=prefix, 1=substring, 2=hidden) per item.
-        annotated: list[tuple[int, str, QListWidgetItem]] = []
-        for i in range(self.vault_list.count()):
-            item = self.vault_list.item(i)
-            name_lower = item.text().lower()
-            if not q:
-                rank = 0
-            elif name_lower.startswith(q):
-                rank = 0
-            elif q in name_lower:
-                rank = 1
-            else:
-                rank = 2
-            annotated.append((rank, item.text().lower(), item))
-
-        # Stable sort: prefix matches first, then substring matches, then hidden.
-        # Within each group preserve the alphabetical order set in _refresh_vault_list.
-        annotated.sort(key=lambda t: (t[0], t[1]))
-
-        # Re-order rows by taking items out and re-adding in the new sequence.
-        # takeItem clears selection and ownership cleanly.
-        self.vault_list.blockSignals(True)
-        for i in range(self.vault_list.count() - 1, -1, -1):
-            self.vault_list.takeItem(i)
-        match_count = 0
-        for rank, _name, item in annotated:
-            self.vault_list.addItem(item)
-            # takeItem() above dropped the setItemWidget binding; reattach the
-            # row widget stashed on the item in _refresh_vault_list so the
-            # instance-aware row (badge + buttons) survives filtering/reordering.
-            row = item.data(Qt.ItemDataRole.UserRole)
-            if row is not None:
-                self.vault_list.setItemWidget(item, row)
-            if rank == 2:
-                item.setHidden(True)
-            else:
-                item.setHidden(False)
-                match_count += 1
-        self.vault_list.blockSignals(False)
-
-        # Empty-state label
-        if q and match_count == 0:
-            self.empty_state_label.setText(f"No vaults match “{query}”")
-            self.empty_state_label.show()
-            self.vault_list.hide()
-        else:
-            self.empty_state_label.hide()
-            self.vault_list.show()
-
-        logger.info(
-            f"VaultDrawer filter applied: query={query!r} matches={match_count} "
-            f"total={self.vault_list.count()}"
-        )
+        self._rebuild_vault_rows(query)
 
 
     def show_create_vault_dialog(self):
