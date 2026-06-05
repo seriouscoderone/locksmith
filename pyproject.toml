@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Locksmith"
-version = "0.0.8"
+version = "0.0.9"
 description = "Locksmith – KERI identity vault application"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -51,6 +51,9 @@ dependencies = [
 build-macos = [
     "pyinstaller>=6.6,<7",
     "dmgbuild>=1.6.1",
+]
+build-windows = [
+    "pyinstaller>=6.6,<7",
 ]
 
 [project.entry-points."locksmith.plugins"]
