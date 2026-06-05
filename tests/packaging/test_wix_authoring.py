@@ -98,11 +98,11 @@ def test_manufacturer_is_keri_host(wxs_tree):
     assert pkg.attrib.get("Manufacturer") == "KERI.host"
 
 
-def test_arp_no_repair_no_modify(wxs_tree):
-    # The Add/Remove Programs entry should only offer Uninstall.
+def test_arp_no_repair_set(wxs_tree):
+    # The Add/Remove Programs entry should not offer Repair.
+    # (ARPNOMODIFY is set by WixUI_InstallDir; we don't redefine it.)
     props = {p.attrib["Id"]: p.attrib.get("Value") for p in wxs_tree.findall(".//w:Property", NS)}
     assert props.get("ARPNOREPAIR") == "1"
-    assert props.get("ARPNOMODIFY") == "1"
 
 
 def test_wix_ui_installdir_is_used(wxs_tree):

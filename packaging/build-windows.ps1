@@ -5,13 +5,14 @@
 .DESCRIPTION
     Drives the Phase 3A (unsigned) Windows release pipeline:
       1. Write src/locksmith/build_info.py with version + channel
-      2. PyInstaller -> dist/Locksmith/Locksmith.exe
-      3. wix harvest -> build/windows/HarvestedComponents.wxs
-      4. wix build   -> build/windows/Locksmith-X.Y.Z.msi
+      2. PyInstaller        -> dist/Locksmith/Locksmith.exe + _internal/
+      3. packaging/wix/harvest.py (pure-Python harvester)
+                            -> build/windows/HarvestedComponents.wxs
+      4. wix build          -> build/windows/Locksmith-X.Y.Z.msi
 
     Signing (Azure Trusted Signing) is intentionally out of scope for
     Phase 3A; it lands in Phase 3B as a separate signing wrapper invoked
-    BEFORE the wix harvest (so the signed .exe is what gets cabbed into
+    BEFORE the harvest (so the signed .exe is what gets cabbed into
     the MSI) and AFTER `wix build` (so the MSI itself is signed too).
 
 .PARAMETER Version
@@ -118,7 +119,6 @@ try {
         -ext WixToolset.UI.wixext `
         -arch x64 `
         -d "Version=$Version" `
-        -d "HarvestSource=$distDir" `
         -bindpath $wixDir `
         -bindpath $iconSourceDir `
         -out $msiPath

@@ -41,11 +41,11 @@
     <MediaTemplate EmbedCab="yes" />
 
     <!-- Branding & metadata visible in Add/Remove Programs. -->
+    <!-- Note: ARPNOMODIFY is set by WixUI_InstallDir; do not redefine here. -->
     <Property Id="ARPPRODUCTICON" Value="LocksmithIcon" />
     <Property Id="ARPURLINFOABOUT" Value="https://locksmith.app" />
     <Property Id="ARPHELPLINK" Value="https://locksmith.app/support" />
     <Property Id="ARPNOREPAIR" Value="1" />
-    <Property Id="ARPNOMODIFY" Value="1" />
     <Icon Id="LocksmithIcon" SourceFile="AppIcon.ico" />
 
     <!-- Install location: %LOCALAPPDATA%\Programs\Locksmith\ -->
