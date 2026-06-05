@@ -104,18 +104,14 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-splash = Splash(
-    str(REPO_ROOT / "assets" / "custom" / "SplashScreen.png"),
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=None,       # no progress text overlay; just the logo
-    max_img_size=(600, 360),
-)
+# PyInstaller's Splash() is Tcl/Tk-based and explicitly unsupported on
+# macOS (recent macOS dropped system Tcl/Tk). The Dock bounce already
+# provides launch feedback, so the .app skips the splash; Windows has
+# its own Splash() resource in Locksmith.windows.spec where it does work.
 
 exe = EXE(
     pyz,
     a.scripts,
-    splash,
     [],
     exclude_binaries=True,
     name="Locksmith",
@@ -131,7 +127,6 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
-    splash.binaries,
     a.binaries,
     a.zipfiles,
     a.datas,
