@@ -177,6 +177,11 @@ class LocksmithWindow(QMainWindow):
 
         logger.info("LocksmithHome initialized")
 
+    def open_vault_targeted(self, vault_name: str) -> None:
+        """Present the passcode dialog for a specific vault (used by the
+        ``--vault`` launch path). The dialog performs the actual claim."""
+        self.vault_drawer.show_open_vault_dialog(vault_name)
+
     def _raise_to_front(self) -> None:
         """Bring this window to the foreground and request user attention."""
         from PySide6.QtWidgets import QApplication

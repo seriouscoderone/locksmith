@@ -81,6 +81,15 @@ help.ogler.baseConsoleHandler.setFormatter(baseFormatter)
 logger = help.ogler.getLogger(__name__)
 
 
+def parse_vault_arg(argv: list[str]) -> str | None:
+    """Return the value of ``--vault <name>`` from argv, or None."""
+    if "--vault" in argv:
+        i = argv.index("--vault")
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp-server":
         logger.info("MCP server mode detected")
@@ -101,6 +110,16 @@ if __name__ == "__main__":
     config = LocksmithConfig.get_instance()
     window = LocksmithWindow(config)
     window.show()
+
+    target_vault = parse_vault_arg(sys.argv)
+    if target_vault:
+        # If another instance already owns this vault, raise it and exit —
+        # never open a duplicate (also protects the LMDB single-writer).
+        if window.app.coordinator.request_raise(target_vault):
+            logger.info(f"instance.startup.focused_existing vault={target_vault}")
+            sys.exit(0)
+        logger.info(f"instance.startup.opening vault={target_vault}")
+        window.open_vault_targeted(target_vault)
 
     with loop:
         sys.exit(loop.run_forever())
