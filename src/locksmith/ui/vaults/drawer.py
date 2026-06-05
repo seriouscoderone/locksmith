@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
 from PySide6.QtGui import QIcon, QFont
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QLabel, QGraphicsOpacityEffect, QHBoxLayout, \
-    QListWidgetItem, QListWidget
+    QListWidgetItem, QListWidget, QMenu, QToolButton
 from keri import help
 
+from locksmith.core.instancing import InstanceLauncher
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import load_scaled_pixmap, create_spacer
+from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 from locksmith.ui.vaults.create import CreateVaultDialog
 from locksmith.ui.vaults.open import OpenVaultDialog
@@ -125,6 +127,13 @@ class VaultDrawer(QWidget):
         title_label.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {colors.TEXT_PRIMARY};")
         drawer_header_layout.addWidget(title_label)
         drawer_header_layout.addStretch()
+
+        # "＋ New Instance" button — spawns a fresh process with no vault open.
+        self.new_instance_button = LocksmithButton("＋ New Instance")
+        self.new_instance_button.setObjectName("vaultDrawer.newInstanceButton")
+        self.new_instance_button.clicked.connect(self._new_instance)
+        drawer_header_layout.addWidget(self.new_instance_button)
+
         drawer_layout.addLayout(drawer_header_layout)
 
         # Add a horizontal divider
@@ -205,7 +214,11 @@ class VaultDrawer(QWidget):
             }}
         """)
 
-        self.vault_list.itemClicked.connect(self._on_vault_item_clicked)
+        # NOTE: whole-row click-to-open wiring was removed here. Each row now
+        # renders its own state-appropriate action buttons (Open / Switch to /
+        # ▾ menu) via setItemWidget, which own the actions. Connecting
+        # itemClicked -> open would double-fire / conflict with those buttons,
+        # so the row-click handler is intentionally not wired up.
 
         # Populate vault list
         self._refresh_vault_list()
@@ -383,22 +396,127 @@ class VaultDrawer(QWidget):
         self.vault_drawer.show()
 
     def _refresh_vault_list(self):
-        """Refresh the list of vaults, preserving any active filter query."""
+        """Refresh the vault list with per-instance state and actions.
+
+        Each row uses a custom widget (state badge + state-appropriate
+        buttons) via ``setItemWidget``. The item's TEXT is still set to
+        ``vault_name`` so ``_filter_vaults`` (which reads ``item.text()``)
+        keeps working unchanged — the text is hidden behind the row widget.
+        """
         self.vault_list.clear()
 
-        vault_font = QFont()
-        vault_font.setPointSize(15)
-
-        # Sort vaults alphabetically so the prefix/substring grouping below
-        # produces a stable order within each group.
+        # Sort vaults alphabetically so the prefix/substring grouping in
+        # _filter_vaults produces a stable order within each group.
         for vault_name in sorted(self.app.environments(), key=str.lower):
-            vault_item = QListWidgetItem(QIcon(":/assets/custom/vault.png"), vault_name)
-            vault_item.setFont(vault_font)
-            self.vault_list.addItem(vault_item)
+            state = self._vault_state(vault_name)
+            # Keep vault_name as the item text so the search filter still
+            # matches on it; the row widget visually covers the text.
+            item = QListWidgetItem(vault_name)
+            row = self._build_vault_row(vault_name, state)
+            item.setSizeHint(row.sizeHint())
+            # Stash the row widget on the item itself. _filter_vaults reorders
+            # by takeItem()/addItem(), which drops the setItemWidget binding;
+            # it reattaches from this stored reference afterward.
+            item.setData(Qt.ItemDataRole.UserRole, row)
+            self.vault_list.addItem(item)
+            self.vault_list.setItemWidget(item, row)
 
         # Re-apply the active filter so add/delete don't desync the visible list.
         query = self.search_field.text() if hasattr(self, "search_field") else ""
         self._filter_vaults(query)
+
+    def _vault_state(self, vault_name: str) -> str:
+        """Classify a vault row: 'current', 'running', or 'idle'.
+
+        Reads ``app.name`` (the vault open in THIS instance) and
+        ``app.coordinator`` (cross-instance liveness). Both are read
+        defensively so the drawer still renders during early construction —
+        or under test stubs — before coordination state exists, degrading to
+        'idle' rather than raising.
+        """
+        if getattr(self.app, "name", None) == vault_name:
+            return "current"
+        coordinator = getattr(self.app, "coordinator", None)
+        if coordinator is not None and coordinator.probe(vault_name):
+            return "running"
+        return "idle"
+
+    def _build_vault_row(self, vault_name: str, state: str) -> QFrame:
+        """Build the per-vault row widget for ``state``.
+
+        - current: name + "● Open in this instance" badge + "current" tag.
+        - running: name + "◆ Running in another instance" badge + Switch to.
+        - idle:    name + "Not open" badge + split Open button (Open + ▾ menu).
+        """
+        row = QFrame()
+        row.setObjectName(f"vaultDrawer.row.{vault_name}")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(10, 8, 10, 8)
+        h.setSpacing(8)
+
+        name_col = QVBoxLayout()
+        name_label = QLabel(vault_name)
+        name_font = QFont()
+        name_font.setPointSize(14)
+        name_label.setFont(name_font)
+        name_col.addWidget(name_label)
+        status = QLabel({
+            "current": "● Open in this instance",
+            "running": "◆ Running in another instance",
+            "idle": "Not open",
+        }[state])
+        status.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+        name_col.addWidget(status)
+        h.addLayout(name_col)
+        h.addStretch()
+
+        if state == "current":
+            tag = QLabel("current")
+            tag.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+            h.addWidget(tag)
+        elif state == "running":
+            switch_btn = LocksmithButton("Switch to")
+            switch_btn.setObjectName(f"vaultDrawer.switchTo.{vault_name}")
+            switch_btn.clicked.connect(
+                lambda _=False, v=vault_name: self._switch_to_running(v)
+            )
+            h.addWidget(switch_btn)
+        else:  # idle — split button: Open ▾ Open in New Instance
+            open_btn = LocksmithButton("Open")
+            open_btn.setObjectName(f"vaultDrawer.open.{vault_name}")
+            open_btn.clicked.connect(
+                lambda _=False, v=vault_name: self.show_open_vault_dialog(v)
+            )
+            h.addWidget(open_btn)
+
+            more = QToolButton()
+            more.setObjectName(f"vaultDrawer.openMenu.{vault_name}")
+            more.setText("▾")
+            more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            menu = QMenu(more)
+            act = menu.addAction("Open in New Instance")
+            act.triggered.connect(
+                lambda _=False, v=vault_name: self._open_in_new_instance(v)
+            )
+            more.setMenu(menu)
+            h.addWidget(more)
+
+        return row
+
+    def _open_in_new_instance(self, vault_name: str) -> None:
+        """Spawn a new OS process opened on ``vault_name``."""
+        logger.info(f"instance.drawer.open_new vault={vault_name}")
+        InstanceLauncher.launch_new(vault_name)
+
+    def _switch_to_running(self, vault_name: str) -> None:
+        """Ask the running owner of ``vault_name`` to raise its window."""
+        logger.info(f"instance.drawer.switch_to vault={vault_name}")
+        self.app.coordinator.request_raise(vault_name)
+
+    def _new_instance(self) -> None:
+        """Spawn a new OS process with no vault open."""
+        logger.info("instance.drawer.new_instance")
+        InstanceLauncher.launch_new(None)
 
     def _filter_vaults(self, query: str):
         """
@@ -436,6 +554,12 @@ class VaultDrawer(QWidget):
         match_count = 0
         for rank, _name, item in annotated:
             self.vault_list.addItem(item)
+            # takeItem() above dropped the setItemWidget binding; reattach the
+            # row widget stashed on the item in _refresh_vault_list so the
+            # instance-aware row (badge + buttons) survives filtering/reordering.
+            row = item.data(Qt.ItemDataRole.UserRole)
+            if row is not None:
+                self.vault_list.setItemWidget(item, row)
             if rank == 2:
                 item.setHidden(True)
             else:
@@ -470,15 +594,14 @@ class VaultDrawer(QWidget):
         dialog.show()
 
     def _on_vault_item_clicked(self, item: QListWidgetItem):
-        """
-        Handle vault item click.
+        """Deprecated: whole-row click-to-open.
 
-        Args:
-            item: The clicked QListWidgetItem
+        No longer wired to ``vault_list.itemClicked`` — each row now renders
+        its own action buttons (Open / Switch to / ▾ menu). Kept as an
+        intentional no-op so any stray reconnection won't double-fire the
+        open flow. Use the row buttons instead.
         """
-        vault_name = item.text()
-        logger.info(f"Vault item clicked: {vault_name}")
-        self.show_open_vault_dialog(vault_name)
+        return
 
     def show_open_vault_dialog(self, vault_name: str):
         """
