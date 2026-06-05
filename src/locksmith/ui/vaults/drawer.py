@@ -590,6 +590,11 @@ class VaultDrawer(QWidget):
     def show_create_vault_dialog(self):
         """Show the vault creation dialog."""
         dialog = CreateVaultDialog(parent=self.parent, config=self.app.config, app=self.app)
+        # Destroy the dialog when it closes. Otherwise it lingers as a hidden
+        # child of the main window, and a later create dialog produces duplicate
+        # objectName'd widgets — selectors then resolve to the stale hidden one.
+        # Safe here because the parent (main window) long outlives the dialog.
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         # Connect the vault_created signal to refresh the list (persistent vaults)
         dialog.vault_created.connect(self._on_vault_created)
@@ -610,6 +615,9 @@ class VaultDrawer(QWidget):
             parent=self.parent,
             config=self.app.config,
         )
+        # Destroy on close so repeated opens don't leave stale hidden
+        # duplicates (same objectNames) parented to the main window.
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         # Connect vault_opened signal to close drawer and navigate
         dialog.vault_opened.connect(self._on_vault_opened)
