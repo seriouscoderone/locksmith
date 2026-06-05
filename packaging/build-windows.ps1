@@ -18,13 +18,24 @@
 .PARAMETER Version
     Override the version derived from pyproject.toml. Optional.
 
+.PARAMETER Stage
+    Which stage to run. CI splits the run into two halves so signing
+    can be spliced between them:
+      - "pyinstaller": steps 1-3 only (produces dist/Locksmith/*.exe)
+      - "msi":         steps 4-5 only (harvest + wix build of MSI)
+      - "all" (default): everything end-to-end (dev usage)
+
 .EXAMPLE
     pwsh packaging/build-windows.ps1
     pwsh packaging/build-windows.ps1 -Version 0.0.9
+    pwsh packaging/build-windows.ps1 -Stage pyinstaller
+    pwsh packaging/build-windows.ps1 -Stage msi
 #>
 [CmdletBinding()]
 param(
-    [string]$Version
+    [string]$Version,
+    [ValidateSet("all", "pyinstaller", "msi")]
+    [string]$Stage = "all"
 )
 
 $ErrorActionPreference = "Stop"
@@ -67,22 +78,29 @@ Write-Host "[build] wrote $buildInfo"
 
 # --- 3. PyInstaller -----------------------------------------------------------
 
-Write-Host "[build] running PyInstaller"
-Push-Location $repoRoot
-try {
-    & pyinstaller --noconfirm --clean (Join-Path $packagingDir "Locksmith.windows.spec")
-    if ($LASTEXITCODE -ne 0) {
-        throw "[build] PyInstaller exited $LASTEXITCODE"
+if ($Stage -eq "all" -or $Stage -eq "pyinstaller") {
+    Write-Host "[build] running PyInstaller"
+    Push-Location $repoRoot
+    try {
+        & pyinstaller --noconfirm --clean (Join-Path $packagingDir "Locksmith.windows.spec")
+        if ($LASTEXITCODE -ne 0) {
+            throw "[build] PyInstaller exited $LASTEXITCODE"
+        }
+    } finally {
+        Pop-Location
     }
-} finally {
-    Pop-Location
+
+    $exePath = Join-Path $distDir "Locksmith.exe"
+    if (-not (Test-Path -LiteralPath $exePath)) {
+        throw "[build] PyInstaller did not produce $exePath"
+    }
+    Write-Host "[build] PyInstaller ok exe=$exePath"
 }
 
-$exePath = Join-Path $distDir "Locksmith.exe"
-if (-not (Test-Path -LiteralPath $exePath)) {
-    throw "[build] PyInstaller did not produce $exePath"
+if ($Stage -eq "pyinstaller") {
+    Write-Host "[build] stage=pyinstaller; stopping before harvest/wix so signing can splice in"
+    return
 }
-Write-Host "[build] PyInstaller ok exe=$exePath"
 
 # --- 4. Harvest the dist tree (pure-Python harvester) ------------------------
 # We don't use `wix harvest` because its CLI surface is unstable across the

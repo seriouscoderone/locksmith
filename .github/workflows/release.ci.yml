@@ -132,8 +132,12 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    # `windows-signing` GitHub Environment gates this job on the tag glob v*
+    # and supplies the AZURE_* + ARTIFACT_SIGNING_* variables consumed by
+    # the azure/login and trusted-signing steps below.
+    environment: windows-signing
     permissions:
-      id-token: write   # required for GitHub Actions OIDC (AWS upload)
+      id-token: write   # required for GitHub Actions OIDC (AWS + Azure)
       contents: read
     env:
       LOCKSMITH_RELEASE_CHANNEL: stable
@@ -222,12 +226,61 @@ jobs:
           & wix extension add -g WixToolset.UI.wixext/4.0.5
           & wix extension list -g
 
-      - name: Build unsigned MSI
+      # ---- Phase 3B: signing ------------------------------------------------
+      # PyInstaller runs first; the produced .exe + .dll + .pyd files are
+      # Authenticode-signed by Azure Artifact Signing; then WiX wraps the
+      # signed tree into an MSI; then the MSI itself is signed. Two distinct
+      # azure/trusted-signing-action calls (one per artifact set).
+
+      - name: Build .exe (PyInstaller stage)
         shell: pwsh
         env:
           LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
         run: |
-          pwsh packaging/build-windows.ps1 -Version "${{ steps.set_version.outputs.version }}"
+          pwsh packaging/build-windows.ps1 `
+            -Version "${{ steps.set_version.outputs.version }}" `
+            -Stage pyinstaller
+
+      - name: Azure login via GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Sign PyInstaller binaries (Locksmith.exe + bundled DLLs / PYDs)
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_CERT_PROFILE }}
+          files-folder: dist/Locksmith
+          files-folder-filter: exe,dll,pyd
+          files-folder-recurse: true
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
+
+      - name: Build .msi (WiX stage, packages the now-signed binaries)
+        shell: pwsh
+        env:
+          LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
+        run: |
+          pwsh packaging/build-windows.ps1 `
+            -Version "${{ steps.set_version.outputs.version }}" `
+            -Stage msi
+
+      - name: Sign the MSI itself
+        uses: azure/trusted-signing-action@v0.5.1
+        with:
+          endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
+          trusted-signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
+          certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_CERT_PROFILE }}
+          files-folder: build/windows
+          files-folder-filter: msi
+          file-digest: SHA256
+          timestamp-rfc3161: http://timestamp.acs.microsoft.com
+          timestamp-digest: SHA256
 
       - name: Configure AWS credentials via OIDC
         uses: aws-actions/configure-aws-credentials@v4
