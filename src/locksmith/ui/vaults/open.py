@@ -173,6 +173,14 @@ class OpenVaultDialog(LocksmithDialog):
                 self.show_error("Vault does not exist.")
                 return
 
+            # Single-instance-per-vault: claim before opening the keystore.
+            # If another instance already owns it, the owner has been
+            # raised; do not open a duplicate (also guards the LMDB writer).
+            if not self.app.coordinator.claim(self.vault_name):
+                logger.info(f"instance.open.denied vault={self.vault_name}")
+                self.show_error("This vault is already open in another instance.")
+                return
+
             # Check if vault is encrypted
             is_encrypted = is_vault_encrypted(self.vault_name, self.config.base)
             
