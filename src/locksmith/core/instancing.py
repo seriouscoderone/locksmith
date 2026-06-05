@@ -19,8 +19,11 @@ import hashlib
 import socket
 
 from keri import help
+from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = help.ogler.getLogger(__name__)
+
+_CONNECT_TIMEOUT_MS = 200
 
 
 def vault_server_name(base: str | None, vault: str) -> str:
@@ -53,3 +56,97 @@ def find_free_port(start: int = 5621, host: str = "0.0.0.0", limit: int = 200) -
             except OSError:
                 continue
     return start
+
+
+class InstanceCoordinator:
+    """Per-vault single-instance coordination over Qt local sockets.
+
+    One coordinator lives per process. It can hold claims for more than
+    one vault transiently (during a switch-in-place the new vault is
+    claimed before the old one is released), so claims are tracked in a
+    dict keyed by vault name.
+    """
+
+    def __init__(self, base: str | None = None, raise_window=None):
+        self._base = base or ""
+        self.raise_window = raise_window  # zero-arg callable, set by the window
+        self._servers: dict[str, QLocalServer] = {}
+
+    def _name(self, vault: str) -> str:
+        return vault_server_name(self._base, vault)
+
+    def request_raise(self, vault: str) -> bool:
+        """Ask a running owner of ``vault`` to raise its window.
+
+        Returns True if an owner answered (vault is open elsewhere).
+        """
+        sock = QLocalSocket()
+        sock.connectToServer(self._name(vault))
+        if sock.waitForConnected(_CONNECT_TIMEOUT_MS):
+            logger.info(f"instance.raise.requested vault={vault}")
+            sock.write(b"raise\n")
+            sock.flush()
+            sock.waitForBytesWritten(_CONNECT_TIMEOUT_MS)
+            sock.disconnectFromServer()
+            sock.close()
+            return True
+        sock.abort()
+        return False
+
+    def claim(self, vault: str) -> bool:
+        """Become the owner of ``vault``. Returns False if already owned
+        elsewhere (in which case the owner has been asked to raise)."""
+        if vault in self._servers:
+            return True  # idempotent — we already own it
+        if self.request_raise(vault):
+            logger.info(f"instance.claim.denied vault={vault}")
+            return False
+        name = self._name(vault)
+        # Clear a stale socket file left by a crashed owner; safe because
+        # no live listener answered request_raise above.
+        QLocalServer.removeServer(name)
+        server = QLocalServer()
+        if not server.listen(name):
+            logger.error(
+                f"instance.claim.listen_failed vault={vault} "
+                f"err={server.errorString()}"
+            )
+            return False
+        server.newConnection.connect(lambda v=vault: self._on_incoming(v))
+        self._servers[vault] = server
+        logger.info(f"instance.claim.granted vault={vault}")
+        return True
+
+    def _on_incoming(self, vault: str) -> None:
+        server = self._servers.get(vault)
+        if server is None:
+            return
+        conn = server.nextPendingConnection()
+        if conn is not None:
+            conn.readAll()  # drain the "raise" payload
+            conn.close()
+        logger.info(f"instance.raise.received vault={vault}")
+        if self.raise_window is not None:
+            self.raise_window()
+
+    def probe(self, vault: str) -> bool:
+        """Non-owning liveness check used to render drawer badges."""
+        if vault in self._servers:
+            return True
+        sock = QLocalSocket()
+        sock.connectToServer(self._name(vault))
+        ok = sock.waitForConnected(_CONNECT_TIMEOUT_MS)
+        sock.abort()
+        sock.close()
+        return ok
+
+    def release(self, vault: str) -> None:
+        server = self._servers.pop(vault, None)
+        if server is not None:
+            server.close()
+            QLocalServer.removeServer(self._name(vault))
+            logger.info(f"instance.released vault={vault}")
+
+    def release_all(self) -> None:
+        for vault in list(self._servers):
+            self.release(vault)
