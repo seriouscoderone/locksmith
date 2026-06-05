@@ -17,8 +17,11 @@ from __future__ import annotations
 
 import hashlib
 import socket
+import sys
+from pathlib import Path
 
 from keri import help
+from PySide6.QtCore import QProcess
 from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = help.ogler.getLogger(__name__)
@@ -154,3 +157,27 @@ class InstanceCoordinator:
     def release_all(self) -> None:
         for vault in list(self._servers):
             self.release(vault)
+
+
+class InstanceLauncher:
+    """Spawn a new OS process of this app, optionally opened on a vault.
+
+    Mirrors the plugin-restart relaunch pattern in
+    ``ui/window.py::_handle_restart_requested`` (QProcess.startDetached),
+    extended with a ``--vault`` argument.
+    """
+
+    @staticmethod
+    def launch_new(vault: str | None = None) -> None:
+        extra = ["--vault", vault] if vault else []
+        if getattr(sys, "frozen", False):
+            if sys.platform == "darwin":
+                # sys.executable -> .../Locksmith.app/Contents/MacOS/Locksmith
+                app_bundle = str(Path(sys.executable).parents[2])
+                QProcess.startDetached("open", ["-n", app_bundle, "--args"] + extra)
+                logger.info(f"instance.launch.spawned platform=macos vault={vault}")
+                return
+            QProcess.startDetached(sys.executable, sys.argv[1:] + extra)
+        else:
+            QProcess.startDetached(sys.executable, ["-m", "locksmith.main"] + extra)
+        logger.info(f"instance.launch.spawned platform={sys.platform} vault={vault}")

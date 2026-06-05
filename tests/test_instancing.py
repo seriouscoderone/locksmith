@@ -81,3 +81,26 @@ def test_probe_reports_running_state(qapp, tmp_path):
     finally:
         owner.release_all()
         observer.release_all()
+
+
+from unittest.mock import patch
+
+from locksmith.core import instancing
+
+
+def test_launch_new_dev_mode_uses_module_invocation(qapp):
+    with patch.object(instancing.sys, "frozen", False, create=True), \
+         patch.object(instancing.QProcess, "startDetached", return_value=(True, 0)) as sd:
+        instancing.InstanceLauncher.launch_new("treasurer")
+    sd.assert_called_once()
+    args = sd.call_args[0]
+    # dev mode: python -m locksmith.main --vault treasurer
+    assert args[1] == ["-m", "locksmith.main", "--vault", "treasurer"]
+
+
+def test_launch_new_without_vault_omits_vault_arg(qapp):
+    with patch.object(instancing.sys, "frozen", False, create=True), \
+         patch.object(instancing.QProcess, "startDetached", return_value=(True, 0)) as sd:
+        instancing.InstanceLauncher.launch_new(None)
+    args = sd.call_args[0]
+    assert args[1] == ["-m", "locksmith.main"]
