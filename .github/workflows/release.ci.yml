@@ -132,16 +132,125 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    permissions:
+      id-token: write   # required for GitHub Actions OIDC (AWS upload)
+      contents: read
+    env:
+      LOCKSMITH_RELEASE_CHANNEL: stable
+      AWS_REGION: us-east-1
+      S3_BUCKET: releases.keri.host
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          # Full clone so `git verify-tag` in the preflight has the
+          # signed-tag object. See Phase 2 macOS job for the gotcha.
+          fetch-depth: 0
+
+      - name: Re-fetch annotated tag object
+        # actions/checkout on a `release` event writes refs/tags/<tag>
+        # as a lightweight ref. Force-fetch overwrites with the real
+        # annotated tag so `git verify-tag` succeeds.
+        shell: bash
+        run: git fetch --tags --force origin
 
       - name: Set up Python 3.14
         uses: actions/setup-python@v5
         with:
           python-version: '3.14'
 
-      - name: Phase 3 placeholder
+      - name: Install Python build dependencies
+        shell: bash
         run: |
-          echo "Windows build will land in Phase 3 of the deploy/update plan."
-          exit 0
+          python -m pip install --upgrade pip setuptools wheel boto3
+          pip install -e .[build-windows]
+
+      - name: Configure git to verify SSH-signed tags via .gitsigners
+        shell: bash
+        run: |
+          git config --global gpg.format ssh
+          git config --global gpg.ssh.allowedSignersFile "$GITHUB_WORKSPACE/.gitsigners"
+
+      - name: Preflight — verify tag matches pyproject and is signed
+        shell: bash
+        run: |
+          python scripts/check-version.py --tag "${{ github.event.release.tag_name }}"
+
+      - name: Set version output
+        id: set_version
+        shell: bash
+        run: |
+          version="${{ github.event.release.tag_name }}"
+          if [[ "$version" == v* ]]; then version="${version:1}"; fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Install libsodium (vcpkg-style — choco)
+        shell: pwsh
+        run: |
+          choco install libsodium --version=1.0.20.1 --no-progress -y
+          # Chocolatey drops libsodium.dll into:
+          #   C:\ProgramData\chocolatey\lib\libsodium\tools\libsodium.dll
+          $candidates = @(
+            "C:\ProgramData\chocolatey\lib\libsodium\tools\libsodium.dll",
+            "C:\ProgramData\chocolatey\lib\libsodium\bin\libsodium.dll"
+          )
+          $sodiumDll = $candidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+          if (-not $sodiumDll) {
+            Write-Host "[install] searching choco lib tree for libsodium.dll"
+            $sodiumDll = (Get-ChildItem -Recurse -Filter libsodium.dll -Path "C:\ProgramData\chocolatey\lib" -ErrorAction SilentlyContinue | Select-Object -First 1).FullName
+          }
+          if (-not $sodiumDll) {
+            throw "could not locate libsodium.dll after choco install"
+          }
+          Write-Host "[install] libsodium.dll at $sodiumDll"
+          New-Item -ItemType Directory -Force -Path "packaging/windows" | Out-Null
+          Copy-Item -LiteralPath $sodiumDll -Destination "packaging/windows/libsodium.dll" -Force
+
+      - name: Install WiX Toolset v4
+        shell: pwsh
+        run: |
+          dotnet tool install --global wix --version 4.0.5
+          & wix --version
+
+      - name: Install WiX UI extension
+        shell: pwsh
+        run: |
+          & wix extension add -g WixToolset.UI.wixext/4.0.5
+          & wix extension list -g
+
+      - name: Build unsigned MSI
+        shell: pwsh
+        env:
+          LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
+        run: |
+          pwsh packaging/build-windows.ps1 -Version "${{ steps.set_version.outputs.version }}"
+
+      - name: Configure AWS credentials via OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gha-locksmith-release-publisher
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Upload MSI to s3://releases.keri.host/releases/<version>/
+        shell: bash
+        env:
+          VERSION: ${{ steps.set_version.outputs.version }}
+          S3_BUCKET: ${{ env.S3_BUCKET }}
+        run: |
+          MSI="build/windows/Locksmith-${VERSION}.msi"
+          if [ ! -f "$MSI" ]; then
+            echo "MSI not found at $MSI" >&2
+            exit 1
+          fi
+          python scripts/upload.py \
+            --bucket "$S3_BUCKET" \
+            --object-key "releases/${VERSION}/Locksmith-${VERSION}.msi" \
+            --file "$MSI" \
+            --content-type application/x-msi
+
+      - name: Capture MSI artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Locksmith-${{ steps.set_version.outputs.version }}-msi
+          path: build/windows/Locksmith-${{ steps.set_version.outputs.version }}.msi
+          retention-days: 7
