@@ -403,6 +403,18 @@ class VaultDrawer(QWidget):
         ``vault_name`` so ``_filter_vaults`` (which reads ``item.text()``)
         keeps working unchanged — the text is hidden behind the row widget.
         """
+        # QListWidget.clear() does NOT free widgets installed via
+        # setItemWidget — they stay parented to the list's viewport and
+        # accumulate on every refresh (the drawer refreshes on every open).
+        # Release them explicitly before clearing. Safe when the list is empty.
+        for i in range(self.vault_list.count()):
+            item = self.vault_list.item(i)
+            row = self.vault_list.itemWidget(item) or item.data(Qt.ItemDataRole.UserRole)
+            self.vault_list.removeItemWidget(item)
+            if row is not None:
+                row.setParent(None)
+                row.deleteLater()
+            item.setData(Qt.ItemDataRole.UserRole, None)
         self.vault_list.clear()
 
         # Sort vaults alphabetically so the prefix/substring grouping in
@@ -437,7 +449,9 @@ class VaultDrawer(QWidget):
         if getattr(self.app, "name", None) == vault_name:
             return "current"
         coordinator = getattr(self.app, "coordinator", None)
-        if coordinator is not None and coordinator.probe(vault_name):
+        if coordinator is None:
+            logger.debug("instance.drawer.no_coordinator vault=%s", vault_name)
+        elif coordinator.probe(vault_name):
             return "running"
         return "idle"
 
@@ -592,16 +606,6 @@ class VaultDrawer(QWidget):
         dialog.vault_opened.connect(self._on_vault_opened)
 
         dialog.show()
-
-    def _on_vault_item_clicked(self, item: QListWidgetItem):
-        """Deprecated: whole-row click-to-open.
-
-        No longer wired to ``vault_list.itemClicked`` — each row now renders
-        its own action buttons (Open / Switch to / ▾ menu). Kept as an
-        intentional no-op so any stray reconnection won't double-fire the
-        open flow. Use the row buttons instead.
-        """
-        return
 
     def show_open_vault_dialog(self, vault_name: str):
         """
