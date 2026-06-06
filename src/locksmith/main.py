@@ -141,7 +141,10 @@ if __name__ == "__main__":
     win_pos = parse_window_pos(sys.argv)
     if win_pos is not None:
         window.move(*win_pos)
-        logger.info(f"instance.startup.window_pos x={win_pos[0]} y={win_pos[1]}")
+        logger.info(
+            f"instance.startup.window_pos requested=({win_pos[0]},{win_pos[1]}) "
+            f"actual=({window.x()},{window.y()})"
+        )
 
     if target_vault:
         logger.info(f"instance.startup.opening vault={target_vault}")

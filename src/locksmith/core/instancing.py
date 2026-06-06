@@ -168,8 +168,9 @@ class InstanceLauncher:
     """
 
     # Pixels to offset a new instance from the launching window so both are
-    # visible at once (Windows/VS Code-style cascade): down and to the left.
-    _CASCADE_DX = -48
+    # visible at once (Windows/VS Code-style cascade): down and to the right.
+    # (Down-left clamps against the screen's left edge and overlaps instead.)
+    _CASCADE_DX = 48
     _CASCADE_DY = 48
 
     @staticmethod

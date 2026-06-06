@@ -107,19 +107,19 @@ def test_launch_new_without_vault_omits_vault_arg(qapp):
 
 
 def test_launch_new_with_origin_cascades_window_pos(qapp):
-    # origin (200, 100) -> cascade down/left: x+(-48)=152, y+48=148
+    # origin (200, 100) -> cascade down/right: x+48=248, y+48=148
     with patch.object(instancing.sys, "frozen", False, create=True), \
          patch.object(instancing.QProcess, "startDetached", return_value=(True, 0)) as sd:
         instancing.InstanceLauncher.launch_new("treasurer", origin_xy=(200, 100))
     args = sd.call_args[0]
     assert args[1] == ["-m", "locksmith.main", "--vault", "treasurer",
-                       "--win-pos", "152,148"]
+                       "--win-pos", "248,148"]
 
 
-def test_launch_new_origin_clamped_to_screen_edge(qapp):
-    # Near the left/top edge, the cascade clamps at 0 rather than going negative.
+def test_launch_new_origin_from_top_left(qapp):
+    # From the top-left corner, the new instance still steps down-and-right.
     with patch.object(instancing.sys, "frozen", False, create=True), \
          patch.object(instancing.QProcess, "startDetached", return_value=(True, 0)) as sd:
-        instancing.InstanceLauncher.launch_new(None, origin_xy=(10, 0))
+        instancing.InstanceLauncher.launch_new(None, origin_xy=(0, 0))
     args = sd.call_args[0]
-    assert args[1] == ["-m", "locksmith.main", "--win-pos", "0,48"]
+    assert args[1] == ["-m", "locksmith.main", "--win-pos", "48,48"]
