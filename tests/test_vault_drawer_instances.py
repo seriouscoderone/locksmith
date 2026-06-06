@@ -1,5 +1,5 @@
 from types import SimpleNamespace
-from unittest.mock import MagicMock, patch
+from unittest.mock import ANY, MagicMock, patch
 
 from PySide6.QtWidgets import QFrame, QMainWindow
 
@@ -63,7 +63,8 @@ def test_open_in_new_instance_launches_process(qapp):
     try:
         with patch("locksmith.ui.vaults.drawer.InstanceLauncher") as launcher:
             drawer._open_in_new_instance("notary")
-            launcher.launch_new.assert_called_once_with("notary")
+            # Passes the launching window's position so the new instance cascades.
+            launcher.launch_new.assert_called_once_with("notary", origin_xy=ANY)
     finally:
         drawer.deleteLater()
         win.close()
@@ -134,6 +135,28 @@ def test_refresh_does_not_leak_row_widgets(qapp):
         # Honor the deleteLater() scheduled for released row widgets.
         qapp.processEvents()
         assert _live_row_count(drawer) == len(vaults)
+    finally:
+        drawer.deleteLater()
+        win.close()
+
+
+def test_current_row_has_close_button_that_closes_vault(qapp):
+    """The current vault's row renders a Close button wired to the window's
+    lock/close flow (replacing the removed top-toolbar Close button)."""
+    from PySide6.QtWidgets import QPushButton
+
+    win, coord = _make_window(["solo"], current="solo", probe_running=set())
+    win.on_lock_vault = MagicMock()
+    toolbar = SimpleNamespace(height=lambda: 0)
+    drawer = VaultDrawer(parent=win, toolbar_ref=toolbar)
+    try:
+        # Row widgets live under the list (setItemWidget → viewport), not under
+        # the drawer controller object.
+        close_btn = drawer.vault_list.findChild(QPushButton, "vaultDrawer.close.solo")
+        assert close_btn is not None, "current row should have a Close button"
+        # Clicking it runs the window's close-vault flow.
+        drawer._close_current_vault("solo")
+        win.on_lock_vault.assert_called_once()
     finally:
         drawer.deleteLater()
         win.close()

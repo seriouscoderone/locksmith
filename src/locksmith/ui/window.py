@@ -270,8 +270,15 @@ class LocksmithWindow(QMainWindow):
             self._disconnect_toast_signals()
 
         elif page == Pages.VAULT:
-            # Vault page: hide vault drawer (nav menu is in VaultPage)
-            self.vault_drawer.hide_drawer_widgets()
+            # Vault page: keep the vault drawer available (closed, ready to
+            # slide in) so the user can switch vaults, create a new one, or
+            # close the current vault from the drawer without leaving the page.
+            self.vault_drawer.show_drawer_widgets()
+            self.vault_drawer.handle_resize(
+                self.width(),
+                self.height(),
+                self.toolbar.height()
+            )
             # Connect toast signals when vault is active
             self._connect_toast_signals()
 

@@ -90,6 +90,23 @@ def parse_vault_arg(argv: list[str]) -> str | None:
     return None
 
 
+def parse_window_pos(argv: list[str]) -> tuple[int, int] | None:
+    """Return the ``--win-pos X,Y`` top-left position from argv, or None.
+
+    Used by the cascade: a launched instance opens offset from the window
+    that spawned it so both are visible at once.
+    """
+    if "--win-pos" in argv:
+        i = argv.index("--win-pos")
+        if i + 1 < len(argv):
+            try:
+                x_str, y_str = argv[i + 1].split(",")
+                return (int(x_str), int(y_str))
+            except ValueError:
+                return None
+    return None
+
+
 if __name__ == "__main__":
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp-server":
         logger.info("MCP server mode detected")
@@ -118,6 +135,13 @@ if __name__ == "__main__":
         sys.exit(0)
 
     window.show()
+
+    # Cascade: if launched from another instance, open offset from it so both
+    # windows are visible (set after show so the move sticks on all platforms).
+    win_pos = parse_window_pos(sys.argv)
+    if win_pos is not None:
+        window.move(*win_pos)
+        logger.info(f"instance.startup.window_pos x={win_pos[0]} y={win_pos[1]}")
 
     if target_vault:
         logger.info(f"instance.startup.opening vault={target_vault}")

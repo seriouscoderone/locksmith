@@ -167,9 +167,20 @@ class InstanceLauncher:
     extended with a ``--vault`` argument.
     """
 
+    # Pixels to offset a new instance from the launching window so both are
+    # visible at once (Windows/VS Code-style cascade): down and to the left.
+    _CASCADE_DX = -48
+    _CASCADE_DY = 48
+
     @staticmethod
-    def launch_new(vault: str | None = None) -> None:
+    def launch_new(vault: str | None = None, origin_xy: tuple[int, int] | None = None) -> None:
         extra = ["--vault", vault] if vault else []
+        if origin_xy is not None:
+            # Cascade off the launching window's position so the new instance
+            # doesn't land exactly on top of it. Clamped to the screen edge.
+            tx = max(0, int(origin_xy[0]) + InstanceLauncher._CASCADE_DX)
+            ty = max(0, int(origin_xy[1]) + InstanceLauncher._CASCADE_DY)
+            extra += ["--win-pos", f"{tx},{ty}"]
         if getattr(sys, "frozen", False):
             if sys.platform == "darwin":
                 # sys.executable -> .../Locksmith.app/Contents/MacOS/Locksmith

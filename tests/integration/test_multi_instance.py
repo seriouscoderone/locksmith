@@ -253,29 +253,58 @@ def test_switch_in_place_reuses_one_instance():
         assert _vault_open(devctl, sock), "vaultone should be open"
         assert _open_vault_name(devctl, sock) == "vaultone"
 
-        # Switch in place: the real user flow to leave a vault is the
-        # toolbar Lock button (the Vaults drawer button is hidden on the
-        # vault page). Lock closes vaultone (releasing its claim) and
-        # navigates HOME, which re-shows + refreshes the drawer. The Lock
-        # button carries the "Close Vault" tooltip selector.
-        r = devctl(sock, "click", target="Close Vault")
-        assert r.get("ok"), f"click Lock (close vault): {r}"
-        r = devctl(sock, "wait_for",
-                   target="vaultNavMenu.identifiersButton",
-                   condition="hidden", timeout_ms=10000)
-        assert r.get("ok"), f"vault never closed after Lock: {r}"
-        # Vault closed: the toolbar vault-name label clears.
-        assert _open_vault_name(devctl, sock) == "", (
-            "toolbar vault-name label should clear when the vault closes"
-        )
-
-        # Open the drawer (Vaults button is back on the home toolbar) and
-        # create + open vault B in the SAME instance.
+        # True switch-in-place: WHILE INSIDE vaultone, open the Vaults drawer
+        # (now reachable on the vault page) and create+open vaulttwo — no
+        # manual close first. Opening another vault closes the current one
+        # (claim-before-release) and reuses this single instance.
         r = devctl(sock, "click", target="toolbar.vaultsButton")
-        assert r.get("ok"), f"open vault drawer: {r}"
+        assert r.get("ok"), f"open vault drawer while in vault: {r}"
         open_test_vault_via_ui(devctl, sock, name="vaulttwo")
         assert _vault_open(devctl, sock), "vaulttwo should be open"
-        assert _open_vault_name(devctl, sock) == "vaulttwo"
+        assert _open_vault_name(devctl, sock) == "vaulttwo", (
+            "switching vaults should leave the instance on vaulttwo"
+        )
+    finally:
+        i["proc"].terminate()
+        try:
+            i["proc"].wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            i["proc"].kill()
+        shutil.rmtree(root, ignore_errors=True)
+
+
+def test_close_vault_from_drawer():
+    """The current vault's drawer row has a Close button (the top-toolbar lock
+    button was removed). Clicking it closes the vault and returns to home."""
+    root, i = _single_instance()
+    try:
+        devctl = _devctl
+        sock = i["sock"]
+
+        open_test_vault_via_ui(devctl, sock, name="solo")
+        assert _open_vault_name(devctl, sock) == "solo"
+
+        # The dedicated top "Close Vault" button no longer exists on the
+        # vault page — closing happens from the drawer.
+        assert not devctl(sock, "is_visible", target="Close Vault").get("visible"), (
+            "top-toolbar Close Vault button should be gone on the vault page"
+        )
+
+        # Open the drawer in-vault and click the current row's Close button.
+        r = devctl(sock, "click", target="toolbar.vaultsButton")
+        assert r.get("ok"), f"open vault drawer in-vault: {r}"
+        r = devctl(sock, "wait_for", target="vaultDrawer.close.solo",
+                   condition="visible", timeout_ms=3000)
+        assert r.get("ok"), f"current row Close button not shown: {r}"
+        r = devctl(sock, "click", target="vaultDrawer.close.solo")
+        assert r.get("ok"), f"click drawer Close: {r}"
+
+        r = devctl(sock, "wait_for", target="vaultNavMenu.identifiersButton",
+                   condition="hidden", timeout_ms=8000)
+        assert r.get("ok"), f"vault never closed after drawer Close: {r}"
+        assert _open_vault_name(devctl, sock) == "", (
+            "toolbar vault-name label should clear after closing from the drawer"
+        )
     finally:
         i["proc"].terminate()
         try:

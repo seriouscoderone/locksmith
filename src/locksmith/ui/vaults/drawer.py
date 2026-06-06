@@ -516,7 +516,8 @@ class VaultDrawer(QWidget):
 
         Layout: a two-line left column (vault name + a small colored status
         line) and a right-aligned, compact action:
-          - current: a muted "Current" pill (no action).
+          - current: a "Close" button (closes the vault — replaces the old
+            top-toolbar lock button now that the drawer is always reachable).
           - running: a "Switch to" button (raises the owning instance).
           - idle:    a split "Open" button with a ▾ menu ("Open in New Instance").
         """
@@ -542,13 +543,12 @@ class VaultDrawer(QWidget):
         h.addStretch()
 
         if state == "current":
-            tag = QLabel("Current")
-            tag.setStyleSheet(
-                "color: #16A34A; background-color: rgba(34,197,94,0.12); "
-                "font-size: 11px; font-weight: 600; border-radius: 10px; "
-                "padding: 3px 10px;"
+            close_btn = self._row_button("Close", neutral=True)
+            close_btn.setObjectName(f"vaultDrawer.close.{vault_name}")
+            close_btn.clicked.connect(
+                lambda _=False, v=vault_name: self._close_current_vault(v)
             )
-            h.addWidget(tag, 0, Qt.AlignmentFlag.AlignVCenter)
+            h.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignVCenter)
         elif state == "running":
             switch_btn = self._row_button("Switch to", primary=False)
             switch_btn.setObjectName(f"vaultDrawer.switchTo.{vault_name}")
@@ -591,12 +591,15 @@ class VaultDrawer(QWidget):
 
         return row
 
-    def _row_button(self, text: str, primary: bool = True, side: str = "all"):
+    def _row_button(self, text: str, primary: bool = True, side: str = "all",
+                    neutral: bool = False):
         """A compact row-action button (smaller than the CTA LocksmithButton).
 
-        ``primary`` = filled orange; otherwise an orange outline. ``side``
-        controls which corners are rounded so a button can sit flush against
-        an attached ▾ menu button ("left" rounds only the left corners).
+        ``primary`` = filled orange; otherwise an orange outline. ``neutral``
+        overrides both with a muted gray outline (for non-primary actions like
+        "Close" that shouldn't compete with the orange calls-to-action).
+        ``side`` controls which corners are rounded so a button can sit flush
+        against an attached ▾ menu button ("left" rounds only the left corners).
         """
         from PySide6.QtWidgets import QPushButton
         btn = QPushButton(text)
@@ -606,7 +609,13 @@ class VaultDrawer(QWidget):
             radius = "border-top-left-radius: 6px; border-bottom-left-radius: 6px;"
         else:
             radius = "border-radius: 6px;"
-        if primary:
+        if neutral:
+            base = (
+                f"background-color: transparent; color: {colors.TEXT_SECONDARY}; "
+                f"border: 1px solid {colors.BORDER_TABLE};"
+            )
+            hover = "background-color: rgba(0,0,0,0.05);"
+        elif primary:
             base = (
                 f"background-color: {colors.PRIMARY}; color: white; "
                 f"border: 1px solid {colors.PRIMARY};"
@@ -625,10 +634,15 @@ class VaultDrawer(QWidget):
         )
         return btn
 
+    def _origin_xy(self) -> tuple[int, int]:
+        """Top-left of the launching window, so a new instance can cascade
+        off it (open offset rather than directly on top)."""
+        return (self.parent.x(), self.parent.y())
+
     def _open_in_new_instance(self, vault_name: str) -> None:
         """Spawn a new OS process opened on ``vault_name``."""
         logger.info(f"instance.drawer.open_new vault={vault_name}")
-        InstanceLauncher.launch_new(vault_name)
+        InstanceLauncher.launch_new(vault_name, origin_xy=self._origin_xy())
 
     def _switch_to_running(self, vault_name: str) -> None:
         """Ask the running owner of ``vault_name`` to raise its window."""
@@ -638,7 +652,16 @@ class VaultDrawer(QWidget):
     def _new_instance(self) -> None:
         """Spawn a new OS process with no vault open."""
         logger.info("instance.drawer.new_instance")
-        InstanceLauncher.launch_new(None)
+        InstanceLauncher.launch_new(None, origin_xy=self._origin_xy())
+
+    def _close_current_vault(self, vault_name: str) -> None:
+        """Close the currently-open vault from the drawer (replaces the old
+        top-toolbar lock button). Closes the drawer, then runs the window's
+        standard lock/close flow (teardown + navigate home + reset title)."""
+        logger.info(f"instance.drawer.close vault={vault_name}")
+        if self.is_visible():
+            self.toggle()
+        self.parent.on_lock_vault()
 
     def _filter_vaults(self, query: str):
         """
