@@ -83,6 +83,30 @@ def test_probe_reports_running_state(qapp, tmp_path):
         observer.release_all()
 
 
+def test_probe_does_not_raise_the_owner(qapp, tmp_path):
+    # A probe (used to render the drawer's "running elsewhere" badge) must
+    # NOT bring the owning instance to the front — only request_raise should.
+    owner = InstanceCoordinator(base=str(tmp_path))
+    raised = []
+    owner.raise_window = lambda: raised.append(True)
+    observer = InstanceCoordinator(base=str(tmp_path))
+    try:
+        owner.claim("vaultA")
+        assert observer.probe("vaultA") is True
+        for _ in range(5):
+            qapp.processEvents()
+        assert raised == [], "probing must not raise the owner's window"
+
+        # But an explicit raise request still works.
+        observer.request_raise("vaultA")
+        for _ in range(5):
+            qapp.processEvents()
+        assert raised == [True], "request_raise should raise the owner"
+    finally:
+        owner.release_all()
+        observer.release_all()
+
+
 from unittest.mock import patch
 
 from locksmith.core import instancing

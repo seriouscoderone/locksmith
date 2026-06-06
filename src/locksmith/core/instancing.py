@@ -128,9 +128,21 @@ class InstanceCoordinator:
         if server is None:
             return
         conn = server.nextPendingConnection()
-        if conn is not None:
-            conn.readAll()  # drain the "raise" payload
-            conn.close()
+        if conn is None:
+            return
+        # Distinguish an explicit raise request from a liveness probe.
+        # probe() connects (to check we're alive) and disconnects WITHOUT
+        # writing anything, so it must NOT bring us to the front — only an
+        # actual "raise" command from request_raise should. Reading on a
+        # probe returns promptly because the peer has already disconnected.
+        requested = False
+        if conn.waitForReadyRead(_CONNECT_TIMEOUT_MS):
+            requested = b"raise" in bytes(conn.readAll())
+        conn.close()
+        conn.deleteLater()
+        if not requested:
+            logger.debug(f"instance.probe.received vault={vault}")
+            return
         logger.info(f"instance.raise.received vault={vault}")
         if self.raise_window is not None:
             self.raise_window()
