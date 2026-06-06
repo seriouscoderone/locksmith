@@ -16,7 +16,7 @@ from keri.vdr import credentialing
 
 from locksmith.core import otping
 from locksmith.core.crypto import stretch_password_to_passcode
-from locksmith.core.habbing import format_bran
+from locksmith.core.habbing import format_bran, open_hby
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
@@ -206,7 +206,9 @@ class CreateVaultDialog(LocksmithDialog):
                 self.close()
                 return
 
-            # Persistent vaults: close and let user open via drawer
+            # Persistent vaults: close the freshly-created keystore, then
+            # immediately re-open it with the SAME passcode the user just
+            # entered — no second password prompt.
             hby.close()
 
             # Save OTP secret if enabled
@@ -218,7 +220,32 @@ class CreateVaultDialog(LocksmithDialog):
 
             logger.info(f"Vault created successfully: {name}")
 
-            # Emit signal
+            # Auto-open with the passcode just entered. Claim first (single-
+            # instance-per-vault); a brand-new vault is never owned elsewhere,
+            # so this effectively always succeeds. If anything goes wrong, fall
+            # back to the drawer's open dialog rather than leaving the user stuck.
+            open_bran = bran if passcode else None
+            if self.app.coordinator.claim(name):
+                try:
+                    vault, qtask = open_hby(
+                        name=name,
+                        base=self.config.base,
+                        bran=open_bran,
+                        app=self.app,
+                        salt=self.config.salt,
+                    )
+                    self.app.open_vault(name=name, vault=vault, qtask=qtask)
+                    logger.info(f"Vault created and opened: {name}")
+                    self.vault_opened.emit(name)
+                    self.close()
+                    return
+                except Exception:
+                    logger.exception(
+                        "create.auto_open_failed; falling back to open dialog"
+                    )
+                    self.app.coordinator.release(name)
+
+            # Fallback: surface the vault in the drawer for a manual open.
             self.vault_created.emit(name)
 
             # Close dialog

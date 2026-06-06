@@ -152,19 +152,11 @@ class VaultDrawer(QWidget):
             placeholder_text="Search vaults",
             leading_icon=":/assets/material-icons/search.svg",
         )
+        self.search_field.setObjectName("vaultDrawer.searchField")
         self.search_field.setClearButtonEnabled(True)
         self.search_field.textChanged.connect(self._filter_vaults)
         search_row.addWidget(self.search_field)
         drawer_layout.addLayout(search_row)
-
-        # Empty-state label (shown when filter has zero matches)
-        self.empty_state_label = QLabel("")
-        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_state_label.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 14px; padding: 16px;"
-        )
-        self.empty_state_label.hide()
-        drawer_layout.addWidget(self.empty_state_label)
 
         # New vault button in its own list widget with custom styling
         new_vault_button_container = QListWidget()
@@ -196,6 +188,21 @@ class VaultDrawer(QWidget):
         new_vault_button_container.clicked.connect(self.show_create_vault_dialog)
         drawer_layout.addWidget(new_vault_button_container)
 
+        # Empty-state message shown when a filter matches no vaults. It is the
+        # expanding filler for the list area (vertical Expanding) so that when
+        # the vault list is hidden on a zero-match search, free space goes HERE
+        # rather than scattering through the layout and shoving the header down.
+        from PySide6.QtWidgets import QSizePolicy
+        self.empty_state_label = QLabel("")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        self.empty_state_label.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 14px; padding: 16px;"
+        )
+        self.empty_state_label.hide()
+        drawer_layout.addWidget(self.empty_state_label)
 
         # Create vault list widget (store as instance variable for refreshing)
         self.vault_list = QListWidget()
