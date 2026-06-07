@@ -103,6 +103,16 @@ logger = help.ogler.getLogger(__name__)
 
 
 if __name__ == "__main__":
+    # Pre-empt Qt initialisation entirely for the verifier CLI path. The
+    # standalone --verify-update path is a no-UI mode anyone can run on a
+    # downloaded artifact; it must not spin up the wallet window.
+    if any(
+        arg == "--verify-update" or arg.startswith("--verify-update=")
+        for arg in sys.argv[1:]
+    ):
+        from locksmith.update.cli import run as run_verify
+        sys.exit(run_verify(sys.argv[1:]))
+
     if len(sys.argv) > 1 and sys.argv[1] == "--mcp-server":
         logger.info("MCP server mode detected")
         logger.info(f"sys.argv: {sys.argv}")

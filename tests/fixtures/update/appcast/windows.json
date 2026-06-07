@@ -1,0 +1,51 @@
+{
+  "schema_version": 1,
+  "channel": "stable",
+  "publisher_aid": "EMUvj_PEHgrWHRRyO7JYbqk-qEvuBMFbyoq22O-7DZ4A",
+  "publisher_kel_url": "https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+  "current_version": "1.1.0",
+  "releases": [
+    {
+      "version": "1.0.0",
+      "released_at": "2026-05-28T00:00:00Z",
+      "platform": "windows",
+      "minimum_system_version": "10.0.19041",
+      "artifact_url": "https://releases.keri.host/releases/1.0.0/Locksmith-1.0.0.msi.stub",
+      "artifact_sha256": "5995aa262b86422778fb30980019038a712a000c70bc3a1976f73efead61fe7e",
+      "artifact_size": 46,
+      "anchor_url": "https://releases.keri.host/releases/1.0.0/release-anchor-1.0.0.cesr",
+      "anchor_said": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
+      "release_notes_url": "https://locksmith.app/releases/1.0.0",
+      "is_major": false,
+      "is_critical": false
+    },
+    {
+      "version": "1.0.1",
+      "released_at": "2026-05-28T00:00:00Z",
+      "platform": "windows",
+      "minimum_system_version": "10.0.19041",
+      "artifact_url": "https://releases.keri.host/releases/1.0.1/Locksmith-1.0.1.msi.stub",
+      "artifact_sha256": "6ac1996dade358e8f9805abaa293091628832cd358ee7daf2adeca0ceb562797",
+      "artifact_size": 46,
+      "anchor_url": "https://releases.keri.host/releases/1.0.1/release-anchor-1.0.1.cesr",
+      "anchor_said": "EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc",
+      "release_notes_url": "https://locksmith.app/releases/1.0.1",
+      "is_major": false,
+      "is_critical": false
+    },
+    {
+      "version": "1.1.0",
+      "released_at": "2026-05-28T00:00:00Z",
+      "platform": "windows",
+      "minimum_system_version": "10.0.19041",
+      "artifact_url": "https://releases.keri.host/releases/1.1.0/Locksmith-1.1.0.msi.stub",
+      "artifact_sha256": "672c61b933cc940079e1af3f0f7203991b29ec8b0dc211fc72aed357fbdf6690",
+      "artifact_size": 46,
+      "anchor_url": "https://releases.keri.host/releases/1.1.0/release-anchor-1.1.0.cesr",
+      "anchor_said": "EPhiL-zxvya6JJLnZDcfF6DEBQkMtKbxwi_HoltooIj5",
+      "release_notes_url": "https://locksmith.app/releases/1.1.0",
+      "is_major": true,
+      "is_critical": false
+    }
+  ]
+}

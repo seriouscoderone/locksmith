@@ -1,0 +1,128 @@
+"""Append-only verification log per spec §9.6 + [[feedback-testing-automated]].
+
+Format: one line per verification attempt; each line is a sequence of
+``key=value`` pairs separated by single spaces. Values containing
+whitespace or ``=`` are shell-quoted.
+
+Reserved keys (in canonical emit order): ``ts``, ``outcome``, ``version``,
+``publisher_aid``, ``anchor_said``. Free-form context goes into ``fields``.
+
+Per plan deviation #3: this log is **per-install informational**, not
+cryptographic. It exists so Phase 5's UI can render "last 5 update
+checks" without re-running the verifier. KERI's KEL provides the
+cryptographic append-only history.
+"""
+from __future__ import annotations
+
+import os
+import platform as _platform
+import re
+import shlex
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from locksmith.update.errors import SchemaError
+
+_RESERVED = ("ts", "outcome", "version", "publisher_aid", "anchor_said")
+_KV_RE = re.compile(r"^([A-Za-z_][A-Za-z0-9_]*)=(.*)$")
+
+
+@dataclass(frozen=True)
+class VerificationLogEntry:
+    ts: str
+    outcome: str  # "ok" | "hash_mismatch" | "signature" | "witness" | ...
+    version: str
+    publisher_aid: str
+    anchor_said: str
+    fields: dict[str, str] = field(default_factory=dict)
+
+
+def default_log_path() -> Path:
+    """Return the platform-appropriate verification log path."""
+    sysname = _platform.system()
+    if sysname == "Darwin":
+        base = Path.home() / "Library" / "Application Support" / "Locksmith"
+    elif sysname == "Windows":  # pragma: no cover - selected per OS
+        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Locksmith"
+    else:
+        base = Path.home() / ".local" / "share" / "locksmith"
+    return base / "verification.log"
+
+
+def _quote(v: str) -> str:
+    """Shell-quote when whitespace or ``=`` is present; else pass through."""
+    if any(c.isspace() for c in v) or "=" in v:
+        return shlex.quote(v)
+    return v
+
+
+def _format(entry: VerificationLogEntry) -> str:
+    parts = [
+        f"ts={_quote(entry.ts)}",
+        f"outcome={_quote(entry.outcome)}",
+        f"version={_quote(entry.version)}",
+        f"publisher_aid={_quote(entry.publisher_aid)}",
+        f"anchor_said={_quote(entry.anchor_said)}",
+    ]
+    for k, v in entry.fields.items():
+        if k in _RESERVED:
+            raise SchemaError(
+                f"reserved key in log fields: {k}",
+                log_fields={"reserved_key": k},
+            )
+        if not _KV_RE.match(f"{k}=x"):
+            raise SchemaError(
+                f"invalid log field key: {k!r}",
+                log_fields={"key": k},
+            )
+        parts.append(f"{k}={_quote(str(v))}")
+    return " ".join(parts)
+
+
+def append_entry(path: Path, entry: VerificationLogEntry) -> None:
+    """Atomically append ``entry`` to ``path`` (creates parents)."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    line = _format(entry) + "\n"
+    with path.open("a", encoding="utf-8") as fp:
+        fp.write(line)
+
+
+def _parse_line(raw: str) -> VerificationLogEntry:
+    tokens = shlex.split(raw.strip())
+    kv: dict[str, str] = {}
+    for t in tokens:
+        m = _KV_RE.match(t)
+        if not m:
+            raise SchemaError(
+                f"malformed log token: {t!r}",
+                log_fields={"token": t},
+            )
+        kv[m.group(1)] = m.group(2)
+    missing = [k for k in _RESERVED if k not in kv]
+    if missing:
+        raise SchemaError(
+            f"log line missing reserved keys: {missing}",
+            log_fields={"missing": ",".join(missing)},
+        )
+    extras = {k: v for k, v in kv.items() if k not in _RESERVED}
+    return VerificationLogEntry(
+        ts=kv["ts"],
+        outcome=kv["outcome"],
+        version=kv["version"],
+        publisher_aid=kv["publisher_aid"],
+        anchor_said=kv["anchor_said"],
+        fields=extras,
+    )
+
+
+def read_entries(path: Path) -> list[VerificationLogEntry]:
+    """Return all entries from ``path`` sorted by ``ts`` (empty if missing)."""
+    if not path.exists():
+        return []
+    entries: list[VerificationLogEntry] = []
+    for line in path.read_text(encoding="utf-8").splitlines():
+        if not line.strip():
+            continue
+        entries.append(_parse_line(line))
+    entries.sort(key=lambda e: e.ts)
+    return entries
