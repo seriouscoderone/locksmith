@@ -261,9 +261,13 @@ class VaultPage(BasePage):
     # -------------------------------------------------------------------------
 
     def get_toolbar_config(self) -> dict[str, Any]:
+        # Keep the Vaults drawer reachable while inside a vault so the user can
+        # switch to another vault (switch-in-place), create a new one, or close
+        # the current one — all from the drawer — without a separate top-toolbar
+        # lock button (the current vault's row carries a "Close" button instead).
         return {
-            'show_vaults_button': False,
-            'show_lock_button': True,
+            'show_vaults_button': True,
+            'show_lock_button': False,
             'show_notifications_button': True,
             'show_settings_button': True,
         }

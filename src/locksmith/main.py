@@ -102,6 +102,32 @@ help.ogler.baseConsoleHandler.setFormatter(baseFormatter)
 logger = help.ogler.getLogger(__name__)
 
 
+def parse_vault_arg(argv: list[str]) -> str | None:
+    """Return the value of ``--vault <name>`` from argv, or None."""
+    if "--vault" in argv:
+        i = argv.index("--vault")
+        if i + 1 < len(argv):
+            return argv[i + 1]
+    return None
+
+
+def parse_window_pos(argv: list[str]) -> tuple[int, int] | None:
+    """Return the ``--win-pos X,Y`` top-left position from argv, or None.
+
+    Used by the cascade: a launched instance opens offset from the window
+    that spawned it so both are visible at once.
+    """
+    if "--win-pos" in argv:
+        i = argv.index("--win-pos")
+        if i + 1 < len(argv):
+            try:
+                x_str, y_str = argv[i + 1].split(",")
+                return (int(x_str), int(y_str))
+            except ValueError:
+                return None
+    return None
+
+
 if __name__ == "__main__":
     # Pre-empt Qt initialisation entirely for the verifier CLI path. The
     # standalone --verify-update path is a no-UI mode anyone can run on a
@@ -131,6 +157,14 @@ if __name__ == "__main__":
 
     config = LocksmithConfig.get_instance()
     window = LocksmithWindow(config)
+
+    target_vault = parse_vault_arg(sys.argv)
+    if target_vault and window.app.coordinator.request_raise(target_vault):
+        # Another instance already owns this vault — raise it and exit
+        # before showing our window, so there's no flash/Dock bounce.
+        logger.info(f"instance.startup.focused_existing vault={target_vault}")
+        sys.exit(0)
+
     window.show()
 
     # Tear down the PyInstaller bootloader splash now that Qt is on screen.
@@ -142,6 +176,20 @@ if __name__ == "__main__":
             pyi_splash.close()
     except ImportError:
         pass
+
+    # Cascade: if launched from another instance, open offset from it so both
+    # windows are visible (set after show so the move sticks on all platforms).
+    win_pos = parse_window_pos(sys.argv)
+    if win_pos is not None:
+        window.move(*win_pos)
+        logger.info(
+            f"instance.startup.window_pos requested=({win_pos[0]},{win_pos[1]}) "
+            f"actual=({window.x()},{window.y()})"
+        )
+
+    if target_vault:
+        logger.info(f"instance.startup.opening vault={target_vault}")
+        window.open_vault_targeted(target_vault)
 
     with loop:
         sys.exit(loop.run_forever())

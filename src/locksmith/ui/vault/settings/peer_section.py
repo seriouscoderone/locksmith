@@ -9,6 +9,7 @@ from PySide6.QtWidgets import (
 )
 from keri import help
 
+from locksmith.core.instancing import find_free_port
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.exposure import count_exposed
 from locksmith.peer.health import summarize_health_for_ui
@@ -123,6 +124,10 @@ class PeerSettingsSection(QFrame):
         self.port_spin.setValue(5621)
         self.port_spin.setFixedWidth(110)
         row2.addWidget(self.port_spin)
+        self.find_port_button = LocksmithButton("Find free port")
+        self.find_port_button.setObjectName("peerSettingsSection.findPortButton")
+        self.find_port_button.clicked.connect(self._on_find_free_port)
+        row2.addWidget(self.find_port_button)
         row2.addSpacing(20)
         row2.addWidget(QLabel("Bind to interface"))
         self.bind_combo = QComboBox()
@@ -250,6 +255,9 @@ class PeerSettingsSection(QFrame):
     def _load(self) -> None:
         rec = self._vault.db.peerSettings.get(keys=("default",))
         if rec is None:
+            # First-time setup: pick a free port so two concurrently open
+            # vaults don't both grab the hardcoded 5621 default.
+            self.port_spin.setValue(find_free_port(start=5621))
             return
         self.enabled_toggle.setChecked(rec.enabled)
         self.port_spin.setValue(rec.port)
@@ -280,6 +288,11 @@ class PeerSettingsSection(QFrame):
             # 500ms is enough for hio's TCPServer to flip self.opened
             # in the common path without making the user wait.
             QTimer.singleShot(500, lambda: self._run_reachability_self_test(rec))
+
+    def _on_find_free_port(self) -> None:
+        port = find_free_port(start=self.port_spin.value())
+        self.port_spin.setValue(port)
+        logger.info(f"peer.settings.free_port_suggested port={port}")
 
     def _run_reachability_self_test(self, rec: PeerModeSettings) -> None:
         # Only meaningful if the listener actually came up — if it didn't,

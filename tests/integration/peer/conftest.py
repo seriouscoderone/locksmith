@@ -178,15 +178,13 @@ def open_test_vault_via_ui(
     name: str,
     passcode: str = DEFAULT_TEST_PASSCODE,
 ) -> None:
-    """Drive the vault drawer to create + open a vault the way a user
-    would. Two-step on persistent storage:
+    """Drive the vault drawer to create a vault the way a user would, which
+    now auto-opens it (no second password prompt):
 
       1. Click "Initialize New Vault" → CreateVaultDialog.
-      2. Type name + passcode, click Create. Vault gets created on disk
-         and the create dialog closes; the new entry shows up in the
-         drawer's vault_list.
-      3. Click the new vault entry → OpenVaultDialog.
-      4. Type passcode, click Open. Vault page shows.
+      2. Type name + passcode, click Create. The vault is created on disk
+         and immediately opened with the same passcode; the create dialog
+         closes and the vault page mounts.
 
     Replaces the retired peer_open_test_vault devctl bypass. Same
     default passcode (the test passcode is a fixture, not a secret —
@@ -217,31 +215,12 @@ def open_test_vault_via_ui(
                condition="hidden", timeout_ms=10000)
     assert r.get("ok"), f"create dialog never closed: {r}"
 
-    # --- Step 3+4: open ---
-    # The drawer auto-shows the OpenVaultDialog for the new vault
-    # (_on_vault_created → show_open_vault_dialog), so the user doesn't
-    # have to click the new entry. The passcode field appears directly.
-    r = devctl(sock, "wait_for",
-               target="openVaultDialog.passcodeField",
-               condition="visible", timeout_ms=3000)
-    assert r.get("ok"), f"Open Vault dialog never appeared: {r}"
-    r = devctl(sock, "type",
-               target="openVaultDialog.passcodeField", text=passcode)
-    assert r.get("ok"), r
-    r = devctl(sock, "click",
-               target="openVaultDialog.openButton")
-    assert r.get("ok"), r
-
-    # Wait for the open dialog to close and the vault page to mount
-    # (the Identifiers nav button appears when the vault is up).
-    r = devctl(sock, "wait_for",
-               target="openVaultDialog.passcodeField",
-               condition="hidden", timeout_ms=10000)
-    assert r.get("ok"), f"open dialog never closed: {r}"
+    # The vault auto-opens after creation (no second password prompt): the
+    # vault page mounts and the Identifiers nav button appears.
     r = devctl(sock, "wait_for",
                target="vaultNavMenu.identifiersButton",
-               condition="visible", timeout_ms=5000)
-    assert r.get("ok"), f"vault page never mounted: {r}"
+               condition="visible", timeout_ms=10000)
+    assert r.get("ok"), f"vault did not auto-open after create: {r}"
 
 
 def create_aid_via_ui(devctl, sock: Path, alias: str) -> None:

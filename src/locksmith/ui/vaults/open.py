@@ -162,6 +162,10 @@ class OpenVaultDialog(LocksmithDialog):
         #     self.show_error("Passcode is too short.")
         #     return
 
+        # Tracks whether we hold the claim, so a post-claim failure can
+        # release it (the vault never opened, so close_vault won't run).
+        claimed = False
+
         try:
             # Clear any previous errors
             self.clear_error()
@@ -172,6 +176,15 @@ class OpenVaultDialog(LocksmithDialog):
             if not keystore_exists(self.vault_name, self.config.base):
                 self.show_error("Vault does not exist.")
                 return
+
+            # Single-instance-per-vault: claim before opening the keystore.
+            # If another instance already owns it, the owner has been
+            # raised; do not open a duplicate (also guards the LMDB writer).
+            if not self.app.coordinator.claim(self.vault_name):
+                logger.info(f"instance.open.denied vault={self.vault_name}")
+                self.show_error("This vault is already open in another instance.")
+                return
+            claimed = True
 
             # Check if vault is encrypted
             is_encrypted = is_vault_encrypted(self.vault_name, self.config.base)
@@ -210,12 +223,18 @@ class OpenVaultDialog(LocksmithDialog):
 
         except kering.AuthError as ex:
             logger.error(f"Authentication error opening vault: {ex}")
+            if claimed:
+                self.app.coordinator.release(self.vault_name)
             self.show_error(f"Authentication error: {str(ex)}")
 
         except ValueError as ex:
             logger.error(f"Value error opening vault: {ex}")
+            if claimed:
+                self.app.coordinator.release(self.vault_name)
             self.show_error(f"Invalid input: {str(ex)}")
 
         except Exception as ex:
             logger.exception(f"Error opening vault: {ex}")
+            if claimed:
+                self.app.coordinator.release(self.vault_name)
             self.show_error(f"An unexpected error occurred: {str(ex)}")
