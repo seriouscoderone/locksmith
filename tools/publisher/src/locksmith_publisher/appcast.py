@@ -1,0 +1,131 @@
+"""Appcast generator — operator-side, invoked after each ``anchor`` succeeds.
+
+Reads every ``releases/X.Y.Z/release-anchor-X.Y.Z.cesr`` from S3, extracts the
+release seal from each, emits per-platform appcasts under ``appcast/v1/``, and
+archives prior appcasts under ``appcast/archive/{timestamp}/`` so the history
+is recoverable.
+
+Per Phase 4 deviation #2, this also runs on the operator's laptop (not CI) —
+the same publisher signing flow that calls ``anchor`` can be followed by a
+``locksmith-publisher publish-appcasts`` invocation to refresh the appcast.
+"""
+from __future__ import annotations
+
+import datetime as _dt
+import json
+from dataclasses import dataclass
+from typing import Any
+
+from keri.core import serdering
+
+
+@dataclass(frozen=True)
+class GeneratorConfig:
+    bucket: str
+    publisher_aid: str
+    publisher_kel_url: str
+    schema_version: int = 1
+    channel: str = "stable"
+
+
+def _parse_anchor(raw: bytes) -> dict[str, Any]:
+    """Parse a CESR-encoded release anchor; return ``{said, seal}``."""
+    serder = serdering.SerderKERI(raw=bytearray(raw))
+    seals = serder.ked.get("a", [])
+    if not seals:
+        raise ValueError(
+            f"release anchor {serder.said} has no seals in `a` field"
+        )
+    return {"said": serder.said, "seal": seals[0]}
+
+
+def _semver_key(v: str) -> tuple[int, int, int]:
+    try:
+        parts = v.split(".")
+        return (int(parts[0]), int(parts[1]), int(parts[2]))
+    except (ValueError, IndexError):
+        # Push unparseable versions to the end so they don't poison the sort.
+        return (10**9, 10**9, 10**9)
+
+
+def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
+    """Regenerate per-platform appcasts from S3 and upload them.
+
+    ``s3`` must expose ``list_release_versions(bucket=...) -> list[str]``,
+    ``get_object(Bucket=, Key=) -> bytes`` (or ``-> object with ['Body'].read()``),
+    and ``put_object(Bucket=, Key=, Body=, ContentType=)``.
+    """
+    versions = sorted(s3.list_release_versions(bucket=config.bucket), key=_semver_key)
+    if not versions:
+        return
+
+    anchors_by_version: dict[str, dict[str, Any]] = {}
+    for v in versions:
+        raw_or_resp = s3.get_object(
+            Bucket=config.bucket,
+            Key=f"releases/{v}/release-anchor-{v}.cesr",
+        )
+        # Tolerate both raw bytes and a boto3-style response dict.
+        if isinstance(raw_or_resp, (bytes, bytearray)):
+            raw = bytes(raw_or_resp)
+        elif isinstance(raw_or_resp, dict) and "Body" in raw_or_resp:
+            raw = raw_or_resp["Body"].read()
+        else:
+            raise ValueError(
+                f"unexpected S3 get_object return for {v}: {type(raw_or_resp).__name__}"
+            )
+        anchors_by_version[v] = _parse_anchor(raw)
+
+    current_version = versions[-1]
+    timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+
+    for platform, ext in [("macos", "dmg"), ("windows", "msi")]:
+        releases: list[dict[str, Any]] = []
+        for v in versions:
+            parsed = anchors_by_version[v]
+            seal = parsed["seal"]["release"]
+            artifact = next(
+                a for a in seal["artifacts"] if a["platform"] == platform
+            )
+            releases.append({
+                "version": v,
+                "released_at": seal["released_at"],
+                "platform": platform,
+                "minimum_system_version":
+                    seal["minimum_system_versions"][platform],
+                "artifact_url":
+                    f"https://releases.keri.host/releases/{v}/{artifact['filename']}",
+                "artifact_sha256": artifact["sha256"],
+                "artifact_size": artifact["size"],
+                "anchor_url":
+                    f"https://releases.keri.host/releases/{v}/release-anchor-{v}.cesr",
+                "anchor_said": parsed["said"],
+                "release_notes_url":
+                    f"https://locksmith.app/releases/{v}",
+                "is_major": seal.get("is_major", False),
+                "is_critical": seal.get("is_critical", False),
+            })
+
+        appcast = {
+            "schema_version": config.schema_version,
+            "channel": config.channel,
+            "publisher_aid": config.publisher_aid,
+            "publisher_kel_url": config.publisher_kel_url,
+            "current_version": current_version,
+            "releases": releases,
+        }
+        body = json.dumps(appcast, indent=2).encode()
+        live_key = f"appcast/v1/{platform}.json"
+        archive_key = f"appcast/archive/{timestamp}/{platform}.json"
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=live_key,
+            Body=body,
+            ContentType="application/json",
+        )
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=archive_key,
+            Body=body,
+            ContentType="application/json",
+        )
