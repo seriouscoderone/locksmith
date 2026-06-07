@@ -33,7 +33,16 @@ from .release_anchor import (
     write_release_anchor_files,
 )
 from .s3_client import S3
-from .witness_client import WitnessClient, WitnessThresholdNotMet
+from .signing_context import (
+    HabSigningContext,
+    PemFileSigningContext,
+    PublisherStateFile,
+)
+from .witness_client import (
+    WitnessClient,
+    WitnessThresholdNotMet,
+    WitnessUnreachable,
+)
 from .witnesses import default_witness_pool
 
 
@@ -126,8 +135,13 @@ def _open_publisher_keystore(
 ):
     """Open the publisher Habery. Test seam — patched by ``tests/unit/publisher``.
 
-    Production: opens the operator's persistent Habery (passphrase unlocks the
-    bran-encrypted keystore). Tests substitute a temp Habery via monkeypatch.
+    Production (only when --key-source habery is selected): opens the
+    operator's persistent Habery (passphrase unlocks the bran-encrypted
+    keystore). Tests substitute a temp Habery via monkeypatch.
+
+    The Phase 1 inception ceremony did NOT create a Habery — it persisted
+    a single encrypted Ed25519 PEM file. The default ``--key-source pem``
+    bypasses this function entirely and uses ``PemFileSigningContext``.
     """
     from keri.app import habbing
 
@@ -136,6 +150,83 @@ def _open_publisher_keystore(
         base=keystore_base,
         bran=passphrase,
     )
+
+
+def _default_keys_dir() -> Path:
+    return Path.home() / ".locksmith-publisher" / "keys-production" / "current"
+
+
+def _default_state_file() -> Path:
+    return Path.home() / ".locksmith-publisher" / "state.json"
+
+
+def _bundled_publisher_anchor_path() -> Path | None:
+    """Resolve the bundled publisher_anchor.json shipped with locksmith.
+
+    Returns ``None`` if the source tree's copy can't be located (e.g.,
+    the publisher CLI was installed without the locksmith repo
+    alongside it); the operator can always pass the seed values
+    manually via ``--seed-aid``/``--seed-sn``/``--seed-digest``.
+    """
+    here = Path(__file__).resolve()
+    # tools/publisher/src/locksmith_publisher/cli.py
+    # → repo root is 4 parents up.
+    for parent in here.parents:
+        candidate = parent / "src" / "locksmith" / "release" / "publisher_anchor.json"
+        if candidate.is_file():
+            return candidate
+    return None
+
+
+def _seed_pem_state(
+    *,
+    ctx: PemFileSigningContext,
+    bundled_anchor_path: Path | None,
+    witness_client_factory,
+    seed_aid: str | None,
+    seed_sn: int | None,
+    seed_digest: str | None,
+) -> None:
+    """Populate the PEM context's state file from one of three sources.
+
+    Priority:
+    1. Operator-supplied ``--seed-*`` flags (explicit override).
+    2. Bundled ``src/locksmith/release/publisher_anchor.json`` (very first
+       ixn after inception — the embedded anchor IS the KEL tip).
+    3. ``WitnessClient.query_state(aid)`` against the federation.
+
+    Falls through silently if the state file is already populated.
+    """
+    if ctx.state_file.has_tip:
+        return  # state already known — nothing to do
+
+    if seed_aid is not None and seed_sn is not None and seed_digest is not None:
+        ctx.seed_state_from_anchor(
+            aid=seed_aid, sn=seed_sn, event_digest=seed_digest
+        )
+        return
+
+    if bundled_anchor_path is not None and bundled_anchor_path.is_file():
+        body = json.loads(bundled_anchor_path.read_text())
+        if body.get("publisher_aid") == ctx.publisher_aid:
+            ctx.seed_state_from_anchor(
+                aid=body["publisher_aid"],
+                sn=int(body["embedded_kel_sn"]),
+                event_digest=body["embedded_kel_hash"],
+            )
+            return
+
+    # Last resort: ask the witnesses.
+    try:
+        wc = witness_client_factory()
+        ctx.seed_state_from_witnesses(wc)
+        return
+    except WitnessUnreachable as ex:
+        raise click.ClickException(
+            f"could not seed publisher KEL tip: no local state, no bundled "
+            f"anchor for AID {ctx.publisher_aid!r}, and no witness reached "
+            f"({ex}). Use --seed-aid/--seed-sn/--seed-digest to override."
+        )
 
 
 @cli.command("anchor")
@@ -160,18 +251,70 @@ def _open_publisher_keystore(
     help="S3 URL prefix where CI uploaded the artifacts. The CLI appends version/.",
 )
 @click.option(
-    "--keystore-name", required=True,
-    help="Name of the publisher Habery (must contain the live publisher AID).",
+    "--key-source",
+    type=click.Choice(["pem", "habery"]),
+    default="pem",
+    show_default=True,
+    help="Where the publisher signing key lives. 'pem' (default, matches "
+         "Phase 1 production reality) loads the encrypted Ed25519 PEM at "
+         "--keys-dir. 'habery' opens a keripy Habery — kept for tests and "
+         "for any future migration to Habery-based storage.",
+)
+# --- PEM-mode options ---
+@click.option(
+    "--publisher-aid",
+    default=None,
+    help="Expected publisher AID prefix (PEM mode). If omitted, read from the "
+         "bundled src/locksmith/release/publisher_anchor.json.",
+)
+@click.option(
+    "--keys-dir",
+    type=click.Path(file_okay=False, path_type=Path),
+    default=None,
+    help="PEM mode: directory containing key-1.enc.pem. "
+         "Default: ~/.locksmith-publisher/keys-production/current/",
+)
+@click.option(
+    "--state-file",
+    type=click.Path(dir_okay=False, path_type=Path),
+    default=None,
+    help="PEM mode: JSON file tracking the publisher KEL tip. "
+         "Default: ~/.locksmith-publisher/state.json",
+)
+@click.option(
+    "--seed-aid",
+    default=None,
+    help="PEM mode: manually seed the publisher AID into the state file "
+         "(overrides the bundled anchor + witness fallback).",
+)
+@click.option(
+    "--seed-sn",
+    type=int,
+    default=None,
+    help="PEM mode: manually seed the current KEL sn into the state file.",
+)
+@click.option(
+    "--seed-digest",
+    default=None,
+    help="PEM mode: manually seed the last KEL event SAID into the state file.",
+)
+# --- Habery-mode options (kept for tests + --key-source habery) ---
+@click.option(
+    "--keystore-name", default=None,
+    help="Habery mode only: name of the publisher Habery.",
 )
 @click.option(
     "--keystore-base", default="",
-    help="Base directory for the Habery (default: keripy's default location).",
+    help="Habery mode only: base directory for the Habery.",
 )
+# --- Passphrase is shared (Habery bran OR PEM file decrypt) ---
 @click.option(
     "--passphrase",
     envvar="LOCKSMITH_PUBLISHER_PASSPHRASE",
     required=True,
-    help="Passphrase that unlocks the publisher Habery.",
+    help="Passphrase that unlocks the publisher key material. "
+         "PEM mode: decrypts the on-disk Ed25519 PEM. "
+         "Habery mode: bran for the Habery keystore.",
 )
 @click.option(
     "--released-at", required=True,
@@ -209,7 +352,14 @@ def anchor_cmd(
     macos_artifact: Path | None,
     windows_artifact: Path | None,
     candidates_url: str,
-    keystore_name: str,
+    key_source: str,
+    publisher_aid: str | None,
+    keys_dir: Path | None,
+    state_file: Path | None,
+    seed_aid: str | None,
+    seed_sn: int | None,
+    seed_digest: str | None,
+    keystore_name: str | None,
     keystore_base: str,
     passphrase: str,
     released_at: str,
@@ -223,8 +373,18 @@ def anchor_cmd(
     """Build, sign, and submit a release-anchoring ixn event.
 
     Manual flow (per Phase 4 user deviation #2): no countersign step,
-    no CI signing. The publisher's signing key lives only in the local
-    Habery keystore on this machine.
+    no CI signing. The publisher's signing key lives only on this
+    machine — either as an encrypted Ed25519 PEM file at
+    ``~/.locksmith-publisher/keys-production/current/`` (default,
+    matches Phase 1 production reality) or as a keripy Habery
+    (``--key-source habery``, kept for Phase 4 tests).
+
+    PEM-mode KEL-tip discovery falls through three sources in order:
+    1. ``--seed-aid`` / ``--seed-sn`` / ``--seed-digest`` flags
+    2. ``--state-file`` (populated after each successful anchor)
+    3. Bundled ``src/locksmith/release/publisher_anchor.json``
+       (used for the very first ixn after inception)
+    4. Witness federation ``query_state`` fallback
     """
     # 1. Resolve artifact paths — fetch from S3 if not provided locally.
     artifacts: list[ArtifactInput] = []
@@ -261,25 +421,83 @@ def anchor_cmd(
         release_notes_said=release_notes_said,
     )
 
-    # 2. Open the publisher Habery, locate the Hab, sign the ixn.
-    hby = _open_publisher_keystore(
-        keystore_name=keystore_name,
-        keystore_base=keystore_base,
-        passphrase=passphrase,
-    )
-    try:
-        hab = hby.habs[list(hby.habs.keys())[0]] if hby.habs else None
-        # When habs is keyed by AID, just take the first one — the publisher
-        # keystore should contain exactly one Hab.
-        if hab is None:
-            raise click.ClickException(
-                f"keystore {keystore_name!r} has no Hab; "
-                f"run `locksmith-publisher incept` first"
+    # 2. Build the signing context — PEM-on-disk (default, production) or Habery
+    #    (test / legacy). Sign the ixn.
+    if key_source == "habery":
+        if not keystore_name:
+            raise click.UsageError(
+                "--keystore-name is required when --key-source=habery"
             )
-        click.echo(f"signing ixn for {request.version} via publisher AID {hab.pre}")
-        anchor = build_release_anchor(hab=hab, request=request)
-    finally:
-        hby.close()
+        hby = _open_publisher_keystore(
+            keystore_name=keystore_name,
+            keystore_base=keystore_base,
+            passphrase=passphrase,
+        )
+        try:
+            hab = hby.habs[list(hby.habs.keys())[0]] if hby.habs else None
+            if hab is None:
+                raise click.ClickException(
+                    f"keystore {keystore_name!r} has no Hab; "
+                    f"run `locksmith-publisher incept` first"
+                )
+            click.echo(
+                f"signing ixn for {request.version} via publisher AID {hab.pre} "
+                f"(habery backend)"
+            )
+            anchor = build_release_anchor(
+                context=HabSigningContext(hab=hab), request=request
+            )
+        finally:
+            hby.close()
+    else:
+        # --- PEM mode (production default) ---
+        keys_dir_resolved = keys_dir or _default_keys_dir()
+        state_path_resolved = state_file or _default_state_file()
+
+        # Resolve expected publisher AID: explicit flag → bundled anchor.
+        expected_aid = publisher_aid
+        bundled_path = _bundled_publisher_anchor_path()
+        if expected_aid is None and bundled_path is not None:
+            try:
+                expected_aid = json.loads(bundled_path.read_text())["publisher_aid"]
+            except (KeyError, ValueError) as ex:
+                raise click.ClickException(
+                    f"could not read publisher_aid from {bundled_path}: {ex}"
+                )
+        if not expected_aid:
+            raise click.UsageError(
+                "could not determine publisher AID: pass --publisher-aid "
+                "explicitly or ensure src/locksmith/release/publisher_anchor.json "
+                "is reachable from the publisher CLI install."
+            )
+
+        state = PublisherStateFile.load(state_path_resolved)
+        ctx = PemFileSigningContext(
+            publisher_aid=expected_aid,
+            keys_dir=keys_dir_resolved,
+            passphrase=passphrase,
+            state_file=state,
+        )
+
+        # Seed the KEL tip if needed (first ixn after inception, or fresh box).
+        pool = default_witness_pool()
+        wc_factory = lambda: WitnessClient(  # noqa: E731
+            witness_urls=[w.base_url for w in pool], threshold=3
+        )
+        _seed_pem_state(
+            ctx=ctx,
+            bundled_anchor_path=bundled_path,
+            witness_client_factory=wc_factory,
+            seed_aid=seed_aid,
+            seed_sn=seed_sn,
+            seed_digest=seed_digest,
+        )
+
+        click.echo(
+            f"signing ixn for {request.version} via publisher AID "
+            f"{ctx.prefix} (pem backend, sn={ctx.current_sn} → {ctx.current_sn + 1})"
+        )
+        anchor = build_release_anchor(context=ctx, request=request)
 
     # 3. Optionally submit to witnesses.
     receipts_cesr: bytes | None = None

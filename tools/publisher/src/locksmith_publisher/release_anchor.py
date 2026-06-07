@@ -23,7 +23,8 @@ from pathlib import Path
 
 from keri.app import habbing
 
-from .anchor import Anchor, IxnAnchor, build_release_seal
+from .anchor import Anchor, build_release_seal
+from .signing_context import HabSigningContext, PublisherSigningContext
 
 
 @dataclass(frozen=True)
@@ -71,16 +72,33 @@ class ReleaseAnchorRequest:
 
 def build_release_anchor(
     *,
-    hab: habbing.Hab,
+    hab: habbing.Hab | None = None,
+    context: PublisherSigningContext | None = None,
     request: ReleaseAnchorRequest,
 ) -> Anchor:
-    """Append a release-anchoring ixn event to ``hab``'s KEL and return it.
+    """Append a release-anchoring ixn event and return it.
 
-    The publisher Hab must already be incepted (sn 0) and reside in the
-    operator's local keystore. The Hab's own signers are used to sign the
-    event (single-sig per Phase 1 deviation; the Hab knows how many keys
-    are required from its inception threshold).
+    Two calling conventions, exactly one required:
+
+    * ``hab=`` — back-compat shim used by the Phase 4 tests. Wraps the
+      Hab in a ``HabSigningContext`` and delegates.
+    * ``context=`` — production path; accepts any ``PublisherSigningContext``
+      implementation. ``PemFileSigningContext`` is the on-disk-PEM bridge
+      added in the Phase 1 / Phase 4 reconciliation; ``HabSigningContext``
+      is used internally when ``hab=`` is supplied.
+
+    The context is responsible for:
+    1. building the ixn event with the correct ``s`` (current_sn + 1) and
+       ``p`` (last_event_digest) fields,
+    2. signing it with the publisher's controlling key, and
+    3. persisting the new KEL tip so the next anchor advances correctly.
     """
+    if (hab is None) == (context is None):
+        raise ValueError("pass exactly one of hab= or context=")
+    if hab is not None:
+        context = HabSigningContext(hab=hab)
+    assert context is not None  # for type-checkers
+
     artifact_dicts = []
     for a in request.artifacts:
         artifact_dicts.append({
@@ -100,7 +118,8 @@ def build_release_anchor(
         artifacts=artifact_dicts,
         release_notes_said=request.release_notes_said,
     )
-    return IxnAnchor(hab=hab, seal=seal).build()
+    raw, serder = context.build_signed_ixn(seal=seal)
+    return Anchor(raw=raw, serder=serder)
 
 
 def write_release_anchor_files(
