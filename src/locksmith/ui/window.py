@@ -45,6 +45,12 @@ class LocksmithWindow(QMainWindow):
 
         self.app = LocksmithApplication(config=config)
 
+        # Let an incoming "open this vault" request from another launch
+        # raise this window to the front (VS Code focus-existing behavior).
+        # The coordinator invokes this from QLocalServer.newConnection, which
+        # fires on the Qt event loop, so these GUI calls are thread-safe.
+        self.app.coordinator.raise_window = self._raise_to_front
+
         # Staged-install tracking: set to plugin_id between install() and trust.
         self._pending_trust_install: str | None = None
 
@@ -171,6 +177,24 @@ class LocksmithWindow(QMainWindow):
 
         logger.info("LocksmithHome initialized")
 
+    def open_vault_targeted(self, vault_name: str) -> None:
+        """Present the passcode dialog for a specific vault (used by the
+        ``--vault`` launch path). The dialog performs the actual claim."""
+        self.vault_drawer.show_open_vault_dialog(vault_name)
+
+    def _raise_to_front(self) -> None:
+        """Bring this window to the foreground and request user attention."""
+        from PySide6.QtWidgets import QApplication
+        self.show()
+        self.setWindowState(
+            (self.windowState() & ~Qt.WindowState.WindowMinimized)
+            | Qt.WindowState.WindowActive
+        )
+        self.raise_()
+        self.activateWindow()
+        QApplication.alert(self)
+        logger.info("instance.window.raised")
+
     def on_page_changed(self, page_name: str, params: dict):
         """
         Handle page change from NavigationManager.
@@ -246,8 +270,15 @@ class LocksmithWindow(QMainWindow):
             self._disconnect_toast_signals()
 
         elif page == Pages.VAULT:
-            # Vault page: hide vault drawer (nav menu is in VaultPage)
-            self.vault_drawer.hide_drawer_widgets()
+            # Vault page: keep the vault drawer available (closed, ready to
+            # slide in) so the user can switch vaults, create a new one, or
+            # close the current vault from the drawer without leaving the page.
+            self.vault_drawer.show_drawer_widgets()
+            self.vault_drawer.handle_resize(
+                self.width(),
+                self.height(),
+                self.toolbar.height()
+            )
             # Connect toast signals when vault is active
             self._connect_toast_signals()
 
@@ -372,6 +403,7 @@ class LocksmithWindow(QMainWindow):
 
         # Reset title
         self.setWindowTitle("Locksmith")
+        self.toolbar.set_vault_name(None)
 
     def on_home(self):
         """Handle home icon click - close vault if open and navigate to home."""

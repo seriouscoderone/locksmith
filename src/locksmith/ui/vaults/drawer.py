@@ -9,11 +9,13 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
 from PySide6.QtGui import QIcon, QFont
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QLabel, QGraphicsOpacityEffect, QHBoxLayout, \
-    QListWidgetItem, QListWidget
+    QListWidgetItem, QListWidget, QMenu, QToolButton
 from keri import help
 
+from locksmith.core.instancing import InstanceLauncher
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import load_scaled_pixmap, create_spacer
+from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 from locksmith.ui.vaults.create import CreateVaultDialog
 from locksmith.ui.vaults.open import OpenVaultDialog
@@ -125,6 +127,16 @@ class VaultDrawer(QWidget):
         title_label.setStyleSheet(f"font-size: 24px; font-weight: bold; color: {colors.TEXT_PRIMARY};")
         drawer_header_layout.addWidget(title_label)
         drawer_header_layout.addStretch()
+
+        # "＋ New Instance" button — spawns a fresh process with no vault open.
+        # Compact outline style so it fits beside the "Vaults" title.
+        self.new_instance_button = self._row_button("＋ New Instance", primary=False)
+        self.new_instance_button.setObjectName("vaultDrawer.newInstanceButton")
+        self.new_instance_button.clicked.connect(self._new_instance)
+        drawer_header_layout.addWidget(
+            self.new_instance_button, 0, Qt.AlignmentFlag.AlignVCenter
+        )
+
         drawer_layout.addLayout(drawer_header_layout)
 
         # Add a horizontal divider
@@ -140,19 +152,11 @@ class VaultDrawer(QWidget):
             placeholder_text="Search vaults",
             leading_icon=":/assets/material-icons/search.svg",
         )
+        self.search_field.setObjectName("vaultDrawer.searchField")
         self.search_field.setClearButtonEnabled(True)
         self.search_field.textChanged.connect(self._filter_vaults)
         search_row.addWidget(self.search_field)
         drawer_layout.addLayout(search_row)
-
-        # Empty-state label (shown when filter has zero matches)
-        self.empty_state_label = QLabel("")
-        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self.empty_state_label.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 14px; padding: 16px;"
-        )
-        self.empty_state_label.hide()
-        drawer_layout.addWidget(self.empty_state_label)
 
         # New vault button in its own list widget with custom styling
         new_vault_button_container = QListWidget()
@@ -184,20 +188,38 @@ class VaultDrawer(QWidget):
         new_vault_button_container.clicked.connect(self.show_create_vault_dialog)
         drawer_layout.addWidget(new_vault_button_container)
 
+        # Empty-state message shown when a filter matches no vaults. It is the
+        # expanding filler for the list area (vertical Expanding) so that when
+        # the vault list is hidden on a zero-match search, free space goes HERE
+        # rather than scattering through the layout and shoving the header down.
+        from PySide6.QtWidgets import QSizePolicy
+        self.empty_state_label = QLabel("")
+        self.empty_state_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.empty_state_label.setSizePolicy(
+            QSizePolicy.Policy.Preferred, QSizePolicy.Policy.Expanding
+        )
+        self.empty_state_label.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 14px; padding: 16px;"
+        )
+        self.empty_state_label.hide()
+        drawer_layout.addWidget(self.empty_state_label)
 
         # Create vault list widget (store as instance variable for refreshing)
         self.vault_list = QListWidget()
         self.vault_list.setObjectName("vaultDrawer.vaultList")
         self.vault_list.setIconSize(QSize(36, 36))
         self.vault_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Each row is a custom widget (setItemWidget) that fills the item
+        # width; keep horizontal scrolling off so wide rows never bleed
+        # past the drawer edge.
+        self.vault_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
         self.vault_list.setStyleSheet(f"""
             QListWidget {{
                 border: none;
                 background: transparent;
             }}
             QListWidget::item {{
-                padding: 12px;
-                padding-left: 24px;
+                margin: 2px 8px;
                 border-radius: 8px;
             }}
             QListWidget::item:hover {{
@@ -205,7 +227,11 @@ class VaultDrawer(QWidget):
             }}
         """)
 
-        self.vault_list.itemClicked.connect(self._on_vault_item_clicked)
+        # NOTE: whole-row click-to-open wiring was removed here. Each row now
+        # renders its own state-appropriate action buttons (Open / Switch to /
+        # ▾ menu) via setItemWidget, which own the actions. Connecting
+        # itemClicked -> open would double-fire / conflict with those buttons,
+        # so the row-click handler is intentionally not wired up.
 
         # Populate vault list
         self._refresh_vault_list()
@@ -276,6 +302,13 @@ class VaultDrawer(QWidget):
             self.drawer_closed.emit()
         else:
             # Slide in (show)
+            # Re-enumerate on-disk vaults AND re-probe per-instance running
+            # state every time the drawer opens. The drawer is built once at
+            # startup, so without this an instance never sees vaults that
+            # another instance created (or running-elsewhere state changes)
+            # after construction. Probe cost for a handful of vaults is fine.
+            self._refresh_vault_list()
+
             start_rect = QRect(
                 window_width,
                 toolbar_height,
@@ -383,69 +416,71 @@ class VaultDrawer(QWidget):
         self.vault_drawer.show()
 
     def _refresh_vault_list(self):
-        """Refresh the list of vaults, preserving any active filter query."""
-        self.vault_list.clear()
+        """Re-read the on-disk vaults + per-instance state, then rebuild rows.
 
-        vault_font = QFont()
-        vault_font.setPointSize(15)
-
-        # Sort vaults alphabetically so the prefix/substring grouping below
-        # produces a stable order within each group.
-        for vault_name in sorted(self.app.environments(), key=str.lower):
-            vault_item = QListWidgetItem(QIcon(":/assets/custom/vault.png"), vault_name)
-            vault_item.setFont(vault_font)
-            self.vault_list.addItem(vault_item)
-
-        # Re-apply the active filter so add/delete don't desync the visible list.
+        All cross-instance probes happen here, once, and the resulting
+        ``(name, state)`` list is cached on ``self._vault_states`` so that
+        keystroke filtering rebuilds rows WITHOUT re-probing.
+        """
+        # probe() spins a nested Qt event loop (QLocalSocket.waitForConnected);
+        # do every probe here, up front, never interleaved with list mutation.
+        self._vault_states = [
+            (name, self._vault_state(name))
+            for name in sorted(self.app.environments(), key=str.lower)
+        ]
         query = self.search_field.text() if hasattr(self, "search_field") else ""
-        self._filter_vaults(query)
+        self._rebuild_vault_rows(query)
 
-    def _filter_vaults(self, query: str):
+    def _rebuild_vault_rows(self, query: str):
+        """Rebuild the visible rows from the cached ``self._vault_states``,
+        keeping only names matching ``query`` (prefix matches first, then
+        substring matches).
+
+        Full rebuild — NOT takeItem()/addItem() reordering. ``takeItem`` on an
+        item carrying a ``setItemWidget`` row deletes that row widget in C++,
+        so reordering items and reattaching a stashed widget pointer is a
+        use-after-free (it segfaults in ``QListWidgetItem::data`` →
+        ``getWrapperForQObject``). Rebuilding from scratch keeps widget
+        ownership trivial: each refresh/filter creates fresh rows and releases
+        the old ones, and no item ever references a freed widget.
         """
-        Filter the vault list to names containing ``query`` (case-insensitive).
+        q = (query or "").strip().lower()
 
-        Prefix matches sort above non-prefix substring matches; non-matches
-        are hidden. Empty-state label is shown when nothing matches.
-        """
-        q = query.strip().lower()
-
-        # First pass: assign a sort key (0=prefix, 1=substring, 2=hidden) per item.
-        annotated: list[tuple[int, str, QListWidgetItem]] = []
+        # QListWidget.clear() does NOT free widgets installed via
+        # setItemWidget — release them explicitly first (otherwise they
+        # accumulate, since the drawer rebuilds on every open/keystroke).
         for i in range(self.vault_list.count()):
             item = self.vault_list.item(i)
-            name_lower = item.text().lower()
-            if not q:
-                rank = 0
-            elif name_lower.startswith(q):
-                rank = 0
+            row = self.vault_list.itemWidget(item)
+            self.vault_list.removeItemWidget(item)
+            if row is not None:
+                row.setParent(None)
+                row.deleteLater()
+        self.vault_list.clear()
+
+        # Rank matches: 0 = prefix (or no query), 1 = substring; drop non-matches.
+        ranked = []
+        for name, state in getattr(self, "_vault_states", []):
+            name_lower = name.lower()
+            if not q or name_lower.startswith(q):
+                ranked.append((0, name_lower, name, state))
             elif q in name_lower:
-                rank = 1
-            else:
-                rank = 2
-            annotated.append((rank, item.text().lower(), item))
+                ranked.append((1, name_lower, name, state))
+        # Stable: prefix group first, then substring group; alphabetical within.
+        ranked.sort(key=lambda t: (t[0], t[1]))
 
-        # Stable sort: prefix matches first, then substring matches, then hidden.
-        # Within each group preserve the alphabetical order set in _refresh_vault_list.
-        annotated.sort(key=lambda t: (t[0], t[1]))
-
-        # Re-order rows by taking items out and re-adding in the new sequence.
-        # takeItem clears selection and ownership cleanly.
-        self.vault_list.blockSignals(True)
-        for i in range(self.vault_list.count() - 1, -1, -1):
-            self.vault_list.takeItem(i)
-        match_count = 0
-        for rank, _name, item in annotated:
+        for _rank, _nl, name, state in ranked:
+            # vault_name is also the item text so any text-based selector/filter
+            # still resolves it; the row widget visually covers the text.
+            item = QListWidgetItem(name)
+            row = self._build_vault_row(name, state)
+            item.setSizeHint(row.sizeHint())
             self.vault_list.addItem(item)
-            if rank == 2:
-                item.setHidden(True)
-            else:
-                item.setHidden(False)
-                match_count += 1
-        self.vault_list.blockSignals(False)
+            self.vault_list.setItemWidget(item, row)
 
-        # Empty-state label
+        match_count = len(ranked)
         if q and match_count == 0:
-            self.empty_state_label.setText(f"No vaults match “{query}”")
+            self.empty_state_label.setText(f"No vaults match “{(query or '').strip()}”")
             self.empty_state_label.show()
             self.vault_list.hide()
         else:
@@ -453,14 +488,209 @@ class VaultDrawer(QWidget):
             self.vault_list.show()
 
         logger.info(
-            f"VaultDrawer filter applied: query={query!r} matches={match_count} "
-            f"total={self.vault_list.count()}"
+            "VaultDrawer filter applied: query=%r matches=%d total=%d"
+            % (q, match_count, len(getattr(self, "_vault_states", [])))
         )
+
+    def _vault_state(self, vault_name: str) -> str:
+        """Classify a vault row: 'current', 'running', or 'idle'.
+
+        Reads ``app.name`` (the vault open in THIS instance) and
+        ``app.coordinator`` (cross-instance liveness). Both are read
+        defensively so the drawer still renders during early construction —
+        or under test stubs — before coordination state exists, degrading to
+        'idle' rather than raising.
+        """
+        if getattr(self.app, "name", None) == vault_name:
+            return "current"
+        coordinator = getattr(self.app, "coordinator", None)
+        if coordinator is None:
+            logger.debug("instance.drawer.no_coordinator vault=%s", vault_name)
+        elif coordinator.probe(vault_name):
+            return "running"
+        return "idle"
+
+    # Status dot colors per row state.
+    _STATE_DOT = {"current": "#22C55E", "running": "#3B82F6", "idle": "#9CA3AF"}
+    _STATE_TEXT = {
+        "current": "Open in this instance",
+        "running": "Running in another instance",
+        "idle": "Not open",
+    }
+
+    def _build_vault_row(self, vault_name: str, state: str) -> QFrame:
+        """Build the compact per-vault row widget for ``state``.
+
+        Layout: a two-line left column (vault name + a small colored status
+        line) and a right-aligned, compact action:
+          - current: a "Close" button (closes the vault — replaces the old
+            top-toolbar lock button now that the drawer is always reachable).
+          - running: a "Switch to" button (raises the owning instance).
+          - idle:    a split "Open" button with a ▾ menu ("Open in New Instance").
+        """
+        row = QFrame()
+        row.setObjectName(f"vaultDrawer.row.{vault_name}")
+        h = QHBoxLayout(row)
+        h.setContentsMargins(14, 9, 12, 9)
+        h.setSpacing(8)
+
+        # Left: name + status, stacked.
+        name_col = QVBoxLayout()
+        name_col.setSpacing(2)
+        name_label = QLabel(vault_name)
+        name_label.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; font-weight: 600;"
+        )
+        name_col.addWidget(name_label)
+        dot = self._STATE_DOT[state]
+        status = QLabel(f'<span style="color:{dot};">●</span> {self._STATE_TEXT[state]}')
+        status.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+        name_col.addWidget(status)
+        h.addLayout(name_col)
+        h.addStretch()
+
+        if state == "current":
+            close_btn = self._row_button("Close", neutral=True)
+            close_btn.setObjectName(f"vaultDrawer.close.{vault_name}")
+            close_btn.clicked.connect(
+                lambda _=False, v=vault_name: self._close_current_vault(v)
+            )
+            h.addWidget(close_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        elif state == "running":
+            switch_btn = self._row_button("Switch to", primary=False)
+            switch_btn.setObjectName(f"vaultDrawer.switchTo.{vault_name}")
+            switch_btn.clicked.connect(
+                lambda _=False, v=vault_name: self._switch_to_running(v)
+            )
+            h.addWidget(switch_btn, 0, Qt.AlignmentFlag.AlignVCenter)
+        else:  # idle — split "Open" button + ▾ "Open in New Instance"
+            split = QHBoxLayout()
+            split.setSpacing(0)
+            open_btn = self._row_button("Open", primary=True, side="left")
+            open_btn.setObjectName(f"vaultDrawer.open.{vault_name}")
+            open_btn.clicked.connect(
+                lambda _=False, v=vault_name: self.show_open_vault_dialog(v)
+            )
+            split.addWidget(open_btn)
+
+            more = QToolButton()
+            more.setObjectName(f"vaultDrawer.openMenu.{vault_name}")
+            more.setText("▾")
+            more.setFixedHeight(30)
+            more.setCursor(Qt.CursorShape.PointingHandCursor)
+            more.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            more.setStyleSheet(
+                f"QToolButton {{ background-color: {colors.PRIMARY}; color: white; "
+                f"border: none; border-top-right-radius: 6px; "
+                f"border-bottom-right-radius: 6px; padding: 0 6px; "
+                f"font-size: 12px; }}"
+                f"QToolButton:hover {{ background-color: {colors.PRIMARY_HOVER}; }}"
+                f"QToolButton::menu-indicator {{ image: none; }}"
+            )
+            menu = QMenu(more)
+            act = menu.addAction("Open in New Instance")
+            act.triggered.connect(
+                lambda _=False, v=vault_name: self._open_in_new_instance(v)
+            )
+            more.setMenu(menu)
+            split.addWidget(more)
+            h.addLayout(split)
+
+        return row
+
+    def _row_button(self, text: str, primary: bool = True, side: str = "all",
+                    neutral: bool = False):
+        """A compact row-action button (smaller than the CTA LocksmithButton).
+
+        ``primary`` = filled orange; otherwise an orange outline. ``neutral``
+        overrides both with a muted gray outline (for non-primary actions like
+        "Close" that shouldn't compete with the orange calls-to-action).
+        ``side`` controls which corners are rounded so a button can sit flush
+        against an attached ▾ menu button ("left" rounds only the left corners).
+        """
+        from PySide6.QtWidgets import QPushButton
+        btn = QPushButton(text)
+        btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        btn.setFixedHeight(30)
+        if side == "left":
+            radius = "border-top-left-radius: 6px; border-bottom-left-radius: 6px;"
+        else:
+            radius = "border-radius: 6px;"
+        if neutral:
+            base = (
+                f"background-color: transparent; color: {colors.TEXT_SECONDARY}; "
+                f"border: 1px solid {colors.BORDER_TABLE};"
+            )
+            hover = "background-color: rgba(0,0,0,0.05);"
+        elif primary:
+            base = (
+                f"background-color: {colors.PRIMARY}; color: white; "
+                f"border: 1px solid {colors.PRIMARY};"
+            )
+            hover = f"background-color: {colors.PRIMARY_HOVER}; border-color: {colors.PRIMARY_HOVER};"
+        else:
+            base = (
+                f"background-color: transparent; color: {colors.PRIMARY}; "
+                f"border: 1px solid {colors.PRIMARY};"
+            )
+            hover = f"background-color: rgba(234,88,12,0.08);"
+        btn.setStyleSheet(
+            f"QPushButton {{ {base} {radius} font-size: 12px; font-weight: 600; "
+            f"padding: 4px 14px; }}"
+            f"QPushButton:hover {{ {hover} }}"
+        )
+        return btn
+
+    def _origin_xy(self) -> tuple[int, int]:
+        """Top-left of the launching window, so a new instance can cascade
+        off it (open offset rather than directly on top)."""
+        return (self.parent.x(), self.parent.y())
+
+    def _open_in_new_instance(self, vault_name: str) -> None:
+        """Spawn a new OS process opened on ``vault_name``."""
+        logger.info(f"instance.drawer.open_new vault={vault_name}")
+        InstanceLauncher.launch_new(vault_name, origin_xy=self._origin_xy())
+
+    def _switch_to_running(self, vault_name: str) -> None:
+        """Ask the running owner of ``vault_name`` to raise its window."""
+        logger.info(f"instance.drawer.switch_to vault={vault_name}")
+        self.app.coordinator.request_raise(vault_name)
+
+    def _new_instance(self) -> None:
+        """Spawn a new OS process with no vault open."""
+        logger.info("instance.drawer.new_instance")
+        InstanceLauncher.launch_new(None, origin_xy=self._origin_xy())
+
+    def _close_current_vault(self, vault_name: str) -> None:
+        """Close the currently-open vault from the drawer (replaces the old
+        top-toolbar lock button). Closes the drawer, then runs the window's
+        standard lock/close flow (teardown + navigate home + reset title)."""
+        logger.info(f"instance.drawer.close vault={vault_name}")
+        if self.is_visible():
+            self.toggle()
+        self.parent.on_lock_vault()
+
+    def _filter_vaults(self, query: str):
+        """
+        Filter the vault list to names containing ``query`` (case-insensitive).
+
+        Prefix matches sort above non-prefix substring matches; non-matches
+        are omitted. Empty-state label is shown when nothing matches. Rebuilds
+        rows from the cached vault states (no probing) — see
+        ``_rebuild_vault_rows`` for why this is a full rebuild rather than an
+        in-place reorder.
+        """
+        self._rebuild_vault_rows(query)
 
 
     def show_create_vault_dialog(self):
         """Show the vault creation dialog."""
         dialog = CreateVaultDialog(parent=self.parent, config=self.app.config, app=self.app)
+        # Destroy the dialog when it closes. Otherwise it lingers as a hidden
+        # child of the main window, and a later create dialog produces duplicate
+        # objectName'd widgets — selectors then resolve to the stale hidden one.
+        # Safe here because the parent (main window) long outlives the dialog.
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         # Connect the vault_created signal to refresh the list (persistent vaults)
         dialog.vault_created.connect(self._on_vault_created)
@@ -468,17 +698,6 @@ class VaultDrawer(QWidget):
         dialog.vault_opened.connect(self._on_vault_opened)
 
         dialog.show()
-
-    def _on_vault_item_clicked(self, item: QListWidgetItem):
-        """
-        Handle vault item click.
-
-        Args:
-            item: The clicked QListWidgetItem
-        """
-        vault_name = item.text()
-        logger.info(f"Vault item clicked: {vault_name}")
-        self.show_open_vault_dialog(vault_name)
 
     def show_open_vault_dialog(self, vault_name: str):
         """
@@ -492,6 +711,9 @@ class VaultDrawer(QWidget):
             parent=self.parent,
             config=self.app.config,
         )
+        # Destroy on close so repeated opens don't leave stale hidden
+        # duplicates (same objectNames) parented to the main window.
+        dialog.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose, True)
 
         # Connect vault_opened signal to close drawer and navigate
         dialog.vault_opened.connect(self._on_vault_opened)
@@ -511,6 +733,7 @@ class VaultDrawer(QWidget):
             self.toggle()
 
         self.parent.setWindowTitle(f"Locksmith | {vault_name}")
+        self.parent.toolbar.set_vault_name(vault_name)
 
         # Navigate to vault page
         from locksmith.ui.navigation import Pages

@@ -111,6 +111,14 @@ class LocksmithToolbar(QToolBar):
         text_label.setFont(font)
         self.addWidget(text_label)
 
+        self.vault_name_label = QLabel("")
+        self.vault_name_label.setObjectName("toolbar.vaultNameLabel")
+        self.vault_name_label.setStyleSheet(f"color: {colors.WHITE};")
+        vault_name_font = QFont()
+        vault_name_font.setPointSize(16)
+        self.vault_name_label.setFont(vault_name_font)
+        self.addWidget(self.vault_name_label)
+
         # Add spacer to push next items to the right
         self.addWidget(create_spacer(expanding=True))
 
@@ -170,6 +178,7 @@ class LocksmithToolbar(QToolBar):
             icon_hover="assets/material-icons/vault-drawer-hover.svg",
             tooltip="Vaults"
         )
+        self.vaults_button.setObjectName("toolbar.vaultsButton")
         self.vaults_button.clicked.connect(self.vaults_clicked.emit)
         self.vaults_action = self.addWidget(self.vaults_button)
 
@@ -184,6 +193,15 @@ class LocksmithToolbar(QToolBar):
         self.lock_action.setVisible(False)  # Hidden by default
 
         self.addWidget(create_spacer(6))
+
+    def set_vault_name(self, name: str | None) -> None:
+        """Show the open vault's name in the toolbar (window identity).
+
+        Empty when no vault is open. Also the test-observability hook for
+        the active vault (selector: toolbar.vaultNameLabel).
+        """
+        if hasattr(self, "vault_name_label"):
+            self.vault_name_label.setText(name or "")
 
     def set_vaults_active(self, active: bool):
         """
