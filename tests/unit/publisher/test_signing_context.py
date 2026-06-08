@@ -199,16 +199,19 @@ def test_pem_context_seed_then_build_signed_ixn(synthetic_pem, tmp_path: Path):
     assert isinstance(serder, serdering.SerderKERI)
     assert serder.ked["t"] == "ixn"
     assert serder.ked["i"] == icp_serder.pre
-    # sn advanced to 1.
+    # sn advanced to 1 in the serder.
     assert serder.sn == 1
     # prior digest is the seeded inception SAID.
     assert serder.ked["p"] == icp_serder.said
     # Seal lives in `a`.
     assert serder.ked["a"][0] == seal
-    # State file advanced.
+    # State file is NOT advanced by build_signed_ixn — only by commit_event.
+    assert ctx.state_file.current_sn == 0
+    assert ctx.state_file.last_event_digest == icp_serder.said
+    # Now commit and verify state advanced + persisted.
+    ctx.commit_event(serder)
     assert ctx.state_file.current_sn == 1
     assert ctx.state_file.last_event_digest == serder.said
-    # Persisted to disk.
     on_disk = PublisherStateFile.load(state.path)
     assert on_disk.current_sn == 1
     assert on_disk.last_event_digest == serder.said
@@ -233,8 +236,13 @@ def test_pem_context_sequential_builds_advance_sn(synthetic_pem, tmp_path: Path)
 
     seal = _release_seal_fixture()
     _, s1 = ctx.build_signed_ixn(seal=seal)
-    _, s2 = ctx.build_signed_ixn(seal=seal)
+    # Without commit, sn does NOT advance — second build also produces sn=1.
+    _, s1_again = ctx.build_signed_ixn(seal=seal)
     assert s1.sn == 1
+    assert s1_again.sn == 1
+    # After commit_event, the next build advances to sn=2 chained on s1.
+    ctx.commit_event(s1)
+    _, s2 = ctx.build_signed_ixn(seal=seal)
     assert s2.sn == 2
     assert s2.ked["p"] == s1.said  # chains correctly
 

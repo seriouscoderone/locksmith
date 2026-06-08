@@ -260,11 +260,13 @@ def test_anchor_command_pem_dry_run_with_synthetic_pem(runner, tmp_path):
     meta = json.loads((out / "release-anchor-1.2.3.json").read_text())
     assert meta["version"] == "1.2.3"
     assert meta["ilk"] == "ixn"
-    # State file was advanced.
+    # State file records the SEEDED tip (sn=0, the icp), NOT the
+    # un-submitted ixn at sn=1. Dry-run must not advance past the seed
+    # because no witness has actually confirmed the new event.
     state = json.loads(state_file.read_text())
     assert state["publisher_aid"] == icp_serder.pre
-    assert state["current_sn"] == 1
-    assert state["last_event_digest"] == meta["said"]
+    assert state["current_sn"] == 0
+    assert state["last_event_digest"] == icp_serder.said
 
 
 def test_anchor_command_pem_seeds_from_bundled_anchor(runner, tmp_path, monkeypatch):
@@ -340,10 +342,11 @@ def test_anchor_command_pem_seeds_from_bundled_anchor(runner, tmp_path, monkeypa
     )
     assert result.exit_code == 0, result.output
 
-    # State file was seeded from the bundled anchor + advanced to sn=1.
+    # State file records the seeded inception tip (sn=0). Dry-run did not
+    # advance past it because no witness has confirmed the new event yet.
     state = json.loads(state_file.read_text())
     assert state["publisher_aid"] == icp_serder.pre
-    assert state["current_sn"] == 1
+    assert state["current_sn"] == 0
 
 
 def test_anchor_command_pem_mode_requires_publisher_aid(runner, tmp_path, monkeypatch):

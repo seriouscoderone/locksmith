@@ -450,9 +450,8 @@ def anchor_cmd(
                 f"signing ixn for {request.version} via publisher AID {hab.pre} "
                 f"(habery backend)"
             )
-            anchor = build_release_anchor(
-                context=HabSigningContext(hab=hab), request=request
-            )
+            ctx = HabSigningContext(hab=hab)
+            anchor = build_release_anchor(context=ctx, request=request)
         finally:
             hby.close()
     else:
@@ -519,12 +518,17 @@ def anchor_cmd(
         try:
             receipts = wc.submit_event(anchor.raw)
         except WitnessThresholdNotMet as ex:
+            # Witness rejection — state must NOT advance. The local
+            # state file is unchanged at this point because we now only
+            # commit_event() after a successful submission.
             raise click.ClickException(
                 f"witness threshold not met: collected={ex.collected} "
                 f"threshold={ex.threshold}"
             )
         click.echo(f"collected {len(receipts)} receipts")
         receipts_cesr = b"".join(r.cesr_bytes for r in receipts)
+        # Quorum met — durably advance local KEL-tip state to match.
+        ctx.commit_event(anchor.serder)
 
     # 4. Persist locally.
     paths = write_release_anchor_files(

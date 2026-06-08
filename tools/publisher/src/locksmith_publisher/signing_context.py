@@ -75,13 +75,23 @@ class PublisherSigningContext(Protocol):
         ...
 
     def build_signed_ixn(self, *, seal: dict) -> tuple[bytes, "serdering.SerderKERI"]:
-        """Build, sign, and persist the next ixn event anchoring ``seal``.
+        """Build + sign the next ixn event anchoring ``seal``. Does NOT
+        persist KEL-tip state — the caller MUST call ``commit_event()``
+        after the event has been confirmed by witnesses. (Persisting
+        before submission is a footgun: dry-runs and failed submissions
+        would advance ``current_sn`` past the witness-known tip,
+        permanently desyncing local state.)
 
         Returns the CESR-encoded message (event + ControllerIdxSigs +
-        N * Siger) and the parsed ``SerderKERI``. After this call,
-        ``current_sn`` and ``last_event_digest`` must reflect the new
-        event (i.e., ``current_sn`` has advanced by 1).
+        N * Siger) and the parsed ``SerderKERI``.
         """
+        ...
+
+    def commit_event(self, serder: "serdering.SerderKERI") -> None:
+        """Persist KEL-tip state for ``serder``. Call only after the
+        event has been accepted by ≥ threshold witnesses. No-op for
+        contexts whose backing store already auto-persists on signing
+        (e.g., Hab/Habery)."""
         ...
 
 
@@ -117,6 +127,11 @@ class HabSigningContext:
         msg = self.hab.interact(data=[seal])
         serder = serdering.SerderKERI(raw=bytearray(msg))
         return bytes(msg), serder
+
+    def commit_event(self, serder: serdering.SerderKERI) -> None:
+        """No-op. ``Hab.interact()`` already persisted to the Hab's LMDB
+        store; the operator's keystore is the source of truth here."""
+        return
 
 
 # ---------------------------------------------------------------------------
@@ -286,16 +301,18 @@ class PemFileSigningContext:
         siger = Siger(raw=sig_raw, code=IdrDex.Ed25519_Sig, index=0)
         msg.extend(siger.qb64b)
 
-        # Persist new tip before returning so a crash post-witness-submit
-        # but pre-state-save doesn't permanently desync. (If we crash
-        # before submit, the operator can manually decrement; if we crash
-        # after submit but before save, we've at least recorded locally.)
+        # Intentionally NOT persisting state here. State advances only
+        # via ``commit_event()`` after the caller confirms the event was
+        # accepted by ≥ threshold witnesses. See PublisherSigningContext
+        # docstring for the rationale.
+        return bytes(msg), serder
+
+    def commit_event(self, serder: serdering.SerderKERI) -> None:
+        """Persist KEL-tip state after a witness-accepted event."""
         self.state_file.publisher_aid = self.publisher_aid
-        self.state_file.current_sn = next_sn
+        self.state_file.current_sn = int(serder.sn) if hasattr(serder, "sn") else int(serder.ked["s"], 16)
         self.state_file.last_event_digest = serder.said
         self.state_file.save()
-
-        return bytes(msg), serder
 
     # --- KEL-tip seeding helpers --------------------------------------
 
