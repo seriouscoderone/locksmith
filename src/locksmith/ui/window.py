@@ -175,7 +175,87 @@ class LocksmithWindow(QMainWindow):
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
 
+        # --- App-update menu + controller wiring (Phase 5) ---
+        self._install_help_menu()
+        self._wire_update_controller_signals()
+        # --- end app-update wiring ---
+
         logger.info("LocksmithHome initialized")
+
+    def _install_help_menu(self) -> None:
+        """Add a Help menu with the "Check for updates…" entry. Native
+        macOS menu bar (top of screen); Windows menu bar (under title bar).
+        Idempotent — safe even if menuBar() already has a Help submenu."""
+        menubar = self.menuBar()
+        for action in menubar.actions():
+            if action.text() == "Help" or action.text() == "&Help":
+                help_menu = action.menu()
+                break
+        else:
+            help_menu = menubar.addMenu("&Help")
+
+        check_action = help_menu.addAction("Check for updates…")
+        check_action.setObjectName("helpMenu.checkForUpdates")
+        check_action.triggered.connect(self._on_check_for_updates_clicked)
+
+        verify_action = help_menu.addAction("Show last verification…")
+        verify_action.setObjectName("helpMenu.showLastVerification")
+        verify_action.triggered.connect(self._on_show_verification_log_clicked)
+
+    def _wire_update_controller_signals(self) -> None:
+        """Connect the UpdateController's signals to UI handlers. No-op
+        if the controller didn't construct (e.g., import failed in tests)."""
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            logger.info("update_controller.wire_skipped (no controller)")
+            return
+        ctrl.action_decided.connect(self._on_update_action_decided)
+        ctrl.check_failed.connect(self._on_update_check_failed)
+        ctrl.verification_failed.connect(self._on_update_verification_failed)
+        # Last-seen VerificationResult so the Help menu can re-open the dialog.
+        self._last_verification_result = None
+
+    # ---- update menu handlers ----
+
+    def _on_check_for_updates_clicked(self) -> None:
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            logger.warning("update_controller.check_now.no_controller")
+            return
+        logger.info("update_controller.check_now.requested_from_help_menu")
+        ctrl.check_now()
+
+    def _on_show_verification_log_clicked(self) -> None:
+        from locksmith.ui.dialogs.verification_log import VerificationLogDialog
+        dlg = VerificationLogDialog(
+            result=getattr(self, "_last_verification_result", None),
+            parent=self,
+        )
+        dlg.open()
+
+    def _on_update_action_decided(self, decision) -> None:
+        """The controller decided what to do about an available release.
+        Phase 5 will route this to a banner / notification based on
+        ``decision.action``; for now we log."""
+        logger.info(
+            "update_controller.action_decided action=%s",
+            getattr(decision, "action", "?"),
+        )
+
+    def _on_update_check_failed(self, err: str) -> None:
+        logger.warning("update_controller.check_failed err=%s", err)
+
+    def _on_update_verification_failed(self, version: str) -> None:
+        """Open the verification log dialog with a rejected result so the
+        user can see why the update was blocked."""
+        from locksmith.ui.dialogs.verification_log import VerificationLogDialog
+        logger.warning("update_controller.verification_failed version=%s", version)
+        dlg = VerificationLogDialog(
+            result=None,  # Phase 5: pass the rejected VerificationResult here
+            error_message=f"Verification rejected the update to v{version}.",
+            parent=self,
+        )
+        dlg.open()
 
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the

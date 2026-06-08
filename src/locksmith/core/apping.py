@@ -71,6 +71,43 @@ class LocksmithApplication:
             self.plugin_update_checker.interval_seconds // 3600,
         )
 
+        # App-update controller — Phase 5. Watches the appcast feed at
+        # releases.keri.host, runs KERI verification on candidate
+        # releases, hands off to Sparkle/WinSparkle for install. Lazy:
+        # the controller is constructed but not started until the main
+        # window calls `start_app_updates()` after first paint.
+        self.update_controller = None  # type: ignore[assignment]
+        self._init_update_controller()
+
+    def _init_update_controller(self) -> None:
+        """Construct the in-app updater controller + bridge adapter.
+
+        Idempotent + safe to call without Qt running — uses PySide6
+        QObject but won't trigger any UI.
+        """
+        try:
+            from locksmith.update.bridge_adapter import (
+                BridgeAdapter,
+                current_platform,
+            )
+            from locksmith.update.controller import UpdateController
+            from locksmith.build_info import LOCKSMITH_VERSION
+        except Exception as exc:  # noqa: BLE001 — defensive against import errors in tests
+            logger.warning("update_controller.init_skipped reason=%s", exc)
+            return
+
+        self.update_bridge = BridgeAdapter()
+        self.update_controller = UpdateController(
+            current_version=LOCKSMITH_VERSION,
+            platform=current_platform(),
+        )
+        self.update_controller.set_bridge(self.update_bridge)
+        logger.info(
+            "update_controller.constructed version=%s platform=%s",
+            LOCKSMITH_VERSION,
+            current_platform(),
+        )
+
     @property
     def protectedUrl(self) -> str:
         """Protected ESSR endpoint URL from config."""
