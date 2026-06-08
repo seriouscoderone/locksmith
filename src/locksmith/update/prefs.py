@@ -86,3 +86,21 @@ class UpdatePrefs:
         else:
             self._s.setValue(f"{_GROUP}/deferred_version", value)
         self._s.sync()
+
+    # --- last_seen_version (semver of the last build the user has launched) ---
+    # Used to fire the "What's New" modal on first launch after a major
+    # upgrade (compare to LOCKSMITH_VERSION). Read at bootstrap, write at
+    # the end of bootstrap so subsequent launches in this version don't
+    # re-show the modal.
+    @property
+    def last_seen_version(self) -> str | None:
+        v = self._s.value(f"{_GROUP}/last_seen_version", None)
+        return str(v) if v else None
+
+    @last_seen_version.setter
+    def last_seen_version(self, value: str | None) -> None:
+        if value is None:
+            self._s.remove(f"{_GROUP}/last_seen_version")
+        else:
+            self._s.setValue(f"{_GROUP}/last_seen_version", value)
+        self._s.sync()
