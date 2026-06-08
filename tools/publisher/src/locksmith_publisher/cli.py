@@ -317,8 +317,9 @@ def _seed_pem_state(
          "Habery mode: bran for the Habery keystore.",
 )
 @click.option(
-    "--released-at", required=True,
-    help="ISO-8601 timestamp for the release (e.g., 2026-05-28T14:30:00Z).",
+    "--released-at", default=None,
+    help=("ISO-8601 timestamp for the release (e.g., 2026-05-28T14:30:00Z). "
+          "Defaults to the current UTC time when omitted."),
 )
 @click.option(
     "--is-major", is_flag=True, default=False,
@@ -362,7 +363,7 @@ def anchor_cmd(
     keystore_name: str | None,
     keystore_base: str,
     passphrase: str,
-    released_at: str,
+    released_at: str | None,
     is_major: bool,
     is_critical: bool,
     previous_version: str | None,
@@ -386,6 +387,11 @@ def anchor_cmd(
        (used for the very first ixn after inception)
     4. Witness federation ``query_state`` fallback
     """
+    if released_at is None:
+        from datetime import datetime, timezone
+        released_at = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+        click.echo(f"--released-at not given; defaulting to {released_at}")
+
     # 1. Resolve artifact paths — fetch from S3 if not provided locally.
     artifacts: list[ArtifactInput] = []
     s3_client: S3 | None = None
