@@ -82,6 +82,16 @@ class AppSettingsDialog(LocksmithDialog):
 
         self._close_button.clicked.connect(self.accept)
 
+        self._mount_sections()
+
+    def _mount_sections(self) -> None:
+        """Compose the section widgets into the dialog body."""
+        from locksmith.ui.dialogs.defaults_settings_widget import (
+            DefaultsSettingsWidget,
+        )
+        self._defaults_widget = DefaultsSettingsWidget()
+        self._insert_section(self._defaults_widget)
+
     def _insert_section(self, widget: QWidget) -> None:
         """Insert a section widget above the trailing stretch."""
         # stretch is the last item; insert before it

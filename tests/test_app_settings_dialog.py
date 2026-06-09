@@ -1,7 +1,7 @@
 """Tests for the AppSettingsDialog (toolbar Settings entry)."""
 from types import SimpleNamespace
 
-from PySide6.QtWidgets import QLabel
+from PySide6.QtWidgets import QLabel, QWidget
 
 from locksmith.core.configing import LocksmithConfig
 from locksmith.ui.dialogs.app_settings import AppSettingsDialog
@@ -67,3 +67,9 @@ def test_defaults_widget_hides_salt_row_when_algo_is_randy(qapp):
             widget.hide()
     finally:
         config.algo = original_algo
+
+
+def test_app_settings_dialog_contains_defaults_section(qapp):
+    dialog = AppSettingsDialog(app=_fake_app())
+    widgets = dialog.findChildren(QWidget, "defaultsSettingsWidget")
+    assert len(widgets) == 1
