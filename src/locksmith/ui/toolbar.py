@@ -6,17 +6,14 @@ This module contains the toolbar component for the Locksmith application.
 """
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
 from PySide6.QtGui import QFont, QIcon
-from PySide6.QtWidgets import (
-    QFrame, QToolBar, QLabel, QVBoxLayout, QHBoxLayout, QWidget, QPushButton,
-)
+from PySide6.QtWidgets import QToolBar, QLabel, QPushButton
 from hio.base import doing
 from keri import help
 
-from locksmith.core.configing import LocksmithConfig
 from locksmith.peer.exposure import count_exposed
 from locksmith.ui import colors
 from locksmith.ui.toolkit.utils import create_spacer, load_scaled_pixmap
-from locksmith.ui.toolkit.widgets import HoverIconButton, LocksmithDialog, LocksmithButton
+from locksmith.ui.toolkit.widgets import HoverIconButton
 
 logger = help.ogler.getLogger(__name__)
 
@@ -169,7 +166,6 @@ class LocksmithToolbar(QToolBar):
             tooltip="Settings"
         )
         self.settings_button.clicked.connect(self.show_settings_dialog)
-        self.settings_button.clicked.connect(self.settings_clicked.emit)
         self.settings_action = self.addWidget(self.settings_button)
 
         # Vaults button with hover effect
@@ -311,110 +307,14 @@ class LocksmithToolbar(QToolBar):
 
 
     def show_settings_dialog(self):
-        """Show the Configuration settings dialog."""
-        # Get configuration instance
-        config = LocksmithConfig.get_instance()
+        """Open the application Settings dialog (toolbar entry).
 
-        # Create content widget with configuration information
-        content_widget = self._create_settings_content(config)
-
-        # Create button layout with OK button
-        button_layout = QHBoxLayout()
-        button_layout.setSpacing(8)
-
-        ok_button = LocksmithButton("Ok")
-
-        button_layout.addWidget(ok_button)
-
-        title_content = QLabel("Configuration")
-        title_content.setStyleSheet(f"font-size: 24px; color: {colors.TEXT_DARK};")
-
-        # Create dialog
-        dialog = LocksmithDialog(
-            parent=self.parent(),
-            title="Configuration",
-            title_content=title_content,
-            show_close_button=True,
-            show_title_divider=False,
-            content=content_widget,
-            buttons=button_layout
-        )
-
-        # Connect OK button to close dialog
-        ok_button.clicked.connect(dialog.accept)
-
-        # Set fixed size for dialog
-        dialog.setFixedSize(720, 650)
-
-        # Show dialog
+        App-wide settings: Updates, Defaults for new vaults, About.
+        Per-vault settings live in the vault sidebar Settings entry.
+        """
+        from locksmith.ui.dialogs.app_settings import AppSettingsDialog
+        dialog = AppSettingsDialog(app=self.app, parent=self.parent())
         dialog.open()
-
-    def _create_settings_content(self, config: LocksmithConfig):
-        """
-        Create the content widget displaying configuration information.
-
-        Args:
-            config: LocksmithConfig instance with configuration data.
-
-        Returns:
-            QWidget containing formatted configuration data.
-        """
-        content = QWidget()
-        layout = QVBoxLayout(content)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(5)
-
-        # Add subtitle
-        subtitle = QLabel("Provider Connection Information:")
-        subtitle.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_PRIMARY};")
-        layout.addWidget(subtitle)
-
-        # Add spacing
-        layout.addSpacing(20)
-
-        # Add configuration fields
-        self._add_config_field(layout, "ROOT AID", config.root_aid)
-        self._add_config_field(layout, "ROOT OOBI", config.root_oobi)
-        layout.addSpacing(15)
-        self._add_config_field(layout, "API AID", config.api_aid)
-        self._add_config_field(layout, "API OOBI", config.api_oobi)
-        layout.addSpacing(15)
-        self._add_config_field(layout, "Registration URL", config.unprotected_url)
-        self._add_config_field(layout, "API URL", config.protected_url, False)
-
-        # Add stretch to push content to top
-        layout.addStretch()
-
-        return content
-
-    def _add_config_field(self, layout: QVBoxLayout, label: str, value: str, spacing_after: bool = True):
-        """
-        Add a labeled configuration field to the layout.
-
-        Args:
-            layout: Layout to add the field to.
-            label: Label text for the field.
-            value: Value to display.
-        """
-        # Create label
-        label_widget = QLabel(label)
-        label_font = QFont()
-        label_font.setBold(True)
-        label_widget.setFont(label_font)
-        label_widget.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        layout.addWidget(label_widget)
-        layout.addSpacing(3)
-
-        # Create value label
-        value_widget = QLabel(value)
-        value_widget.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_SECONDARY}; padding-left: 0px;")
-        value_widget.setWordWrap(True)
-        value_widget.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
-        layout.addWidget(value_widget)
-
-        # Add spacing after each field
-        if spacing_after:
-            layout.addSpacing(15)
 
 
 
