@@ -65,14 +65,31 @@ def _row(label: str, value: str, *, value_color: str | None = None, mono: bool =
 
 
 def _status_banner(result: VerificationResult, error_message: str | None) -> QWidget:
-    """Green 'Verified' or red 'Rejected' banner across the top of the dialog body."""
+    """Three-state status banner: Verified (green) / Rejected (red) / Idle (neutral).
+
+    The neutral state is critical: showing 'Rejected' when no check has
+    actually run is a UX bug — the user reads it as 'something is wrong'
+    when actually nothing has happened yet.
+    """
     banner = QWidget()
     banner.setObjectName("verificationLogDialog.statusBanner")
     layout = QHBoxLayout(banner)
     layout.setContentsMargins(16, 12, 16, 12)
     layout.setSpacing(12)
 
-    if result is not None and result.ok:
+    if result is None:
+        bg, fg, mark, headline = (
+            colors.BACKGROUND_SELECTION,
+            colors.TEXT_PRIMARY,
+            "ⓘ",
+            "No verification yet",
+        )
+        sub = (
+            "Click 'Check now' from Settings → Updates (or 'Check for "
+            "updates…' from the Help menu) to verify the running release "
+            "against the publisher's KERI key event log."
+        )
+    elif result.ok:
         bg, fg, mark, headline = (
             colors.BACKGROUND_SUCCESS,
             "#1B5E20",
@@ -167,15 +184,8 @@ class VerificationLogDialog(LocksmithDialog):
         layout.addWidget(_status_banner(result, error_message))
 
         if result is None:
-            placeholder = QLabel(
-                "No verification has run yet. Trigger 'Check for updates' "
-                "from the Help menu to see the trust state of a release."
-            )
-            placeholder.setWordWrap(True)
-            placeholder.setStyleSheet(
-                f"color: {colors.TEXT_SECONDARY}; font-size: 13px; padding: 8px 0;"
-            )
-            layout.addWidget(placeholder)
+            # Status banner already carries the "No verification yet"
+            # guidance; no redundant placeholder needed below it.
             return wrap
 
         # Cryptographic-evidence section

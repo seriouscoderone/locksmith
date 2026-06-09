@@ -245,9 +245,31 @@ class UpdatesSettingsWidget(QWidget):
         )
 
     def _on_check_now_clicked(self) -> None:
+        """User clicked Check now — disable + relabel the button so the
+        user sees something is happening, fire the callback, then on the
+        next event-loop tick stamp Last checked and re-enable. The
+        callback itself is expected to be synchronous-ish at this layer
+        (controller.check_now()); a 1.5s button-disabled window gives
+        the user clear feedback even when the underlying fetch is fast."""
+        from datetime import datetime, timezone
+        from PySide6.QtCore import QTimer
+
         logger.info("[update] settings.check_now_clicked")
+        self.check_now_button.setEnabled(False)
+        self.check_now_button.setText("Checking…")
+        self.set_last_checked(
+            datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC"),
+        )
         if self._check_now_callback is not None:
-            self._check_now_callback()
+            try:
+                self._check_now_callback()
+            except Exception as exc:  # noqa: BLE001 — surface but don't crash the UI
+                logger.warning("[update] settings.check_now_callback_raised err=%s", exc)
+
+        def _restore():
+            self.check_now_button.setText("Check now")
+            self.check_now_button.setEnabled(True)
+        QTimer.singleShot(1500, _restore)
 
     def _on_view_log_clicked(self) -> None:
         logger.info("[update] settings.view_log_clicked")
