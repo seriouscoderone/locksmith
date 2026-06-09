@@ -113,6 +113,41 @@ class AppSettingsDialog(LocksmithDialog):
         self._updates_widget.set_view_log_callback(_on_view_log)
         self._insert_section(self._updates_widget)
 
+        # About section (last)
+        about_container = QFrame()
+        about_container.setObjectName("appSettingsDialog.aboutContainer")
+        about_container.setStyleSheet(f"""
+            #appSettingsDialog\\.aboutContainer {{
+                background-color: {colors.WHITE};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 24px;
+            }}
+            QWidget {{ background-color: transparent; }}
+        """)
+        about_layout = QVBoxLayout(about_container)
+        about_layout.setContentsMargins(25, 25, 25, 25)
+        about_layout.setSpacing(8)
+
+        about_header = QLabel("About")
+        about_header.setObjectName("appSettingsDialog.aboutHeader")
+        about_header.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 14px; font-weight: bold;"
+        )
+        about_layout.addWidget(about_header)
+
+        try:
+            from locksmith.build_info import LOCKSMITH_VERSION
+        except Exception:
+            LOCKSMITH_VERSION = "dev"
+        version_label = QLabel(f"Version: {LOCKSMITH_VERSION}")
+        version_label.setObjectName("appSettingsDialog.aboutVersionLabel")
+        version_label.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY};"
+        )
+        about_layout.addWidget(version_label)
+
+        self._insert_section(about_container)
+
     def _insert_section(self, widget: QWidget) -> None:
         """Insert a section widget above the trailing stretch."""
         # stretch is the last item; insert before it

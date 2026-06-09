@@ -96,3 +96,12 @@ def test_app_settings_dialog_wires_check_now_to_controller(qapp):
     assert btn is not None
     btn.click()
     assert called == ["check_now"]
+
+
+def test_app_settings_dialog_contains_about_section(qapp):
+    dialog = AppSettingsDialog(app=_fake_app())
+    labels = dialog.findChildren(QLabel, "appSettingsDialog.aboutVersionLabel")
+    assert len(labels) == 1
+    # Version string format: "Version: <something non-empty>"
+    assert labels[0].text().startswith("Version: ")
+    assert labels[0].text() != "Version: "
