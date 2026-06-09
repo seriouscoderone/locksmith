@@ -70,6 +70,30 @@ jobs:
       - name: Install create-dmg
         run: brew install create-dmg
 
+      - name: Fetch Sparkle framework
+        # Bundle Sparkle 2.x into the .app at build time. Pinned to the
+        # 2.6.x line — pre-2.7 is what packaging/Locksmith.macos.spec was
+        # authored against. Lands at packaging/macos/Sparkle.framework/
+        # which the spec adds to Contents/Frameworks/.
+        env:
+          SPARKLE_VERSION: "2.6.4"
+        run: |
+          set -euo pipefail
+          mkdir -p packaging/macos
+          url="https://github.com/sparkle-project/Sparkle/releases/download/${SPARKLE_VERSION}/Sparkle-${SPARKLE_VERSION}.tar.xz"
+          echo "fetching $url"
+          curl -fsSL "$url" -o /tmp/sparkle.tar.xz
+          tar -xf /tmp/sparkle.tar.xz -C /tmp
+          # The tarball lays out Sparkle.framework directly at the top.
+          if [ ! -d /tmp/Sparkle.framework ]; then
+            echo "::error::Sparkle.framework not found after extracting tarball"
+            ls -la /tmp >&2
+            exit 1
+          fi
+          rm -rf packaging/macos/Sparkle.framework
+          mv /tmp/Sparkle.framework packaging/macos/
+          ls -la packaging/macos/Sparkle.framework/ | head -5
+
       - name: Import Apple Developer ID certificate
         env:
           CERTIFICATE_BASE64: ${{ secrets.APPLE_DEVELOPER_CERTIFICATE_P12_BASE64 }}
@@ -213,6 +237,34 @@ jobs:
           New-Item -ItemType Directory -Force -Path "packaging/windows" | Out-Null
           Copy-Item -LiteralPath $dll -Destination "packaging/windows/libsodium.dll" -Force
           Get-Item "packaging/windows/libsodium.dll" | Select-Object FullName,Length
+
+      - name: Fetch WinSparkle
+        # Bundle WinSparkle 0.8.x next to Locksmith.exe at build time.
+        # The spec's bindings under locksmith.update.winsparkle_bridge load
+        # WinSparkle.dll via ctypes at runtime.
+        shell: pwsh
+        env:
+          WINSPARKLE_VERSION: "0.8.3"
+        run: |
+          $url = "https://github.com/vslavik/winsparkle/releases/download/v${env:WINSPARKLE_VERSION}/WinSparkle-${env:WINSPARKLE_VERSION}.zip"
+          $zip = Join-Path $env:RUNNER_TEMP "winsparkle.zip"
+          $extract = Join-Path $env:RUNNER_TEMP "winsparkle"
+          Write-Host "[install] downloading $url"
+          Invoke-WebRequest -Uri $url -OutFile $zip -UseBasicParsing
+          Expand-Archive -LiteralPath $zip -DestinationPath $extract -Force
+          # WinSparkle.dll lives at WinSparkle-X.Y.Z/x64/Release/WinSparkle.dll
+          $candidates = Get-ChildItem -Recurse -Filter WinSparkle.dll -Path $extract |
+            Where-Object { $_.FullName -match "x64" -and $_.FullName -match "[Rr]elease" }
+          if (-not $candidates) {
+            Write-Host "[install] no x64 Release match; tree dump:"
+            Get-ChildItem -Recurse -Path $extract | Select-Object FullName
+            throw "could not locate WinSparkle.dll inside $extract"
+          }
+          $dll = $candidates[0].FullName
+          Write-Host "[install] WinSparkle.dll at $dll"
+          New-Item -ItemType Directory -Force -Path "packaging/windows/winsparkle" | Out-Null
+          Copy-Item -LiteralPath $dll -Destination "packaging/windows/winsparkle/WinSparkle.dll" -Force
+          Get-Item "packaging/windows/winsparkle/WinSparkle.dll" | Select-Object FullName,Length
 
       - name: Install WiX Toolset v4
         shell: pwsh

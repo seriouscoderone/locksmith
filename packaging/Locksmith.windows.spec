@@ -73,6 +73,24 @@ else:
           "without a bundled libsodium.dll. CI's 'Stage libsodium for PyInstaller' "
           "step copies it into place before pyinstaller runs.")
 
+# WinSparkle.dll — bundled next to Locksmith.exe so the ctypes loader in
+# locksmith.update.winsparkle_bridge finds it as `WinSparkle.dll`. The
+# release CI step "Fetch WinSparkle" downloads it from
+# https://github.com/vslavik/winsparkle/releases (0.8+ line) into
+# packaging/windows/winsparkle/ before invoking PyInstaller.
+#
+# Runtime appcast URL: https://releases.keri.host/appcast/v1/windows.json
+# (configured by winsparkle_init.py via win_sparkle_set_appcast_url).
+# WinSparkle's native DSA verification is DISABLED at runtime
+# (win_sparkle_set_dsa_pub_pem(NULL)) — KERI is sole trust (spec §3).
+_WINSPARKLE_DLL = REPO_ROOT / "packaging" / "windows" / "winsparkle" / "WinSparkle.dll"
+if _WINSPARKLE_DLL.is_file():
+    binaries.append((str(_WINSPARKLE_DLL), "."))
+else:
+    print(f"[spec] WARNING: {_WINSPARKLE_DLL} not present; bundle will ship "
+          "without in-app updates. CI's 'Fetch WinSparkle' step copies "
+          "WinSparkle.dll into place before pyinstaller runs.")
+
 # ---- Hidden imports ------------------------------------------------------
 #
 # Mirror the macOS spec's pinned list. Add to this list with a one-line

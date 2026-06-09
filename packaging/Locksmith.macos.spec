@@ -22,6 +22,14 @@ import qtawesome  # noqa: F401  — bundling its data only; we don't call it her
 # the repo root. SPECPATH is provided by PyInstaller.
 REPO_ROOT = Path(SPECPATH).resolve().parent  # noqa: F821 — SPECPATH injected
 
+# Sparkle.framework lives at packaging/macos/Sparkle.framework. The
+# release CI step "Fetch Sparkle framework" downloads it from
+# https://github.com/sparkle-project/Sparkle/releases (2.x line) and
+# extracts it there before invoking PyInstaller. KERI is the sole trust
+# mechanism (spec §3); Sparkle's native EdDSA verification is OFF — see
+# the omission of SUPublicEDKey in info_plist below.
+SPARKLE_FRAMEWORK = REPO_ROOT / "packaging" / "macos" / "Sparkle.framework"
+
 # ---- Read version --------------------------------------------------------
 
 with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
@@ -47,6 +55,15 @@ datas = [
     # qtawesome icon fonts (needed at runtime; not auto-collected reliably)
     (str(_QTA_FONTS), "qtawesome/fonts"),
 ]
+
+# Sparkle.framework: NOT added to PyInstaller's datas. PyInstaller's
+# BUNDLE step nests data paths under Contents/Frameworks/, which would
+# put the framework at Contents/Frameworks/Frameworks/Sparkle.framework
+# AND PyInstaller's internal ad-hoc codesign chokes on a nested .framework
+# subcomponent. build-macos.sh copies Sparkle.framework into
+# Contents/Frameworks/ after PyInstaller exits, before the Developer ID
+# codesign in scripts/sign.sh runs over the full bundle.
+_ = SPARKLE_FRAMEWORK  # silence unused-variable check; build-macos.sh reads the path itself
 
 # ---- Binaries: native libs ----------------------------------------------
 
@@ -157,8 +174,22 @@ app = BUNDLE(
         "LSMinimumSystemVersion": "13.0",
         "NSPrincipalClass": "NSApplication",
         "NSHighResolutionCapable": True,
-        # Sparkle 2 will read these in Phase 5 — set safe defaults now
-        "SUEnableInstallerLauncherService": False,
+        # Sparkle 2 in-app updater. Sparkle is the orchestrator only:
+        # native signature verification is OFF (no SUPublicEDKey key) and
+        # all trust flows through the Python KERI verifier in
+        # locksmith.update.verify per spec §3.
+        "SUFeedURL": "https://releases.keri.host/appcast/v1/macos.json",
+        "SUEnableInstallerLauncherService": True,
+        # We drive checks from UpdateScheduler; disable Sparkle's own cadence.
+        "SUEnableAutomaticChecks": False,
         "SUEnableDownloaderService": False,
+        # NOTE: Sparkle's EdDSA public-key Info.plist entry is intentionally
+        # OMITTED — KERI is sole trust (spec §3). Adding that key here would
+        # silently re-enable Sparkle's native signature verification on top
+        # of (or instead of) ours; do not add it.
+        "NSAppTransportSecurity": {
+            "NSAllowsArbitraryLoads": False,
+            "NSExceptionDomains": {},
+        },
     },
 )

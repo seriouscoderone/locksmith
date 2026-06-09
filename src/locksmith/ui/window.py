@@ -85,6 +85,15 @@ class LocksmithWindow(QMainWindow):
         self.upgrade_banner.restart_requested.connect(self._handle_restart_requested)
         outer_layout.addWidget(self.upgrade_banner)
 
+        # Phase 5 critical-update banner — sits under the upgrade_banner,
+        # hidden until UpdateController emits an action with is_critical=True.
+        from locksmith.ui.banners.critical_update import CriticalUpdateBanner
+        self.critical_update_banner = CriticalUpdateBanner(parent=central_widget)
+        self.critical_update_banner.install_requested.connect(
+            self._handle_critical_update_install_clicked,
+        )
+        outer_layout.addWidget(self.critical_update_banner)
+
         # Horizontal container holds the page stack (preserves the original layout shape).
         stack_holder = QWidget()
         outer_layout.addWidget(stack_holder)
@@ -175,7 +184,178 @@ class LocksmithWindow(QMainWindow):
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
 
+        # --- App-update menu + controller wiring (Phase 5) ---
+        self._install_help_menu()
+        self._wire_update_controller_signals()
+        # Defer one-shot dialogs (consent on first launch, "What's new"
+        # on first launch after a major upgrade) until the window has
+        # actually painted, so they appear over the real window not a
+        # blank one.
+        QTimer.singleShot(250, self._maybe_show_first_launch_consent)
+        QTimer.singleShot(500, self._maybe_show_whats_new)
+        # --- end app-update wiring ---
+
         logger.info("LocksmithHome initialized")
+
+    def _install_help_menu(self) -> None:
+        """Add a Help menu with the "Check for updates…" entry. Native
+        macOS menu bar (top of screen); Windows menu bar (under title bar).
+        Idempotent — safe even if menuBar() already has a Help submenu."""
+        menubar = self.menuBar()
+        for action in menubar.actions():
+            if action.text() == "Help" or action.text() == "&Help":
+                help_menu = action.menu()
+                break
+        else:
+            help_menu = menubar.addMenu("&Help")
+
+        check_action = help_menu.addAction("Check for updates…")
+        check_action.setObjectName("helpMenu.checkForUpdates")
+        check_action.triggered.connect(self._on_check_for_updates_clicked)
+
+        verify_action = help_menu.addAction("Show last verification…")
+        verify_action.setObjectName("helpMenu.showLastVerification")
+        verify_action.triggered.connect(self._on_show_verification_log_clicked)
+
+    def _wire_update_controller_signals(self) -> None:
+        """Connect the UpdateController's signals to UI handlers. No-op
+        if the controller didn't construct (e.g., import failed in tests)."""
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            logger.info("update_controller.wire_skipped (no controller)")
+            return
+        ctrl.action_decided.connect(self._on_update_action_decided)
+        ctrl.check_failed.connect(self._on_update_check_failed)
+        ctrl.verification_failed.connect(self._on_update_verification_failed)
+        # Last-seen VerificationResult so the Help menu can re-open the dialog.
+        self._last_verification_result = None
+
+    # ---- update menu handlers ----
+
+    def _on_check_for_updates_clicked(self) -> None:
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            logger.warning("update_controller.check_now.no_controller")
+            return
+        logger.info("update_controller.check_now.requested_from_help_menu")
+        ctrl.check_now()
+
+    def _on_show_verification_log_clicked(self) -> None:
+        from locksmith.ui.dialogs.verification_log import VerificationLogDialog
+        dlg = VerificationLogDialog(
+            result=getattr(self, "_last_verification_result", None),
+            parent=self,
+        )
+        dlg.open()
+
+    def _on_update_action_decided(self, decision) -> None:
+        """The controller decided what to do about an available release.
+
+        Wires:
+          - is_critical → show the persistent critical-update banner
+          - non-critical, available-to-install → log only (Phase 5
+            could expand to a non-blocking toast later)
+        """
+        action = getattr(decision, "action", None)
+        release = getattr(decision, "release", None)
+        is_critical = bool(getattr(release, "is_critical", False))
+        version = getattr(release, "version", "?")
+        logger.info(
+            "update_controller.action_decided action=%s version=%s critical=%s",
+            getattr(action, "value", action), version, is_critical,
+        )
+        if is_critical:
+            self.critical_update_banner.show_for_version(version)
+
+    def _on_update_check_failed(self, err: str) -> None:
+        logger.warning("update_controller.check_failed err=%s", err)
+
+    def _on_update_verification_failed(self, version: str) -> None:
+        """Show the update-failed toast (auto-dismisses; clickable to
+        open the verification log). The toast is the high-signal UI;
+        the verification-log dialog is the deep-dive the user opts into."""
+        logger.warning("update_controller.verification_failed version=%s", version)
+        if not hasattr(self, "_update_failed_toast") or self._update_failed_toast is None:
+            from locksmith.ui.toasts.update_failed import UpdateFailedToast
+            self._update_failed_toast = UpdateFailedToast(parent=self)
+            self._update_failed_toast.clicked.connect(self._on_show_verification_log_clicked)
+        self._update_failed_toast.show_for_version(version)
+        self._update_failed_toast.position_in_parent(self.width(), self.height())
+
+    def _handle_critical_update_install_clicked(self) -> None:
+        """User clicked Install on the critical-update banner. Trigger
+        the controller's install path (which routes through Sparkle /
+        WinSparkle's installer with KERI verification gating)."""
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            return
+        logger.info("critical_banner.install_clicked")
+        ctrl.check_now()  # bridge's install path fires on the next check
+
+    # ---- one-shot startup dialogs ----
+
+    def _maybe_show_first_launch_consent(self) -> None:
+        """If the user has never seen the update-consent dialog, show it.
+        Records `consent_seen=True` on either Allow or Not now so it
+        won't show again. On decline we explicitly set check_automatically
+        to False — 'Not now' means opt-out until they enable it from
+        Settings."""
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None or ctrl.prefs.consent_seen:
+            return
+        from locksmith.ui.dialogs.update_consent import UpdateConsentDialog
+        dlg = UpdateConsentDialog(prefs=ctrl.prefs, parent=self)
+
+        def _on_accept():
+            logger.info("update_consent.accepted")
+            if hasattr(ctrl, "start"):
+                ctrl.start()  # begin scheduled checks
+
+        def _on_decline():
+            logger.info("update_consent.declined")
+            ctrl.prefs.check_automatically = False
+
+        dlg.consent_accepted.connect(_on_accept)
+        dlg.consent_declined.connect(_on_decline)
+        dlg.open()
+
+    def _maybe_show_whats_new(self) -> None:
+        """If LOCKSMITH_VERSION is newer than the user's last_seen_version
+        AND the change crosses a major-or-minor boundary, fire the
+        What's New modal. Updates last_seen_version unconditionally so
+        future launches in this version don't re-show it."""
+        try:
+            from locksmith.build_info import LOCKSMITH_VERSION
+        except ImportError:
+            return
+        ctrl = getattr(self.app, "update_controller", None)
+        if ctrl is None:
+            return
+        prev = ctrl.prefs.last_seen_version
+        # Always record current so subsequent launches don't loop.
+        ctrl.prefs.last_seen_version = LOCKSMITH_VERSION
+        if prev is None or LOCKSMITH_VERSION == prev:
+            return
+        try:
+            prev_major_minor = tuple(int(x) for x in prev.split(".")[:2])
+            cur_major_minor = tuple(int(x) for x in LOCKSMITH_VERSION.split(".")[:2])
+        except ValueError:
+            return
+        if cur_major_minor <= prev_major_minor:
+            return
+        # Genuine major or minor bump — show the modal.
+        from locksmith.ui.dialogs.whats_new import WhatsNewDialog
+        notes = (
+            f"# What's new in v{LOCKSMITH_VERSION}\n\n"
+            f"You've upgraded from v{prev}. "
+            f"See the release notes on releases.keri.host for details."
+        )
+        dlg = WhatsNewDialog(
+            version=LOCKSMITH_VERSION,
+            release_notes_md=notes,
+            parent=self,
+        )
+        dlg.open()
 
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the

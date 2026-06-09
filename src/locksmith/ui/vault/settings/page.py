@@ -91,6 +91,7 @@ class SettingsPage(QWidget):
         # Add the actual settings content
         self._create_general_settings_section(content_layout)
         self._create_peer_mode_section(content_layout)
+        self._create_updates_section(content_layout)
         self._create_danger_zone_section(content_layout)
         
         # Push version to bottom
@@ -333,6 +334,30 @@ class SettingsPage(QWidget):
             return
         self.peer_section = PeerSettingsSection(vault=self.app.vault)
         self._peer_section_placeholder_layout.addWidget(self.peer_section)
+
+    def _create_updates_section(self, parent_layout: QVBoxLayout):
+        """Mount the Phase 5 UpdatesSettingsWidget — auto-check toggle,
+        Last-checked timestamp, Check-now button, View-verification-log
+        button. Wires the buttons to the app's UpdateController."""
+        from locksmith.ui.vault.settings.updates_widget import UpdatesSettingsWidget
+        ctrl = getattr(self.app, "update_controller", None) if self.app else None
+        widget = UpdatesSettingsWidget(
+            prefs=ctrl.prefs if ctrl else None,
+        )
+
+        if ctrl is not None:
+            widget.set_check_now_callback(ctrl.check_now)
+
+        def _on_view_log():
+            # Walk up to the top-level LocksmithWindow and open its dialog
+            # via the same handler the Help menu uses.
+            top = self.window()
+            handler = getattr(top, "_on_show_verification_log_clicked", None)
+            if handler is not None:
+                handler()
+        widget.set_view_log_callback(_on_view_log)
+
+        parent_layout.addWidget(widget)
 
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""

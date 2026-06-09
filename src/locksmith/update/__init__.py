@@ -1,11 +1,32 @@
-"""Update verification subsystem for Locksmith.
+"""Update verification + orchestration subsystem for Locksmith.
 
-Consumes the appcast + publisher KEL + witness receipts and gates artifact
-installation by SHA256 match against the anchored release seal. Public
-surface used by Phase 5's Sparkle UI:
+Phase 4 (verification) public surface:
 
 - ``verify.verify_artifact(...)``
 - ``staging.stage_and_lock(...)``
 - ``log.append_entry(...)`` / ``log.read_entries(...)``
 - ``errors.UpdateError`` and subclasses
+
+Phase 5 (orchestration + UI bridge) public surface:
+
+- ``UpdateController``  — top-level entry, instantiated from main.py
+- ``UpdateScheduler``   — periodic check timer (30s initial + 4h cadence)
+- ``UpdateDecision``    — pure function over appcast Release + current version
+- ``UpdatePrefs``       — QSettings wrapper for user prefs
+- ``Deferral``          — sliding 24h / 7-day cap logic
 """
+from locksmith.update.controller import UpdateController
+from locksmith.update.decision import UpdateAction, UpdateDecision
+from locksmith.update.deferral import Deferral, DeferralState
+from locksmith.update.prefs import UpdatePrefs
+from locksmith.update.scheduler import UpdateScheduler
+
+__all__ = [
+    "UpdateController",
+    "UpdateScheduler",
+    "UpdateDecision",
+    "UpdateAction",
+    "UpdatePrefs",
+    "Deferral",
+    "DeferralState",
+]
