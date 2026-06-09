@@ -105,3 +105,40 @@ def test_app_settings_dialog_contains_about_section(qapp):
     # Version string format: "Version: <something non-empty>"
     assert labels[0].text().startswith("Version: ")
     assert labels[0].text() != "Version: "
+
+
+def test_vault_settings_page_no_longer_mounts_updates_widget(qapp):
+    """The vault sidebar Settings entry must not double-mount Updates;
+    that section lives in the toolbar AppSettingsDialog now."""
+    # Build a minimal VaultPage-like parent for SettingsPage construction.
+    fake_app = SimpleNamespace(
+        vault=None,
+        config=LocksmithConfig.get_instance(),
+        update_controller=None,
+        is_vault_open=False,
+    )
+    parent = QWidget()
+    parent.app = fake_app  # SettingsPage reads `parent.app`
+
+    from locksmith.ui.vault.settings.page import SettingsPage
+    page = SettingsPage(parent=parent)
+
+    assert page.findChild(QWidget, "updatesSettingsWidget") is None
+    # Sanity: the per-vault Peer Mode placeholder still exists.
+    assert page._peer_section_placeholder is not None
+
+
+def test_vault_settings_page_no_longer_mounts_defaults_widget(qapp):
+    fake_app = SimpleNamespace(
+        vault=None,
+        config=LocksmithConfig.get_instance(),
+        update_controller=None,
+        is_vault_open=False,
+    )
+    parent = QWidget()
+    parent.app = fake_app
+
+    from locksmith.ui.vault.settings.page import SettingsPage
+    page = SettingsPage(parent=parent)
+
+    assert page.findChild(QWidget, "defaultsSettingsWidget") is None

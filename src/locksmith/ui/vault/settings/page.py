@@ -10,7 +10,7 @@ from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QPalette, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QScrollArea, QFrame, QButtonGroup
+    QScrollArea, QFrame
 )
 from keri import help
 from keri.core import coring
@@ -19,15 +19,12 @@ from keri import kering
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN, LocksmithConfig
 from locksmith.ui import colors
 from locksmith.ui.styles import get_monospace_font_family
-from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithIconButton, LocksmithRadioButton, LocksmithCopyButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithIconButton, LocksmithCopyButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
-from locksmith.ui.toolkit.widgets.toggle import ToggleSwitch
 from locksmith.ui.vault.settings.delete_dialog import DeleteVaultDialog
 from locksmith.ui.vault.settings.peer_section import PeerSettingsSection
 
 logger = help.ogler.getLogger(__name__)
-
-__version__ = "0.0.1"
 
 # AID validation regex (44 character base64url)
 AID_PATTERN = re.compile(r'^[A-Za-z0-9_-]{44}$')
@@ -74,8 +71,8 @@ class SettingsPage(QWidget):
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.Shape.NoFrame)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
-        
-        # Force light background for the scroll area and its viewport 
+
+        # Force light background for the scroll area and its viewport
         # (overrides system dark mode for consistency with other vault pages)
         scroll_area.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT}; border: none;")
         scroll_area.viewport().setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
@@ -88,94 +85,20 @@ class SettingsPage(QWidget):
         content_layout.setContentsMargins(30, 30, 30, 30)
         content_layout.setSpacing(20)
 
-        # Add the actual settings content
-        self._create_general_settings_section(content_layout)
+        # Vault-scoped sections only (app-wide settings live in the
+        # toolbar AppSettingsDialog — see
+        # docs/superpowers/plans/2026-06-09-settings-two-surface-refactor.md).
         self._create_peer_mode_section(content_layout)
-        self._create_updates_section(content_layout)
+        if ENABLE_TURRET_BROWSER_PLUGIN:
+            self._create_browser_plugin_section(content_layout)
         self._create_danger_zone_section(content_layout)
-        
-        # Push version to bottom
+
         content_layout.addStretch()
-        self._create_version_section(content_layout)
 
         scroll_area.setWidget(content_widget)
         main_layout.addWidget(scroll_area)
 
         logger.info("SettingsPage initialized")
-
-    def _create_general_settings_section(self, parent_layout: QVBoxLayout):
-        """Create the General Settings section with form fields."""
-        # Section header
-        header_label = QLabel("Vault Settings")
-        header_font = QFont()
-        header_font.setBold(True)
-        header_font.setPointSize(14)
-        header_label.setFont(header_font)
-        header_label.setStyleSheet(f"color: {colors.TEXT_PRIMARY};")
-        parent_layout.addWidget(header_label)
-
-        # Subheader explaining these are defaults
-        subheader_label = QLabel("Default settings for new vaults and identifiers")
-        subheader_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px; margin-bottom: 10px;")
-        parent_layout.addWidget(subheader_label)
-
-        # Container with styled inputs
-        settings_container = QFrame()
-        settings_container.setObjectName("settingsContainer")
-        settings_container.setStyleSheet(f"""
-            #settingsContainer {{
-                background-color: {colors.WHITE};
-                border: 1px solid {colors.BORDER_TABLE};
-                border-radius: 24px;
-            }}
-            /* --- Ensure child widgets inherit container background --- */
-            QWidget {{ background-color: transparent; }}
-            
-            /* --- RADIO BUTTONS --- */
-            QRadioButton {{ spacing: 8px; color: {colors.TOGGLE_TRACK_ON}; }}
-            QRadioButton::indicator {{
-                width: 14px; height: 14px;
-                border-radius: 8px;
-                border: 2px solid {colors.BLUE_ACCENT};
-                background-color: transparent;
-            }}
-            QRadioButton::indicator:checked {{
-                background-color: {colors.BLUE_ACCENT};
-            }}
-            /* --- TEXT INPUTS --- */
-            QLineEdit {{
-                border: 2px solid {colors.BORDER_TABLE};
-                border-radius: 6px;
-                padding: 5px;
-                color: {colors.TOGGLE_TRACK_ON};
-            }}
-            QLineEdit:focus {{
-                border: 2px solid {colors.BLUE_ACCENT};
-            }}
-        """)
-        settings_layout = QVBoxLayout(settings_container)
-        settings_layout.setContentsMargins(25, 25, 25, 25)
-        settings_layout.setSpacing(20)
-
-        # Temporary Datastore toggle
-        self._create_temp_datastore_row(settings_layout)
-
-        # Database Directory Base
-        self._create_base_dir_row(settings_layout)
-
-        # Cryptographic Key Strength
-        self._create_tier_row(settings_layout)
-
-        # Default Key Generation (algo)
-        self._create_algo_row(settings_layout)
-
-        # Key Salt (only visible when salty is selected)
-        self._create_salt_row(settings_layout)
-
-        parent_layout.addWidget(settings_container)
-
-        if ENABLE_TURRET_BROWSER_PLUGIN:
-            self._create_browser_plugin_section(parent_layout)
 
     def _create_browser_plugin_section(self, parent_layout: QVBoxLayout):
         """Create the Browser Plugin Connection section."""
@@ -335,30 +258,6 @@ class SettingsPage(QWidget):
         self.peer_section = PeerSettingsSection(vault=self.app.vault)
         self._peer_section_placeholder_layout.addWidget(self.peer_section)
 
-    def _create_updates_section(self, parent_layout: QVBoxLayout):
-        """Mount the Phase 5 UpdatesSettingsWidget — auto-check toggle,
-        Last-checked timestamp, Check-now button, View-verification-log
-        button. Wires the buttons to the app's UpdateController."""
-        from locksmith.ui.vault.settings.updates_widget import UpdatesSettingsWidget
-        ctrl = getattr(self.app, "update_controller", None) if self.app else None
-        widget = UpdatesSettingsWidget(
-            prefs=ctrl.prefs if ctrl else None,
-        )
-
-        if ctrl is not None:
-            widget.set_check_now_callback(ctrl.check_now)
-
-        def _on_view_log():
-            # Walk up to the top-level LocksmithWindow and open its dialog
-            # via the same handler the Help menu uses.
-            top = self.window()
-            handler = getattr(top, "_on_show_verification_log_clicked", None)
-            if handler is not None:
-                handler()
-        widget.set_view_log_callback(_on_view_log)
-
-        parent_layout.addWidget(widget)
-
     def _create_danger_zone_section(self, parent_layout: QVBoxLayout):
         """Create the Danger Zone section with delete vault button."""
         # Section header
@@ -389,154 +288,6 @@ class SettingsPage(QWidget):
         self._create_delete_vault_row(danger_layout)
 
         parent_layout.addWidget(danger_container)
-
-    def _create_temp_datastore_row(self, parent_layout: QVBoxLayout):
-        """Create the temporary datastore toggle row."""
-        row = QHBoxLayout()
-        row.setSpacing(20)
-
-        label = QLabel("Temporary Datastore")
-        label.setFixedWidth(220)
-        label.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        row.addWidget(label)
-
-        self.temp_toggle = ToggleSwitch()
-        self.temp_toggle.setChecked(self.config.temp)
-        self.temp_toggle.toggled.connect(self._on_temp_changed)
-        row.addWidget(self.temp_toggle)
-
-        row.addStretch()
-        parent_layout.addLayout(row)
-
-    def _create_base_dir_row(self, parent_layout: QVBoxLayout):
-        """Create the database directory base row."""
-        row = QHBoxLayout()
-        row.setSpacing(20)
-
-        label = QLabel("Database Directory Base")
-        label.setFixedWidth(220)
-        label.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        row.addWidget(label)
-
-        self.base_dir_field = FloatingLabelLineEdit("Directory")
-        self.base_dir_field.setText(self.config.base)
-        self.base_dir_field.setFixedWidth(300)
-        self.base_dir_field.line_edit.textChanged.connect(self._on_base_changed)
-        row.addWidget(self.base_dir_field)
-
-        row.addStretch()
-        parent_layout.addLayout(row)
-
-    def _create_tier_row(self, parent_layout: QVBoxLayout):
-        """Create the cryptographic key strength row."""
-        row = QHBoxLayout()
-        row.setSpacing(20)
-
-        label = QLabel("Cryptographic Key Strength")
-        label.setFixedWidth(220)
-        label.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        row.addWidget(label)
-
-        # Radio button group
-        self.tier_group = QButtonGroup(self)
-        tier_layout = QHBoxLayout()
-        tier_layout.setSpacing(15)
-
-        self.tier_low = LocksmithRadioButton("Low")
-        self.tier_med = LocksmithRadioButton("Medium")
-        self.tier_high = LocksmithRadioButton("High")
-
-        self.tier_group.addButton(self.tier_low)
-        self.tier_group.addButton(self.tier_med)
-        self.tier_group.addButton(self.tier_high)
-
-        # Set current selection
-        current_tier = self.config.tier
-        if current_tier == "med":
-            self.tier_med.setChecked(True)
-        elif current_tier == "high":
-            self.tier_high.setChecked(True)
-        else:
-            self.tier_low.setChecked(True)
-
-        tier_layout.addWidget(self.tier_low)
-        tier_layout.addWidget(self.tier_med)
-        tier_layout.addWidget(self.tier_high)
-
-        self.tier_group.buttonClicked.connect(self._on_tier_changed)
-
-        row.addLayout(tier_layout)
-        row.addStretch()
-        parent_layout.addLayout(row)
-
-    def _create_algo_row(self, parent_layout: QVBoxLayout):
-        """Create the default key generation algorithm row."""
-        row = QHBoxLayout()
-        row.setSpacing(20)
-
-        label = QLabel("Default Key Generation")
-        label.setFixedWidth(220)
-        label.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        row.addWidget(label)
-
-        # Radio button group
-        self.algo_group = QButtonGroup(self)
-        algo_layout = QHBoxLayout()
-        algo_layout.setSpacing(15)
-
-        self.algo_salty = LocksmithRadioButton("Salty")
-        self.algo_randy = LocksmithRadioButton("Randy")
-
-        self.algo_group.addButton(self.algo_salty)
-        self.algo_group.addButton(self.algo_randy)
-
-        # Set current selection
-        if self.config.algo == "salty":
-            self.algo_salty.setChecked(True)
-        else:
-            self.algo_randy.setChecked(True)
-
-        algo_layout.addWidget(self.algo_salty)
-        algo_layout.addWidget(self.algo_randy)
-
-        self.algo_group.buttonClicked.connect(self._on_algo_changed)
-
-        row.addLayout(algo_layout)
-        row.addStretch()
-        parent_layout.addLayout(row)
-
-    def _create_salt_row(self, parent_layout: QVBoxLayout):
-        """Create the key salt row with resalt button."""
-        self.salt_row_widget = QWidget()
-        self.salt_row_widget.setStyleSheet("background-color: transparent;")
-        row = QHBoxLayout(self.salt_row_widget)
-        row.setContentsMargins(0, 0, 0, 0)
-        row.setSpacing(20)
-
-        label = QLabel("Key Salt")
-        label.setFixedWidth(220)
-        label.setStyleSheet(f"font-size: 16px; color: {colors.TEXT_PRIMARY};")
-        row.addWidget(label)
-
-        self.salt_field = FloatingLabelLineEdit("Salt", password_mode=True)
-        self.salt_field.setText(self.config.salt)
-        self.salt_field.setFixedWidth(300)
-        self.salt_field.line_edit.textChanged.connect(self._on_salt_changed)
-        row.addWidget(self.salt_field)
-
-        # Resalt button
-        resalt_button = LocksmithIconButton(
-            icon_path=":/assets/material-icons/refresh.svg",
-            tooltip="Generate new salt"
-        )
-        resalt_button.clicked.connect(self._on_resalt)
-        row.addWidget(resalt_button)
-
-        row.addStretch()
-        parent_layout.addWidget(self.salt_row_widget)
-
-        # Show/hide based on algo selection
-        self._update_salt_visibility()
 
     def _create_delete_vault_row(self, parent_layout: QVBoxLayout):
         """Create the delete vault button row."""
@@ -573,67 +324,12 @@ class SettingsPage(QWidget):
         row.addStretch()
         parent_layout.addLayout(row)
 
-    def _create_version_section(self, parent_layout: QVBoxLayout):
-        """Create the version info section."""
-        parent_layout.addSpacing(20)
-
-        version_label = QLabel(f"Version: {__version__}")
-        version_label.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
-        parent_layout.addWidget(version_label)
-
-
-
-    def _on_temp_changed(self, checked: bool):
-        """Handle temporary datastore toggle."""
-        self.config.temp = checked
-        logger.info(f"Temporary datastore set to: {self.config.temp}")
-
-    def _on_base_changed(self, text: str):
-        """Handle database directory change."""
-        self.config.base = text
-        logger.info(f"Database base directory set to: {self.config.base}")
-
-    def _on_tier_changed(self):
-        """Handle tier selection change."""
-        if self.tier_low.isChecked():
-            self.config.tier = "low"
-        elif self.tier_med.isChecked():
-            self.config.tier = "med"
-        elif self.tier_high.isChecked():
-            self.config.tier = "high"
-        logger.info(f"Cryptographic tier set to: {self.config.tier}")
-
-    def _on_algo_changed(self):
-        """Handle algorithm selection change."""
-        if self.algo_salty.isChecked():
-            self.config.algo = "salty"
-        else:
-            self.config.algo = "randy"
-        logger.info(f"Key generation algorithm set to: {self.config.algo}")
-        self._update_salt_visibility()
-
-    def _update_salt_visibility(self):
-        """Show/hide salt row based on algorithm selection."""
-        if hasattr(self, 'salt_row_widget'):
-            self.salt_row_widget.setVisible(self.config.algo == "salty")
-
-    def _on_salt_changed(self, text: str):
-        """Handle salt field change."""
-        self.config.salt = text
-        logger.info("Key salt updated")
-
-    def _on_resalt(self):
-        """Handle resalt button click."""
-        new_salt = self.config.resalt()
-        self.salt_field.setText(new_salt)
-        logger.info("New salt generated")
-
     def _on_delete_vault(self):
         """Handle delete vault button click."""
         if not self.vault_name:
             logger.warning("No vault name set, cannot delete")
             return
-        
+
         if not self.app:
             logger.warning("No app instance, cannot delete vault")
             return
@@ -660,7 +356,7 @@ class SettingsPage(QWidget):
             if nav_manager is not None:
                 break
             widget = widget.parent()  # type: ignore[assignment]
-        
+
         if nav_manager is not None:
             # Clear navigation stack and navigate to home
             nav_manager.clear_navigation_stack()
