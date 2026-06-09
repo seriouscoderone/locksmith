@@ -25,7 +25,6 @@ class LocksmithToolbar(QToolBar):
     """
 
     # Signals for toolbar actions
-    settings_clicked = Signal()
     vaults_clicked = Signal()
     lock_clicked = Signal()
     home_clicked = Signal()

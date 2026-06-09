@@ -64,7 +64,6 @@ class LocksmithWindow(QMainWindow):
 
         # Create and add toolbar
         self.toolbar = LocksmithToolbar(self.app, self)
-        self.toolbar.settings_clicked.connect(self.on_settings)
         self.toolbar.vaults_clicked.connect(self.on_vaults)
         self.toolbar.lock_clicked.connect(self.on_lock_vault)
         self.toolbar.home_clicked.connect(self.on_home)
@@ -549,12 +548,6 @@ class LocksmithWindow(QMainWindow):
                 self.nav_manager.navigate_to(Pages.HOME)
             return
         self.nav_manager.navigate_to(Pages.PLUGINS)
-
-    def on_settings(self):
-        """Handle settings button click."""
-        logger.info("Settings clicked")
-        # Settings dialog is shown by toolbar
-        pass
 
     def on_vaults(self):
         """Handle vaults button click - delegate to drawer."""

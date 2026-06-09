@@ -142,3 +142,15 @@ def test_vault_settings_page_no_longer_mounts_defaults_widget(qapp):
     page = SettingsPage(parent=parent)
 
     assert page.findChild(QWidget, "defaultsSettingsWidget") is None
+
+
+def test_on_settings_stub_is_gone():
+    """The toolbar opens AppSettingsDialog directly; the window-level
+    on_settings stub is dead and must not be re-introduced."""
+    from pathlib import Path
+    import locksmith.ui.window as window_module
+    source = Path(window_module.__file__).read_text()
+    assert "def on_settings" not in source, (
+        "on_settings stub re-introduced — toolbar opens AppSettingsDialog directly"
+    )
+    assert "settings_clicked.connect(self.on_settings)" not in source

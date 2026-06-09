@@ -19,7 +19,7 @@ from keri import kering
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN, LocksmithConfig
 from locksmith.ui import colors
 from locksmith.ui.styles import get_monospace_font_family
-from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithIconButton, LocksmithCopyButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithCopyButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
 from locksmith.ui.vault.settings.delete_dialog import DeleteVaultDialog
 from locksmith.ui.vault.settings.peer_section import PeerSettingsSection
