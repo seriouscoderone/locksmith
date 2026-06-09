@@ -50,6 +50,23 @@ if [[ ! -d "dist/Locksmith.app" ]]; then
     exit 1
 fi
 
+# ---- 4b. Embed Sparkle.framework -----------------------------------------
+# Done post-PyInstaller because PyInstaller's BUNDLE step nests data paths
+# under Contents/Frameworks/, producing Contents/Frameworks/Frameworks/...,
+# and its internal ad-hoc codesign chokes on the nested .framework. Copying
+# here puts it at the canonical Contents/Frameworks/Sparkle.framework path;
+# scripts/sign.sh below does a recursive Developer ID sign that catches it.
+SPARKLE_SRC="packaging/macos/Sparkle.framework"
+if [[ -d "$SPARKLE_SRC" ]]; then
+    echo "build-macos: embedding Sparkle.framework into Contents/Frameworks/"
+    mkdir -p "dist/Locksmith.app/Contents/Frameworks"
+    rm -rf "dist/Locksmith.app/Contents/Frameworks/Sparkle.framework"
+    # -R preserves symlinks (Frameworks rely on Versions/Current/* symlink chain).
+    cp -R "$SPARKLE_SRC" "dist/Locksmith.app/Contents/Frameworks/Sparkle.framework"
+else
+    echo "build-macos: WARNING — $SPARKLE_SRC not present; in-app updates will be a no-op"
+fi
+
 # ---- 5. Sign nested libsodium dylibs ------------------------------------
 echo "build-macos: signing libsodium dylibs"
 ./signLibs.sh

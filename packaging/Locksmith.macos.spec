@@ -56,18 +56,14 @@ datas = [
     (str(_QTA_FONTS), "qtawesome/fonts"),
 ]
 
-# Sparkle.framework — embedded into Contents/Frameworks/. Only added when
-# present so local dev builds (without the CI fetch step) still succeed;
-# CI's "Fetch Sparkle framework" step is what guarantees presence for
-# release artifacts.
-if SPARKLE_FRAMEWORK.is_dir():
-    datas.append((str(SPARKLE_FRAMEWORK), "Frameworks/Sparkle.framework"))
-else:
-    print(
-        f"[spec] WARNING: {SPARKLE_FRAMEWORK} not present; the bundle will "
-        f"ship without Sparkle and in-app updates will be a no-op. CI's "
-        f"'Fetch Sparkle framework' step extracts it before pyinstaller runs."
-    )
+# Sparkle.framework: NOT added to PyInstaller's datas. PyInstaller's
+# BUNDLE step nests data paths under Contents/Frameworks/, which would
+# put the framework at Contents/Frameworks/Frameworks/Sparkle.framework
+# AND PyInstaller's internal ad-hoc codesign chokes on a nested .framework
+# subcomponent. build-macos.sh copies Sparkle.framework into
+# Contents/Frameworks/ after PyInstaller exits, before the Developer ID
+# codesign in scripts/sign.sh runs over the full bundle.
+_ = SPARKLE_FRAMEWORK  # silence unused-variable check; build-macos.sh reads the path itself
 
 # ---- Binaries: native libs ----------------------------------------------
 
