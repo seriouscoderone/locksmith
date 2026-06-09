@@ -89,8 +89,29 @@ class AppSettingsDialog(LocksmithDialog):
         from locksmith.ui.dialogs.defaults_settings_widget import (
             DefaultsSettingsWidget,
         )
+        from locksmith.ui.vault.settings.updates_widget import (
+            UpdatesSettingsWidget,
+        )
+
         self._defaults_widget = DefaultsSettingsWidget()
         self._insert_section(self._defaults_widget)
+
+        ctrl = getattr(self._app, "update_controller", None) if self._app else None
+        self._updates_widget = UpdatesSettingsWidget(
+            prefs=ctrl.prefs if ctrl else None,
+        )
+        if ctrl is not None:
+            self._updates_widget.set_check_now_callback(ctrl.check_now)
+
+        def _on_view_log() -> None:
+            # Walk up to the top-level LocksmithWindow and open its
+            # dialog via the same handler the Help menu uses.
+            top = self.window()
+            handler = getattr(top, "_on_show_verification_log_clicked", None)
+            if handler is not None:
+                handler()
+        self._updates_widget.set_view_log_callback(_on_view_log)
+        self._insert_section(self._updates_widget)
 
     def _insert_section(self, widget: QWidget) -> None:
         """Insert a section widget above the trailing stretch."""

@@ -73,3 +73,26 @@ def test_app_settings_dialog_contains_defaults_section(qapp):
     dialog = AppSettingsDialog(app=_fake_app())
     widgets = dialog.findChildren(QWidget, "defaultsSettingsWidget")
     assert len(widgets) == 1
+
+
+def test_app_settings_dialog_contains_updates_section(qapp):
+    dialog = AppSettingsDialog(app=_fake_app())
+    widgets = dialog.findChildren(QWidget, "updatesSettingsWidget")
+    assert len(widgets) == 1
+
+
+def test_app_settings_dialog_wires_check_now_to_controller(qapp):
+    called = []
+    fake_controller = SimpleNamespace(
+        prefs=None,
+        check_now=lambda: called.append("check_now"),
+    )
+    app = SimpleNamespace(update_controller=fake_controller)
+    dialog = AppSettingsDialog(app=app)
+
+    btn = dialog.findChild(
+        QWidget, "updatesSettingsWidget.checkNowButton"
+    )
+    assert btn is not None
+    btn.click()
+    assert called == ["check_now"]
