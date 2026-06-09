@@ -52,10 +52,11 @@ build-macos = [
     "pyinstaller>=6.6,<7",
     "dmgbuild>=1.6.1",
     # Phase 5 Sparkle bridge — PyObjC talks to the bundled Sparkle.framework
-    # at runtime. Optional at install time so non-frozen dev runs on macOS
-    # don't pull these in unless they're building a release.
+    # at runtime via objc.lookUpClass("SPUUpdater"), so no third-party
+    # framework binding is needed. Cocoa wrapper covers NSObject + the
+    # delegate-protocol plumbing. (There is no pyobjc-framework-Sparkle on
+    # PyPI; Sparkle is third-party and not part of PyObjC's umbrella.)
     "pyobjc-framework-Cocoa>=10.3 ; sys_platform == 'darwin'",
-    "pyobjc-framework-Sparkle>=10.3 ; sys_platform == 'darwin'",
 ]
 build-windows = [
     "pyinstaller>=6.6,<7",
