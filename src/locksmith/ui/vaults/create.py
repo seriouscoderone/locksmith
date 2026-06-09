@@ -71,8 +71,11 @@ class CreateVaultDialog(LocksmithDialog):
         self.passcode_field.setFixedWidth(300)
         layout.addWidget(self.passcode_field)
 
-        # 2fa button creation
-        self.enable_2fa_button = LocksmithButton("Enable 2-Factor Authentication")
+        # 2fa toggle — secondary-styled so it doesn't compete visually with
+        # the primary Create action. LocksmithButton (filled primary) made
+        # it look like the main CTA on Windows; LocksmithInvertedButton
+        # (outlined) keeps it visible but subordinate.
+        self.enable_2fa_button = LocksmithInvertedButton("Enable 2-Factor Authentication")
         self.enable_2fa_button.setFixedWidth(300)
 
         self._2fa_section = CollapsibleSection(

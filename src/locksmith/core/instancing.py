@@ -26,6 +26,44 @@ from PySide6.QtNetwork import QLocalServer, QLocalSocket
 
 logger = help.ogler.getLogger(__name__)
 
+
+# --- Windows foreground-window helpers --------------------------------------
+# macOS doesn't restrict cross-process activation, so these are no-ops there.
+# On Windows, an inactive process can't yank focus from the active one unless
+# the active one calls AllowSetForegroundWindow first. The instance
+# coordinator splits that across processes:
+#   request side (new launch) → _allow_any_process_to_set_foreground()
+#   receive side (existing owner) → _force_set_foreground(hwnd)
+
+_ASFW_ANY = -1  # AllowSetForegroundWindow constant: any process may claim FG
+
+
+def _allow_any_process_to_set_foreground() -> None:
+    """Windows-only: relax anti-focus-stealing for the next ~5 seconds.
+
+    Called by the new-launch process BEFORE asking the existing owner to
+    raise its window. No-op on non-Windows.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.AllowSetForegroundWindow(_ASFW_ANY)
+    except Exception as exc:  # noqa: BLE001 — best-effort; failure just means taskbar flash
+        logger.debug("instance.afsw_failed err=%s", exc)
+
+
+def _force_set_foreground(hwnd: int) -> None:
+    """Windows-only: complete the foreground transition Qt's raise_() /
+    activateWindow() can't do alone on this platform. No-op on non-Windows."""
+    if sys.platform != "win32":
+        return
+    try:
+        import ctypes
+        ctypes.windll.user32.SetForegroundWindow(int(hwnd))
+    except Exception as exc:  # noqa: BLE001
+        logger.debug("instance.set_foreground_failed err=%s", exc)
+
 _CONNECT_TIMEOUT_MS = 200
 
 
@@ -86,6 +124,14 @@ class InstanceCoordinator:
         sock = QLocalSocket()
         sock.connectToServer(self._name(vault))
         if sock.waitForConnected(_CONNECT_TIMEOUT_MS):
+            # Windows anti-focus-stealing protection blocks the receiver's
+            # SetForegroundWindow() unless the foreground process explicitly
+            # grants permission. Grant ANY local process the right to claim
+            # foreground for the next 5 seconds (the window of opportunity
+            # ends on the next mouse/keyboard interaction with our process,
+            # so this is bounded).
+            _allow_any_process_to_set_foreground()
+
             logger.info(f"instance.raise.requested vault={vault}")
             sock.write(b"raise\n")
             sock.flush()

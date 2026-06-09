@@ -363,7 +363,15 @@ class LocksmithWindow(QMainWindow):
         self.vault_drawer.show_open_vault_dialog(vault_name)
 
     def _raise_to_front(self) -> None:
-        """Bring this window to the foreground and request user attention."""
+        """Bring this window to the foreground and request user attention.
+
+        Qt's raise_() / activateWindow() are enough on macOS. On Windows
+        they get blocked by anti-focus-stealing unless the requester
+        called AllowSetForegroundWindow first (see
+        ``InstanceCoordinator.request_raise``). We also explicitly call
+        SetForegroundWindow via ctypes here so the actual focus transition
+        completes after Qt's higher-level calls have set up the window
+        state."""
         from PySide6.QtWidgets import QApplication
         self.show()
         self.setWindowState(
@@ -372,6 +380,10 @@ class LocksmithWindow(QMainWindow):
         )
         self.raise_()
         self.activateWindow()
+        # Windows-specific: complete the foreground transition the OS would
+        # otherwise block. No-op on macOS.
+        from locksmith.core.instancing import _force_set_foreground
+        _force_set_foreground(int(self.winId()))
         QApplication.alert(self)
         logger.info("instance.window.raised")
 
