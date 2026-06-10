@@ -55,16 +55,26 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
     ``get_object(Bucket=, Key=) -> bytes`` (or ``-> object with ['Body'].read()``),
     and ``put_object(Bucket=, Key=, Body=, ContentType=)``.
     """
-    versions = sorted(s3.list_release_versions(bucket=config.bucket), key=_semver_key)
-    if not versions:
+    all_versions = sorted(s3.list_release_versions(bucket=config.bucket), key=_semver_key)
+    if not all_versions:
         return
 
+    # Only include versions that actually have an anchor file. Test
+    # releases that pre-date Phase 4 (or were never anchored) have
+    # artifact uploads but no release-anchor-<v>.cesr — skip those
+    # so a missing key here doesn't poison the appcast.
     anchors_by_version: dict[str, dict[str, Any]] = {}
-    for v in versions:
-        raw_or_resp = s3.get_object(
-            Bucket=config.bucket,
-            Key=f"releases/{v}/release-anchor-{v}.cesr",
-        )
+    versions: list[str] = []
+    for v in all_versions:
+        try:
+            raw_or_resp = s3.get_object(
+                Bucket=config.bucket,
+                Key=f"releases/{v}/release-anchor-{v}.cesr",
+            )
+        except Exception:  # noqa: BLE001 — NoSuchKey, ClientError, etc.
+            # Un-anchored — leave out of the appcast. Verifier wouldn't
+            # accept it anyway since no ixn / receipts exist.
+            continue
         # Tolerate both raw bytes and a boto3-style response dict.
         if isinstance(raw_or_resp, (bytes, bytearray)):
             raw = bytes(raw_or_resp)
@@ -75,6 +85,10 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
                 f"unexpected S3 get_object return for {v}: {type(raw_or_resp).__name__}"
             )
         anchors_by_version[v] = _parse_anchor(raw)
+        versions.append(v)
+
+    if not versions:
+        return
 
     current_version = versions[-1]
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
