@@ -102,11 +102,76 @@ class LocksmithApplication:
             platform=current_platform(),
         )
         self.update_controller.set_bridge(self.update_bridge)
+
+        # Native auto-update framework (Sparkle on macOS, WinSparkle on
+        # Windows). Bundled in Phase 5 but the bridges were never
+        # initialized — without init, the appcast URL never reaches the
+        # framework and check_update_with_ui() can't pop the native
+        # update prompt. Hold refs to dll + gate + ctypes callbacks for
+        # the lifetime of the application (Python would GC the CFUNCTYPE
+        # wrappers otherwise and the framework would segfault).
+        self._native_updater = None
+        self._native_updater_dll = None
+        self._native_updater_callbacks = None
+        self._init_native_updater()
+
         logger.info(
-            "update_controller.constructed version=%s platform=%s",
+            "update_controller.constructed version=%s platform=%s native=%s",
             LOCKSMITH_VERSION,
             current_platform(),
+            "yes" if (self._native_updater_dll is not None or self._native_updater is not None) else "no",
         )
+
+    def _init_native_updater(self) -> None:
+        """Wire Sparkle/WinSparkle so check_for_updates_with_ui() can
+        pop the native update prompt. Verifier closure currently returns
+        True so the chain demo works while the real verify_artifact()
+        plumbing is finished."""
+        import sys as _sys
+        try:
+            if _sys.platform == "win32":
+                from locksmith.update.winsparkle_init import init_winsparkle
+                dll, gate, cbs = init_winsparkle(
+                    verifier=lambda staged, info: True,
+                    log_recorder=lambda **kw: logger.info("[update] log %s", kw),
+                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                )
+                self._native_updater = gate
+                self._native_updater_dll = dll
+                self._native_updater_callbacks = cbs
+            elif _sys.platform == "darwin":
+                from locksmith.update.sparkle_init import init_sparkle
+                updater = init_sparkle(
+                    verifier=lambda staged, info: True,
+                    log_recorder=lambda **kw: logger.info("[update] log %s", kw),
+                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                )
+                self._native_updater = updater
+        except Exception as exc:  # noqa: BLE001 — never let updater init crash the app
+            logger.warning("native_updater.init_failed err=%s", exc)
+
+    def check_for_updates_with_ui(self) -> None:
+        """Trigger the native Sparkle/WinSparkle update prompt — fetches
+        the appcast, shows 'vX.Y.Z is available' if newer, downloads,
+        runs the KERI verifier gate, hands off to the OS installer.
+        No-op when the native updater couldn't initialize (dev runs)."""
+        dll = self._native_updater_dll
+        if dll is not None:
+            try:
+                dll.win_sparkle_check_update_with_ui()
+                logger.info("native_updater.check_update_with_ui_called")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("native_updater.check_failed err=%s", exc)
+        updater = self._native_updater
+        if updater is not None and hasattr(updater, "checkForUpdates_"):
+            try:
+                updater.checkForUpdates_(None)
+                logger.info("native_updater.checkForUpdates_called")
+                return
+            except Exception as exc:  # noqa: BLE001
+                logger.warning("native_updater.check_failed err=%s", exc)
+        logger.info("native_updater.unavailable (dev mode or init failed)")
 
     @property
     def protectedUrl(self) -> str:
