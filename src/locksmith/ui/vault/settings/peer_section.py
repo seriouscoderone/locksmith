@@ -367,7 +367,10 @@ class PeerSettingsSection(QFrame):
 
     def _on_add_peer(self) -> None:
         from locksmith.ui.vault.peers.add_dialog import AddPeerDialog
-        dialog = AddPeerDialog(vault=self._vault, parent=self)
+        # Parent to the top-level window, not self: the card's QSS contains
+        # `QWidget { background-color: transparent; }`, which would cascade
+        # into the dialog and erase the QLineEdit chrome (invisible inputs).
+        dialog = AddPeerDialog(vault=self._vault, parent=self.window())
         dialog.peer_added.connect(self._refresh_peers_list)
         dialog.open()
 
@@ -381,9 +384,10 @@ class PeerSettingsSection(QFrame):
             short_aid = f"{rec.aid[:4]}…{rec.aid[-4:]}" if len(rec.aid) > 12 else rec.aid
             health = self._vault.db.peerHealth.get(keys=(rec.aid,))
             color_key, health_phrase = summarize_health_for_ui(health)
-            item = QListWidgetItem(
-                f"{rec.label}   {short_aid}   {rec.endpoint_url}   ·   {health_phrase}"
-            )
+            # No text on the item itself — setItemWidget below renders a
+            # custom row, and Qt paints both the item text AND the widget
+            # if text is set, producing overlapping labels.
+            item = QListWidgetItem()
             item.setData(Qt.UserRole, rec.aid)
             self.peers_list.addItem(item)
             row_widget = self._build_peer_row(rec, short_aid, color_key, health_phrase)

@@ -64,7 +64,6 @@ class LocksmithWindow(QMainWindow):
 
         # Create and add toolbar
         self.toolbar = LocksmithToolbar(self.app, self)
-        self.toolbar.settings_clicked.connect(self.on_settings)
         self.toolbar.vaults_clicked.connect(self.on_vaults)
         self.toolbar.lock_clicked.connect(self.on_lock_vault)
         self.toolbar.home_clicked.connect(self.on_home)
@@ -233,12 +232,28 @@ class LocksmithWindow(QMainWindow):
     # ---- update menu handlers ----
 
     def _on_check_for_updates_clicked(self) -> None:
+        """Help menu 'Check for updates…' AND Settings → Updates →
+        'Check now' both route here. Two parallel things happen:
+
+          1. controller.check_now() — fetches the appcast through our
+             BridgeAdapter, runs the decision tree, emits action_decided
+             (drives our own banners / verification-log dialog).
+          2. app.check_for_updates_with_ui() — triggers the native
+             Sparkle/WinSparkle 'update available' prompt with native
+             progress UI + install hand-off.
+
+        We do both because the native UI is what the user actually
+        clicks 'Install' on; our controller fills the decision-tree +
+        banner + verification-log roles around it."""
         ctrl = getattr(self.app, "update_controller", None)
         if ctrl is None:
             logger.warning("update_controller.check_now.no_controller")
             return
         logger.info("update_controller.check_now.requested_from_help_menu")
         ctrl.check_now()
+        check_native = getattr(self.app, "check_for_updates_with_ui", None)
+        if check_native is not None:
+            check_native()
 
     def _on_show_verification_log_clicked(self) -> None:
         from locksmith.ui.dialogs.verification_log import VerificationLogDialog
@@ -308,11 +323,17 @@ class LocksmithWindow(QMainWindow):
 
         def _on_accept():
             logger.info("update_consent.accepted")
+            # Belt-and-suspenders: write the prefs ourselves in case the
+            # dialog's internal handler didn't (was reported re-firing
+            # every launch on Windows 2026-06-09).
+            ctrl.prefs.consent_seen = True
+            ctrl.prefs.check_automatically = True
             if hasattr(ctrl, "start"):
                 ctrl.start()  # begin scheduled checks
 
         def _on_decline():
             logger.info("update_consent.declined")
+            ctrl.prefs.consent_seen = True
             ctrl.prefs.check_automatically = False
 
         dlg.consent_accepted.connect(_on_accept)
@@ -561,12 +582,6 @@ class LocksmithWindow(QMainWindow):
                 self.nav_manager.navigate_to(Pages.HOME)
             return
         self.nav_manager.navigate_to(Pages.PLUGINS)
-
-    def on_settings(self):
-        """Handle settings button click."""
-        logger.info("Settings clicked")
-        # Settings dialog is shown by toolbar
-        pass
 
     def on_vaults(self):
         """Handle vaults button click - delegate to drawer."""

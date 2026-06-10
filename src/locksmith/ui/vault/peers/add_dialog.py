@@ -13,14 +13,16 @@ from __future__ import annotations
 from datetime import datetime, timezone
 from urllib.parse import urlparse
 
-from PySide6.QtCore import QTimer, Signal
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtWidgets import (
-    QDialog, QDialogButtonBox, QLabel, QLineEdit, QVBoxLayout,
+    QDialog, QHBoxLayout, QLabel, QLineEdit, QPushButton, QVBoxLayout,
 )
 from keri import help, kering
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerRecord
+from locksmith.ui import colors
+from locksmith.ui.toolkit.widgets.buttons import LocksmithButton
 
 logger = help.ogler.getLogger(__name__)
 
@@ -39,6 +41,32 @@ class AddPeerDialog(QDialog):
 
     def _build(self) -> None:
         self.setMinimumWidth(560)
+        # Pin a light theme — the raw QDialog otherwise inherits the
+        # system appearance and shows up as a near-black dialog against
+        # the rest of the (light) Locksmith UI. LocksmithDialog handles
+        # this on its own; this one is a plain QDialog.
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {colors.BACKGROUND_CONTENT};
+            }}
+            QLabel {{
+                color: {colors.TEXT_PRIMARY};
+                background-color: transparent;
+            }}
+            QLineEdit {{
+                background-color: {colors.WHITE};
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 6px;
+                padding: 6px 8px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {colors.PRIMARY};
+            }}
+            QPushButton {{
+                color: {colors.TEXT_PRIMARY};
+            }}
+        """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
@@ -100,17 +128,39 @@ class AddPeerDialog(QDialog):
         self.error_label.setStyleSheet("color: #DC2626; margin-top: 4px;")
         layout.addWidget(self.error_label)
 
-        buttons = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.pair_button = buttons.button(QDialogButtonBox.Ok)
-        if self.pair_button is not None:
-            self.pair_button.setText("Pair")
-            self.pair_button.setObjectName("addPeerDialog.pairButton")
-        cancel_btn = buttons.button(QDialogButtonBox.Cancel)
-        if cancel_btn is not None:
-            cancel_btn.setObjectName("addPeerDialog.cancelButton")
-        buttons.accepted.connect(self._on_pair_clicked)
-        buttons.rejected.connect(self.reject)
-        layout.addWidget(buttons)
+        # Match the project's dialog button language (cf. DeleteVaultDialog):
+        # neutral gray-bordered Cancel, primary orange action button. Avoid
+        # QDialogButtonBox so we don't inherit the platform's blue default-
+        # button styling on macOS.
+        button_row = QHBoxLayout()
+        button_row.setSpacing(12)
+        button_row.addStretch()
+
+        cancel_btn = QPushButton("Cancel")
+        cancel_btn.setObjectName("addPeerDialog.cancelButton")
+        cancel_btn.setCursor(Qt.CursorShape.PointingHandCursor)
+        cancel_btn.setStyleSheet(f"""
+            QPushButton {{
+                padding: 10px 24px;
+                background-color: {colors.BACKGROUND_DISABLED};
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 6px;
+                font-size: 14px;
+            }}
+            QPushButton:hover {{
+                background-color: {colors.BACKGROUND_NEUTRAL};
+            }}
+        """)
+        cancel_btn.clicked.connect(self.reject)
+        button_row.addWidget(cancel_btn)
+
+        self.pair_button = LocksmithButton("Pair")
+        self.pair_button.setObjectName("addPeerDialog.pairButton")
+        self.pair_button.clicked.connect(self._on_pair_clicked)
+        button_row.addWidget(self.pair_button)
+
+        layout.addLayout(button_row)
 
     def _on_pair_clicked(self) -> None:
         from locksmith.core.remoting import ResolveOobiDoer
