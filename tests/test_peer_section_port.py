@@ -9,6 +9,9 @@ import socket
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
 
+from PySide6.QtWidgets import QMainWindow
+
+from locksmith.peer.records import PeerRecord
 from locksmith.ui.vault.settings.peer_section import PeerSettingsSection
 
 
@@ -22,12 +25,12 @@ def _vault_with_no_saved_settings():
     return vault
 
 
-def _make_section(vault):
-    """Construct PeerSettingsSection with PeerAllowlist patched to return []."""
+def _make_section(vault, peers=()):
+    """Construct PeerSettingsSection with PeerAllowlist patched."""
     with patch(
         "locksmith.ui.vault.settings.peer_section.PeerAllowlist"
     ) as mock_allowlist_cls:
-        mock_allowlist_cls.return_value.list.return_value = []
+        mock_allowlist_cls.return_value.list.return_value = list(peers)
         section = PeerSettingsSection(vault)
     return section
 
@@ -55,3 +58,48 @@ def test_find_free_port_button_updates_spin(qapp):
             probe.bind(("", section.port_spin.value()))  # bindable
     finally:
         section.deleteLater()
+
+
+def test_paired_peer_row_has_no_text_overlay(qapp):
+    """The custom row widget is mounted via setItemWidget; the QListWidgetItem
+    must NOT also carry text() — Qt paints both and the result is jumbled
+    overlapping labels."""
+    vault = _vault_with_no_saved_settings()
+    peer = PeerRecord(
+        aid="ECnJ7jhAxjrduHkIKS_ml56bqPuIJIvSw-i0mpZR_P8p",
+        label="Bob",
+        endpoint_url="tcp://127.0.0.1:5622",
+        paired_at="2026-06-09T00:00:00+00:00",
+    )
+    section = _make_section(vault, peers=[peer])
+    try:
+        assert section.peers_list.count() == 1
+        item = section.peers_list.item(0)
+        assert item.text() == ""
+        assert section.peers_list.itemWidget(item) is not None
+    finally:
+        section.deleteLater()
+
+
+def test_add_peer_dialog_parented_to_top_window_not_section(qapp):
+    """The card's `QWidget { background-color: transparent; }` cascades to
+    child dialogs and erases QLineEdit chrome. Parent the dialog to the
+    top-level window instead so the section's QSS does not leak."""
+    vault = _vault_with_no_saved_settings()
+    section = _make_section(vault)
+    win = QMainWindow()
+    win.setCentralWidget(section)
+    try:
+        with patch(
+            "locksmith.ui.vault.peers.add_dialog.AddPeerDialog"
+        ) as mock_dialog_cls:
+            mock_dialog_cls.return_value.open = MagicMock()
+            section._on_add_peer()
+        assert mock_dialog_cls.called
+        _, kwargs = mock_dialog_cls.call_args
+        assert kwargs["parent"] is win, (
+            "Dialog parent must be the top-level window, not the QSS-poisoned "
+            "PeerSettingsSection"
+        )
+    finally:
+        win.deleteLater()
