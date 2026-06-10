@@ -147,3 +147,25 @@ def test_launch_new_origin_from_top_left(qapp):
         instancing.InstanceLauncher.launch_new(None, origin_xy=(0, 0))
     args = sd.call_args[0]
     assert args[1] == ["-m", "locksmith.main", "--win-pos", "48,48"]
+
+
+def test_launch_new_windows_frozen_does_not_carry_stale_args(qapp):
+    # Cascade bug: a frozen Windows instance that was ITSELF launched with
+    # --win-pos/--vault (i.e. a cascaded child) must not forward those stale
+    # args to a new instance. Otherwise the child's old --win-pos is prepended
+    # before the fresh one, and parse_window_pos (first occurrence) opens the
+    # grandchild at the parent's launch position instead of cascading — so
+    # only the first New Instance appears to cascade.
+    stale_argv = ["Locksmith.exe", "--win-pos", "0,0", "--vault", "old"]
+    with patch.object(instancing.sys, "frozen", True, create=True), \
+         patch.object(instancing.sys, "platform", "win32"), \
+         patch.object(instancing.sys, "argv", stale_argv), \
+         patch.object(instancing.sys, "executable", "Locksmith.exe"), \
+         patch.object(instancing.QProcess, "startDetached", return_value=(True, 0)) as sd:
+        instancing.InstanceLauncher.launch_new(None, origin_xy=(200, 100))
+    spawned = sd.call_args[0][1]
+    # Exactly one --win-pos, and it's the FRESH cascade target (200+48,100+48).
+    assert spawned.count("--win-pos") == 1, f"stale --win-pos carried over: {spawned}"
+    assert spawned == ["--win-pos", "248,148"], spawned
+    # A no-vault New Instance must not inherit the parent's --vault.
+    assert "--vault" not in spawned, f"stale --vault carried over: {spawned}"

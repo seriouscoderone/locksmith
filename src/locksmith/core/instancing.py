@@ -247,7 +247,14 @@ class InstanceLauncher:
                 QProcess.startDetached("open", ["-n", app_bundle, "--args"] + extra)
                 logger.info(f"instance.launch.spawned platform={sys.platform} vault={vault}")
                 return
-            QProcess.startDetached(sys.executable, sys.argv[1:] + extra)
+            # Launch with ONLY the freshly-computed args. Reusing sys.argv[1:]
+            # here would forward THIS process's own --win-pos/--vault to the
+            # child; since parse_window_pos/parse_vault_arg take the first
+            # occurrence, the stale values would win — so a cascaded child's
+            # grandchildren all opened at the parent's launch position instead
+            # of cascading (only the first New Instance appeared to cascade).
+            # The macOS and dev paths already pass only `extra`.
+            QProcess.startDetached(sys.executable, extra)
         else:
             QProcess.startDetached(sys.executable, ["-m", "locksmith.main"] + extra)
         logger.info(f"instance.launch.spawned platform={sys.platform} vault={vault}")
