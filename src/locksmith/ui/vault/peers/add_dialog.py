@@ -21,6 +21,7 @@ from keri import help, kering
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerRecord
+from locksmith.ui import colors
 
 logger = help.ogler.getLogger(__name__)
 
@@ -39,6 +40,32 @@ class AddPeerDialog(QDialog):
 
     def _build(self) -> None:
         self.setMinimumWidth(560)
+        # Pin a light theme — the raw QDialog otherwise inherits the
+        # system appearance and shows up as a near-black dialog against
+        # the rest of the (light) Locksmith UI. LocksmithDialog handles
+        # this on its own; this one is a plain QDialog.
+        self.setStyleSheet(f"""
+            QDialog {{
+                background-color: {colors.BACKGROUND_CONTENT};
+            }}
+            QLabel {{
+                color: {colors.TEXT_PRIMARY};
+                background-color: transparent;
+            }}
+            QLineEdit {{
+                background-color: {colors.WHITE};
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 6px;
+                padding: 6px 8px;
+            }}
+            QLineEdit:focus {{
+                border: 1px solid {colors.PRIMARY};
+            }}
+            QPushButton {{
+                color: {colors.TEXT_PRIMARY};
+            }}
+        """)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(24, 20, 24, 20)
         layout.setSpacing(12)
