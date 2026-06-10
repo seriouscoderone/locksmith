@@ -50,7 +50,7 @@ class FakeHab:
         )
         self.db = SimpleNamespace(clonePreIter=lambda pre: list(self._cloned_messages))
 
-    def makeOwnEvent(self, sn=0, allowPartiallySigned=False):
+    def msgOwnEvent(self, sn=0, allowPartiallySigned=False):
         return f"evt-{self.pre}-{sn}".encode("utf-8")
 
 
@@ -494,9 +494,9 @@ def test_single_witness_rotation_posts_direct_receipt(tmp_path, monkeypatch):
             self.kever.toader.num = toad
             self.kever.serder = SimpleNamespace(said="SAID_ROT_1")
 
-        def makeOwnEvent(self, sn=0, allowPartiallySigned=False):
+        def msgOwnEvent(self, sn=0, allowPartiallySigned=False):
             _ = allowPartiallySigned
-            calls.append(("makeOwnEvent", sn))
+            calls.append(("msgOwnEvent", sn))
             return bytearray(b"RAWATT")
 
     def fake_post(url, *, headers, data, timeout):
@@ -545,7 +545,7 @@ def test_single_witness_rotation_posts_direct_receipt(tmp_path, monkeypatch):
     auth_header = calls[2][2]["Authorization"]
     assert calls == [
         ("rotate", 1, [], ["WIT_1"]),
-        ("makeOwnEvent", 1),
+        ("msgOwnEvent", 1),
         (
             "post",
             "https://wit-1.example/receipts",

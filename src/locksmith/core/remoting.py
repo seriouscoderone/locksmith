@@ -18,11 +18,10 @@ from hio.base import doing
 from keri import help, kering
 from keri.app import organizing, forwarding
 from keri.app.habbing import GroupHab
-from keri.core import parsing, serdering
+from keri.core import exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
 from keri.db import basing
 from keri.help import helping
-from keri.peer import exchanging
 from mnemonic import Mnemonic
 
 logger = help.ogler.getLogger(__name__)
@@ -926,7 +925,7 @@ class ChallengeVerificationDoer(doing.DoDoer):
             payload = dict(i=self.hab_pre, words=self.challenge_words)
 
             # Create exchange message
-            exn, _ = exchanging.exchange(route='/challenge/response', payload=payload, sender=hab.pre)
+            exn = exchange(route='/challenge/response',attributes=payload, sender=hab.pre)
 
             # Endorse the message
             ims = hab.endorse(serder=exn, last=False, framed=True)

@@ -271,7 +271,7 @@ class GroupMultisigInceptDoer(doing.DoDoer):
             )
 
             # Step 2: Get inception event (partially signed)
-            icp = ghab.makeOwnInception(allowPartiallySigned=True)
+            icp = ghab.msgOwnInception(allowPartiallySigned=True)
             serder = SerderKERI(raw=icp)
 
             logger.info(f"Group hab created with prefix: {ghab.pre}")
@@ -466,7 +466,7 @@ class MultisigJoinDoer(doing.DoDoer):
             logger.info(f"Created group hab with prefix: {ghab.pre}")
 
             # Step 4: Get our own signed version of the inception
-            own_icp = ghab.makeOwnInception(allowPartiallySigned=True)
+            own_icp = ghab.msgOwnInception(allowPartiallySigned=True)
             own_serder = SerderKERI(raw=own_icp)
 
             # Step 5: Create response EXN
@@ -832,7 +832,7 @@ class MultisigRotationJoinDoer(doing.DoDoer):
             ghab.rotate(serder=orot, smids=smids, rmids=rmids)
 
             # Step 6: Get own partially signed event
-            rot = ghab.makeOwnEvent(allowPartiallySigned=True, sn=orot.sn)
+            rot = ghab.msgOwnEvent(allowPartiallySigned=True, sn=orot.sn)
 
             # Step 7: Create response EXN
             resp_exn, resp_atc = keri_grouping.multisigRotateExn(

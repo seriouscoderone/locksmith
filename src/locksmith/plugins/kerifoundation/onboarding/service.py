@@ -17,11 +17,10 @@ import requests
 from keri import help
 from keri.app import agenting
 from keri.app.httping import CESR_ATTACHMENT_HEADER, CESR_CONTENT_TYPE, CESR_DESTINATION_HEADER
-from keri.core import parsing
+from keri.core import exchange, parsing
 from keri.core.serdering import SerderKERI
 from keri.db import dbing
 from keri.help import helping
-from keri.peer import exchanging
 from hio.base import doing
 
 from locksmith.core.remoting import (
@@ -212,7 +211,7 @@ class KFBootClient:
         )
 
     def send_ephemeral_inception(self, hab: Any) -> None:
-        msg = hab.makeOwnInception()
+        msg = hab.msgOwnInception()
         self._post_cesr(
             url=self._surfaces.onboarding_url,
             ims=msg,
@@ -388,17 +387,15 @@ class KFBootClient:
         dest = destination or self._destination(surface=surface)
         if surface == "account":
             self._ensure_surface_keystate(surface=surface, hab=hab, destination=dest)
-        serder, end = exchanging.exchange(
+        serder = exchange(
             route=route,
-            payload=payload,
+            attributes=payload,
             sender=hab.pre,
-            recipient=dest or None,
+            receiver=dest or "",
         )
         ims = hab.endorse(serder=serder, last=False, framed=True)
         attachment = bytearray(ims)
         del attachment[:serder.size]
-        if end:
-            attachment.extend(end)
         return self._post_cesr(
             url=self._surface_url(surface),
             body=serder.raw,
@@ -513,7 +510,7 @@ class KFBootClient:
             messages[sn] = raw
 
         for sn in range(start_sn, end_sn + 1):
-            yield sn, messages.get(sn, bytes(hab.makeOwnEvent(sn=sn)))
+            yield sn, messages.get(sn, bytes(hab.msgOwnEvent(sn=sn)))
 
     def _normalize_start_reply(
         self,
@@ -1395,7 +1392,7 @@ class KFOnboardingService:
         witness_url: str,
         auth: str,
     ) -> None:
-        msg = bytearray(hab.makeOwnEvent(sn=hab.kever.sn))
+        msg = bytearray(hab.msgOwnEvent(sn=hab.kever.sn))
         serder = SerderKERI(raw=bytearray(msg))
         attachments = bytes(msg[serder.size:])
         headers = {
