@@ -104,12 +104,22 @@ class AppSettingsDialog(LocksmithDialog):
             self._updates_widget.set_check_now_callback(ctrl.check_now)
 
         def _on_view_log() -> None:
-            # Walk up to the top-level LocksmithWindow and open its
-            # dialog via the same handler the Help menu uses.
-            top = self.window()
-            handler = getattr(top, "_on_show_verification_log_clicked", None)
+            # self.window() returns the dialog itself (it IS a window).
+            # Walk the parent chain to find the LocksmithWindow that
+            # owns _on_show_verification_log_clicked.
+            w = self.parent()
+            handler = None
+            while w is not None:
+                handler = getattr(w, "_on_show_verification_log_clicked", None)
+                if handler is not None:
+                    break
+                w = w.parent()
             if handler is not None:
                 handler()
+            else:
+                logger.warning(
+                    "appSettingsDialog.view_log_no_handler_found"
+                )
         self._updates_widget.set_view_log_callback(_on_view_log)
         self._insert_section(self._updates_widget)
 

@@ -82,12 +82,13 @@ def _status_banner(result: VerificationResult, error_message: str | None) -> QWi
             colors.BACKGROUND_SELECTION,
             colors.TEXT_PRIMARY,
             "ⓘ",
-            "No verification yet",
+            "No update has been verified yet",
         )
         sub = (
-            "Click 'Check now' from Settings → Updates (or 'Check for "
-            "updates…' from the Help menu) to verify the running release "
-            "against the publisher's KERI key event log."
+            "Locksmith verifies an update only when one is actually being "
+            "installed — the cryptographic proof for that release will "
+            "appear here. Your currently running build was signed by the "
+            "publisher at install time."
         )
     elif result.ok:
         bg, fg, mark, headline = (
@@ -167,6 +168,14 @@ class VerificationLogDialog(LocksmithDialog):
         )
         self.setObjectName("verificationLogDialog")
         self.result = result
+        # The inner wrap's setMinimumWidth alone isn't enough — the
+        # LocksmithDialog scroll area collapses to its content's
+        # natural size on first show, clipping label text. Force the
+        # dialog to a comfortable size so the readout fits without
+        # triggering a vertical scrollbar for the typical empty/idle
+        # state.
+        self.setMinimumWidth(640)
+        self.setMinimumHeight(280 if result is None else 540)
 
     # ---- layout ----------------------------------------------------------
 
@@ -230,9 +239,11 @@ class VerificationLogDialog(LocksmithDialog):
         return wrap
 
     def _build_buttons(self) -> QHBoxLayout:
+        # LocksmithDialog already wraps this layout with addStretch()
+        # on both sides for centering — do NOT add another stretch
+        # here or the button gets pushed off-center.
         buttons = QHBoxLayout()
         buttons.setSpacing(12)
-        buttons.addStretch(1)
         close = QPushButton("Close")
         close.setObjectName("verificationLogDialog.closeButton")
         close.setCursor(Qt.CursorShape.PointingHandCursor)

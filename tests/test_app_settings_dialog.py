@@ -98,6 +98,25 @@ def test_app_settings_dialog_wires_check_now_to_controller(qapp):
     assert called == ["check_now"]
 
 
+def test_app_settings_dialog_wires_view_log_to_parent_window_handler(qapp):
+    """Regression: self.window() returns the dialog itself, so a naive
+    lookup misses the LocksmithWindow handler. The callback must walk
+    the parent chain instead."""
+    called = []
+
+    class FakeWindow(QWidget):
+        def _on_show_verification_log_clicked(self):
+            called.append("opened")
+
+    window = FakeWindow()
+    dialog = AppSettingsDialog(app=_fake_app(), parent=window)
+
+    btn = dialog.findChild(QWidget, "updatesSettingsWidget.viewLogButton")
+    assert btn is not None
+    btn.click()
+    assert called == ["opened"]
+
+
 def test_app_settings_dialog_contains_about_section(qapp):
     dialog = AppSettingsDialog(app=_fake_app())
     labels = dialog.findChildren(QLabel, "appSettingsDialog.aboutVersionLabel")

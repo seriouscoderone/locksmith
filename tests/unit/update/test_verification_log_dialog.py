@@ -145,16 +145,21 @@ def test_rejected_dialog_falls_back_to_generic_error_message():
 
 def test_none_result_shows_idle_banner_not_rejected():
     """When no verification has run, the dialog must show a neutral
-    'No verification yet' state, NOT a red 'Rejected' banner. Showing
-    Rejected makes users think something failed when actually nothing
-    has happened yet (UX bug fixed 2026-06-09)."""
+    idle banner, NOT a red 'Rejected' banner. Showing Rejected makes
+    users think something failed when actually nothing has happened
+    yet (UX bug fixed 2026-06-09)."""
     dlg = VerificationLogDialog(result=None)
     texts = _all_label_texts(dlg)
-    assert any("No verification yet" in t for t in texts)
+    assert any("No update has been verified" in t for t in texts)
     # And specifically NOT a rejection
     assert "Rejected" not in texts
-    # The body should guide the user to Check now / Help menu
-    assert any("Check now" in t or "Check for updates" in t for t in texts)
+    # The body should honestly explain when verification populates,
+    # NOT mislead the user into thinking 'Check now' will populate it.
+    assert any(
+        "verifies an update only when" in t.lower()
+        or "installed" in t.lower()
+        for t in texts
+    )
 
 
 def test_witness_count_below_threshold_does_not_get_green_styling():
