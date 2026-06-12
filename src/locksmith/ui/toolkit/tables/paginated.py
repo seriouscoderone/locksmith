@@ -8,7 +8,7 @@ from enum import Enum
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
 
-from PySide6.QtCore import Qt, Signal, QEvent
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QColor
 from PySide6.QtWidgets import (
     QWidget,
@@ -36,6 +36,25 @@ logger = help.ogler.getLogger(__name__)
 
 # Get assets directory path relative to this module
 _ASSETS_DIR = Path(__file__).resolve().parents[5] / "assets" / "material-icons"
+
+
+class _HoverClearingTableWidget(QTableWidget):
+    """QTableWidget subclass that clears its selection when the mouse
+    leaves the widget area.
+
+    This replaces an earlier ``installEventFilter`` on the viewport that
+    pointed at the surrounding ``PaginatedTableWidget``. That filter
+    crashed (segfault inside Shiboken's override lookup) when the
+    PaginatedTableWidget's Python wrapper was GC'd before the inner
+    viewport — Qt's filter list still held a raw pointer to a dead
+    object. Subclassing the table itself ties the override's lifetime
+    directly to the Qt widget being hovered, which is the canonical
+    PySide6 pattern.
+    """
+
+    def leaveEvent(self, event):
+        self.clearSelection()
+        super().leaveEvent(event)
 
 
 class SortOrder(Enum):
@@ -184,7 +203,7 @@ class PaginatedTableWidget(QWidget):
         main_layout.addWidget(self.header)
 
         # Create table
-        self.table = QTableWidget()
+        self.table = _HoverClearingTableWidget()
         self._setup_table()
         main_layout.addWidget(self.table)
 
@@ -242,10 +261,12 @@ class PaginatedTableWidget(QWidget):
         self.table.horizontalHeader().setSortIndicator(-1, Qt.SortOrder.AscendingOrder)
         self.table.horizontalHeader().sectionClicked.connect(self._on_header_clicked)
 
-        # Enable hover highlighting
+        # Enable hover highlighting. Selection is cleared on mouse-leave
+        # via _HoverClearingTableWidget.leaveEvent — formerly done with
+        # installEventFilter, which crashed when the PaginatedTableWidget's
+        # Python wrapper was GC'd before the inner viewport.
         self.table.setMouseTracking(True)
         self.table.cellEntered.connect(self.table.selectRow)
-        self.table.viewport().installEventFilter(self)
         self.table.cellPressed.connect(self._on_cell_clicked)
 
 
@@ -998,12 +1019,6 @@ class PaginatedTableWidget(QWidget):
             self._load_data()
 
         self.page_changed.emit(new_page)
-
-    def eventFilter(self, source, event: QEvent) -> bool:
-        """Handle events for the table viewport."""
-        if source == self.table.viewport() and event.type() == QEvent.Type.Leave:
-            self.table.clearSelection()
-        return super().eventFilter(source, event)
 
     def _on_cell_clicked(self, row: int, column: int):
         """Handle cell click to trigger row_clicked signal."""
