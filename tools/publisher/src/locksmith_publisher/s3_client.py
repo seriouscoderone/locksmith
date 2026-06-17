@@ -66,6 +66,46 @@ class S3:
             content_type=content_type,
         )
 
+    def upload_release(
+        self,
+        *,
+        bucket: str,
+        kel: bytes,
+        anchors: dict[str, bytes],
+        appcast: bytes,
+        appcast_key: str,
+    ) -> None:
+        """Upload the publisher KEL, anchor events, and the appcast in one shot.
+
+        Layout (mirrors the verifier's expected URLs):
+
+          ``<bucket>/publisher/v1/kel.cesr``            — the publisher KEL stream
+          ``<bucket>/publisher/v1/anchors/<said>.cesr`` — one per anchor event
+          ``<bucket>/<appcast_key>``                    — the built appcast JSON
+
+        ``anchors`` maps each anchor SAID to its CESR-encoded event bytes.
+        Reuses ``put_object``; no network in tests when ``self.client`` is a mock.
+        """
+        self.put_object(
+            bucket=bucket,
+            key="publisher/v1/kel.cesr",
+            data=kel,
+            content_type="application/cesr",
+        )
+        for said, event in anchors.items():
+            self.put_object(
+                bucket=bucket,
+                key=f"publisher/v1/anchors/{said}.cesr",
+                data=event,
+                content_type="application/cesr",
+            )
+        self.put_object(
+            bucket=bucket,
+            key=appcast_key,
+            data=appcast,
+            content_type="application/json",
+        )
+
     def list_release_versions(self, *, bucket: str) -> list[str]:
         """Enumerate ``X.Y.Z`` directories under ``releases/`` in S3."""
         paginator = self.client.get_paginator("list_objects_v2")

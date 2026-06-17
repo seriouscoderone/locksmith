@@ -48,6 +48,63 @@ def _semver_key(v: str) -> tuple[int, int, int]:
         return (10**9, 10**9, 10**9)
 
 
+def build_appcast(
+    *,
+    publisher_aid: str,
+    publisher_kel_url: str,
+    releases: list[dict[str, Any]],
+    channel: str = "stable",
+    schema_version: int = 1,
+    current_version: str | None = None,
+) -> str:
+    """Build an appcast JSON string the verifier's ``parse_appcast`` consumes.
+
+    Mirrors the schema in ``locksmith.update.appcast``: the top-level object
+    carries ``schema_version``/``channel``/``publisher_aid``/
+    ``publisher_kel_url``/``current_version``/``releases``, and each release
+    carries the full ``REQUIRED_REL`` key set. Each entry in ``releases`` only
+    needs the load-bearing fields the caller knows (``version``, ``platform``,
+    ``anchor_said``, ``anchor_url``, ``artifact_sha256``, ``artifact_url``);
+    the remaining required keys are filled from per-release overrides or
+    schema-valid defaults so ``parse_appcast`` accepts the payload.
+
+    ``current_version`` defaults to the highest semver among ``releases`` so
+    ``select_latest_for_platform`` resolves the newest release per platform.
+    """
+    if not releases:
+        raise ValueError("build_appcast requires at least one release")
+
+    built: list[dict[str, Any]] = []
+    for r in releases:
+        built.append({
+            "version": r["version"],
+            "released_at": r.get("released_at", ""),
+            "platform": r["platform"],
+            "minimum_system_version": r.get("minimum_system_version", ""),
+            "artifact_url": r["artifact_url"],
+            "artifact_sha256": r["artifact_sha256"],
+            "artifact_size": int(r.get("artifact_size", 0)),
+            "anchor_url": r["anchor_url"],
+            "anchor_said": r["anchor_said"],
+            "release_notes_url": r.get("release_notes_url", ""),
+            "is_major": bool(r.get("is_major", False)),
+            "is_critical": bool(r.get("is_critical", False)),
+        })
+
+    if current_version is None:
+        current_version = max((b["version"] for b in built), key=_semver_key)
+
+    appcast = {
+        "schema_version": schema_version,
+        "channel": channel,
+        "publisher_aid": publisher_aid,
+        "publisher_kel_url": publisher_kel_url,
+        "current_version": current_version,
+        "releases": built,
+    }
+    return json.dumps(appcast, indent=2)
+
+
 def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
     """Regenerate per-platform appcasts from S3 and upload them.
 
