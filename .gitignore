@@ -194,6 +194,13 @@ infrastructure/cdk.context.json
 # locksmith.update.cli._load_publisher_anchor.
 src/locksmith/release/publisher_anchor.json
 
+# Deploy config — the REAL federation/CDN domains (witness hosts/AIDs +
+# releases CDN base/bucket + appcast URLs) live here and are never committed.
+# Only the placeholder `deploy_config.example.json` template is tracked.
+# CI/build writes the real file here or points $LOCKSMITH_DEPLOY_CONFIG at it.
+# See locksmith.release.deploy.load_deploy_config.
+src/locksmith/release/deploy_config.json
+
 # Publisher anchor scratch dir — `locksmith-publisher anchor --output-dir ./out`
 # writes DMG/MSI + release-anchor cesr/receipts locally before uploading to S3.
 # The canonical copies live on S3; locally they're throwaway.

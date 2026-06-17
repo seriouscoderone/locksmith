@@ -39,9 +39,9 @@ def test_generator_writes_per_platform_appcasts():
         lambda Bucket, Key, Body, **kw: captured.update({Key: Body})
     )
     cfg = GeneratorConfig(
-        bucket="releases.keri.host",
+        bucket="releases.example.com",
         publisher_aid="EAaa",
-        publisher_kel_url="https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+        publisher_kel_url="https://releases.example.com/publisher/v1/publisher-kel.cesr",
     )
     generate_and_upload_appcasts(s3=s3, config=cfg)
 
@@ -59,9 +59,9 @@ def test_generator_retains_full_history_no_pruning():
         lambda Bucket, Key, Body, **kw: captured.update({Key: Body})
     )
     cfg = GeneratorConfig(
-        bucket="releases.keri.host",
+        bucket="releases.example.com",
         publisher_aid="EAaa",
-        publisher_kel_url="https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+        publisher_kel_url="https://releases.example.com/publisher/v1/publisher-kel.cesr",
     )
     generate_and_upload_appcasts(s3=s3, config=cfg)
 
@@ -81,9 +81,9 @@ def test_generator_current_version_is_highest_semver():
         lambda Bucket, Key, Body, **kw: captured.update({Key: Body})
     )
     cfg = GeneratorConfig(
-        bucket="releases.keri.host",
+        bucket="releases.example.com",
         publisher_aid="EAaa",
-        publisher_kel_url="https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+        publisher_kel_url="https://releases.example.com/publisher/v1/publisher-kel.cesr",
     )
     generate_and_upload_appcasts(s3=s3, config=cfg)
     macos = json.loads(captured["appcast/v1/macos.json"])
@@ -94,9 +94,9 @@ def test_generator_no_releases_short_circuits():
     s3 = MagicMock()
     s3.list_release_versions.return_value = []
     cfg = GeneratorConfig(
-        bucket="releases.keri.host",
+        bucket="releases.example.com",
         publisher_aid="EAaa",
-        publisher_kel_url="https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+        publisher_kel_url="https://releases.example.com/publisher/v1/publisher-kel.cesr",
     )
     generate_and_upload_appcasts(s3=s3, config=cfg)
     s3.put_object.assert_not_called()
@@ -113,9 +113,9 @@ def test_generator_emits_appcast_compatible_with_parser():
         lambda Bucket, Key, Body, **kw: captured.update({Key: Body})
     )
     cfg = GeneratorConfig(
-        bucket="releases.keri.host",
+        bucket="releases.example.com",
         publisher_aid="EAaa",
-        publisher_kel_url="https://releases.keri.host/publisher/v1/publisher-kel.cesr",
+        publisher_kel_url="https://releases.example.com/publisher/v1/publisher-kel.cesr",
     )
     generate_and_upload_appcasts(s3=s3, config=cfg)
     # Round-trip through the verifier's parser — must succeed.

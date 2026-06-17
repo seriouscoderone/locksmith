@@ -12,4 +12,15 @@ The committed ``publisher_anchor.example.json`` is a placeholder template with
 
 See ``locksmith.update.cli._load_publisher_anchor`` for the resolution order
 and docs/superpowers/specs/2026-05-28-locksmith-deploy-update-design.md §7.7.
+
+The federation/CDN DOMAINS (witness hosts/AIDs + release CDN base/bucket/
+appcast URLs) follow the same de-commit pattern but live in a separate config:
+the gitignored ``deploy_config.json`` with committed ``deploy_config.example.json``
+template. See ``locksmith.release.deploy.load_deploy_config``.
 """
+from locksmith.release.deploy import (
+    DEPLOY_CONFIG_ENV_VAR,
+    load_deploy_config,
+)
+
+__all__ = ["DEPLOY_CONFIG_ENV_VAR", "load_deploy_config"]

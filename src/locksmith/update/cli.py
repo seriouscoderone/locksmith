@@ -26,11 +26,20 @@ import urllib.request
 from importlib import resources
 from pathlib import Path
 
+from locksmith.release import load_deploy_config
 from locksmith.update.errors import NetworkError, UpdateError
 from locksmith.update.verify import verify_artifact
 
-APPCAST_URL_MAC = "https://releases.keri.host/appcast/v1/macos.json"
-APPCAST_URL_WIN = "https://releases.keri.host/appcast/v1/windows.json"
+
+def _appcast_url(platform: str) -> str:
+    """Resolve the per-platform appcast URL from the deploy config.
+
+    The release CDN domain is no longer hardcoded here: it lives in the
+    gitignored ``deploy_config.json`` (committed ``deploy_config.example.json``
+    template). See ``locksmith.release.deploy.load_deploy_config``.
+    """
+    urls = load_deploy_config()["appcast_urls"]
+    return urls["macos"] if platform == "macos" else urls["windows"]
 
 #: Env var pointing at a build-injected publisher anchor JSON file. Takes
 #: precedence over the packaged anchor so CI can inject the real (gitignored)
@@ -107,7 +116,7 @@ def _load_anchor_and_appcast(
     ``_load_publisher_anchor``) and fetches the live appcast for ``platform``.
     """
     anchor = _load_publisher_anchor()
-    url = APPCAST_URL_MAC if platform == "macos" else APPCAST_URL_WIN
+    url = _appcast_url(platform)
     try:
         with urllib.request.urlopen(url, timeout=30) as resp:
             appcast_raw = resp.read().decode("utf-8")

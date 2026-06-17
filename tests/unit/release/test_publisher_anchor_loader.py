@@ -51,21 +51,13 @@ def test_example_anchor_has_all_required_keys():
 
 def test_example_anchor_uses_only_placeholder_values():
     """No real domains or AIDs in the committed template."""
-    raw = EXAMPLE_PATH.read_text()
-    body = json.loads(raw)
-    # Every witness OOBI must live under an example.com host.
+    body = json.loads(EXAMPLE_PATH.read_text())
+    # Every witness OOBI must live under an example.com host. Asserted
+    # positively so this test never names the real federation domains (which
+    # would itself be a privacy leak in the committed repo).
     for oobi in body["witness_oobis"]:
         assert oobi.startswith("https://"), oobi
         assert "example.com" in oobi, f"non-placeholder host in OOBI: {oobi}"
-    # The real federation domains must not leak into the committed template.
-    for forbidden in (
-        "keri.host",
-        "legitim.us",
-        "goonei.com",
-        "verdadero.me",
-        "honest.town",
-    ):
-        assert forbidden not in raw, f"real domain leaked into example: {forbidden}"
     # The placeholder AID must be obviously a placeholder.
     assert "Placeholder" in body["publisher_aid"] or "Example" in body["publisher_aid"]
 

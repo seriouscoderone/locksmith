@@ -185,8 +185,8 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, monkeyp
 
             # 6. Build the appcast the verifier consumes. URLs are arbitrary —
             #    _fetch_url is monkeypatched to return local bytes (no network).
-            kel_url = "https://releases.keri.host/publisher/v1/kel.cesr"
-            anchor_url = f"https://releases.keri.host/releases/0.2.0/{info['anchor_said']}.cesr"
+            kel_url = "https://releases.example.com/publisher/v1/kel.cesr"
+            anchor_url = f"https://releases.example.com/releases/0.2.0/{info['anchor_said']}.cesr"
             artifact_sha = verify._sha256_file(artifact)[0]
             appcast_raw = build_appcast(
                 publisher_aid=pub_pre,
@@ -197,7 +197,7 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, monkeyp
                     platform="macos",
                     anchor_url=anchor_url,
                     artifact_sha256=artifact_sha,
-                    artifact_url="https://releases.keri.host/releases/0.2.0/Locksmith-0.2.0.dmg",
+                    artifact_url="https://releases.example.com/releases/0.2.0/Locksmith-0.2.0.dmg",
                 )],
             )
 

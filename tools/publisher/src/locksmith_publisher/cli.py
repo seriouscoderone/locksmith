@@ -129,19 +129,19 @@ class _AppcastS3Adapter:
 
 
 @cli.command("appcast")
-@click.option("--bucket", default="releases.keri.host", show_default=True,
+@click.option("--bucket", default=None,
               help="S3 bucket where releases/<version>/release-anchor-*.cesr lives "
-                   "and appcast/v1/*.json will be written.")
+                   "and appcast/v1/*.json will be written. Defaults to "
+                   "deploy_config.json's `s3_bucket`.")
 @click.option("--publisher-aid", "publisher_aid", default=None,
               help="Publisher AID for the appcast `publisher_aid` field. "
                    "Defaults to the value in src/locksmith/release/publisher_anchor.json.")
-@click.option("--publisher-kel-url", "publisher_kel_url",
-              default="https://releases.keri.host/publisher/v1/kel.cesr",
-              show_default=True,
-              help="URL of the publisher's KEL stream the verifier replays.")
+@click.option("--publisher-kel-url", "publisher_kel_url", default=None,
+              help="URL of the publisher's KEL stream the verifier replays. "
+                   "Defaults to deploy_config.json's `publisher_kel_url`.")
 @click.option("--channel", default="stable", show_default=True)
-def appcast_cmd(bucket: str, publisher_aid: str | None,
-                publisher_kel_url: str, channel: str) -> None:
+def appcast_cmd(bucket: str | None, publisher_aid: str | None,
+                publisher_kel_url: str | None, channel: str) -> None:
     """Regenerate per-platform appcasts from S3 and upload them.
 
     Walks every releases/<version>/ directory in the bucket, parses each
@@ -155,7 +155,18 @@ def appcast_cmd(bucket: str, publisher_aid: str | None,
     installed Locksmith builds can see new releases and KERI-verify them
     via the linked release anchor.
     """
+    from locksmith.release import load_deploy_config
+
     from .appcast import GeneratorConfig, generate_and_upload_appcasts
+
+    # Federation/CDN domains are no longer hardcoded here — pull unset options
+    # from the (gitignored) deploy_config (committed example uses example.com).
+    deploy_cfg = load_deploy_config()
+    if bucket is None:
+        bucket = deploy_cfg["s3_bucket"]
+    if publisher_kel_url is None:
+        publisher_kel_url = deploy_cfg["publisher_kel_url"]
+    releases_cdn_base = deploy_cfg["releases_cdn_base"]
 
     if publisher_aid is None:
         bundled = _bundled_publisher_anchor_path()
@@ -179,6 +190,7 @@ def appcast_cmd(bucket: str, publisher_aid: str | None,
             bucket=bucket,
             publisher_aid=publisher_aid,
             publisher_kel_url=publisher_kel_url,
+            releases_cdn_base=releases_cdn_base,
             channel=channel,
         ),
     )

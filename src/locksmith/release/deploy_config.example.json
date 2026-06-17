@@ -1,0 +1,16 @@
+{
+  "releases_cdn_base": "https://releases.example.com",
+  "s3_bucket": "releases.example.com",
+  "publisher_kel_url": "https://releases.example.com/publisher/v1/kel.cesr",
+  "appcast_urls": {
+    "macos": "https://releases.example.com/appcast/v1/macos.json",
+    "windows": "https://releases.example.com/appcast/v1/windows.json"
+  },
+  "witnesses": [
+    {"alias": "wan", "host": "witness1.example.com", "aid": "BWitnessOnePlaceholderExample0000000000000000"},
+    {"alias": "wil", "host": "witness2.example.com", "aid": "BWitnessTwoPlaceholderExample0000000000000000"},
+    {"alias": "wes", "host": "witness3.example.com", "aid": "BWitnessThreePlaceholderExample00000000000000"},
+    {"alias": "wit", "host": "witness4.example.com", "aid": "BWitnessFourPlaceholderExample000000000000000"},
+    {"alias": "wub", "host": "witness5.example.com", "aid": "BWitnessFivePlaceholderExample000000000000000"}
+  ]
+}

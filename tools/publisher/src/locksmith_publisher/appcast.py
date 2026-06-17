@@ -24,8 +24,19 @@ class GeneratorConfig:
     bucket: str
     publisher_aid: str
     publisher_kel_url: str
+    #: Base URL of the release CDN, used to build per-release ``artifact_url`` /
+    #: ``anchor_url`` (no trailing slash). The real value lives in the gitignored
+    #: deploy_config; callers that don't pass one fall back to that config.
+    releases_cdn_base: str | None = None
     schema_version: int = 1
     channel: str = "stable"
+
+    def cdn_base(self) -> str:
+        """Resolve the release CDN base, deferring to deploy_config if unset."""
+        if self.releases_cdn_base:
+            return self.releases_cdn_base.rstrip("/")
+        from locksmith.release import load_deploy_config
+        return load_deploy_config()["releases_cdn_base"].rstrip("/")
 
 
 def _parse_anchor(raw: bytes) -> dict[str, Any]:
@@ -149,6 +160,7 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
 
     current_version = versions[-1]
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
+    cdn_base = config.cdn_base()
 
     for platform, ext in [("macos", "dmg"), ("windows", "msi")]:
         releases: list[dict[str, Any]] = []
@@ -165,11 +177,11 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
                 "minimum_system_version":
                     seal["minimum_system_versions"][platform],
                 "artifact_url":
-                    f"https://releases.keri.host/releases/{v}/{artifact['filename']}",
+                    f"{cdn_base}/releases/{v}/{artifact['filename']}",
                 "artifact_sha256": artifact["sha256"],
                 "artifact_size": artifact["size"],
                 "anchor_url":
-                    f"https://releases.keri.host/releases/{v}/release-anchor-{v}.cesr",
+                    f"{cdn_base}/releases/{v}/release-anchor-{v}.cesr",
                 "anchor_said": parsed["said"],
                 "release_notes_url":
                     f"https://locksmith.app/releases/{v}",
