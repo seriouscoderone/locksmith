@@ -14,8 +14,63 @@ from locksmith.core.vaulting import Vault
 from locksmith.db.basing import LocksmithBaser
 from locksmith.plugins.manager import PluginManager
 from locksmith.plugins.updates import PluginUpdateChecker
+from locksmith.update.cli import _detect_platform, _load_anchor_and_appcast
+from locksmith.update.verify import verify_artifact
 
 logger = help.ogler.getLogger(__name__)
+
+
+def _make_update_verifier():
+    """Return the ``(staged, info) -> bool`` gate handed to Sparkle/WinSparkle.
+
+    The closure runs the real KERI update-verification pipeline
+    (``verify.verify_artifact``) against the build-injected publisher trust
+    anchor, returning its ``.ok``.
+
+    DARK MODE: until a real publisher anchor is injected,
+    ``_load_anchor_and_appcast`` raises ``FileNotFoundError`` (no
+    ``$LOCKSMITH_PUBLISHER_ANCHOR`` and no packaged ``publisher_anchor.json``;
+    the committed ``.example.json`` is deliberately not a fallback). In that
+    pre-cutover state the gate returns ``True`` WITHOUT calling
+    ``verify_artifact`` so updates are never blocked before a trust root exists.
+
+    ``staged`` is the staged artifact path Sparkle/WinSparkle downloaded.
+    ``info`` is the captured SUAppcastItem release metadata (version,
+    anchor_said, artifact_sha256, ...); it does NOT carry the appcast feed —
+    the gate fetches the live appcast itself via ``_load_anchor_and_appcast``.
+    """
+
+    def _verify(staged: str, info: dict) -> bool:
+        platform = _detect_platform()
+        try:
+            (
+                appcast_raw,
+                publisher_aid,
+                kel_sn,
+                kel_said,
+                toad,
+                _platform,
+            ) = _load_anchor_and_appcast(platform)
+        except FileNotFoundError:
+            # No real publisher anchor injected yet — stay dark.
+            logger.info(
+                "[update] verify gate DARK: no publisher anchor injected "
+                "(verification not yet active); allowing update"
+            )
+            return True
+
+        result = verify_artifact(
+            artifact_path=Path(staged),
+            appcast_raw=appcast_raw,
+            platform=platform,
+            embedded_publisher_aid=publisher_aid,
+            embedded_kel_sn=kel_sn,
+            embedded_kel_said=kel_said,
+            toad=toad,
+        )
+        return bool(result.ok)
+
+    return _verify
 
 
 class LocksmithApplication:
@@ -124,15 +179,17 @@ class LocksmithApplication:
 
     def _init_native_updater(self) -> None:
         """Wire Sparkle/WinSparkle so check_for_updates_with_ui() can
-        pop the native update prompt. Verifier closure currently returns
-        True so the chain demo works while the real verify_artifact()
-        plumbing is finished."""
+        pop the native update prompt. The verifier closure runs the real
+        ``verify_artifact`` gate against the build-injected publisher trust
+        anchor; until a real anchor exists it stays DARK (returns True,
+        non-enforcing) — see ``_make_update_verifier``."""
         import sys as _sys
+        verifier = _make_update_verifier()
         try:
             if _sys.platform == "win32":
                 from locksmith.update.winsparkle_init import init_winsparkle
                 dll, gate, cbs = init_winsparkle(
-                    verifier=lambda staged, info: True,
+                    verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
                 )
@@ -142,7 +199,7 @@ class LocksmithApplication:
             elif _sys.platform == "darwin":
                 from locksmith.update.sparkle_init import init_sparkle
                 updater = init_sparkle(
-                    verifier=lambda staged, info: True,
+                    verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
                 )
