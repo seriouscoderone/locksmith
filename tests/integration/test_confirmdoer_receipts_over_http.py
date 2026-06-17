@@ -127,6 +127,12 @@ def test_confirmdoer_collects_delegator_receipts_over_http():
         _seed_wit_ends(dgrHby.db, witHab)
         assert dgr.fetchUrls(eid=witHab.pre, scheme="http")[Schemes.http] == WIT_URL
 
+        # In production the delegator is already witnessed before it confirms a
+        # delegate, so the witness holds D's KEL. Mirror that: give the witness
+        # D's inception so it can receipt D's anchoring ixn over /receipts.
+        witHby.psr.parse(ims=bytearray(dgr.msgOwnInception()))
+        assert dgr.pre in witHby.kevers
+
         # Delegate G's delegated inception (delpre = D).
         dele = delHby.makeHab(name="G", transferable=True, delpre=dgr.pre)
         dipser = dele.kever.serder

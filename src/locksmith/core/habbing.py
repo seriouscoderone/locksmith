@@ -1101,6 +1101,7 @@ class ConfirmDoer(doing.DoDoer):
             logger.info(f"Error loading delegation handlers: {e}")
 
         self.mbx = app.vault.mbx
+        self.receiptor = app.vault.receiptor
 
         doers = [self.witq]
         self.toRemove = list(doers)
@@ -1125,7 +1126,7 @@ class ConfirmDoer(doing.DoDoer):
         """
         from keri.db import dbing
         from keri.core import serdering, coring
-        from keri.app import habbing, grouping, agenting
+        from keri.app import habbing, grouping
         from ordered_set import OrderedSet as oset
         from keri import core
 
@@ -1222,15 +1223,8 @@ class ConfirmDoer(doing.DoDoer):
                                     (wit, code) = arg.split(":")
                                     auths[wit] = f"{code}#{codeTime}"
 
-                            witDoer = agenting.WitnessReceiptor(hby=self.hby, auths=auths)
-                            self.extend(doers=[witDoer])
-                            self.toRemove.append(witDoer)  # type: ignore
-                            yield self.tock
-
                             if hab.kever.wits:
-                                witDoer.msgs.append(dict(pre=hab.pre, sn=cur+1))
-                                while not witDoer.cues:
-                                    _ = yield self.tock
+                                yield from self.receiptor.receipt(hab.pre, sn=cur + 1, auths=auths)
 
                             logger.info(f'Delegator Prefix  {hab.pre}')
                             logger.info(f'\tDelegate {eserder.pre} {typ} Anchored at Seq. No.  {hab.kever.sner.num}')
