@@ -88,10 +88,29 @@ def test_loader_prefers_env_var_anchor(tmp_path, monkeypatch):
 def test_loader_falls_back_to_packaged_anchor(tmp_path, monkeypatch):
     """With no env var, the packaged ``publisher_anchor.json`` is used."""
     monkeypatch.delenv("LOCKSMITH_PUBLISHER_ANCHOR", raising=False)
+    # Control the packaged path deterministically so this test does not depend on
+    # whether a real (gitignored) publisher_anchor.json happens to be on disk in
+    # this checkout. Use placeholder/example.com values (no real domains/AIDs).
+    packaged = tmp_path / "publisher_anchor.json"
+    packaged.write_text(
+        json.dumps(
+            {
+                "publisher_aid": "EPackagedAnchorForTestOnly0000000000000000000",
+                "embedded_kel_hash": "EPackagedAnchorForTestOnly0000000000000000000",
+                "embedded_kel_sn": 0,
+                "witness_oobis": [
+                    "https://witness.example.com/oobi/Bpkg1/witness",
+                    "https://witness.example.com/oobi/Bpkg2/witness",
+                    "https://witness.example.com/oobi/Bpkg3/witness",
+                ],
+            }
+        )
+    )
+    monkeypatch.setattr(cli, "_packaged_publisher_anchor_path", lambda: packaged)
+
     anchor = cli._load_publisher_anchor()
-    # Whatever is present locally must satisfy the contract.
     assert REQUIRED_KEYS.issubset(set(anchor.keys()))
-    assert isinstance(anchor["publisher_aid"], str) and anchor["publisher_aid"]
+    assert anchor["publisher_aid"] == "EPackagedAnchorForTestOnly0000000000000000000"
 
 
 def test_loader_raises_clear_error_when_nothing_resolvable(tmp_path, monkeypatch):
