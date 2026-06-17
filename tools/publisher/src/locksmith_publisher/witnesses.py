@@ -27,7 +27,7 @@ class WitnessInfo:
 
     @property
     def base_url(self) -> str:
-        """Witness service base URL (witness_client appends /receipts etc.)."""
+        """Witness service base URL (the receipt endpoint, etc., hang off this)."""
         # OOBI: https://<domain>/oobi/<aid>/witness  →  base: https://<domain>
         from urllib.parse import urlparse
         parsed = urlparse(self.oobi)

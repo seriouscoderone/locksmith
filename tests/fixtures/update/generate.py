@@ -84,6 +84,18 @@ def attach_wigs(pub: habbing.Hab, witnesses: list[habbing.Hab], serder: serderin
     signature is re-wrapped as an indexed Siger (index = position in the
     publisher's wits list). The Parser's wig pipeline reconstitutes these
     indexed sigs against the publisher event's bound witnesses.
+
+    NOTE: This is a FIXTURE GENERATOR, not a runtime/test helper. It is kept
+    deliberately even though the bespoke KERI-event/receipt pipeline was
+    retired in favor of the kli pipeline: the verifier unit tests in
+    ``tests/unit/update/`` consume the COMMITTED fixtures this script emits
+    (``anchor/``, ``kel/``, ``tampered/``, ``publisher_aid.json``), and those
+    fixtures can only be regenerated (``python generate.py``) if ``attach_wigs``
+    remains. The masking *test* (``tests/unit/publisher/test_round_trip_verify``)
+    that faked receipts via ``db.wigs.put`` at TEST TIME was removed; the live
+    round-trip is now pinned end-to-end by
+    ``tests/integration/test_publisher_roundtrip.py`` against a real witness with
+    real receipts. Regenerating fixtures here stays offline by construction.
     """
     dgkey = dbing.dgKey(pub.pre.encode(), serder.said.encode())
     wigers = []
