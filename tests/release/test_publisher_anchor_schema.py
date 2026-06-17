@@ -1,16 +1,23 @@
-"""Validate the committed publisher_anchor.json is schema-correct.
+"""Validate the committed publisher_anchor.example.json is schema-correct.
 
-Until the production ceremony runs, this file is a placeholder. The test asserts
-the *shape* is correct so any future overwrite is structurally valid.
+The REAL ``publisher_anchor.json`` is gitignored + build-injected (privacy
+rule: no real publisher AID / witness domains committed). The committed source
+of truth is the placeholder template ``publisher_anchor.example.json``; this
+test asserts its *shape* is correct so any future build-injected anchor is
+structurally valid. Detailed loader/placeholder coverage lives in
+``tests/unit/release/test_publisher_anchor_loader.py``.
 """
 import json
 from pathlib import Path
 
 
-def test_publisher_anchor_has_expected_keys():
-    path = Path(__file__).resolve().parents[2] / "src" / "locksmith" / "release" / "publisher_anchor.json"
+def test_publisher_anchor_example_has_expected_keys():
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "src" / "locksmith" / "release" / "publisher_anchor.example.json"
+    )
     body = json.loads(path.read_text())
-    assert set(body.keys()) == {"publisher_aid", "embedded_kel_hash", "embedded_kel_sn", "witness_oobis"}
+    assert {"publisher_aid", "embedded_kel_hash", "embedded_kel_sn", "witness_oobis"}.issubset(set(body.keys()))
     assert isinstance(body["publisher_aid"], str)
     assert isinstance(body["embedded_kel_hash"], str)
     assert isinstance(body["embedded_kel_sn"], int)

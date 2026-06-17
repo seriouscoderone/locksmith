@@ -1,0 +1,13 @@
+{
+  "embedded_kel_hash": "ELocksmithPublisherAidPlaceholderExample00000",
+  "embedded_kel_sn": 0,
+  "publisher_aid": "ELocksmithPublisherAidPlaceholderExample00000",
+  "toad": 3,
+  "witness_oobis": [
+    "https://witness1.example.com/oobi/BWitnessOnePlaceholderExample0000000000000000/witness",
+    "https://witness2.example.com/oobi/BWitnessTwoPlaceholderExample0000000000000000/witness",
+    "https://witness3.example.com/oobi/BWitnessThreePlaceholderExample00000000000000/witness",
+    "https://witness4.example.com/oobi/BWitnessFourPlaceholderExample000000000000000/witness",
+    "https://witness5.example.com/oobi/BWitnessFivePlaceholderExample000000000000000/witness"
+  ]
+}

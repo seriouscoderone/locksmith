@@ -187,6 +187,13 @@ tests/_screenshots/
 # CDK auto-resolved context (AZ/SSM lookups; regenerated as needed)
 infrastructure/cdk.context.json
 
+# Publisher trust anchor — the REAL anchor (real publisher AID + real witness
+# OOBI domains) is build-injected, never committed. Only the placeholder
+# `publisher_anchor.example.json` template is tracked. CI/build writes the real
+# file here or points $LOCKSMITH_PUBLISHER_ANCHOR at it. See
+# locksmith.update.cli._load_publisher_anchor.
+src/locksmith/release/publisher_anchor.json
+
 # Publisher anchor scratch dir — `locksmith-publisher anchor --output-dir ./out`
 # writes DMG/MSI + release-anchor cesr/receipts locally before uploading to S3.
 # The canonical copies live on S3; locally they're throwaway.

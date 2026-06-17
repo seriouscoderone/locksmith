@@ -19,6 +19,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 import urllib.error
 import urllib.request
@@ -31,20 +32,81 @@ from locksmith.update.verify import verify_artifact
 APPCAST_URL_MAC = "https://releases.keri.host/appcast/v1/macos.json"
 APPCAST_URL_WIN = "https://releases.keri.host/appcast/v1/windows.json"
 
+#: Env var pointing at a build-injected publisher anchor JSON file. Takes
+#: precedence over the packaged anchor so CI can inject the real (gitignored)
+#: trust root without committing it. See ``publisher_anchor.example.json``.
+ANCHOR_ENV_VAR = "LOCKSMITH_PUBLISHER_ANCHOR"
+
+
+def _packaged_publisher_anchor_path() -> Path | None:
+    """Return the path to the packaged ``publisher_anchor.json`` if present.
+
+    The real anchor is gitignored and injected at build time (PyInstaller
+    bundles it into ``locksmith/release/``); the committed template lives
+    alongside it as ``publisher_anchor.example.json``. Returns ``None`` when
+    no real anchor has been placed (e.g. a clean checkout without injection).
+    """
+    try:
+        candidate = resources.files("locksmith.release").joinpath(
+            "publisher_anchor.json"
+        )
+    except (ModuleNotFoundError, FileNotFoundError):
+        return None
+    # ``Traversable.is_file`` works for both filesystem and zipped resources.
+    try:
+        if candidate.is_file():
+            return Path(str(candidate))
+    except (OSError, FileNotFoundError):
+        return None
+    return None
+
+
+def _load_publisher_anchor() -> dict:
+    """Resolve the publisher trust anchor, build-injection source first.
+
+    Resolution order (privacy rule: the real anchor is never committed):
+
+    1. ``$LOCKSMITH_PUBLISHER_ANCHOR`` — a file path injected by the build/CI.
+    2. The packaged (gitignored) ``locksmith/release/publisher_anchor.json``.
+    3. Otherwise raise ``FileNotFoundError`` with a clear message.
+
+    The committed ``publisher_anchor.example.json`` is a placeholder template
+    and is intentionally NOT a fallback — verifying against ``example.com``
+    witnesses would be meaningless.
+    """
+    env_path = os.environ.get(ANCHOR_ENV_VAR)
+    if env_path:
+        injected = Path(env_path)
+        if injected.is_file():
+            return json.loads(injected.read_text())
+        # An env var that points nowhere is a build misconfiguration: fail
+        # loudly rather than silently falling back to the packaged anchor.
+        raise FileNotFoundError(
+            f"{ANCHOR_ENV_VAR} is set to {env_path!r} but no file exists there "
+            f"(publisher_anchor injection misconfigured)"
+        )
+
+    packaged = _packaged_publisher_anchor_path()
+    if packaged is not None:
+        return json.loads(packaged.read_text())
+
+    raise FileNotFoundError(
+        "no publisher_anchor.json found: set $"
+        f"{ANCHOR_ENV_VAR} to a build-injected anchor file or place a real "
+        "publisher_anchor.json in locksmith/release/ "
+        "(publisher_anchor.example.json is a placeholder template, not a fallback)"
+    )
+
 
 def _load_anchor_and_appcast(
     platform: str,
 ) -> tuple[str, str, int, str | None, int, str]:
     """Return ``(appcast_raw, publisher_aid, sn, said, toad, platform)``.
 
-    Reads the embedded ``publisher_anchor.json`` (Phase 1 deliverable)
-    and fetches the live appcast for ``platform``.
+    Reads the publisher trust anchor (build-injected first; see
+    ``_load_publisher_anchor``) and fetches the live appcast for ``platform``.
     """
-    anchor = json.loads(
-        resources.files("locksmith.release")
-        .joinpath("publisher_anchor.json")
-        .read_text()
-    )
+    anchor = _load_publisher_anchor()
     url = APPCAST_URL_MAC if platform == "macos" else APPCAST_URL_WIN
     try:
         with urllib.request.urlopen(url, timeout=30) as resp:
