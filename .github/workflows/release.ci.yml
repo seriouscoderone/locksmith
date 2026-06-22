@@ -130,6 +130,12 @@ jobs:
         run: |
           echo "DEVELOPER_ID_APP_CERT=$DEVELOPER_ID_APP_CERT" >> $GITHUB_ENV
 
+      - name: Inject publisher trust anchor (real, from secret)
+        run: |
+          mkdir -p src/locksmith/release
+          printf '%s' "${{ secrets.LOCKSMITH_PUBLISHER_ANCHOR }}" > src/locksmith/release/publisher_anchor.json
+          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
+
       - name: Build, sign, notarize, staple DMG
         env:
           LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
@@ -283,6 +289,13 @@ jobs:
       # Authenticode-signed by Azure Artifact Signing; then WiX wraps the
       # signed tree into an MSI; then the MSI itself is signed. Two distinct
       # azure/trusted-signing-action calls (one per artifact set).
+
+      - name: Inject publisher trust anchor (real, from secret)
+        shell: bash
+        run: |
+          mkdir -p src/locksmith/release
+          printf '%s' "${{ secrets.LOCKSMITH_PUBLISHER_ANCHOR }}" > src/locksmith/release/publisher_anchor.json
+          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
 
       - name: Build .exe (PyInstaller stage)
         shell: pwsh
