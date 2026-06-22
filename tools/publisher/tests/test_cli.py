@@ -55,3 +55,15 @@ def test_gen_anchor_writes_doc(monkeypatch, tmp_path, fake_pool):
     # refuses overwrite without --force
     r2 = CliRunner().invoke(cli_mod.cli, ["gen-anchor", "--name", "pub", "--base", "/ks"])
     assert r2.exit_code != 0 and "exists" in r2.output.lower()
+
+
+def test_cli_help_lists_appcast():
+    r = CliRunner().invoke(cli_mod.cli, ["--help"])
+    assert r.exit_code == 0
+    assert "appcast" in r.output
+
+
+def test_cli_version_flag():
+    r = CliRunner().invoke(cli_mod.cli, ["--version"])
+    assert r.exit_code == 0
+    assert "0.1.0" in r.output
