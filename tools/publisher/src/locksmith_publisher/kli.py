@@ -29,3 +29,14 @@ def kli_interact(*, name, alias, bran, base, data: str) -> str:
     argv = [KLI, "interact", "--name", name, "--alias", alias, "--base", base,
             "--passcode", bran, "--receipt-endpoint", "--data", data]
     return _run(argv)
+
+
+def kli_init(*, name, base, bran) -> str:
+    """Create the keystore. `bran` is the passcode/seed; never logged."""
+    return _run([KLI, "init", "--name", name, "--base", base, "--passcode", bran])
+
+
+def kli_resolve_oobi(*, name, base, bran, oobi: str) -> str:
+    """Resolve a witness OOBI into the keystore so incept can reach it."""
+    return _run([KLI, "oobi", "resolve", "--name", name, "--base", base,
+                 "--passcode", bran, "--oobi", oobi])
