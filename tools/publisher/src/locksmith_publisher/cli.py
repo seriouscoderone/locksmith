@@ -2,27 +2,23 @@
 
 The publisher was rebuilt as a ``kli`` pipeline (``seal`` + ``kli`` +
 ``publish.anchor_release`` + ``appcast.build_appcast`` + ``s3_client``).
-The bespoke KERI-event/receipt code that the original ``incept`` / ``anchor``
-subcommands were built on (``witness_client``, ``release_anchor``,
-``signing_context``, ``incept``, ``anchor``) has been retired — ``kli`` now
-owns key custody, event signing, and witness-receipt collection.
-
-The operator-facing invocation CLI for the new pipeline is a separate,
-deferred task. Until it lands, the only live subcommand here is ``appcast``
-(regenerate per-platform appcasts from S3); the former ``incept`` / ``anchor``
-/ ``sign`` / ``submit`` / ``verify-ceremony`` commands are retired stubs that
-point operators at the new pipeline.
+``kli`` now owns key custody, event signing, and witness-receipt collection.
 """
 from __future__ import annotations
 
 import json
+import os
 import urllib.parse
 from pathlib import Path
 
 import click
+from keri.app import habbing
 
 from . import __version__
+from . import kli
+from .anchor_doc import build_publisher_anchor
 from .s3_client import S3
+from .witnesses import default_witness_pool
 
 
 @click.group()
@@ -56,52 +52,84 @@ def _bundled_publisher_anchor_path() -> Path | None:
 
 
 # ---------------------------------------------------------------------------
-# Retired subcommands — the bespoke KERI-event/receipt pipeline they drove was
-# replaced by the kli pipeline. The new operator invocation CLI is deferred.
+# Helpers
 # ---------------------------------------------------------------------------
 
-_RETIRED_MSG = (
-    "`{name}` was built on the bespoke KERI-event/receipt code (witness_client/"
-    "release_anchor/signing_context/incept/anchor), which has been retired in "
-    "favor of the kli pipeline (seal + kli + publish.anchor_release + "
-    "appcast.build_appcast + s3_client.upload_release). The operator-facing "
-    "invocation CLI for that pipeline is a separate, deferred task."
-)
+
+def _publisher_anchor_path() -> Path:
+    bundled = _bundled_publisher_anchor_path()
+    if bundled is not None:
+        return bundled
+    # Not yet present — resolve the canonical gitignored location from this file.
+    for parent in Path(__file__).resolve().parents:
+        cand = parent / "src" / "locksmith" / "release"
+        if cand.is_dir():
+            return cand / "publisher_anchor.json"
+    raise click.UsageError("could not locate src/locksmith/release/ — run from the repo")
 
 
-def _retired(name: str) -> None:
-    click.echo(_RETIRED_MSG.format(name=name), err=True)
-    raise SystemExit(2)
+def _read_publisher_aid(*, name: str, base: str, bran: str) -> str:
+    """Open the keystore read-only and return the publisher hab prefix (the AID)."""
+    hby = habbing.Habery(name=name, base=base, bran=bran)
+    try:
+        hab = hby.habByName("publisher")
+        if hab is None:
+            raise click.ClickException(f"no 'publisher' alias in keystore {name}")
+        return hab.pre
+    finally:
+        hby.close()
+
+
+def _bran(bran_env: str) -> str:
+    try:
+        return os.environ[bran_env]
+    except KeyError:
+        raise click.UsageError(f"bran env var {bran_env} is not set")
+
+
+# ---------------------------------------------------------------------------
+# Operator commands
+# ---------------------------------------------------------------------------
 
 
 @cli.command("incept")
-def incept_cmd() -> None:
-    """[Retired] Publisher inception now runs through the kli pipeline."""
-    _retired("incept")
+@click.option("--name", required=True, help="keystore name")
+@click.option("--base", required=True, help="keystore base dir")
+@click.option("--alias", default="publisher", show_default=True)
+@click.option("--bran-env", default="LOCKSMITH_PUBLISHER_BRAN", show_default=True,
+              help="env var holding the keystore bran (never pass the bran as an arg)")
+@click.option("--toad", default=3, show_default=True, type=int)
+def incept_cmd(name, base, alias, bran_env, toad):
+    """Mint the publisher AID: init keystore, resolve witness OOBIs, incept (pre-rotation)."""
+    bran = _bran(bran_env)
+    pool = default_witness_pool()
+    kli.kli_init(name=name, base=base, bran=bran)
+    for w in pool:
+        kli.kli_resolve_oobi(name=name, base=base, bran=bran, oobi=w.oobi)
+    out = kli.kli_incept(name=name, alias=alias, bran=bran, base=base,
+                         wits=[w.aid for w in pool], toad=toad)
+    click.echo(out)
 
 
-@cli.command("anchor")
-def anchor_cmd() -> None:
-    """[Retired] Release anchoring now runs through publish.anchor_release."""
-    _retired("anchor")
-
-
-@cli.command("sign")
-def sign_cmd() -> None:
-    """[Retired] Use the kli pipeline (publish.anchor_release)."""
-    _retired("sign")
-
-
-@cli.command("submit")
-def submit_cmd() -> None:
-    """[Retired] Witness submission/receipts are handled by kli --receipt-endpoint."""
-    _retired("submit")
-
-
-@cli.command("verify-ceremony")
-def verify_ceremony_cmd() -> None:
-    """[Retired] Round-trip verification lives in the integration test suite."""
-    _retired("verify-ceremony")
+@cli.command("gen-anchor")
+@click.option("--name", required=True)
+@click.option("--base", required=True)
+@click.option("--bran-env", default="LOCKSMITH_PUBLISHER_BRAN", show_default=True)
+@click.option("--toad", default=3, show_default=True, type=int)
+@click.option("--force", is_flag=True, help="overwrite an existing publisher_anchor.json")
+def gen_anchor_cmd(name, base, bran_env, toad, force):
+    """Write src/locksmith/release/publisher_anchor.json from the minted keystore."""
+    path = _publisher_anchor_path()
+    if path.exists() and not force:
+        raise click.ClickException(f"{path} already exists; pass --force to overwrite")
+    aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
+    doc = build_publisher_anchor(
+        publisher_aid=aid,
+        witness_oobis=[w.oobi for w in default_witness_pool()],
+        toad=toad,
+    )
+    path.write_text(json.dumps(doc, indent=2) + "\n")
+    click.echo(f"wrote {path} (publisher_aid={aid})")
 
 
 # ---------------------------------------------------------------------------
