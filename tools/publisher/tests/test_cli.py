@@ -67,3 +67,51 @@ def test_cli_version_flag():
     r = CliRunner().invoke(cli_mod.cli, ["--version"])
     assert r.exit_code == 0
     assert "0.1.0" in r.output
+
+
+def test_anchor_invokes_anchor_release(monkeypatch, tmp_path):
+    mac = tmp_path / "Locksmith-0.1.7.dmg"; mac.write_bytes(b"dmg")
+    win = tmp_path / "Locksmith-0.1.7.msi"; win.write_bytes(b"msi")
+    seen = {}
+    monkeypatch.setattr(cli_mod.publish, "anchor_release",
+                        lambda **k: seen.update(k) or {
+                            "anchor_said": "Eanchor", "anchor_sn": 1,
+                            "kel_path": str(tmp_path / "kel.cesr"),
+                            "anchor_event_path": str(tmp_path / "Eanchor.cesr")})
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    r = CliRunner().invoke(cli_mod.cli, [
+        "anchor", "--name", "pub", "--base", "/ks", "--version", "0.1.7",
+        "--macos", str(mac), "--windows", str(win), "--out-dir", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    assert seen["version"] == "0.1.7"
+    assert [p for p, _ in seen["artifacts"]] == ["macos", "windows"]
+
+
+def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
+    (tmp_path / "EpubAID-kel.cesr").write_bytes(b"KEL")
+    (tmp_path / "Eanchor.cesr").write_bytes(b"ANCHOR")
+    monkeypatch.setattr(cli_mod, "load_deploy_config", lambda: {
+        "s3_bucket": "releases.example.com",
+        "releases_cdn_base": "https://releases.example.com",
+        "publisher_kel_url": "https://releases.example.com/publisher/v1/kel.cesr",
+    })
+    monkeypatch.setattr(cli_mod, "_read_publisher_aid", lambda **k: "EpubAID")
+    uploads = {"release": None, "puts": []}
+    class FakeS3:
+        def upload_release(self, **k): uploads["release"] = k
+        def put_object(self, **k): uploads["puts"].append(k)
+    monkeypatch.setattr(cli_mod.S3, "default", classmethod(lambda cls: FakeS3()))
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    r = CliRunner().invoke(cli_mod.cli, [
+        "publish", "--name", "pub", "--base", "/ks", "--version", "0.1.7",
+        "--anchor-said", "Eanchor",
+        "--macos-sha256", "a"*64, "--windows-sha256", "b"*64,
+        "--out-dir", str(tmp_path)])
+    assert r.exit_code == 0, r.output
+    rel = uploads["release"]
+    assert rel["bucket"] == "releases.example.com"
+    assert rel["kel"] == b"KEL"
+    assert rel["anchors"] == {"Eanchor": b"ANCHOR"}
+    assert rel["appcast_key"] == "appcast/v1/macos.json"
+    # windows appcast uploaded separately
+    assert any(p["key"] == "appcast/v1/windows.json" for p in uploads["puts"])

@@ -16,9 +16,12 @@ from keri.app import habbing
 
 from . import __version__
 from . import kli
+from . import publish
 from .anchor_doc import build_publisher_anchor
+from .appcast import build_appcast
 from .s3_client import S3
 from .witnesses import default_witness_pool
+from locksmith.release.deploy import load_deploy_config
 
 
 @click.group()
@@ -224,6 +227,66 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
     )
     click.echo(f"published s3://{bucket}/appcast/v1/macos.json")
     click.echo(f"published s3://{bucket}/appcast/v1/windows.json")
+
+
+@cli.command("anchor")
+@click.option("--name", required=True)
+@click.option("--base", required=True)
+@click.option("--alias", default="publisher", show_default=True)
+@click.option("--bran-env", default="LOCKSMITH_PUBLISHER_BRAN", show_default=True)
+@click.option("--version", required=True)
+@click.option("--macos", "macos_path", required=True,
+              type=click.Path(exists=True, path_type=Path))
+@click.option("--windows", "windows_path", required=True,
+              type=click.Path(exists=True, path_type=Path))
+@click.option("--out-dir", default="out", show_default=True)
+def anchor_cmd(name, base, alias, bran_env, version, macos_path, windows_path, out_dir):
+    """Sign + witness the release seal over the (served) artifacts; export the KEL."""
+    info = publish.anchor_release(
+        name=name, alias=alias, bran=_bran(bran_env), base=base, version=version,
+        artifacts=[("macos", macos_path), ("windows", windows_path)], out_dir=out_dir)
+    click.echo(json.dumps(info, indent=2))
+
+
+@cli.command("publish")
+@click.option("--name", required=True)
+@click.option("--base", required=True)
+@click.option("--bran-env", default="LOCKSMITH_PUBLISHER_BRAN", show_default=True)
+@click.option("--version", required=True)
+@click.option("--anchor-said", required=True)
+@click.option("--macos-sha256", required=True)
+@click.option("--windows-sha256", required=True)
+@click.option("--out-dir", default="out", show_default=True)
+def publish_cmd(name, base, bran_env, version, anchor_said,
+                macos_sha256, windows_sha256, out_dir):
+    """Upload KEL + anchor + per-platform appcasts to S3 from deploy_config."""
+    cfg = load_deploy_config()
+    bucket = cfg["s3_bucket"]
+    cdn = cfg["releases_cdn_base"].rstrip("/")
+    kel_url = cfg["publisher_kel_url"]
+    aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
+
+    out = Path(out_dir)
+    kel = (out / f"{aid}-kel.cesr").read_bytes()
+    anchor_bytes = (out / f"{anchor_said}.cesr").read_bytes()
+    anchor_url = f"{cdn}/publisher/v1/anchors/{anchor_said}.cesr"
+
+    def _appcast(platform, sha, ext):
+        rel = {"version": version, "platform": platform, "anchor_said": anchor_said,
+               "anchor_url": anchor_url, "artifact_sha256": sha,
+               "artifact_url": f"{cdn}/releases/{version}/Locksmith-{version}.{ext}"}
+        return build_appcast(publisher_aid=aid, publisher_kel_url=kel_url,
+                             releases=[rel], current_version=version).encode()
+
+    s3 = S3.default()
+    s3.upload_release(bucket=bucket, kel=kel, anchors={anchor_said: anchor_bytes},
+                      appcast=_appcast("macos", macos_sha256, "dmg"),
+                      appcast_key="appcast/v1/macos.json")
+    s3.put_object(bucket=bucket, key="appcast/v1/windows.json",
+                  data=_appcast("windows", windows_sha256, "msi"),
+                  content_type="application/json")
+    click.echo(f"published v{version}: publisher/v1/kel.cesr + anchors/{anchor_said}.cesr "
+               f"+ appcast/v1/{{macos,windows}}.json")
 
 
 if __name__ == "__main__":
