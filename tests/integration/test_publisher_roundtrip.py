@@ -328,6 +328,19 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
         # round-trip test does explicitly via an extra oobi resolve.)
         real_kli_init = kli.kli_init
 
+        # === In-process test witness OOBI hook (not a production gap) ===
+        # WHY: The in-process test witness (_seed_wit_ends) seeds its loc-scheme
+        # under the *controller* end-role (line 103–106). keripy's default
+        # witness-role OOBI reply role-filters that out per KERI conventions
+        # (witness role → witness endpoints only). To teach the test publisher's
+        # keystore the test witness's HTTP URL, we resolve the /controller OOBI.
+        #
+        # PRODUCTION: The real keri.host federation witnesses serve their
+        # loc-scheme in the witness-role OOBI reply (empirically confirmed via
+        # curl against live federation). Production `incept` resolves only
+        # witness-role OOBIs and reaches the real witnesses fine — no hook needed.
+        # This hook is a test-harness bridge for the in-process witness artifact,
+        # not a workaround for a production gap.
         def _init_then_learn_witness(**kw):
             out = real_kli_init(**kw)
             # Re-init is idempotent in kli; learn the witness HTTP loc-scheme
