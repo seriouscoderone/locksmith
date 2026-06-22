@@ -30,6 +30,11 @@ def test_incept_sequences_kli(monkeypatch, fake_pool):
     incept_call = next(c for c in calls if c[0] == "incept")
     assert incept_call[1]["wits"] == [w.aid for w in fake_pool]
     assert incept_call[1]["toad"] == 3
+    # Env bran must propagate all the way into the kli_incept kwargs.
+    assert incept_call[1]["bran"] == "BRAN0000000000000000"
+    # Also confirm kli_init received the same bran.
+    init_call = next(c for c in calls if c[0] == "init")
+    assert init_call[1]["bran"] == "BRAN0000000000000000"
 
 
 def test_incept_requires_bran_env(monkeypatch, fake_pool):
@@ -85,6 +90,8 @@ def test_anchor_invokes_anchor_release(monkeypatch, tmp_path):
     assert r.exit_code == 0, r.output
     assert seen["version"] == "0.1.7"
     assert [p for p, _ in seen["artifacts"]] == ["macos", "windows"]
+    # Env bran must propagate into anchor_release kwargs.
+    assert seen["bran"] == "BRAN0000000000000000"
 
 
 def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):

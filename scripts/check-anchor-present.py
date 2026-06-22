@@ -4,6 +4,7 @@ a tagged release must ship with a real KERI trust anchor, never gate-dark)."""
 import argparse
 import json
 import sys
+from pathlib import Path
 
 _PLACEHOLDER = "Placeholder"
 
@@ -13,7 +14,7 @@ def main() -> int:
     ap.add_argument("--anchor", required=True)
     args = ap.parse_args()
     try:
-        doc = json.loads(open(args.anchor).read())
+        doc = json.loads(Path(args.anchor).read_text(encoding="utf-8"))
     except FileNotFoundError:
         print(f"ERROR: publisher anchor not found at {args.anchor}", file=sys.stderr)
         return 1

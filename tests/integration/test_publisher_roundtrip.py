@@ -435,7 +435,42 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
         assert pub_aid != witHab.pre
         assert (out_dir / f"{pub_aid}-kel.cesr").exists()
 
-        # 6. The real round-trip via the verifier over the CLI-published bytes.
+        # 6a. sn=0 trust-root pinning path: drive gen-anchor and verify at sn=0.
+        #
+        # gen-anchor writes publisher_anchor.json with embedded_kel_sn=0 and
+        # embedded_kel_hash==publisher_aid (the inception SAID IS the AID prefix).
+        # We monkeypatch _publisher_anchor_path so it writes to a tmp file, not
+        # the real src/locksmith/release/publisher_anchor.json.
+        anchor_doc_path = tmp_path / "publisher_anchor.json"
+        monkeypatch.setattr(cli_mod, "_publisher_anchor_path", lambda: anchor_doc_path)
+        r = runner.invoke(cli_mod.cli, [
+            "gen-anchor", "--name", name, "--base", base, "--toad", "1",
+        ])
+        assert r.exit_code == 0, f"gen-anchor failed: {r.output}\n{r.exception!r}"
+        anchor_doc = json.loads(anchor_doc_path.read_text())
+        assert anchor_doc["publisher_aid"] == pub_aid
+        assert anchor_doc["embedded_kel_sn"] == 0
+        assert anchor_doc["embedded_kel_hash"] == pub_aid  # AID == icp SAID
+
+        # Verify at sn=0: embedded_kel_said=pub_aid (the inception SAID).
+        # toad is enforced on ALL events from sn=0 up — both the inception
+        # and the release ixn must have >= 1 witness receipt. The appcast
+        # still selects the release ixn via anchor_said (downgrade-defence
+        # path is not triggered here since anchor_sn == kel tip sn).
+        result_sn0 = verify.verify_artifact(
+            artifact_path=artifact,
+            appcast_raw=macos_appcast,
+            platform="macos",
+            embedded_publisher_aid=anchor_doc["publisher_aid"],
+            embedded_kel_sn=0,
+            embedded_kel_said=anchor_doc["embedded_kel_hash"],
+            toad=1,
+        )
+        assert result_sn0.ok
+        # Proves the inception event also has a real witness receipt.
+        assert result_sn0.witness_receipts >= 1
+
+        # 6b. The original ixn-pinned round-trip (sn=anchor_sn) — keep both.
         result = verify.verify_artifact(
             artifact_path=artifact,
             appcast_raw=macos_appcast,
