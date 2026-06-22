@@ -35,6 +35,28 @@ def test_kli_init_none_salt_omits_salt_arg(monkeypatch):
     assert "--salt" not in seen["argv"]
 
 
+def test_run_redacts_secrets_in_error_message(monkeypatch):
+    """_run must not leak --passcode or --salt values in the RuntimeError message."""
+    import subprocess
+
+    class FakeProc:
+        returncode = 1
+        stderr = "boom"
+        stdout = ""
+
+    monkeypatch.setattr(kli.subprocess, "run", lambda *a, **k: FakeProc())
+    import pytest
+    with pytest.raises(RuntimeError) as exc_info:
+        kli._run(
+            [kli.KLI, "init", "--passcode", "SECRETBRANVALUE", "--salt", "SECRETSALTVALUE"]
+        )
+    msg = str(exc_info.value)
+    assert "SECRETBRANVALUE" not in msg
+    assert "SECRETSALTVALUE" not in msg
+    assert "***" in msg
+    assert "init" in msg  # non-secret tokens still present
+
+
 def test_kli_resolve_oobi_argv(monkeypatch):
     seen = {}
     monkeypatch.setattr(kli, "_run", lambda argv, **k: seen.setdefault("argv", argv) or "")

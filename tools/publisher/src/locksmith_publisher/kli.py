@@ -5,11 +5,26 @@ import subprocess
 
 KLI = "kli"  # resolved on PATH; tests/CI set kli.KLI = "<venv>/bin/kli"
 
+_SECRET_FLAGS = {"--passcode", "-p", "--salt", "-s"}
+
+
+def _redact(argv: list[str]) -> list[str]:
+    """Return a copy of argv with values following secret flags replaced by ***."""
+    out, redact_next = [], False
+    for tok in argv:
+        if redact_next:
+            out.append("***")
+            redact_next = False
+        else:
+            out.append(tok)
+            redact_next = tok in _SECRET_FLAGS
+    return out
+
 
 def _run(argv: list[str], *, check: bool = True) -> str:
     proc = subprocess.run(argv, capture_output=True, text=True)
     if check and proc.returncode != 0:
-        raise RuntimeError(f"{' '.join(argv)} failed ({proc.returncode}):\n{proc.stderr}")
+        raise RuntimeError(f"{' '.join(_redact(argv))} failed ({proc.returncode}):\n{proc.stderr}")
     return proc.stdout
 
 
