@@ -31,9 +31,18 @@ def kli_interact(*, name, alias, bran, base, data: str) -> str:
     return _run(argv)
 
 
-def kli_init(*, name, base, bran) -> str:
-    """Create the keystore. `bran` is the passcode/seed; never logged."""
-    return _run([KLI, "init", "--name", name, "--base", base, "--passcode", bran])
+def kli_init(*, name, base, bran, salt=None) -> str:
+    """Create the keystore. `bran` is the passcode/seed; never logged.
+
+    Pass `salt` (a qb64 string) to mint a deterministic AID reproducible from
+    (salt + bran). The salt is a secret — read from an env var, never a CLI
+    arg, never echoed. When `salt` is None or empty the keystore generates a
+    random salt (the default / backward-compatible behaviour).
+    """
+    argv = [KLI, "init", "--name", name, "--base", base, "--passcode", bran]
+    if salt:
+        argv += ["--salt", salt]
+    return _run(argv)
 
 
 def kli_resolve_oobi(*, name, base, bran, oobi: str) -> str:

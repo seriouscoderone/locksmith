@@ -101,12 +101,18 @@ def _bran(bran_env: str) -> str:
 @click.option("--alias", default="publisher", show_default=True)
 @click.option("--bran-env", default="LOCKSMITH_PUBLISHER_BRAN", show_default=True,
               help="env var holding the keystore bran (never pass the bran as an arg)")
+@click.option("--salt-env", default="LOCKSMITH_PUBLISHER_SALT", show_default=True,
+              help="env var holding the deterministic qb64 salt (optional). "
+                   "When set, the AID is reproducible from (salt + bran). "
+                   "The salt is a secret — read from env, never passed as a CLI arg. "
+                   "When unset or empty, a random salt is used (default).")
 @click.option("--toad", default=3, show_default=True, type=int)
-def incept_cmd(name, base, alias, bran_env, toad):
+def incept_cmd(name, base, alias, bran_env, salt_env, toad):
     """Mint the publisher AID: init keystore, resolve witness OOBIs, incept (pre-rotation)."""
     bran = _bran(bran_env)
+    salt = os.environ.get(salt_env) or None  # empty string → None (random)
     pool = default_witness_pool()
-    kli.kli_init(name=name, base=base, bran=bran)
+    kli.kli_init(name=name, base=base, bran=bran, salt=salt)
     for w in pool:
         kli.kli_resolve_oobi(name=name, base=base, bran=bran, oobi=w.oobi)
     out = kli.kli_incept(name=name, alias=alias, bran=bran, base=base,

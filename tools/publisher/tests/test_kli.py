@@ -11,6 +11,30 @@ def test_kli_init_argv(monkeypatch):
     ]
 
 
+def test_kli_init_with_salt_appends_salt_arg(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(kli, "_run", lambda argv, **k: seen.setdefault("argv", argv) or "")
+    kli.kli_init(name="pub", base="/ks", bran="BRANBRANBRANBRANBRAN0", salt="0ABsomeDeterministicSalt")
+    argv = seen["argv"]
+    assert "--salt" in argv
+    idx = argv.index("--salt")
+    assert argv[idx + 1] == "0ABsomeDeterministicSalt"
+
+
+def test_kli_init_without_salt_omits_salt_arg(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(kli, "_run", lambda argv, **k: seen.setdefault("argv", argv) or "")
+    kli.kli_init(name="pub", base="/ks", bran="BRANBRANBRANBRANBRAN0")
+    assert "--salt" not in seen["argv"]
+
+
+def test_kli_init_none_salt_omits_salt_arg(monkeypatch):
+    seen = {}
+    monkeypatch.setattr(kli, "_run", lambda argv, **k: seen.setdefault("argv", argv) or "")
+    kli.kli_init(name="pub", base="/ks", bran="BRANBRANBRANBRANBRAN0", salt=None)
+    assert "--salt" not in seen["argv"]
+
+
 def test_kli_resolve_oobi_argv(monkeypatch):
     seen = {}
     monkeypatch.setattr(kli, "_run", lambda argv, **k: seen.setdefault("argv", argv) or "")

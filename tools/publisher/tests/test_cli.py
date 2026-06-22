@@ -37,6 +37,64 @@ def test_incept_sequences_kli(monkeypatch, fake_pool):
     assert init_call[1]["bran"] == "BRAN0000000000000000"
 
 
+def test_incept_passes_salt_from_env(monkeypatch, fake_pool):
+    """When LOCKSMITH_PUBLISHER_SALT is set, incept passes salt= to kli_init."""
+    calls = []
+    monkeypatch.setattr(cli_mod.kli, "kli_init", lambda **k: calls.append(("init", k)) or "")
+    monkeypatch.setattr(cli_mod.kli, "kli_resolve_oobi", lambda **k: None)
+    monkeypatch.setattr(cli_mod.kli, "kli_incept", lambda **k: "Prefix  EpubAID\n")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_SALT", "0ABdeterministicSalt000000000000")
+    r = CliRunner().invoke(cli_mod.cli, ["incept", "--name", "pub", "--base", "/ks"])
+    assert r.exit_code == 0, r.output
+    init_call = next(c for c in calls if c[0] == "init")
+    assert init_call[1]["salt"] == "0ABdeterministicSalt000000000000"
+
+
+def test_incept_no_salt_env_passes_none(monkeypatch, fake_pool):
+    """When salt env var is not set, incept passes salt=None to kli_init."""
+    calls = []
+    monkeypatch.setattr(cli_mod.kli, "kli_init", lambda **k: calls.append(("init", k)) or "")
+    monkeypatch.setattr(cli_mod.kli, "kli_resolve_oobi", lambda **k: None)
+    monkeypatch.setattr(cli_mod.kli, "kli_incept", lambda **k: "Prefix  EpubAID\n")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    monkeypatch.delenv("LOCKSMITH_PUBLISHER_SALT", raising=False)
+    r = CliRunner().invoke(cli_mod.cli, ["incept", "--name", "pub", "--base", "/ks"])
+    assert r.exit_code == 0, r.output
+    init_call = next(c for c in calls if c[0] == "init")
+    assert init_call[1]["salt"] is None
+
+
+def test_incept_empty_salt_env_passes_none(monkeypatch, fake_pool):
+    """When salt env var is set but empty, incept passes salt=None to kli_init."""
+    calls = []
+    monkeypatch.setattr(cli_mod.kli, "kli_init", lambda **k: calls.append(("init", k)) or "")
+    monkeypatch.setattr(cli_mod.kli, "kli_resolve_oobi", lambda **k: None)
+    monkeypatch.setattr(cli_mod.kli, "kli_incept", lambda **k: "Prefix  EpubAID\n")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_SALT", "")
+    r = CliRunner().invoke(cli_mod.cli, ["incept", "--name", "pub", "--base", "/ks"])
+    assert r.exit_code == 0, r.output
+    init_call = next(c for c in calls if c[0] == "init")
+    assert init_call[1]["salt"] is None
+
+
+def test_incept_custom_salt_env_var(monkeypatch, fake_pool):
+    """--salt-env lets the operator use a custom env var name."""
+    calls = []
+    monkeypatch.setattr(cli_mod.kli, "kli_init", lambda **k: calls.append(("init", k)) or "")
+    monkeypatch.setattr(cli_mod.kli, "kli_resolve_oobi", lambda **k: None)
+    monkeypatch.setattr(cli_mod.kli, "kli_incept", lambda **k: "Prefix  EpubAID\n")
+    monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
+    monkeypatch.setenv("MY_CUSTOM_SALT_VAR", "0ABcustomSalt0000000000000000000")
+    monkeypatch.delenv("LOCKSMITH_PUBLISHER_SALT", raising=False)
+    r = CliRunner().invoke(cli_mod.cli, [
+        "incept", "--name", "pub", "--base", "/ks", "--salt-env", "MY_CUSTOM_SALT_VAR"])
+    assert r.exit_code == 0, r.output
+    init_call = next(c for c in calls if c[0] == "init")
+    assert init_call[1]["salt"] == "0ABcustomSalt0000000000000000000"
+
+
 def test_incept_requires_bran_env(monkeypatch, fake_pool):
     monkeypatch.delenv("LOCKSMITH_PUBLISHER_BRAN", raising=False)
     r = CliRunner().invoke(cli_mod.cli, ["incept", "--name", "pub", "--base", "/ks"])
