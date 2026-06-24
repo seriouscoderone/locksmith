@@ -385,21 +385,18 @@ def test_set_global_styles_applies_brand_identity(app):
     assert app.organizationDomain() == branding.brand().org_domain == "keri.host"
 
 
-def test_set_global_styles_applies_theme(app, monkeypatch):
+def test_set_global_styles_applies_theme(app, tmp_path, monkeypatch):
     import json
     from locksmith.ui import styles, colors
-    tmp = app.property("_brandcfg")  # unused; explicit path below
-    cfg = os.path.join(os.environ.get("TMPDIR", "/tmp"), "brandcfg_test.json")
-    with open(cfg, "w") as fh:
-        json.dump({"display_name": "Acme", "theme": {"primary": "#0055AA"}}, fh)
-    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", cfg)
+    cfg = tmp_path / "brandcfg.json"
+    cfg.write_text(json.dumps({"display_name": "Acme", "theme": {"primary": "#0055AA"}}))
+    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
     branding._reset_cache_for_tests()
     try:
         styles.set_global_styles(app)
         assert colors.PRIMARY == "#0055AA"
     finally:
         colors.PRIMARY = "#F57B03"
-        os.remove(cfg)
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**
