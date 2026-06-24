@@ -60,13 +60,20 @@ def set_global_styles(app: QApplication):
     else:
         logger.warning(f"App icon not found at {icon_path}; falling back to symbol logo")
         app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
-    app.setApplicationName("Locksmith")
+    from locksmith.core.branding import brand
+    from locksmith.ui import colors as _colors
+
+    _b = brand()
+    # Apply the brand's accent theme BEFORE the QSS below is built from it.
+    _colors.apply_theme_overrides(_b.theme)
+
+    app.setApplicationName(_b.display_name)
     # setOrganizationName is required for QSettings() with no args to
     # write to a stable per-user location on Windows. Without it,
     # consent_seen / last_checked / other UpdatePrefs values would land
     # somewhere ephemeral and consent dialog would re-fire every launch.
-    app.setOrganizationName("keri.host")
-    app.setOrganizationDomain("keri.host")
+    app.setOrganizationName(_b.org_name)
+    app.setOrganizationDomain(_b.org_domain)
 
     font_path = asset_root / "assets" / "fonts" / "SourceCodePro-Regular.ttf"
 

@@ -55,7 +55,8 @@ class LocksmithWindow(QMainWindow):
         self._pending_trust_install: str | None = None
 
         # Window setup
-        self.setWindowTitle("Locksmith")
+        from locksmith.core.branding import app_title
+        self.setWindowTitle(app_title(None))
         self.setMinimumSize(1280, 1024)
 
         # Create navigation manager
@@ -609,7 +610,8 @@ class LocksmithWindow(QMainWindow):
         self.nav_manager.navigate_to(Pages.HOME)
 
         # Reset title
-        self.setWindowTitle("Locksmith")
+        from locksmith.core.branding import app_title
+        self.setWindowTitle(app_title(None))
         self.toolbar.set_vault_name(None)
 
     def on_home(self):

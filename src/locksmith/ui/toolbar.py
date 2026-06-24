@@ -98,7 +98,8 @@ class LocksmithToolbar(QToolBar):
         self.addWidget(favicon_button)
 
         self.addWidget(create_spacer(6))
-        text_label = QLabel("Locksmith")
+        from locksmith.core.branding import brand
+        text_label = QLabel(brand().display_name)
         text_label.setStyleSheet(f"color: {colors.WHITE};")
         font = QFont()
         font.setPointSize(24)

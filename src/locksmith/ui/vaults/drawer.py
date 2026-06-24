@@ -732,7 +732,8 @@ class VaultDrawer(QWidget):
         if self.is_visible():
             self.toggle()
 
-        self.parent.setWindowTitle(f"Locksmith | {vault_name}")
+        from locksmith.core.branding import app_title
+        self.parent.setWindowTitle(app_title(vault_name))
         self.parent.toolbar.set_vault_name(vault_name)
 
         # Navigate to vault page
