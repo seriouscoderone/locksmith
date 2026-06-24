@@ -18,7 +18,7 @@ from . import __version__
 from . import kli
 from . import publish
 from .anchor_doc import build_publisher_anchor
-from .appcast import build_appcast
+from .appcast import build_appcast, build_appcast_xml
 from .s3_client import S3
 from .witnesses import default_witness_pool
 from locksmith.release.deploy import load_deploy_config
@@ -286,22 +286,40 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     anchor_bytes = (out / f"{anchor_said}.cesr").read_bytes()
     anchor_url = f"{cdn}/publisher/v1/anchors/{anchor_said}.cesr"
 
-    def _appcast(platform, sha, ext):
+    s3 = S3.default()
+
+    def _key(ext):
+        return f"releases/{version}/{artifact_prefix}-{version}.{ext}"
+
+    def _size(ext):
+        return s3.head_object_size(bucket=bucket, key=_key(ext))
+
+    def _json(platform, sha, ext):
         rel = {"version": version, "platform": platform, "anchor_said": anchor_said,
                "anchor_url": anchor_url, "artifact_sha256": sha,
-               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext)}
+               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext),
+               "artifact_size": _size(ext)}
         return build_appcast(publisher_aid=aid, publisher_kel_url=kel_url,
                              releases=[rel], current_version=version).encode()
 
-    s3 = S3.default()
+    def _xml(ext):
+        rel = {"version": version,
+               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext),
+               "artifact_size": _size(ext), "released_at": ""}
+        return build_appcast_xml(title=artifact_prefix, releases=[rel]).encode()
+
     s3.upload_release(bucket=bucket, kel=kel, anchors={anchor_said: anchor_bytes},
-                      appcast=_appcast("macos", macos_sha256, "dmg"),
+                      appcast=_json("macos", macos_sha256, "dmg"),
                       appcast_key="appcast/v1/macos.json")
     s3.put_object(bucket=bucket, key="appcast/v1/windows.json",
-                  data=_appcast("windows", windows_sha256, "msi"),
+                  data=_json("windows", windows_sha256, "msi"),
                   content_type="application/json")
+    s3.put_object(bucket=bucket, key="appcast/v1/macos.xml",
+                  data=_xml("dmg"), content_type="application/xml")
+    s3.put_object(bucket=bucket, key="appcast/v1/windows.xml",
+                  data=_xml("msi"), content_type="application/xml")
     click.echo(f"published v{version}: publisher/v1/kel.cesr + anchors/{anchor_said}.cesr "
-               f"+ appcast/v1/{{macos,windows}}.json")
+               f"+ appcast/v1/{{macos,windows}}.{{json,xml}}")
 
 
 if __name__ == "__main__":

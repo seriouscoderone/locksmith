@@ -165,6 +165,7 @@ def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
     class FakeS3:
         def upload_release(self, **k): uploads["release"] = k
         def put_object(self, **k): uploads["puts"].append(k)
+        def head_object_size(self, *, bucket, key): return 424242
     monkeypatch.setattr(cli_mod.S3, "default", classmethod(lambda cls: FakeS3()))
     monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
     r = CliRunner().invoke(cli_mod.cli, [
@@ -180,3 +181,15 @@ def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
     assert rel["appcast_key"] == "appcast/v1/macos.json"
     # windows appcast uploaded separately
     assert any(p["key"] == "appcast/v1/windows.json" for p in uploads["puts"])
+    # XML appcasts are uploaded for both platforms (Sparkle/WinSparkle feed).
+    put_keys = [p["key"] for p in uploads["puts"]]
+    put_bodies = {p["key"]: p["data"] for p in uploads["puts"]}
+    assert "appcast/v1/macos.xml" in put_keys
+    assert "appcast/v1/windows.xml" in put_keys
+    # the macOS XML enclosure carries the real size from head_object_size
+    macos_xml = put_bodies["appcast/v1/macos.xml"].decode()
+    assert 'length="424242"' in macos_xml
+    assert 'sparkle:version="0.1.7"' in macos_xml
+    # XML uploads use application/xml content type
+    macos_xml_put = next(p for p in uploads["puts"] if p["key"] == "appcast/v1/macos.xml")
+    assert macos_xml_put["content_type"] == "application/xml"
