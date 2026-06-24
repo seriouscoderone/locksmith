@@ -208,6 +208,13 @@ src/locksmith/release/deploy_config.json
 # See locksmith.core.branding.load_brand.
 src/locksmith/release/brand.json
 
+# Per-brand trust material — the REAL publisher anchor + deploy_config for each
+# brand carry real AIDs/federation domains and are never committed. Only
+# brands/example/*.example.json placeholders and brands/<brand>/brand.toml
+# (non-secret identity) are tracked. See docs/superpowers/specs/2026-06-23-*.
+brands/*/publisher_anchor.json
+brands/*/deploy_config.json
+
 # Publisher anchor scratch dir — `locksmith-publisher anchor --output-dir ./out`
 # writes DMG/MSI + release-anchor cesr/receipts locally before uploading to S3.
 # The canonical copies live on S3; locally they're throwaway.

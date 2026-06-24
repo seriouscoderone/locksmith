@@ -1,0 +1,45 @@
+[brand]
+id            = "locksmith"
+display_name  = "Locksmith"
+tagline       = "KERI identity vault"
+manufacturer  = "KERI.host"
+
+[identity]
+bundle_id       = "host.keri.locksmith"
+upgrade_code    = "297BBF26-821C-4D56-8857-309C7B531E21"
+data_dir        = "Locksmith"
+artifact_prefix = "Locksmith"
+org_domain      = "keri.host"
+
+[urls]
+website         = "https://locksmith.app"
+support         = "https://locksmith.app/support"
+appcast_macos   = "https://releases.keri.host/appcast/v1/macos.json"
+appcast_windows = "https://releases.keri.host/appcast/v1/windows.json"
+
+[theme]
+primary         = "#F57B03"
+primary_hover   = "#D66A02"
+primary_pressed = "#E67E00"
+toolbar_dark    = "#1A252C"
+
+[org]
+name = "keri.host"
+
+[assets]
+# The locksmith reference brand uses the canonical committed assets/custom/
+# tree; it ships NO asset files in its brand dir, so brand_apply copies nothing
+# and the in-tree assets are used as-is. Listed here for documentation only.
+app_icon_icns     = "AppIcon.icns"
+app_icon_ico      = "AppIcon.ico"
+splash            = "SplashScreen.png"
+symbol_logo       = "SymbolLogo.svg"
+name_logo         = "NameLogo.svg"
+full_logo         = "FullLogo.svg"
+symbol_logo_black = "SymbolLogoBlack.svg"
+name_logo_black   = "NameLogoBlack.svg"
+full_logo_black   = "FullLogoBlack.svg"
+
+[publisher]
+anchor        = "publisher_anchor.json"
+deploy_config = "deploy_config.json"

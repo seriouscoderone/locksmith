@@ -1,0 +1,39 @@
+[brand]
+id            = "example"
+display_name  = "Example Vault"
+tagline       = "KERI identity vault"
+manufacturer  = "Example, Inc."
+
+[identity]
+bundle_id       = "com.example.vault"
+upgrade_code    = "00000000-0000-0000-0000-000000000000"
+data_dir        = "ExampleVault"
+artifact_prefix = "ExampleVault"
+org_domain      = "example.com"
+
+[urls]
+website         = "https://example.com"
+support         = "https://example.com/support"
+appcast_macos   = "https://releases.example.com/appcast/v1/macos.json"
+appcast_windows = "https://releases.example.com/appcast/v1/windows.json"
+
+[theme]
+primary         = "#3366CC"
+primary_hover   = "#2A52A3"
+primary_pressed = "#1F3D7A"
+toolbar_dark    = "#11202B"
+
+[assets]
+app_icon_icns     = "AppIcon.icns"
+app_icon_ico      = "AppIcon.ico"
+splash            = "SplashScreen.png"
+symbol_logo       = "SymbolLogo.svg"
+name_logo         = "NameLogo.svg"
+full_logo         = "FullLogo.svg"
+symbol_logo_black = "SymbolLogoBlack.svg"
+name_logo_black   = "NameLogoBlack.svg"
+full_logo_black   = "FullLogoBlack.svg"
+
+[publisher]
+anchor        = "publisher_anchor.json"
+deploy_config = "deploy_config.json"
