@@ -47,6 +47,8 @@ def test_generator_writes_per_platform_appcasts():
 
     assert "appcast/v1/macos.json" in captured
     assert "appcast/v1/windows.json" in captured
+    assert "appcast/v1/macos.xml" in captured
+    assert "appcast/v1/windows.xml" in captured
     # At least one archive entry per platform.
     assert any(k.startswith("appcast/archive/") for k in captured)
 

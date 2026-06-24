@@ -253,3 +253,21 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             Body=body,
             ContentType="application/json",
         )
+        xml_body = build_appcast_xml(
+            title=config.publisher_aid,  # brand name not available here; cosmetic
+            releases=[{"version": r["version"], "artifact_url": r["artifact_url"],
+                       "artifact_size": r["artifact_size"],
+                       "released_at": r["released_at"]} for r in releases],
+        ).encode()
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=f"appcast/v1/{platform}.xml",
+            Body=xml_body,
+            ContentType="application/xml",
+        )
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=f"appcast/archive/{timestamp}/{platform}.xml",
+            Body=xml_body,
+            ContentType="application/xml",
+        )
