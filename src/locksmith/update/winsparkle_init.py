@@ -13,7 +13,9 @@ from locksmith.update.winsparkle_bridge import (
 
 logger = help.ogler.getLogger(__name__)
 
-APPCAST_URL = b"https://releases.keri.host/appcast/v1/windows.json"
+def _appcast_url() -> bytes:
+    from locksmith.core.branding import brand
+    return brand().appcast_windows_xml.encode()
 
 
 def init_winsparkle(
@@ -52,13 +54,14 @@ def init_winsparkle(
     c_can_shutdown = CAN_SHUTDOWN_CB(_can_shutdown_cb)
     c_shutdown_req = SHUTDOWN_REQUEST_CB(_shutdown_request_cb)
 
-    dll.win_sparkle_set_appcast_url(APPCAST_URL)
+    appcast_url = _appcast_url()
+    dll.win_sparkle_set_appcast_url(appcast_url)
     dll.win_sparkle_set_dsa_pub_pem(None)            # disable signature check
     dll.win_sparkle_set_can_shutdown_callback(c_can_shutdown)
     dll.win_sparkle_set_shutdown_request_callback(c_shutdown_req)
     dll.win_sparkle_init()
     logger.info(
-        "[update] winsparkle.initialized appcast=%s", APPCAST_URL.decode(),
+        "[update] winsparkle.initialized appcast=%s", appcast_url.decode(),
     )
 
     callbacks = (c_can_shutdown, c_shutdown_req)

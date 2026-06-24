@@ -14,7 +14,7 @@ def test_windows_spec_bundles_winsparkle_dll():
 def test_windows_spec_documents_appcast_url():
     """The runtime URL is set by winsparkle_init.py, but document it here."""
     spec = _SPEC.read_text()
-    assert "releases.keri.host/appcast/v1/windows.json" in spec
+    assert "releases.keri.host/appcast/v1/windows.xml" in spec
 
 
 def test_windows_spec_calls_out_dsa_verification_disabled():

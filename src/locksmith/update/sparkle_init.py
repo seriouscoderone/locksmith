@@ -19,7 +19,9 @@ from locksmith.update.sparkle_bridge import (
 
 logger = help.ogler.getLogger(__name__)
 
-APPCAST_URL = "https://releases.keri.host/appcast/v1/macos.json"
+def _appcast_url() -> str:
+    from locksmith.core.branding import brand
+    return brand().appcast_macos_xml
 
 
 def init_sparkle(
@@ -59,6 +61,6 @@ def init_sparkle(
         )
     )
     logger.info(
-        "[update] sparkle.initialized appcast=%s", APPCAST_URL,
+        "[update] sparkle.initialized appcast=%s", _appcast_url(),
     )
     return controller, py_delegate
