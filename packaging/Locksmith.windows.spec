@@ -31,6 +31,12 @@ SRC_ROOT = REPO_ROOT / "src"
 ASSETS = REPO_ROOT / "assets"
 WIN_ICON = ASSETS / "custom" / "AppIcon.ico"
 
+import sys as _sys
+_sys.path.insert(0, str(REPO_ROOT / "packaging"))
+import brandlib as _brandlib
+_BRAND = _brandlib.load_brand_manifest()
+_BRAND_NAME = _BRAND["brand"]["display_name"]
+
 # ---- Read version --------------------------------------------------------
 
 with (REPO_ROOT / "pyproject.toml").open("rb") as fh:
@@ -148,7 +154,7 @@ exe = EXE(
     splash,
     [],
     exclude_binaries=True,
-    name="Locksmith",
+    name=_BRAND_NAME,
     debug=False,
     bootloader_ignore_signals=False,
     strip=False,
@@ -172,5 +178,5 @@ coll = COLLECT(
     strip=False,
     upx=False,
     upx_exclude=[],
-    name="Locksmith",
+    name=_BRAND_NAME,
 )
