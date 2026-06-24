@@ -2,6 +2,7 @@
   "releases_cdn_base": "https://releases.example.com",
   "s3_bucket": "releases.example.com",
   "publisher_kel_url": "https://releases.example.com/publisher/v1/kel.cesr",
+  "artifact_prefix": "ExampleVault",
   "appcast_urls": {
     "macos": "https://releases.example.com/appcast/v1/macos.json",
     "windows": "https://releases.example.com/appcast/v1/windows.json"

@@ -59,6 +59,14 @@ def _bundled_publisher_anchor_path() -> Path | None:
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_ARTIFACT_PREFIX = "Locksmith"
+
+
+def _artifact_url(cdn: str, version: str, prefix: str, ext: str) -> str:
+    """Return the CDN URL for a release artifact with the given brand prefix."""
+    return f"{cdn.rstrip('/')}/releases/{version}/{prefix}-{version}.{ext}"
+
+
 def _publisher_anchor_path() -> Path:
     bundled = _bundled_publisher_anchor_path()
     if bundled is not None:
@@ -270,6 +278,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     bucket = cfg["s3_bucket"]
     cdn = cfg["releases_cdn_base"].rstrip("/")
     kel_url = cfg["publisher_kel_url"]
+    artifact_prefix = cfg.get("artifact_prefix", _DEFAULT_ARTIFACT_PREFIX)
     aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
 
     out = Path(out_dir)
@@ -280,7 +289,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     def _appcast(platform, sha, ext):
         rel = {"version": version, "platform": platform, "anchor_said": anchor_said,
                "anchor_url": anchor_url, "artifact_sha256": sha,
-               "artifact_url": f"{cdn}/releases/{version}/Locksmith-{version}.{ext}"}
+               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext)}
         return build_appcast(publisher_aid=aid, publisher_kel_url=kel_url,
                              releases=[rel], current_version=version).encode()
 

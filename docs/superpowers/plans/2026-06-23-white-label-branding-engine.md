@@ -20,6 +20,8 @@
 
 **Scope:** Phases 1 (runtime) + 2 (build). **Out of scope (Phase 3, gated on a real second brand's infra):** renaming the platform build-script output files (`build-macos.sh`/`build-windows.ps1` only diverge from `Locksmith-{version}` for a non-Locksmith brand), running a real second brand's publisher ceremony, and publishing a second edition. Also out: runtime brand-switching, cross-brand data migration, auto-minting UpgradeCode, localization, brand-management UI.
 
+**Phase-3 pipeline-integration follow-on (tracked — built here, wired there).** Phases 1+2 deliver `scripts/brand_apply.py` and `scripts/check-brand-complete.py` as working, tested tools, but they are NOT yet invoked by CI or the build scripts. Wiring them is deferred to Phase 3 (alongside the build-script artifact rename) because it requires reconciling where each brand's trust material lives: the guard reads `brands/<brand>/publisher_anchor.json`, while today's `release.ci.yml` injects the anchor to `src/locksmith/release/publisher_anchor.json` — and `brand_apply` is what copies the former to the latter. The coherent Phase-3 CI sequence is: inject (or run `brand_apply` to stage) the brand's trust material → run `check-brand-complete --brand $LOCKSMITH_BRAND` (mirroring how `check-anchor-present.py` is already wired at `release.ci.yml`) → `brand_apply` → platform build. For brand #1 (`locksmith`) this is no regression: the existing `check-anchor-present.py` already gates the anchor in CI, so the locksmith release is not unprotected. Also tracked for Phase 3 (completeness, not enumerated in the Phase-1/2 surface): branding the remaining UI prose strings that still say "Locksmith" (`dialogs/update_consent.py`, `dialogs/verification_log.py`, `vault/settings/updates_widget.py`, `plugins/upgrade_banner.py`, `vault/settings/page.py` "Locksmith Identifier", `otping.py` TOTP issuer); consuming `Brand.website`/`Brand.support` in the About panel; the guard also flagging placeholder `appcast_*` URLs and cross-checking the injected anchor's `publisher_aid` belongs to the brand; and shipping `brands/example/` as a complete copy-paste starter (placeholder asset files + `*.example.json` trust templates).
+
 ---
 
 ### Task 1: Runtime brand loader (`core/branding.py`)
@@ -385,21 +387,18 @@ def test_set_global_styles_applies_brand_identity(app):
     assert app.organizationDomain() == branding.brand().org_domain == "keri.host"
 
 
-def test_set_global_styles_applies_theme(app, monkeypatch):
+def test_set_global_styles_applies_theme(app, tmp_path, monkeypatch):
     import json
     from locksmith.ui import styles, colors
-    tmp = app.property("_brandcfg")  # unused; explicit path below
-    cfg = os.path.join(os.environ.get("TMPDIR", "/tmp"), "brandcfg_test.json")
-    with open(cfg, "w") as fh:
-        json.dump({"display_name": "Acme", "theme": {"primary": "#0055AA"}}, fh)
-    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", cfg)
+    cfg = tmp_path / "brandcfg.json"
+    cfg.write_text(json.dumps({"display_name": "Acme", "theme": {"primary": "#0055AA"}}))
+    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
     branding._reset_cache_for_tests()
     try:
         styles.set_global_styles(app)
         assert colors.PRIMARY == "#0055AA"
     finally:
         colors.PRIMARY = "#F57B03"
-        os.remove(cfg)
 ```
 
 - [ ] **Step 2: Run the test to verify it fails**

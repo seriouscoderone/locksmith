@@ -47,7 +47,6 @@ DEFAULT_PASSCODE = "DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07"  # Development only
 @dataclass
 class LocksmithConfig:
     _instance = None
-    appName = 'Locksmith'
     # Flet assets directory for pictures, fonts, and the like.
     assetsDir: str = './assets'
     # The specific font to use from the fonts subdirectory within the assetsDir.
