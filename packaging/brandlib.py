@@ -7,6 +7,7 @@ NOT use this module — it reads the generated brand.json via
 locksmith.core.branding. Selection: $LOCKSMITH_BRAND (default 'locksmith').
 """
 import os
+import re
 import tomllib
 from pathlib import Path
 
@@ -59,6 +60,9 @@ DMG_LAYOUT_PATH = REPO_ROOT / "packaging" / "dmg" / "layout.json"
 
 
 def render_wxs(manifest: dict, template_text: str) -> str:
+    # Strip the template's own doc-header comment so it is neither
+    # token-substituted nor emitted (keeps rendered .wxs == committed .wxs).
+    template_text = re.sub(r"\n<!-- TEMPLATE:.*?-->\n", "\n", template_text, flags=re.S)
     name = manifest["brand"]["display_name"]
     tokens = {
         "@@NAME@@": name,

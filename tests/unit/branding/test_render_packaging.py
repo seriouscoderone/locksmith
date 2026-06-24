@@ -35,3 +35,14 @@ def test_render_dmg_layout():
     layout = brandlib.render_dmg_layout(m)
     assert layout["volume_name"] == "Locksmith"
     assert layout["icons"][0]["name"] == "Locksmith.app"
+
+
+def test_render_wxs_locksmith_matches_committed_wxs_exactly():
+    # The committed Locksmith.wxs must equal render_wxs(locksmith) byte-for-byte,
+    # so brand_apply --brand locksmith never dirties the tracked file.
+    from pathlib import Path
+    repo = Path(__file__).resolve().parents[3]
+    template = (repo / "packaging" / "wix" / "Locksmith.wxs.in").read_text()
+    committed = (repo / "packaging" / "wix" / "Locksmith.wxs").read_text()
+    rendered = brandlib.render_wxs(brandlib.load_brand_manifest("locksmith"), template)
+    assert rendered == committed
