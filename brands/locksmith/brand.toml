@@ -14,8 +14,10 @@ org_domain      = "keri.host"
 [urls]
 website         = "https://locksmith.app"
 support         = "https://locksmith.app/support"
-appcast_macos   = "https://releases.keri.host/appcast/v1/macos.json"
-appcast_windows = "https://releases.keri.host/appcast/v1/windows.json"
+appcast_macos       = "https://releases.keri.host/appcast/v1/macos.json"
+appcast_windows     = "https://releases.keri.host/appcast/v1/windows.json"
+appcast_macos_xml   = "https://releases.keri.host/appcast/v1/macos.xml"
+appcast_windows_xml = "https://releases.keri.host/appcast/v1/windows.xml"
 
 [theme]
 primary         = "#F57B03"

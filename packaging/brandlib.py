@@ -45,6 +45,8 @@ def runtime_brand_json(manifest: dict) -> dict:
         "org_domain": manifest["identity"]["org_domain"],
         "website": manifest["urls"]["website"],
         "support": manifest["urls"]["support"],
+        "appcast_macos_xml": manifest["urls"]["appcast_macos_xml"],
+        "appcast_windows_xml": manifest["urls"]["appcast_windows_xml"],
         "theme": dict(manifest.get("theme", {})),
     }
 
@@ -112,7 +114,7 @@ def macos_info_plist(manifest: dict, version: str) -> dict:
         "LSMinimumSystemVersion": "13.0",
         "NSPrincipalClass": "NSApplication",
         "NSHighResolutionCapable": True,
-        "SUFeedURL": manifest["urls"]["appcast_macos"],
+        "SUFeedURL": manifest["urls"]["appcast_macos_xml"],
         "SUEnableInstallerLauncherService": True,
         "SUEnableAutomaticChecks": False,
         "SUEnableDownloaderService": False,

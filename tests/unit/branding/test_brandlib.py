@@ -42,3 +42,15 @@ def test_unknown_brand_falls_back_to_example():
 
 def test_exe_name():
     assert brandlib.exe_name(brandlib.load_brand_manifest("locksmith")) == "Locksmith"
+
+
+def test_macos_info_plist_sufeed_is_xml():
+    m = brandlib.load_brand_manifest("locksmith")
+    plist = brandlib.macos_info_plist(m, "0.2.1")
+    assert plist["SUFeedURL"] == "https://releases.keri.host/appcast/v1/macos.xml"
+
+
+def test_runtime_brand_json_carries_xml_feeds():
+    doc = brandlib.runtime_brand_json(brandlib.load_brand_manifest("locksmith"))
+    assert doc["appcast_macos_xml"] == "https://releases.keri.host/appcast/v1/macos.xml"
+    assert doc["appcast_windows_xml"] == "https://releases.keri.host/appcast/v1/windows.xml"

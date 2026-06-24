@@ -14,7 +14,7 @@ def test_macos_info_plist_from_locksmith():
     assert plist["CFBundleIdentifier"] == "host.keri.locksmith"
     assert plist["CFBundleExecutable"] == "Locksmith"
     assert plist["CFBundleShortVersionString"] == "0.1.8"
-    assert plist["SUFeedURL"] == "https://releases.keri.host/appcast/v1/macos.json"
+    assert plist["SUFeedURL"] == "https://releases.keri.host/appcast/v1/macos.xml"
     # KERI is sole trust: Sparkle's EdDSA key must NOT be present
     assert "SUPublicEDKey" not in plist
 

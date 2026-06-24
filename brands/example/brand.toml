@@ -14,8 +14,10 @@ org_domain      = "example.com"
 [urls]
 website         = "https://example.com"
 support         = "https://example.com/support"
-appcast_macos   = "https://releases.example.com/appcast/v1/macos.json"
-appcast_windows = "https://releases.example.com/appcast/v1/windows.json"
+appcast_macos       = "https://releases.example.com/appcast/v1/macos.json"
+appcast_windows     = "https://releases.example.com/appcast/v1/windows.json"
+appcast_macos_xml   = "https://releases.example.com/appcast/v1/macos.xml"
+appcast_windows_xml = "https://releases.example.com/appcast/v1/windows.xml"
 
 [theme]
 primary         = "#3366CC"

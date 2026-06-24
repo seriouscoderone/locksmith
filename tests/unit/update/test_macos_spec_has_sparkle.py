@@ -24,7 +24,7 @@ def test_macos_spec_sets_sufeed_url():
     # SUFeedURL now flows from the brand manifest via brandlib.macos_info_plist;
     # the spec delegates to it. Assert the spec delegates AND the value emitted.
     assert "macos_info_plist" in _SPEC.read_text()
-    assert _locksmith_plist()["SUFeedURL"] == "https://releases.keri.host/appcast/v1/macos.json"
+    assert _locksmith_plist()["SUFeedURL"] == "https://releases.keri.host/appcast/v1/macos.xml"
 
 
 def test_macos_spec_does_not_set_public_ed_key():
