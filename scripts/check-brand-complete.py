@@ -18,7 +18,7 @@ _REQUIRED_IDENTITY = ("bundle_id", "upgrade_code", "data_dir",
 _ANCHOR_PLACEHOLDER = "Placeholder"
 
 
-def validate(brand_id: str, brands_dir: Path) -> list:
+def validate(brand_id: str, brands_dir: Path) -> list[str]:
     problems = []
     bdir = Path(brands_dir) / brand_id
     toml_path = bdir / "brand.toml"
@@ -49,9 +49,10 @@ def validate(brand_id: str, brands_dir: Path) -> list:
                             f"({_LOCKSMITH_BUNDLE})")
         if ident.get("upgrade_code") == _LOCKSMITH_UPGRADE:
             problems.append("non-locksmith brand reuses Locksmith upgrade_code")
-        for key, fname in m.get("assets", {}).items():
-            if not (bdir / fname).is_file():
-                problems.append(f"missing asset file {fname} (assets.{key})")
+        if brand_id not in ("locksmith", "example"):
+            for key, fname in m.get("assets", {}).items():
+                if not (bdir / fname).is_file():
+                    problems.append(f"missing asset file {fname} (assets.{key})")
 
     if not is_example:
         anchor_name = m.get("publisher", {}).get("anchor", "publisher_anchor.json")

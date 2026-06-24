@@ -77,3 +77,11 @@ def test_missing_anchor_rejected(tmp_path):
     _write_brand(tmp_path, "acme", with_anchor=False)
     probs = cbc.validate("acme", tmp_path / "brands")
     assert any("anchor" in p.lower() for p in probs)
+
+
+def test_real_example_brand_passes_guard():
+    # The committed brands/example template must pass the guard: it is exempt
+    # from URL/upgrade-code/anchor AND (post-fix) asset checks.
+    from pathlib import Path
+    repo_brands = Path(__file__).resolve().parents[3] / "brands"
+    assert cbc.validate("example", repo_brands) == []
