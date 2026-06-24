@@ -114,3 +114,26 @@ BLACK = "#000000"
 # Toolbar Colors
 # =============================================================================
 TOOLBAR_DARK = "#1A252C"  # Dark toolbar button background
+
+
+# =============================================================================
+# Per-brand theme overrides
+# =============================================================================
+# Maps brand.toml [theme] keys → the module-level accent constants above. Only
+# the accent set is brandable; neutrals and semantic (danger/success) colors are
+# shared across all brands. Called once at startup BEFORE the QSS is built.
+_THEME_KEY_TO_CONST = {
+    "primary": "PRIMARY",
+    "primary_hover": "PRIMARY_HOVER",
+    "primary_pressed": "PRIMARY_PRESSED",
+    "toolbar_dark": "TOOLBAR_DARK",
+}
+
+
+def apply_theme_overrides(theme: dict) -> None:
+    """Overwrite the accent constants from a brand's theme dict (in place)."""
+    g = globals()
+    for key, const_name in _THEME_KEY_TO_CONST.items():
+        value = theme.get(key)
+        if value:
+            g[const_name] = value
