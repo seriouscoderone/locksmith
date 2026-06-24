@@ -85,15 +85,6 @@ class LocksmithWindow(QMainWindow):
         self.upgrade_banner.restart_requested.connect(self._handle_restart_requested)
         outer_layout.addWidget(self.upgrade_banner)
 
-        # Phase 5 critical-update banner — sits under the upgrade_banner,
-        # hidden until UpdateController emits an action with is_critical=True.
-        from locksmith.ui.banners.critical_update import CriticalUpdateBanner
-        self.critical_update_banner = CriticalUpdateBanner(parent=central_widget)
-        self.critical_update_banner.install_requested.connect(
-            self._handle_critical_update_install_clicked,
-        )
-        outer_layout.addWidget(self.critical_update_banner)
-
         # Horizontal container holds the page stack (preserves the original layout shape).
         stack_holder = QWidget()
         outer_layout.addWidget(stack_holder)
@@ -218,43 +209,27 @@ class LocksmithWindow(QMainWindow):
         verify_action.triggered.connect(self._on_show_verification_log_clicked)
 
     def _wire_update_controller_signals(self) -> None:
-        """Connect the UpdateController's signals to UI handlers. No-op
-        if the controller didn't construct (e.g., import failed in tests)."""
+        """Connect the controller's verification_failed signal to the toast.
+        No-op if the controller didn't construct (e.g., import failed in tests)."""
         ctrl = getattr(self.app, "update_controller", None)
         if ctrl is None:
             logger.info("update_controller.wire_skipped (no controller)")
             return
-        ctrl.action_decided.connect(self._on_update_action_decided)
-        ctrl.check_failed.connect(self._on_update_check_failed)
         ctrl.verification_failed.connect(self._on_update_verification_failed)
-        # Last-seen VerificationResult so the Help menu can re-open the dialog.
         self._last_verification_result = None
 
     # ---- update menu handlers ----
 
     def _on_check_for_updates_clicked(self) -> None:
-        """Help menu 'Check for updates…' AND Settings → Updates →
-        'Check now' both route here. Two parallel things happen:
-
-          1. controller.check_now() — fetches the appcast through our
-             BridgeAdapter, runs the decision tree, emits action_decided
-             (drives our own banners / verification-log dialog).
-          2. app.check_for_updates_with_ui() — triggers the native
-             Sparkle/WinSparkle 'update available' prompt with native
-             progress UI + install hand-off.
-
-        We do both because the native UI is what the user actually
-        clicks 'Install' on; our controller fills the decision-tree +
-        banner + verification-log roles around it."""
+        """Help menu 'Check for updates…' and Settings → 'Check now' route here.
+        Triggers the native Sparkle/WinSparkle update dialog (discovery →
+        download → KERI gate → install)."""
         ctrl = getattr(self.app, "update_controller", None)
         if ctrl is None:
             logger.warning("update_controller.check_now.no_controller")
             return
-        logger.info("update_controller.check_now.requested_from_help_menu")
+        logger.info("update_controller.check_now.requested")
         ctrl.check_now()
-        check_native = getattr(self.app, "check_for_updates_with_ui", None)
-        if check_native is not None:
-            check_native()
 
     def _on_show_verification_log_clicked(self) -> None:
         from locksmith.ui.dialogs.verification_log import VerificationLogDialog
@@ -263,28 +238,6 @@ class LocksmithWindow(QMainWindow):
             parent=self,
         )
         dlg.open()
-
-    def _on_update_action_decided(self, decision) -> None:
-        """The controller decided what to do about an available release.
-
-        Wires:
-          - is_critical → show the persistent critical-update banner
-          - non-critical, available-to-install → log only (Phase 5
-            could expand to a non-blocking toast later)
-        """
-        action = getattr(decision, "action", None)
-        release = getattr(decision, "release", None)
-        is_critical = bool(getattr(release, "is_critical", False))
-        version = getattr(release, "version", "?")
-        logger.info(
-            "update_controller.action_decided action=%s version=%s critical=%s",
-            getattr(action, "value", action), version, is_critical,
-        )
-        if is_critical:
-            self.critical_update_banner.show_for_version(version)
-
-    def _on_update_check_failed(self, err: str) -> None:
-        logger.warning("update_controller.check_failed err=%s", err)
 
     def _on_update_verification_failed(self, version: str) -> None:
         """Show the update-failed toast (auto-dismisses; clickable to
@@ -297,16 +250,6 @@ class LocksmithWindow(QMainWindow):
             self._update_failed_toast.clicked.connect(self._on_show_verification_log_clicked)
         self._update_failed_toast.show_for_version(version)
         self._update_failed_toast.position_in_parent(self.width(), self.height())
-
-    def _handle_critical_update_install_clicked(self) -> None:
-        """User clicked Install on the critical-update banner. Trigger
-        the controller's install path (which routes through Sparkle /
-        WinSparkle's installer with KERI verification gating)."""
-        ctrl = getattr(self.app, "update_controller", None)
-        if ctrl is None:
-            return
-        logger.info("critical_banner.install_clicked")
-        ctrl.check_now()  # bridge's install path fires on the next check
 
     # ---- one-shot startup dialogs ----
 

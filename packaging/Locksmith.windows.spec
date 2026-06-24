@@ -85,8 +85,8 @@ else:
 # https://github.com/vslavik/winsparkle/releases (0.8+ line) into
 # packaging/windows/winsparkle/ before invoking PyInstaller.
 #
-# Runtime appcast URL: https://releases.keri.host/appcast/v1/windows.json
-# (configured by winsparkle_init.py via win_sparkle_set_appcast_url).
+# Runtime appcast URL: https://releases.keri.host/appcast/v1/windows.xml
+# (brand-derived by winsparkle_init._appcast_url via win_sparkle_set_appcast_url).
 # WinSparkle's native DSA verification is DISABLED at runtime
 # (win_sparkle_set_dsa_pub_pem(NULL)) — KERI is sole trust (spec §3).
 _WINSPARKLE_DLL = REPO_ROOT / "packaging" / "windows" / "winsparkle" / "WinSparkle.dll"

@@ -15,6 +15,7 @@ import datetime as _dt
 import json
 from dataclasses import dataclass
 from typing import Any
+from xml.sax.saxutils import escape, quoteattr
 
 from keri.core import serdering
 
@@ -116,6 +117,47 @@ def build_appcast(
     return json.dumps(appcast, indent=2)
 
 
+def build_appcast_xml(
+    *,
+    title: str,
+    releases: list[dict[str, Any]],
+    channel: str = "stable",
+) -> str:
+    """Build an RSS 2.0 appcast Sparkle/WinSparkle can parse.
+
+    Native signature verification stays OFF (no ``sparkle:edSignature``) —
+    trust is the OS code-signature on the wire plus the KERI gate at install.
+    Items are emitted newest-first by semver.
+    """
+    if not releases:
+        raise ValueError("build_appcast_xml requires at least one release")
+    ordered = sorted(releases, key=lambda r: _semver_key(r["version"]), reverse=True)
+    items: list[str] = []
+    for r in ordered:
+        v = r["version"]
+        pubdate = f"    <pubDate>{escape(r['released_at'])}</pubDate>\n" if r.get("released_at") else ""
+        items.append(
+            f"  <item>\n"
+            f"    <title>{escape(title)} {escape(v)}</title>\n"
+            f"{pubdate}"
+            f"    <enclosure url={quoteattr(r['artifact_url'])} "
+            f"sparkle:version={quoteattr(v)} sparkle:shortVersionString={quoteattr(v)} "
+            f"length={quoteattr(str(int(r['artifact_size'])))} type={quoteattr('application/octet-stream')}/>\n"
+            f"  </item>"
+        )
+    items_xml = "\n".join(items)
+    return (
+        '<?xml version="1.0" encoding="utf-8"?>\n'
+        '<rss version="2.0" '
+        'xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">\n'
+        "  <channel>\n"
+        f"    <title>{escape(title)} ({escape(channel)})</title>\n"
+        f"{items_xml}\n"
+        "  </channel>\n"
+        "</rss>\n"
+    )
+
+
 def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
     """Regenerate per-platform appcasts from S3 and upload them.
 
@@ -211,4 +253,22 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             Key=archive_key,
             Body=body,
             ContentType="application/json",
+        )
+        xml_body = build_appcast_xml(
+            title=config.publisher_aid,  # brand name not available here; cosmetic
+            releases=[{"version": r["version"], "artifact_url": r["artifact_url"],
+                       "artifact_size": r["artifact_size"],
+                       "released_at": r["released_at"]} for r in releases],
+        ).encode()
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=f"appcast/v1/{platform}.xml",
+            Body=xml_body,
+            ContentType="application/xml",
+        )
+        s3.put_object(
+            Bucket=config.bucket,
+            Key=f"appcast/archive/{timestamp}/{platform}.xml",
+            Body=xml_body,
+            ContentType="application/xml",
         )

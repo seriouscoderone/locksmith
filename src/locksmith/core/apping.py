@@ -141,39 +141,24 @@ class LocksmithApplication:
         QObject but won't trigger any UI.
         """
         try:
-            from locksmith.update.bridge_adapter import (
-                BridgeAdapter,
-                current_platform,
-            )
             from locksmith.update.controller import UpdateController
-            from locksmith.build_info import LOCKSMITH_VERSION
         except Exception as exc:  # noqa: BLE001 — defensive against import errors in tests
             logger.warning("update_controller.init_skipped reason=%s", exc)
             return
 
-        self.update_bridge = BridgeAdapter()
-        self.update_controller = UpdateController(
-            current_version=LOCKSMITH_VERSION,
-            platform=current_platform(),
-        )
-        self.update_controller.set_bridge(self.update_bridge)
-
-        # Native auto-update framework (Sparkle on macOS, WinSparkle on
-        # Windows). Bundled in Phase 5 but the bridges were never
-        # initialized — without init, the appcast URL never reaches the
-        # framework and check_update_with_ui() can't pop the native
-        # update prompt. Hold refs to dll + gate + ctypes callbacks for
-        # the lifetime of the application (Python would GC the CFUNCTYPE
-        # wrappers otherwise and the framework would segfault).
+        # Native updater first, so the controller's on_check can drive it.
         self._native_updater = None
         self._native_updater_dll = None
         self._native_updater_callbacks = None
+        self._native_updater_delegate = None
         self._init_native_updater()
 
+        self.update_controller = UpdateController(
+            on_check=self.check_for_updates_with_ui,
+        )
+
         logger.info(
-            "update_controller.constructed version=%s platform=%s native=%s",
-            LOCKSMITH_VERSION,
-            current_platform(),
+            "update_controller.constructed native=%s",
             "yes" if (self._native_updater_dll is not None or self._native_updater is not None) else "no",
         )
 
@@ -191,19 +176,28 @@ class LocksmithApplication:
                 dll, gate, cbs = init_winsparkle(
                     verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
-                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                    on_failure=lambda v: (
+                        self.update_controller.report_verification_failed(v)
+                        if getattr(self, "update_controller", None) is not None
+                        else logger.warning("[update] verify_failed (no controller) %s", v)
+                    ),
                 )
                 self._native_updater = gate
                 self._native_updater_dll = dll
                 self._native_updater_callbacks = cbs
             elif _sys.platform == "darwin":
                 from locksmith.update.sparkle_init import init_sparkle
-                updater = init_sparkle(
+                controller, py_delegate = init_sparkle(
                     verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
-                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                    on_failure=lambda v: (
+                        self.update_controller.report_verification_failed(v)
+                        if getattr(self, "update_controller", None) is not None
+                        else logger.warning("[update] verify_failed (no controller) %s", v)
+                    ),
                 )
-                self._native_updater = updater
+                self._native_updater = controller
+                self._native_updater_delegate = py_delegate
         except Exception as exc:  # noqa: BLE001 — never let updater init crash the app
             logger.warning("native_updater.init_failed err=%s", exc)
 

@@ -107,3 +107,10 @@ def test_winsparkle_init_returns_triple_of_none_off_windows():
     assert dll is None
     assert gate is None
     assert callbacks is None
+
+
+def test_winsparkle_appcast_url_is_brand_xml(monkeypatch):
+    import locksmith.update.winsparkle_init as wi
+    from locksmith.core import branding
+    branding._reset_cache_for_tests()
+    assert wi._appcast_url() == b"https://releases.keri.host/appcast/v1/windows.xml"

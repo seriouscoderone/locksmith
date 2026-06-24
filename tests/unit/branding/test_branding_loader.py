@@ -55,3 +55,9 @@ def test_app_title():
     assert branding.app_title(None) == "Locksmith"
     assert branding.app_title("") == "Locksmith"
     assert branding.app_title("Personal") == "Locksmith | Personal"
+
+
+def test_default_brand_carries_xml_feeds():
+    b = branding.load_brand()
+    assert b.appcast_macos_xml == "https://releases.keri.host/appcast/v1/macos.xml"
+    assert b.appcast_windows_xml == "https://releases.keri.host/appcast/v1/windows.xml"
