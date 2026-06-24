@@ -15,6 +15,7 @@ import datetime as _dt
 import json
 from dataclasses import dataclass
 from typing import Any
+from xml.sax.saxutils import escape, quoteattr
 
 from keri.core import serdering
 
@@ -134,14 +135,14 @@ def build_appcast_xml(
     items: list[str] = []
     for r in ordered:
         v = r["version"]
-        pubdate = f"    <pubDate>{r['released_at']}</pubDate>\n" if r.get("released_at") else ""
+        pubdate = f"    <pubDate>{escape(r['released_at'])}</pubDate>\n" if r.get("released_at") else ""
         items.append(
             f"  <item>\n"
-            f"    <title>{title} {v}</title>\n"
+            f"    <title>{escape(title)} {escape(v)}</title>\n"
             f"{pubdate}"
-            f'    <enclosure url="{r["artifact_url"]}" '
-            f'sparkle:version="{v}" sparkle:shortVersionString="{v}" '
-            f'length="{int(r["artifact_size"])}" type="application/octet-stream"/>\n'
+            f"    <enclosure url={quoteattr(r['artifact_url'])} "
+            f"sparkle:version={quoteattr(v)} sparkle:shortVersionString={quoteattr(v)} "
+            f"length={quoteattr(str(int(r['artifact_size'])))} type={quoteattr('application/octet-stream')}/>\n"
             f"  </item>"
         )
     items_xml = "\n".join(items)
@@ -150,7 +151,7 @@ def build_appcast_xml(
         '<rss version="2.0" '
         'xmlns:sparkle="http://www.andymatuschak.org/xml-namespaces/sparkle">\n'
         "  <channel>\n"
-        f"    <title>{title} ({channel})</title>\n"
+        f"    <title>{escape(title)} ({escape(channel)})</title>\n"
         f"{items_xml}\n"
         "  </channel>\n"
         "</rss>\n"

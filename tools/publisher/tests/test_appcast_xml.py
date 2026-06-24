@@ -36,3 +36,16 @@ def test_xml_orders_newest_first():
     versions = [e.get(f"{{{_SPARKLE}}}version")
                 for e in root.findall(".//item/enclosure")]
     assert versions == ["0.2.0", "0.1.7"]
+
+
+def test_xml_escapes_special_chars():
+    xml = build_appcast_xml(title="Acme & Co <test>", releases=[{
+        "version": "0.2.0",
+        "artifact_url": "https://cdn.example.com/r?a=1&b=2",
+        "artifact_size": 5, "released_at": "",
+    }])
+    # must be well-formed despite & and < in title and & in url
+    root = ET.fromstring(xml)  # raises if malformed
+    enc = root.find(".//item/enclosure")
+    assert enc.get("url") == "https://cdn.example.com/r?a=1&b=2"  # round-trips unescaped
+    assert "Acme & Co <test>" in root.find(".//item/title").text  # ET unescapes on read

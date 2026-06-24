@@ -176,7 +176,11 @@ class LocksmithApplication:
                 dll, gate, cbs = init_winsparkle(
                     verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
-                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                    on_failure=lambda v: (
+                        self.update_controller.report_verification_failed(v)
+                        if getattr(self, "update_controller", None) is not None
+                        else logger.warning("[update] verify_failed (no controller) %s", v)
+                    ),
                 )
                 self._native_updater = gate
                 self._native_updater_dll = dll
@@ -186,7 +190,11 @@ class LocksmithApplication:
                 controller, py_delegate = init_sparkle(
                     verifier=verifier,
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
-                    on_failure=lambda v: logger.warning("[update] verify_failed %s", v),
+                    on_failure=lambda v: (
+                        self.update_controller.report_verification_failed(v)
+                        if getattr(self, "update_controller", None) is not None
+                        else logger.warning("[update] verify_failed (no controller) %s", v)
+                    ),
                 )
                 self._native_updater = controller
                 self._native_updater_delegate = py_delegate
