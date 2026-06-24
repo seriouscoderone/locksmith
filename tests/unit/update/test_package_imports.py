@@ -5,13 +5,11 @@ def test_update_package_exports_phase5_public_api():
     from locksmith.update import (
         UpdateController,
         UpdateScheduler,
-        UpdateDecision,
         UpdatePrefs,
         Deferral,
     )
     assert UpdateController is not None
     assert UpdateScheduler is not None
-    assert UpdateDecision is not None
     assert UpdatePrefs is not None
     assert Deferral is not None
 

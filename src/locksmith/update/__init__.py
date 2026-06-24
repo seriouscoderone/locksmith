@@ -7,16 +7,16 @@ Phase 4 (verification) public surface:
 - ``log.append_entry(...)`` / ``log.read_entries(...)``
 - ``errors.UpdateError`` and subclasses
 
-Phase 5 (orchestration + UI bridge) public surface:
+Phase 5 (orchestration) public surface:
 
-- ``UpdateController``  — top-level entry, instantiated from main.py
+- ``UpdateController``  — top-level entry; owns prefs + scheduler, routes
+                          checks to the native Sparkle/WinSparkle framework
+                          via an injected ``on_check`` callback
 - ``UpdateScheduler``   — periodic check timer (30s initial + 4h cadence)
-- ``UpdateDecision``    — pure function over appcast Release + current version
 - ``UpdatePrefs``       — QSettings wrapper for user prefs
 - ``Deferral``          — sliding 24h / 7-day cap logic
 """
 from locksmith.update.controller import UpdateController
-from locksmith.update.decision import UpdateAction, UpdateDecision
 from locksmith.update.deferral import Deferral, DeferralState
 from locksmith.update.prefs import UpdatePrefs
 from locksmith.update.scheduler import UpdateScheduler
@@ -24,8 +24,6 @@ from locksmith.update.scheduler import UpdateScheduler
 __all__ = [
     "UpdateController",
     "UpdateScheduler",
-    "UpdateDecision",
-    "UpdateAction",
     "UpdatePrefs",
     "Deferral",
     "DeferralState",
