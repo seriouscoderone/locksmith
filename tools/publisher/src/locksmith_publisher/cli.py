@@ -59,6 +59,9 @@ def _bundled_publisher_anchor_path() -> Path | None:
 # ---------------------------------------------------------------------------
 
 
+_DEFAULT_ARTIFACT_PREFIX = "Locksmith"
+
+
 def _artifact_url(cdn: str, version: str, prefix: str, ext: str) -> str:
     """Return the CDN URL for a release artifact with the given brand prefix."""
     return f"{cdn.rstrip('/')}/releases/{version}/{prefix}-{version}.{ext}"
@@ -275,7 +278,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     bucket = cfg["s3_bucket"]
     cdn = cfg["releases_cdn_base"].rstrip("/")
     kel_url = cfg["publisher_kel_url"]
-    artifact_prefix = cfg.get("artifact_prefix", "Locksmith")
+    artifact_prefix = cfg.get("artifact_prefix", _DEFAULT_ARTIFACT_PREFIX)
     aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
 
     out = Path(out_dir)

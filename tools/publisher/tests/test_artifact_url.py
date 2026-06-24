@@ -16,9 +16,8 @@ def test_artifact_url_strips_trailing_slash_from_cdn():
 
 def test_artifact_url_default_prefix_locksmith():
     """The default artifact_prefix is 'Locksmith' when absent from deploy_config."""
-    prefix = {}.get("artifact_prefix", "Locksmith")
-    assert prefix == "Locksmith"
-    url = cli._artifact_url("https://cdn.example.com", "2.0.0", prefix, "msi")
+    assert cli._DEFAULT_ARTIFACT_PREFIX == "Locksmith"
+    url = cli._artifact_url("https://cdn.example.com", "2.0.0", cli._DEFAULT_ARTIFACT_PREFIX, "msi")
     assert url == "https://cdn.example.com/releases/2.0.0/Locksmith-2.0.0.msi"
 
 
