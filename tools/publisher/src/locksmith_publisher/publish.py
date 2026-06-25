@@ -2,11 +2,32 @@
 read the KEL back via clonePreIter (export + anchor lookup). No re-implemented
 KERI logic — kli for keys, keri lib read-only for the KEL stream."""
 import json
+import time
 from pathlib import Path
 from keri.app import habbing
 from keri.core import serdering
+from keri.db import dbing
 from .seal import build_release_seal
 from . import kli
+from locksmith.update.kel_replay import replay_kel
+
+
+def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
+    """Poll the latest event's witness-receipt count until >= toad, re-collecting
+    from the witnesses each round while short. Raises TimeoutError on timeout."""
+    deadline = time.monotonic() + timeout_s
+    def _count():
+        dgkey = dbing.dgKey(hab.pre, hab.kever.serder.said)
+        return len(hby.db.wigs.get(keys=dgkey) or [])
+    n = _count()
+    while n < toad and time.monotonic() < deadline:
+        recollect()
+        time.sleep(2.0)
+        n = _count()
+    if n < toad:
+        raise TimeoutError(
+            f"only {n}/{toad} witness receipts for sn={hab.kever.sn} after {timeout_s}s")
+    return n
 
 
 def anchor_release(*, name, alias, bran, base, version,
@@ -41,3 +62,22 @@ def anchor_release(*, name, alias, bran, base, version,
     anchor_event_path.write_bytes(anchor["bytes"])
     return dict(anchor_said=anchor["said"], anchor_sn=anchor["sn"],
                 kel_path=str(kel_path), anchor_event_path=str(anchor_event_path))
+
+
+def assert_kel_anchors_release(*, kel_bytes: bytes, publisher_aid: str,
+                               version: str, anchor_said: str, toad: int) -> None:
+    """Replay the exported KEL through the toad-gated verifier and confirm the
+    release's anchor is ACCEPTED. Raises if the anchor is missing/escrowed —
+    e.g. published with < toad witness receipts (the 0.2.4-class failure)."""
+    state = replay_kel(kel_stream=kel_bytes, publisher_aid=publisher_aid,
+                       embedded_sn=0, embedded_said=publisher_aid, toad=toad)
+    for ev in state.events:
+        if ev.said == anchor_said:
+            for s in ev.seals:
+                if isinstance(s, dict) and s.get("release", {}).get("v") == version:
+                    return
+            raise RuntimeError(
+                f"anchor {anchor_said} accepted but does not carry release v{version}")
+    raise RuntimeError(
+        f"release v{version} anchor {anchor_said} not accepted in published KEL "
+        f"(missing/escrowed — likely < toad={toad} witness receipts)")

@@ -37,16 +37,20 @@ class VerificationLogEntry:
     fields: dict[str, str] = field(default_factory=dict)
 
 
-def default_log_path() -> Path:
-    """Return the platform-appropriate verification log path."""
+def _app_data_base() -> Path:
+    """Return the platform-appropriate Locksmith application data directory."""
     sysname = _platform.system()
     if sysname == "Darwin":
-        base = Path.home() / "Library" / "Application Support" / "Locksmith"
+        return Path.home() / "Library" / "Application Support" / "Locksmith"
     elif sysname == "Windows":  # pragma: no cover - selected per OS
-        base = Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Locksmith"
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Locksmith"
     else:
-        base = Path.home() / ".local" / "share" / "locksmith"
-    return base / "verification.log"
+        return Path.home() / ".local" / "share" / "locksmith"
+
+
+def default_log_path() -> Path:
+    """Return the platform-appropriate verification log path."""
+    return _app_data_base() / "verification.log"
 
 
 def _quote(v: str) -> str:
