@@ -4,9 +4,10 @@ KERI logic — kli for keys, keri lib read-only for the KEL stream."""
 import json
 import time
 from pathlib import Path
-from keri.app import habbing
+from keri.app import agenting, habbing
 from keri.core import serdering
 from keri.db import dbing
+from hio.base import doing
 from .seal import build_release_seal
 from . import kli
 from locksmith.update.kel_replay import replay_kel
@@ -42,6 +43,35 @@ def anchor_release(*, name, alias, bran, base, version,
     hby = habbing.Habery(name=name, base=base, bran=bran)
     try:
         hab = hby.habByName(alias)
+
+        # Wait until the just-anchored ixn has >= toad witness receipts BEFORE the
+        # clonePreIter export. Federation receipts arrive async (witness-side
+        # eventual consistency), so a too-soon export carries an under-receipted
+        # anchor that the client gate escrows + rejects (the 0.2.4-class failure).
+        # Re-collect each short round via a stock keripy Receiptor pass — NOT
+        # WitnessReceiptor, which hangs over HTTP (see ~/code/KERI-COMMUNICATION-MODEL.md).
+        toad = hab.kever.toader.num
+
+        def _recollect():
+            receiptor = agenting.Receiptor(hby=hby)
+
+            def _pass(tymth, tock=0.0, **opts):
+                receiptor.wind(tymth)
+                _ = (yield tock)
+                try:
+                    yield from receiptor.receipt(hab.pre, sn=hab.kever.sn)
+                finally:
+                    receiptor.remove(list(receiptor.doers))
+                return
+
+            doing.Doist(tock=0.03125, real=True).do(
+                doers=[receiptor, doing.doify(_pass)], limit=30.0)
+
+        n = _wait_for_receipts(hby, hab, toad=toad, timeout_s=120.0,
+                               recollect=_recollect)
+        print(f"anchor: {n}/{toad} witness receipts for sn={hab.kever.sn} "
+              f"before export")
+
         kel = bytearray()
         anchor = None
         for msg in hby.db.clonePreIter(pre=hab.pre):
