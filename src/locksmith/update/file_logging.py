@@ -20,29 +20,18 @@ from __future__ import annotations
 
 import logging
 import logging.handlers
-import os
-import platform as _platform
+import sys
 from pathlib import Path
 
 from keri import help as _keri_help
 
+from locksmith.update.log import _app_data_base as _app_data_dir
+
 # ---------------------------------------------------------------------------
-# Platform-specific data-dir resolution
-# (mirrors the logic in locksmith.update.log.default_log_path)
+# Sentinel attribute name on the ogler singleton
 # ---------------------------------------------------------------------------
 
 _HANDLER_ATTR = "_locksmith_diag_file_handler"  # sentinel attr on the ogler
-
-
-def _app_data_dir() -> Path:
-    """Return the platform-appropriate Locksmith application data directory."""
-    sysname = _platform.system()
-    if sysname == "Darwin":
-        return Path.home() / "Library" / "Application Support" / "Locksmith"
-    elif sysname == "Windows":  # pragma: no cover — selected per OS
-        return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / "Locksmith"
-    else:
-        return Path.home() / ".local" / "share" / "locksmith"
 
 
 # ---------------------------------------------------------------------------
@@ -64,33 +53,42 @@ def setup_file_logging() -> Path:
     if existing is not None:
         return Path(existing.baseFilename)
 
-    # Build the log path and create the directory.
+    # Build the intended log path (returned even on failure so the call site
+    # can log it — the value is only used for informational logging in main.py).
     log_dir = _app_data_dir() / "logs"
-    log_dir.mkdir(parents=True, exist_ok=True)
     log_path = log_dir / "locksmith_update.log"
 
-    # Build the handler.
-    fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)-8s %(message)s")
-    fmt.default_msec_format = None
-    handler = logging.handlers.RotatingFileHandler(
-        log_path,
-        maxBytes=1 * 1024 * 1024,  # 1 MiB per file
-        backupCount=3,
-        encoding="utf-8",
-    )
-    handler.setFormatter(fmt)
-    # Emit everything the ogler-level is configured to emit.
-    handler.setLevel(logging.NOTSET)
+    try:
+        # Create the directory and open the handler.  On locked-down Windows
+        # installs or sandboxed macOS apps this can raise OSError/PermissionError;
+        # we must not let it crash app startup.
+        log_dir.mkdir(parents=True, exist_ok=True)
 
-    # Store the handler on the ogler so idempotency check above works and
-    # so close() can clean up on Windows (mirrors ogler's own pattern).
-    setattr(ogler, _HANDLER_ATTR, handler)
+        # Build the handler.
+        fmt = logging.Formatter("%(asctime)s [%(name)s] %(levelname)-8s %(message)s")
+        fmt.default_msec_format = None
+        handler = logging.handlers.RotatingFileHandler(
+            log_path,
+            maxBytes=1 * 1024 * 1024,  # 1 MiB per file
+            backupCount=3,
+            encoding="utf-8",
+        )
+        handler.setFormatter(fmt)
+        # Emit everything the ogler-level is configured to emit.
+        handler.setLevel(logging.NOTSET)
 
-    # --- Attach to all currently existing ogler-managed loggers -----------
-    _attach_to_existing(ogler, handler)
+        # Store the handler on the ogler so idempotency check above works and
+        # so close() can clean up on Windows (mirrors ogler's own pattern).
+        setattr(ogler, _HANDLER_ATTR, handler)
 
-    # --- Wrap ogler.getLogger so future loggers also get the handler ------
-    _patch_ogler_get_logger(ogler, handler)
+        # --- Attach to all currently existing ogler-managed loggers -----------
+        _attach_to_existing(ogler, handler)
+
+        # --- Wrap ogler.getLogger so future loggers also get the handler ------
+        _patch_ogler_get_logger(ogler, handler)
+
+    except OSError as exc:
+        print(f"file_logging: disabled ({exc})", file=sys.stderr)
 
     return log_path
 
