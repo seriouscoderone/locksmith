@@ -219,3 +219,9 @@ brands/*/deploy_config.json
 # writes DMG/MSI + release-anchor cesr/receipts locally before uploading to S3.
 # The canonical copies live on S3; locally they're throwaway.
 /out/
+
+# Vendored update frameworks — fetched at build time (CI: release.ci.yml pins
+# Sparkle 2.6.4 / WinSparkle 0.8.3). Large binaries, never committed; the local
+# scripts/devbuild-macos.sh loop stages the same Sparkle.framework here.
+packaging/macos/Sparkle.framework/
+packaging/windows/WinSparkle*/
