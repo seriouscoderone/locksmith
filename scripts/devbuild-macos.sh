@@ -13,32 +13,23 @@
 # -----------------------------------------------------------------------
 # VERSION-OVERRIDE NOTE
 # -----------------------------------------------------------------------
-# build-macos.sh's mechanism:
-#   1. Reads the version from pyproject.toml.
-#   2. Rewrites src/locksmith/build_info.py (LOCKSMITH_VERSION) — this is
-#      what the RUNNING APP reports at runtime (Help › About, update log).
-#   3. The PyInstaller spec ALSO reads pyproject.toml independently and
-#      bakes that value into Info.plist CFBundleVersion — which is what
-#      Sparkle reads when it decides whether a feed item is "newer".
+# The VERSION argument ($1, default "0.0.0-dev") controls the Sparkle-
+# visible version DIRECTLY:
 #
-# This script follows the SAME mechanism (rewrite build_info.py) so the
-# running app reports the right version. HOWEVER it does NOT patch
-# pyproject.toml, because the brief explicitly forbids a fragile sed hack
-# that the real build doesn't use.
+#   1. build_info.py is rewritten so the running app reports $VERSION at
+#      runtime (Help › About, update log, etc.).
+#   2. AFTER the PyInstaller build, both CFBundleShortVersionString and
+#      CFBundleVersion in the built Info.plist are patched to $VERSION via
+#      PlistBuddy — this is what Sparkle reads when it decides whether a
+#      feed item is "newer".
 #
-# CONSEQUENCE FOR SMOKE-RUNS:
-#   Sparkle compares the feed's <sparkle:version> against Info.plist
-#   CFBundleVersion, which equals the pyproject.toml version (e.g. 0.2.4).
-#   For "Check for Updates" to offer an update the feed must advertise a
-#   version HIGHER than what pyproject.toml currently contains — regardless
-#   of the VERSION argument passed to this script.
+# This lets you build at a version BELOW the live feed so that "Check for
+# Updates" offers the update immediately:
 #
-#   Typical smoke-run workflow:
-#     1. Leave pyproject.toml at its current version (e.g. 0.2.4).
-#     2. Publish a test appcast advertising a HIGHER version (e.g. 0.2.5).
-#     3. Run: ./scripts/devbuild-macos.sh 0.2.4
-#        The built app's About box will show 0.2.4 and Sparkle will see
-#        0.2.5 in the feed → offers the update.
+#   Example: live feed serves 0.2.4, you want to test the update dialog.
+#     ./scripts/devbuild-macos.sh 0.2.3
+#   Sparkle sees CFBundleVersion=0.2.3, feed advertises 0.2.4 → offers
+#   the update.  No new release or test-feed publish needed.
 # -----------------------------------------------------------------------
 #
 # Required (one of):
@@ -122,7 +113,17 @@ else
     echo "  and extract to packaging/macos/Sparkle.framework"
 fi
 
-# ---- 7. Done -------------------------------------------------------------
+# ---- 7. Patch Info.plist so Sparkle sees $VERSION -----------------------
+# PyInstaller bakes CFBundleVersion from pyproject.toml independently of
+# build_info.py; patch the already-built plist so the VERSION arg is what
+# Sparkle actually compares against the feed.
+/usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $VERSION" \
+    "dist/Locksmith.app/Contents/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :CFBundleVersion $VERSION" \
+    "dist/Locksmith.app/Contents/Info.plist"
+echo "devbuild-macos: Info.plist patched (CFBundleVersion=$VERSION)"
+
+# ---- 8. Done -------------------------------------------------------------
 LAUNCH_PATH="dist/Locksmith.app/Contents/MacOS/Locksmith"
 echo ""
 echo "devbuild-macos: OK — unsigned .app ready"

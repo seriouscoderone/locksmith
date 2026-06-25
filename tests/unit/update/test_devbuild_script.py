@@ -66,13 +66,30 @@ def test_stages_sparkle_into_contents_frameworks() -> None:
     produce if the framework were added to datas).
     """
     text = _script_text()
-    # The cp -R line must reference both the source framework and the correct
-    # destination directory — Contents/Frameworks.
-    assert "Sparkle.framework" in text, (
-        "devbuild-macos.sh does not mention Sparkle.framework"
+    # The cp -R destination must be the concatenated path — proves the framework
+    # lands at Contents/Frameworks/Sparkle.framework, not a wrong nesting.
+    assert "Contents/Frameworks/Sparkle.framework" in text, (
+        "devbuild-macos.sh does not stage Sparkle.framework into "
+        "Contents/Frameworks/ (expected 'Contents/Frameworks/Sparkle.framework')"
     )
-    assert "Contents/Frameworks" in text, (
-        "devbuild-macos.sh does not stage Sparkle into Contents/Frameworks/"
+
+
+def test_patches_info_plist_version() -> None:
+    """The script must patch Info.plist via PlistBuddy so Sparkle sees $VERSION.
+
+    FIX 1 guard: after the PyInstaller build, both CFBundleShortVersionString
+    and CFBundleVersion must be set to the VERSION arg so that the Sparkle-
+    visible version matches what was passed to the script.
+    """
+    text = _script_text()
+    assert "PlistBuddy" in text, (
+        "devbuild-macos.sh does not use PlistBuddy to patch Info.plist"
+    )
+    assert "CFBundleShortVersionString" in text, (
+        "devbuild-macos.sh does not set CFBundleShortVersionString via PlistBuddy"
+    )
+    assert "CFBundleVersion" in text, (
+        "devbuild-macos.sh does not set CFBundleVersion via PlistBuddy"
     )
 
 
