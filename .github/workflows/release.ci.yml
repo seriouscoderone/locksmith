@@ -138,6 +138,18 @@ jobs:
           printf '%s' "$PUBLISHER_ANCHOR" > src/locksmith/release/publisher_anchor.json
           python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
 
+      - name: Inject deploy config (real, from secret)
+        # Both PyInstaller specs bundle deploy_config.json (federation/CDN
+        # domains) so the in-app KERI verify gate can fetch the real appcast/KEL.
+        # Without it the gate would ship resolving example.com and block updates.
+        env:
+          DEPLOY_CONFIG: ${{ secrets.LOCKSMITH_DEPLOY_CONFIG }}
+        run: |
+          mkdir -p src/locksmith/release
+          printf '%s' "$DEPLOY_CONFIG" > src/locksmith/release/deploy_config.json
+          python -c "import json,sys; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG secret missing or not valid JSON'; exit 1; }
+
       - name: Build, sign, notarize, staple DMG
         env:
           LOCKSMITH_RELEASE_CHANNEL: ${{ env.LOCKSMITH_RELEASE_CHANNEL }}
@@ -300,6 +312,19 @@ jobs:
           mkdir -p src/locksmith/release
           printf '%s' "$PUBLISHER_ANCHOR" > src/locksmith/release/publisher_anchor.json
           python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
+
+      - name: Inject deploy config (real, from secret)
+        # Both PyInstaller specs bundle deploy_config.json (federation/CDN
+        # domains) so the in-app KERI verify gate can fetch the real appcast/KEL.
+        # Without it the gate would ship resolving example.com and block updates.
+        shell: bash
+        env:
+          DEPLOY_CONFIG: ${{ secrets.LOCKSMITH_DEPLOY_CONFIG }}
+        run: |
+          mkdir -p src/locksmith/release
+          printf '%s' "$DEPLOY_CONFIG" > src/locksmith/release/deploy_config.json
+          python -c "import json,sys; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG secret missing or not valid JSON'; exit 1; }
 
       - name: Build .exe (PyInstaller stage)
         shell: pwsh
