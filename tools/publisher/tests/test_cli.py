@@ -161,6 +161,9 @@ def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
         "publisher_kel_url": "https://releases.example.com/publisher/v1/kel.cesr",
     })
     monkeypatch.setattr(cli_mod, "_read_publisher_aid", lambda **k: "EpubAID")
+    # Bypass the self-verify guard in this integration test (the guard itself is tested
+    # in test_self_verify.py via monkeypatching publish.replay_kel).
+    monkeypatch.setattr(cli_mod.publish, "assert_kel_anchors_release", lambda **kw: None)
     uploads = {"release": None, "puts": []}
     class FakeS3:
         def upload_release(self, **k): uploads["release"] = k

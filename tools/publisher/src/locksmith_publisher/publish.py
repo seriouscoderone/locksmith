@@ -7,6 +7,7 @@ from keri.app import habbing
 from keri.core import serdering
 from .seal import build_release_seal
 from . import kli
+from locksmith.update.kel_replay import replay_kel
 
 
 def anchor_release(*, name, alias, bran, base, version,
@@ -41,3 +42,22 @@ def anchor_release(*, name, alias, bran, base, version,
     anchor_event_path.write_bytes(anchor["bytes"])
     return dict(anchor_said=anchor["said"], anchor_sn=anchor["sn"],
                 kel_path=str(kel_path), anchor_event_path=str(anchor_event_path))
+
+
+def assert_kel_anchors_release(*, kel_bytes: bytes, publisher_aid: str,
+                               version: str, anchor_said: str, toad: int) -> None:
+    """Replay the exported KEL through the toad-gated verifier and confirm the
+    release's anchor is ACCEPTED. Raises if the anchor is missing/escrowed —
+    e.g. published with < toad witness receipts (the 0.2.4-class failure)."""
+    state = replay_kel(kel_stream=kel_bytes, publisher_aid=publisher_aid,
+                       embedded_sn=0, embedded_said=publisher_aid, toad=toad)
+    for ev in state.events:
+        if ev.said == anchor_said:
+            for s in ev.seals:
+                if isinstance(s, dict) and s.get("release", {}).get("v") == version:
+                    return
+            raise RuntimeError(
+                f"anchor {anchor_said} accepted but does not carry release v{version}")
+    raise RuntimeError(
+        f"release v{version} anchor {anchor_said} not accepted in published KEL "
+        f"(missing/escrowed — likely < toad={toad} witness receipts)")

@@ -286,6 +286,10 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     anchor_bytes = (out / f"{anchor_said}.cesr").read_bytes()
     anchor_url = f"{cdn}/publisher/v1/anchors/{anchor_said}.cesr"
 
+    from .publish import assert_kel_anchors_release
+    assert_kel_anchors_release(kel_bytes=kel, publisher_aid=aid, version=version,
+                               anchor_said=anchor_said, toad=cfg.get("toad", 3))
+
     s3 = S3.default()
 
     def _key(ext):
