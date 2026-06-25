@@ -73,18 +73,21 @@ def init_sparkle(
 ):
     """Construct the Sparkle controller + delegate.
 
-    Returns ``(controller, py_delegate)``. The caller MUST keep both
-    references alive for the lifetime of the app (PyObjC will tear them
-    down otherwise). On non-macOS, returns ``(None, None)``.
+    Returns ``(controller, py_delegate, objc_delegate)``. The caller MUST keep
+    ALL THREE references alive for the lifetime of the app. In particular,
+    ``SPUStandardUpdaterController`` holds ``updaterDelegate`` as ``__weak`` —
+    so if nothing retains ``objc_delegate`` it is deallocated, the weak pointer
+    goes nil, and NO delegate method (including the KERI verify veto) fires.
+    On non-macOS, returns ``(None, None, None)``.
     """
     if sys.platform != "darwin":
-        return None, None
+        return None, None, None
 
     try:
         SPUStandardUpdaterController = _load_sparkle_class()
     except Exception as exc:  # noqa: BLE001 — objc missing, framework absent, or class not found
         logger.error("[update] sparkle.load_failed err=%s", exc)
-        return None, None
+        return None, None, None
 
     py_delegate = SparkleVerifierDelegate(
         verifier=verifier,
@@ -108,6 +111,7 @@ def init_sparkle(
     )
     controller.startUpdater()
     logger.info(
-        "[update] sparkle.initialized appcast=%s", _appcast_url(),
+        "[update] sparkle.initialized appcast=%s objc_delegate=%s",
+        _appcast_url(), "yes" if objc_delegate is not None else "no",
     )
-    return controller, py_delegate
+    return controller, py_delegate, objc_delegate

@@ -47,6 +47,7 @@ from __future__ import annotations
 
 import json
 import os
+import sys
 from importlib import resources
 from pathlib import Path
 
@@ -59,12 +60,48 @@ _REAL_FILENAME = "deploy_config.json"
 _EXAMPLE_FILENAME = "deploy_config.example.json"
 
 
+def frozen_release_file(filename: str) -> Path | None:
+    """Locate a bundled ``locksmith/release/<filename>`` on the filesystem when
+    running frozen (PyInstaller).
+
+    ``importlib.resources`` can FAIL to find data files whose package code lives
+    in PyInstaller's embedded PYZ archive (the package has no on-disk ``__init__``
+    for the resource reader to anchor to). PyInstaller still lays the data down
+    on the filesystem under ``sys._MEIPASS`` (and, in a macOS ``.app``, under
+    ``Contents/Frameworks`` and ``Contents/Resources``). Resolve from there.
+
+    Returns ``None`` when not frozen or the file is absent — callers then fall
+    back to the ``importlib.resources`` lookup (correct for source checkouts).
+    """
+    if not getattr(sys, "frozen", False):
+        return None
+    roots: list[Path] = []
+    meipass = getattr(sys, "_MEIPASS", None)
+    if meipass:
+        roots.append(Path(meipass))
+    # macOS .app: executable at Contents/MacOS/, data under Frameworks/Resources.
+    contents = Path(sys.executable).resolve().parent.parent
+    roots.append(contents / "Frameworks")
+    roots.append(contents / "Resources")
+    for root in roots:
+        candidate = root / "locksmith" / "release" / filename
+        try:
+            if candidate.is_file():
+                return candidate
+        except OSError:
+            continue
+    return None
+
+
 def _resource_path(filename: str) -> Path | None:
     """Return a filesystem path to ``filename`` packaged under this module.
 
-    Works for both a normal source checkout and a zipped resource. Returns
-    ``None`` when the resource is absent.
+    Works for a normal source checkout, a zipped resource, AND a PyInstaller
+    frozen app (via :func:`frozen_release_file`). Returns ``None`` when absent.
     """
+    frozen = frozen_release_file(filename)
+    if frozen is not None:
+        return frozen
     try:
         candidate = resources.files("locksmith.release").joinpath(filename)
     except (ModuleNotFoundError, FileNotFoundError):

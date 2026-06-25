@@ -60,6 +60,14 @@ datas = [
         str(SRC_ROOT / "locksmith" / "release" / "publisher_anchor.json"),
         "locksmith/release",
     ),
+    # Deploy config (federation/CDN domains). Build-injected + gitignored like
+    # the anchor; REQUIRED at runtime so the in-app verify gate can fetch the
+    # real appcast/KEL — without it the gate falls back to example.com and the
+    # KERI verify cannot run.
+    (
+        str(SRC_ROOT / "locksmith" / "release" / "deploy_config.json"),
+        "locksmith/release",
+    ),
     # qtawesome icon fonts (needed at runtime; not auto-collected reliably)
     (str(_QTA_FONTS), "qtawesome/fonts"),
 ]

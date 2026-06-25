@@ -1,13 +1,19 @@
 """The macOS Sparkle controller must be stored unwrapped so
 check_for_updates_with_ui() can call checkForUpdates_ (regression: a 2-tuple
-was stored, so hasattr(updater, 'checkForUpdates_') was always False)."""
+was stored, so hasattr(updater, 'checkForUpdates_') was always False).
+
+init_sparkle now returns a 3-tuple ``(controller, py_delegate, objc_delegate)``;
+the ObjC delegate MUST be retained by the app because SPUStandardUpdaterController
+holds ``updaterDelegate`` as ``__weak`` — without a strong ref it deallocates and
+no delegate method (including the KERI verify veto) ever fires.
+"""
 import sys
 import types
 
 import pytest
 
 
-def test_darwin_stores_controller_not_tuple(monkeypatch):
+def test_darwin_stores_controller_and_retains_objc_delegate(monkeypatch):
     monkeypatch.setattr(sys, "platform", "darwin")
 
     class FakeController:
@@ -16,9 +22,12 @@ def test_darwin_stores_controller_not_tuple(monkeypatch):
 
     fake_controller = FakeController()
     fake_delegate = object()
+    fake_objc_delegate = object()
 
     fake_init = types.ModuleType("locksmith.update.sparkle_init")
-    fake_init.init_sparkle = lambda **kw: (fake_controller, fake_delegate)
+    fake_init.init_sparkle = lambda **kw: (
+        fake_controller, fake_delegate, fake_objc_delegate,
+    )
     monkeypatch.setitem(sys.modules, "locksmith.update.sparkle_init", fake_init)
 
     from locksmith.core import apping
@@ -27,11 +36,14 @@ def test_darwin_stores_controller_not_tuple(monkeypatch):
     app._native_updater_dll = None
     app._native_updater_callbacks = None
     app._native_updater_delegate = None
+    app._native_updater_objc_delegate = None
     app._init_native_updater()
 
     assert app._native_updater is fake_controller
     assert hasattr(app._native_updater, "checkForUpdates_")
     assert app._native_updater_delegate is fake_delegate
+    # The weak-delegate fix: the ObjC adapter is retained for the app lifetime.
+    assert app._native_updater_objc_delegate is fake_objc_delegate
 
 
 def test_darwin_on_failure_routes_to_controller(monkeypatch):
@@ -53,19 +65,22 @@ def test_darwin_on_failure_routes_to_controller(monkeypatch):
 
     fake_controller = FakeController()
     fake_delegate = object()
+    fake_objc_delegate = object()
 
     fake_sparkle = types.ModuleType("locksmith.update.sparkle_init")
 
     def _fake_init_sparkle(**kw):
         captured["on_failure"] = kw["on_failure"]
-        return (fake_controller, fake_delegate)
+        return (fake_controller, fake_delegate, fake_objc_delegate)
 
     fake_sparkle.init_sparkle = _fake_init_sparkle
     monkeypatch.setitem(sys.modules, "locksmith.update.sparkle_init", fake_sparkle)
 
-    # Stub _make_update_verifier so it doesn't need a real publisher anchor.
+    # Stub the macOS verifier factory so it doesn't need a real publisher anchor.
     from locksmith.core import apping as _apping
-    monkeypatch.setattr(_apping, "_make_update_verifier", lambda: (lambda staged, info: True))
+    monkeypatch.setattr(
+        _apping, "_make_update_verifier_macos", lambda: (lambda url, info: True)
+    )
 
     # Build just enough of LocksmithApplication for _init_update_controller.
     app = _apping.LocksmithApplication.__new__(_apping.LocksmithApplication)
@@ -73,6 +88,7 @@ def test_darwin_on_failure_routes_to_controller(monkeypatch):
     app._native_updater_dll = None
     app._native_updater_callbacks = None
     app._native_updater_delegate = None
+    app._native_updater_objc_delegate = None
     app.update_controller = None  # will be set by _init_update_controller
 
     app._init_update_controller()

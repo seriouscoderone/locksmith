@@ -27,6 +27,7 @@ from importlib import resources
 from pathlib import Path
 
 from locksmith.release import load_deploy_config
+from locksmith.release.deploy import frozen_release_file
 from locksmith.update.errors import NetworkError, UpdateError
 from locksmith.update.verify import verify_artifact
 
@@ -55,6 +56,13 @@ def _packaged_publisher_anchor_path() -> Path | None:
     alongside it as ``publisher_anchor.example.json``. Returns ``None`` when
     no real anchor has been placed (e.g. a clean checkout without injection).
     """
+    # Frozen app (PyInstaller): importlib.resources can miss data files whose
+    # package code lives in the embedded PYZ, so resolve the bundled file from
+    # the filesystem first. (This was the bug that left the in-app verify gate
+    # silently DARK in a frozen .app — see frozen_release_file.)
+    frozen = frozen_release_file("publisher_anchor.json")
+    if frozen is not None:
+        return frozen
     try:
         candidate = resources.files("locksmith.release").joinpath(
             "publisher_anchor.json"

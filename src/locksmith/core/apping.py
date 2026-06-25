@@ -15,6 +15,7 @@ from locksmith.db.basing import LocksmithBaser
 from locksmith.plugins.manager import PluginManager
 from locksmith.plugins.updates import PluginUpdateChecker
 from locksmith.update.cli import _detect_platform, _load_anchor_and_appcast
+from locksmith.update.errors import NetworkError
 from locksmith.update.verify import verify_artifact
 
 logger = help.ogler.getLogger(__name__)
@@ -42,33 +43,123 @@ def _make_update_verifier():
 
     def _verify(staged: str, info: dict) -> bool:
         platform = _detect_platform()
-        try:
-            (
-                appcast_raw,
-                publisher_aid,
-                kel_sn,
-                kel_said,
-                toad,
-                _platform,
-            ) = _load_anchor_and_appcast(platform)
-        except FileNotFoundError:
-            # No real publisher anchor injected yet — stay dark.
+        loaded = _anchor_and_appcast_or_dark(platform)
+        if loaded is None:
             logger.info(
                 "[update] verify gate DARK: no publisher anchor injected "
                 "(verification not yet active); allowing update"
             )
             return True
+        return _run_verify_artifact(Path(staged), loaded, platform)
 
-        result = verify_artifact(
-            artifact_path=Path(staged),
-            appcast_raw=appcast_raw,
-            platform=platform,
-            embedded_publisher_aid=publisher_aid,
-            embedded_kel_sn=kel_sn,
-            embedded_kel_said=kel_said,
-            toad=toad,
-        )
-        return bool(result.ok)
+    return _verify
+
+
+# Generous: the artifact (a DMG / installer) is tens of MB. The gate fetches
+# it once to verify; Sparkle fetches it again to install.
+_VERIFY_DOWNLOAD_TIMEOUT_SEC = 120
+
+
+def _anchor_and_appcast_or_dark(platform: str):
+    """Return the loaded ``(appcast_raw, aid, sn, said, toad, platform)`` tuple,
+    or ``None`` when DARK (no real publisher anchor injected yet).
+
+    Only ``FileNotFoundError`` (missing anchor) means DARK; a ``NetworkError``
+    from the appcast fetch propagates so the gate fails closed.
+    """
+    try:
+        return _load_anchor_and_appcast(platform)
+    except FileNotFoundError:
+        return None
+
+
+def _run_verify_artifact(artifact_path: Path, loaded: tuple, platform: str) -> bool:
+    """Run ``verify_artifact`` with the anchor-mapped params from ``loaded``.
+
+    Raises the same ``UpdateError`` subclasses ``verify_artifact`` does on a
+    real verification failure (the bridge turns those into a verify-fail).
+    """
+    appcast_raw, publisher_aid, kel_sn, kel_said, toad, _plat = loaded
+    result = verify_artifact(
+        artifact_path=artifact_path,
+        appcast_raw=appcast_raw,
+        platform=platform,
+        embedded_publisher_aid=publisher_aid,
+        embedded_kel_sn=kel_sn,
+        embedded_kel_said=kel_said,
+        toad=toad,
+    )
+    return bool(result.ok)
+
+
+def _download_to_temp(url: str) -> Path:
+    """Stream-download ``url`` to a fresh temp file; return its path.
+
+    Raises ``NetworkError`` on any transport failure (and removes the partial
+    temp file). The caller owns deleting the returned file.
+    """
+    import os
+    import shutil
+    import tempfile
+    import urllib.error
+    import urllib.request
+
+    fd, name = tempfile.mkstemp(suffix=".locksmith-update")
+    path = Path(name)
+    try:
+        with urllib.request.urlopen(
+            url, timeout=_VERIFY_DOWNLOAD_TIMEOUT_SEC
+        ) as resp, os.fdopen(fd, "wb") as out:
+            shutil.copyfileobj(resp, out)
+    except BaseException as exc:
+        try:
+            path.unlink()
+        except OSError:
+            pass
+        if isinstance(exc, (urllib.error.URLError, OSError, TimeoutError)):
+            raise NetworkError(
+                f"artifact download failed: {url}: {exc}",
+                log_fields={"url": url, "reason": str(exc)},
+            ) from exc
+        raise
+    return path
+
+
+def _make_update_verifier_macos():
+    """Return the URL-based ``(enclosure_url, info) -> bool`` gate for Sparkle.
+
+    Sparkle's only veto fires BEFORE download and never exposes the staged
+    artifact (see ``sparkle_bridge``), so this closure fetches the artifact from
+    the enclosure URL itself and runs the SAME ``verify_artifact`` pipeline on
+    the bytes it fetched — giving byte-level KERI binding. DARK (no anchor)
+    short-circuits to True WITHOUT downloading; a download failure while trust
+    is active fails CLOSED.
+    """
+
+    def _verify(enclosure_url: str, info: dict) -> bool:
+        platform = _detect_platform()
+        loaded = _anchor_and_appcast_or_dark(platform)
+        if loaded is None:
+            logger.info(
+                "[update] verify gate DARK: no publisher anchor injected "
+                "(verification not yet active); allowing update"
+            )
+            return True
+        try:
+            staged = _download_to_temp(enclosure_url)
+        except Exception as exc:  # noqa: BLE001 - transport failure -> fail closed
+            logger.warning(
+                "[update] verify download failed url=%s err=%s; blocking update",
+                enclosure_url, exc,
+            )
+            return False
+        try:
+            return _run_verify_artifact(staged, loaded, platform)
+        finally:
+            try:
+                staged.unlink()
+            except OSError:
+                pass
 
     return _verify
 
@@ -151,6 +242,10 @@ class LocksmithApplication:
         self._native_updater_dll = None
         self._native_updater_callbacks = None
         self._native_updater_delegate = None
+        # Strong ref to the ObjC delegate: SPUStandardUpdaterController holds
+        # updaterDelegate __weak, so without this it deallocates and the KERI
+        # verify veto never fires.
+        self._native_updater_objc_delegate = None
         self._init_native_updater()
 
         self.update_controller = UpdateController(
@@ -169,12 +264,13 @@ class LocksmithApplication:
         anchor; until a real anchor exists it stays DARK (returns True,
         non-enforcing) — see ``_make_update_verifier``."""
         import sys as _sys
-        verifier = _make_update_verifier()
         try:
             if _sys.platform == "win32":
                 from locksmith.update.winsparkle_init import init_winsparkle
+                # WinSparkle exposes the downloaded path, so it uses the
+                # path-based verifier.
                 dll, gate, cbs = init_winsparkle(
-                    verifier=verifier,
+                    verifier=_make_update_verifier(),
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: (
                         self.update_controller.report_verification_failed(v)
@@ -187,8 +283,10 @@ class LocksmithApplication:
                 self._native_updater_callbacks = cbs
             elif _sys.platform == "darwin":
                 from locksmith.update.sparkle_init import init_sparkle
-                controller, py_delegate = init_sparkle(
-                    verifier=verifier,
+                # Sparkle never exposes the staged artifact + vetoes pre-download,
+                # so it uses the URL-based verifier (self-download + verify).
+                controller, py_delegate, objc_delegate = init_sparkle(
+                    verifier=_make_update_verifier_macos(),
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: (
                         self.update_controller.report_verification_failed(v)
@@ -198,6 +296,7 @@ class LocksmithApplication:
                 )
                 self._native_updater = controller
                 self._native_updater_delegate = py_delegate
+                self._native_updater_objc_delegate = objc_delegate
         except Exception as exc:  # noqa: BLE001 — never let updater init crash the app
             logger.warning("native_updater.init_failed err=%s", exc)
 
