@@ -93,7 +93,12 @@ def init_sparkle(
     )
     objc_delegate = make_objc_delegate(py_delegate)
 
-    # startingUpdater=False — we drive checks from our scheduler instead.
+    # startingUpdater=False so we control WHEN it starts, then start it
+    # explicitly below. Sparkle requires the updater to be STARTED before any
+    # check works — checkForUpdates_ on an un-started updater is a silent no-op
+    # (the long-tail bug after the import fix). SUEnableAutomaticChecks=False in
+    # Info.plist keeps it from auto-checking on its own cadence; we drive checks
+    # via check_for_updates_with_ui.
     controller = (
         SPUStandardUpdaterController
         .alloc()
@@ -101,6 +106,7 @@ def init_sparkle(
             False, objc_delegate, None,
         )
     )
+    controller.startUpdater()
     logger.info(
         "[update] sparkle.initialized appcast=%s", _appcast_url(),
     )
