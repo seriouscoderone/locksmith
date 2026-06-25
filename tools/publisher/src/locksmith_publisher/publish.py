@@ -2,12 +2,32 @@
 read the KEL back via clonePreIter (export + anchor lookup). No re-implemented
 KERI logic — kli for keys, keri lib read-only for the KEL stream."""
 import json
+import time
 from pathlib import Path
 from keri.app import habbing
 from keri.core import serdering
+from keri.db import dbing
 from .seal import build_release_seal
 from . import kli
 from locksmith.update.kel_replay import replay_kel
+
+
+def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
+    """Poll the latest event's witness-receipt count until >= toad, re-collecting
+    from the witnesses each round while short. Raises TimeoutError on timeout."""
+    deadline = time.monotonic() + timeout_s
+    def _count():
+        dgkey = dbing.dgKey(hab.pre, hab.kever.serder.said)
+        return len(hby.db.wigs.get(keys=dgkey) or [])
+    n = _count()
+    while n < toad and time.monotonic() < deadline:
+        recollect()
+        time.sleep(2.0)
+        n = _count()
+    if n < toad:
+        raise TimeoutError(
+            f"only {n}/{toad} witness receipts for sn={hab.kever.sn} after {timeout_s}s")
+    return n
 
 
 def anchor_release(*, name, alias, bran, base, version,
