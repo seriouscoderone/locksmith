@@ -99,7 +99,15 @@ baseFormatter = logging.Formatter(FORMAT)
 baseFormatter.default_msec_format = None
 help.ogler.baseConsoleHandler.setFormatter(baseFormatter)
 
+# Attach a rotating file handler under the per-OS app data dir so that
+# update-path log lines ([update] …, native_updater.*, winsparkle.*) land
+# on disk.  On Windows, GUI apps have no console stderr, so this is the
+# only way to diagnose WinSparkle failures post-hoc.
+from locksmith.update.file_logging import setup_file_logging as _setup_file_logging
+_diag_log_path = _setup_file_logging()
+
 logger = help.ogler.getLogger(__name__)
+logger.info("file_logging.started path=%s", _diag_log_path)
 
 
 def parse_vault_arg(argv: list[str]) -> str | None:
