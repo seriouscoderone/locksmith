@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import ctypes
 import sys
-from ctypes import CFUNCTYPE, c_int, c_char_p
+from ctypes import CFUNCTYPE, c_int, c_char_p, c_wchar_p
 from typing import Callable
 
 from keri import help
@@ -108,8 +108,14 @@ def load_winsparkle_dll(dll_path: str | None = None):
     # Declare prototypes.
     dll.win_sparkle_set_appcast_url.argtypes = [c_char_p]
     dll.win_sparkle_set_appcast_url.restype = None
-    dll.win_sparkle_set_dsa_pub_pem.argtypes = [c_char_p]
-    dll.win_sparkle_set_dsa_pub_pem.restype = None
+    # set_app_details takes wchar_t* (company, app, version) — the frozen .exe
+    # has no VERSIONINFO, so we MUST set the current version here or WinSparkle
+    # can't compare against the appcast.
+    dll.win_sparkle_set_app_details.argtypes = [c_wchar_p, c_wchar_p, c_wchar_p]
+    dll.win_sparkle_set_app_details.restype = None
+    # NOTE: win_sparkle_set_dsa_pub_pem is intentionally NOT declared/called —
+    # it parses the PEM string, so passing NULL to "disable" it derefs null and
+    # crashes init. Not calling it leaves no DSA key configured = no DSA check.
     dll.win_sparkle_set_can_shutdown_callback.argtypes = [CAN_SHUTDOWN_CB]
     dll.win_sparkle_set_can_shutdown_callback.restype = None
     dll.win_sparkle_set_shutdown_request_callback.argtypes = [SHUTDOWN_REQUEST_CB]

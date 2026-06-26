@@ -18,6 +18,20 @@ def _appcast_url() -> bytes:
     return brand().appcast_windows_xml.encode()
 
 
+def _app_details() -> tuple[str, str, str]:
+    """``(company, app_name, current_version)`` for WinSparkle.
+
+    The frozen .exe ships with no VERSIONINFO (``version_file=None`` in the
+    spec — the MSI carries version metadata, not the exe), so WinSparkle cannot
+    infer the running version. We set it explicitly from ``build_info`` or every
+    update check misfires (no version to compare against the appcast).
+    """
+    from locksmith.build_info import LOCKSMITH_VERSION
+    from locksmith.core.branding import brand
+    b = brand()
+    return (b.org_name, b.display_name, LOCKSMITH_VERSION)
+
+
 def init_winsparkle(
     *,
     verifier: Callable[[], tuple[bool, str]],
@@ -55,13 +69,21 @@ def init_winsparkle(
     c_shutdown_req = SHUTDOWN_REQUEST_CB(_shutdown_request_cb)
 
     appcast_url = _appcast_url()
+    company, app_name, version = _app_details()
+    # Set the current version BEFORE init (exe has no VERSIONINFO for WinSparkle
+    # to read). NOTE: we deliberately do NOT call win_sparkle_set_dsa_pub_pem —
+    # passing NULL to "disable" it derefs null and crashes init (it parses the
+    # PEM string); leaving it unset means no DSA key, so WinSparkle does no
+    # signature verification. KERI is the sole content trust (verified in the
+    # can_shutdown gate); Windows Authenticode pins the installed MSI.
+    dll.win_sparkle_set_app_details(company, app_name, version)
     dll.win_sparkle_set_appcast_url(appcast_url)
-    dll.win_sparkle_set_dsa_pub_pem(None)            # disable signature check
     dll.win_sparkle_set_can_shutdown_callback(c_can_shutdown)
     dll.win_sparkle_set_shutdown_request_callback(c_shutdown_req)
     dll.win_sparkle_init()
     logger.info(
-        "[update] winsparkle.initialized appcast=%s", appcast_url.decode(),
+        "[update] winsparkle.initialized appcast=%s version=%s",
+        appcast_url.decode(), version,
     )
 
     callbacks = (c_can_shutdown, c_shutdown_req)

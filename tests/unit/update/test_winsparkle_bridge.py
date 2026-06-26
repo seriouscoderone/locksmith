@@ -90,3 +90,16 @@ def test_winsparkle_appcast_url_is_brand_xml(monkeypatch):
     from locksmith.core import branding
     branding._reset_cache_for_tests()
     assert wi._appcast_url() == b"https://releases.keri.host/appcast/v1/windows.xml"
+
+
+def test_winsparkle_app_details_carry_brand_and_running_version():
+    """The frozen exe has no VERSIONINFO, so WinSparkle must be told the
+    current version explicitly — (company, app, version) from brand+build_info."""
+    import locksmith.update.winsparkle_init as wi
+    from locksmith.build_info import LOCKSMITH_VERSION
+    from locksmith.core import branding
+    branding._reset_cache_for_tests()
+    company, app_name, version = wi._app_details()
+    assert company == "keri.host"
+    assert app_name == "Locksmith"
+    assert version == LOCKSMITH_VERSION and version  # non-empty current version
