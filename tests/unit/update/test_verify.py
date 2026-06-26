@@ -1,5 +1,6 @@
 """Tests for ``locksmith.update.verify.verify_artifact()``."""
 import json
+import ssl
 from pathlib import Path
 from unittest.mock import patch
 
@@ -182,6 +183,38 @@ def test_verify_network_failure_raises():
                 embedded_kel_said=None,
                 toad=manifest["toad"],
             )
+
+
+def test_ssl_context_returns_context_backed_by_certifi():
+    """A frozen app's OpenSSL default CA path points at the build machine, so
+    the verify path must trust certifi's bundled CA explicitly."""
+    ctx = verify_mod.ssl_context()
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_REQUIRED  # TLS verification stays ON
+
+
+def test_fetch_url_passes_certifi_ssl_context():
+    """``_fetch_url`` must hand urlopen the certifi-backed context — otherwise a
+    Finder-launched signed build raises CERTIFICATE_VERIFY_FAILED on every fetch."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *a):
+            return False
+
+        def read(self):
+            return b"ok"
+
+    def fake_urlopen(url, timeout=None, context=None):
+        captured["context"] = context
+        return _Resp()
+
+    with patch.object(verify_mod.urllib.request, "urlopen", fake_urlopen):
+        assert verify_mod._fetch_url("https://example.com/x") == b"ok"
+    assert isinstance(captured["context"], ssl.SSLContext)
 
 
 def test_verification_result_carries_diagnostic_fields(patched_fetch):

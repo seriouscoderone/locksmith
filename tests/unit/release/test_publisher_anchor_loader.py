@@ -146,8 +146,9 @@ def test_load_anchor_and_appcast_delegates_to_loader(monkeypatch):
 
     captured = {}
 
-    def _fake_urlopen(url, timeout=0):
+    def _fake_urlopen(url, timeout=0, context=None):
         captured["url"] = url
+        captured["context"] = context
 
         class _Resp:
             def __enter__(self_inner):

@@ -29,7 +29,7 @@ from pathlib import Path
 from locksmith.release import load_deploy_config
 from locksmith.release.deploy import frozen_release_file
 from locksmith.update.errors import NetworkError, UpdateError
-from locksmith.update.verify import verify_artifact
+from locksmith.update.verify import ssl_context, verify_artifact
 
 
 def _appcast_url(platform: str) -> str:
@@ -126,7 +126,7 @@ def _load_anchor_and_appcast(
     anchor = _load_publisher_anchor()
     url = _appcast_url(platform)
     try:
-        with urllib.request.urlopen(url, timeout=30) as resp:
+        with urllib.request.urlopen(url, timeout=30, context=ssl_context()) as resp:
             appcast_raw = resp.read().decode("utf-8")
     except (urllib.error.URLError, OSError, TimeoutError) as ex:
         raise NetworkError(

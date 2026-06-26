@@ -104,11 +104,13 @@ def _download_to_temp(url: str) -> Path:
     import urllib.error
     import urllib.request
 
+    from locksmith.update.verify import ssl_context
+
     fd, name = tempfile.mkstemp(suffix=".locksmith-update")
     path = Path(name)
     try:
         with urllib.request.urlopen(
-            url, timeout=_VERIFY_DOWNLOAD_TIMEOUT_SEC
+            url, timeout=_VERIFY_DOWNLOAD_TIMEOUT_SEC, context=ssl_context()
         ) as resp, os.fdopen(fd, "wb") as out:
             shutil.copyfileobj(resp, out)
     except BaseException as exc:

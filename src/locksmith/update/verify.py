@@ -20,6 +20,7 @@ on any failure. No UI / logging side-effects.
 from __future__ import annotations
 
 import hashlib
+import ssl
 import urllib.error
 import urllib.request
 from dataclasses import dataclass
@@ -50,6 +51,24 @@ from locksmith.update.kel_replay import (
 _FETCH_TIMEOUT_SEC = 30
 
 
+def ssl_context() -> ssl.SSLContext:
+    """SSL context that trusts certifi's CA bundle.
+
+    A frozen PyInstaller app ships its own OpenSSL whose baked-in default CA
+    paths point at the BUILD machine (the GitHub runner) — absent on the user's
+    machine, so the default context raises ``CERTIFICATE_VERIFY_FAILED: unable
+    to get local issuer certificate`` for every HTTPS fetch in the verify path.
+    ``certifi.where()`` resolves to the cacert.pem PyInstaller bundles, so use it
+    explicitly. Falls back to the system default when certifi is unavailable
+    (e.g. a source checkout whose OpenSSL CA paths are valid).
+    """
+    try:
+        import certifi
+        return ssl.create_default_context(cafile=certifi.where())
+    except Exception:  # noqa: BLE001 - certifi missing → system default
+        return ssl.create_default_context()
+
+
 @dataclass(frozen=True)
 class VerificationResult:
     ok: bool
@@ -69,7 +88,9 @@ def _fetch_url(url: str) -> bytes:
     Raises ``NetworkError`` on connection / timeout / DNS failures.
     """
     try:
-        with urllib.request.urlopen(url, timeout=_FETCH_TIMEOUT_SEC) as resp:
+        with urllib.request.urlopen(
+            url, timeout=_FETCH_TIMEOUT_SEC, context=ssl_context()
+        ) as resp:
             return resp.read()
     except (urllib.error.URLError, OSError, TimeoutError) as ex:
         raise NetworkError(
