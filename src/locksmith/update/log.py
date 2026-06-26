@@ -130,3 +130,72 @@ def read_entries(path: Path) -> list[VerificationLogEntry]:
         entries.append(_parse_line(line))
     entries.sort(key=lambda e: e.ts)
     return entries
+
+
+# --- VerificationResult <-> log bridge --------------------------------------
+#
+# The Release Verification dialog renders a ``VerificationResult``. The gate
+# that produces it runs in the PRE-relaunch process; after a successful update
+# the app relaunches into the new build whose process never ran a verify. So we
+# PERSIST the result here on success and RELOAD it when the dialog opens — that
+# is what makes the proof visible after the install completes.
+
+_RESULT_FIELDS = (
+    "platform", "artifact_sha256", "artifact_size", "witness_receipts",
+    "kel_tip_sn",
+)
+
+
+def record_verification_result(result, *, path: Path | None = None,
+                               ts: str | None = None) -> None:
+    """Append a ``VerificationResult`` to the verification log."""
+    from datetime import datetime, timezone
+
+    p = path or default_log_path()
+    stamp = ts or datetime.now(timezone.utc).isoformat(timespec="seconds")
+    entry = VerificationLogEntry(
+        ts=stamp,
+        outcome="ok" if result.ok else "failed",
+        version=result.version,
+        publisher_aid=result.publisher_aid,
+        anchor_said=result.anchor_said,
+        fields={
+            "platform": result.platform,
+            "artifact_sha256": result.artifact_sha256,
+            "artifact_size": str(result.artifact_size),
+            "witness_receipts": str(result.witness_receipts),
+            "kel_tip_sn": str(result.kel_tip_sn),
+        },
+    )
+    append_entry(p, entry)
+
+
+def load_last_verification_result(path: Path | None = None):
+    """Reconstruct the most recent successful ``VerificationResult`` from the
+    log (the proof the Release Verification dialog shows), or ``None``."""
+    from locksmith.update.verify import VerificationResult
+
+    p = path or default_log_path()
+    ok = [e for e in read_entries(p) if e.outcome == "ok"]
+    if not ok:
+        return None
+    e = ok[-1]  # read_entries sorts by ts ascending
+    f = e.fields
+
+    def _int(key: str) -> int:
+        try:
+            return int(f.get(key, "0") or "0")
+        except (TypeError, ValueError):
+            return 0
+
+    return VerificationResult(
+        ok=True,
+        version=e.version,
+        platform=f.get("platform", ""),
+        publisher_aid=e.publisher_aid,
+        anchor_said=e.anchor_said,
+        artifact_sha256=f.get("artifact_sha256", ""),
+        artifact_size=_int("artifact_size"),
+        witness_receipts=_int("witness_receipts"),
+        kel_tip_sn=_int("kel_tip_sn"),
+    )

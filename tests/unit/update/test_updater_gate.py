@@ -265,6 +265,38 @@ def test_macos_gate_returns_false_when_verify_fails(monkeypatch, tmp_path):
     assert not downloaded.exists()  # temp cleaned even on verification failure
 
 
+def test_macos_gate_calls_on_verified_with_result_on_success(monkeypatch, tmp_path):
+    """On an enforced PASS the gate hands the VerificationResult to on_verified
+    (the app persists it so the Release Verification dialog can show the proof)."""
+    anchor = _valid_anchor()
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: _loaded_anchor_tuple(anchor), raising=True,
+    )
+    downloaded = tmp_path / "ok.dmg.download"
+    downloaded.write_bytes(b"bytes")
+    monkeypatch.setattr(apping, "_download_to_temp", lambda url: downloaded, raising=True)
+    result = types.SimpleNamespace(ok=True, version="0.2.10", kel_tip_sn=7)
+    monkeypatch.setattr(apping, "verify_artifact", lambda **k: result, raising=True)
+
+    seen = []
+    gate = apping._make_update_verifier_macos(on_verified=seen.append)
+    assert gate("https://cdn.example.com/x.dmg", {"version": "0.2.10"}) is True
+    assert seen == [result]  # exactly the VerificationResult, once
+
+
+def test_macos_gate_does_not_call_on_verified_in_dark(monkeypatch):
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: (_ for _ in ()).throw(FileNotFoundError("no anchor")),
+        raising=True,
+    )
+    seen = []
+    gate = apping._make_update_verifier_macos(on_verified=seen.append)
+    assert gate("https://cdn.example.com/x.dmg", {"version": "9.9.9"}) is True
+    assert seen == []  # dark allows but records no cryptographic proof
+
+
 def test_macos_gate_cleans_temp_and_propagates_verify_exception(monkeypatch, tmp_path):
     """verify_artifact raises on a real mismatch; the gate must not swallow it
     (the bridge turns it into verify_fail) but MUST clean the temp file."""

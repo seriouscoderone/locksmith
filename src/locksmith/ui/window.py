@@ -233,10 +233,14 @@ class LocksmithWindow(QMainWindow):
 
     def _on_show_verification_log_clicked(self) -> None:
         from locksmith.ui.dialogs.verification_log import VerificationLogDialog
-        dlg = VerificationLogDialog(
-            result=getattr(self, "_last_verification_result", None),
-            parent=self,
-        )
+        from locksmith.update.log import load_last_verification_result
+
+        # Read the persisted proof fresh: the verify ran in the pre-relaunch
+        # process, so an in-memory value would be lost across the update.
+        result = getattr(self, "_last_verification_result", None)
+        if result is None:
+            result = load_last_verification_result()
+        dlg = VerificationLogDialog(result=result, parent=self)
         dlg.open()
 
     def _on_update_verification_failed(self, version: str) -> None:

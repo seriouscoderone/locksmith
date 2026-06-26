@@ -152,3 +152,62 @@ def test_missing_required_field_in_log_raises(tmp_path):
     log.write_text("ts=2026 outcome=ok version=1.0.0 publisher_aid=E\n")  # missing anchor_said
     with pytest.raises(SchemaError):
         read_entries(log)
+
+
+# --- VerificationResult persistence (Release Verification dialog) -----------
+
+def _result(**over):
+    from locksmith.update.verify import VerificationResult
+    base = dict(
+        ok=True, version="0.2.10", platform="macos",
+        publisher_aid="EHjWPRGoY9PV", anchor_said="EO9Oh-3r",
+        artifact_sha256="e9cee447", artifact_size=63013340,
+        witness_receipts=5, kel_tip_sn=7,
+    )
+    base.update(over)
+    return VerificationResult(**base)
+
+
+def test_record_then_load_roundtrip(tmp_path):
+    from locksmith.update.log import (
+        record_verification_result, load_last_verification_result,
+    )
+    log = tmp_path / "verification.log"
+    record_verification_result(_result(), path=log, ts="2026-06-26T00:04:16+00:00")
+
+    got = load_last_verification_result(log)
+    assert got is not None
+    assert got.ok is True
+    assert got.version == "0.2.10"
+    assert got.platform == "macos"
+    assert got.publisher_aid == "EHjWPRGoY9PV"
+    assert got.anchor_said == "EO9Oh-3r"
+    assert got.artifact_sha256 == "e9cee447"
+    assert got.artifact_size == 63013340
+    assert got.witness_receipts == 5
+    assert got.kel_tip_sn == 7
+
+
+def test_load_returns_latest_ok(tmp_path):
+    from locksmith.update.log import (
+        record_verification_result, load_last_verification_result,
+    )
+    log = tmp_path / "verification.log"
+    record_verification_result(_result(version="0.2.8", kel_tip_sn=6),
+                               path=log, ts="2026-06-26T00:00:00+00:00")
+    record_verification_result(_result(version="0.2.10", kel_tip_sn=7),
+                               path=log, ts="2026-06-26T01:00:00+00:00")
+    got = load_last_verification_result(log)
+    assert got.version == "0.2.10" and got.kel_tip_sn == 7
+
+
+def test_load_none_when_missing_or_no_ok(tmp_path):
+    from locksmith.update.log import load_last_verification_result
+    assert load_last_verification_result(tmp_path / "nope.log") is None
+    # A failed-only log yields no result for the dialog.
+    log = tmp_path / "v.log"
+    append_entry(log, VerificationLogEntry(
+        ts="2026", outcome="failed", version="0.2.10",
+        publisher_aid="E", anchor_said="E",
+    ))
+    assert load_last_verification_result(log) is None

@@ -16,12 +16,13 @@ from locksmith.plugins.manager import PluginManager
 from locksmith.plugins.updates import PluginUpdateChecker
 from locksmith.update.cli import _detect_platform, _load_anchor_and_appcast
 from locksmith.update.errors import NetworkError
-from locksmith.update.verify import verify_artifact
+from locksmith.update.log import record_verification_result
+from locksmith.update.verify import VerificationResult, verify_artifact
 
 logger = help.ogler.getLogger(__name__)
 
 
-def _make_update_verifier():
+def _make_update_verifier(on_verified=None):
     """Return the ``(staged, info) -> bool`` gate handed to Sparkle/WinSparkle.
 
     The closure runs the real KERI update-verification pipeline
@@ -39,6 +40,10 @@ def _make_update_verifier():
     ``info`` is the captured SUAppcastItem release metadata (version,
     anchor_said, artifact_sha256, ...); it does NOT carry the appcast feed —
     the gate fetches the live appcast itself via ``_load_anchor_and_appcast``.
+
+    ``on_verified`` (optional) is called with the ``VerificationResult`` on an
+    enforced PASS — the app wires it to persist the proof for the Release
+    Verification dialog. Not called in dark mode (no cryptographic proof).
     """
 
     def _verify(staged: str, info: dict) -> bool:
@@ -50,7 +55,10 @@ def _make_update_verifier():
                 "(verification not yet active); allowing update"
             )
             return True
-        return _run_verify_artifact(Path(staged), loaded, platform)
+        result = _run_verify_artifact(Path(staged), loaded, platform)
+        if on_verified is not None and result.ok:
+            on_verified(result)
+        return bool(result.ok)
 
     return _verify
 
@@ -73,14 +81,18 @@ def _anchor_and_appcast_or_dark(platform: str):
         return None
 
 
-def _run_verify_artifact(artifact_path: Path, loaded: tuple, platform: str) -> bool:
+def _run_verify_artifact(
+    artifact_path: Path, loaded: tuple, platform: str
+) -> VerificationResult:
     """Run ``verify_artifact`` with the anchor-mapped params from ``loaded``.
 
-    Raises the same ``UpdateError`` subclasses ``verify_artifact`` does on a
-    real verification failure (the bridge turns those into a verify-fail).
+    Returns the ``VerificationResult`` (so the gate can hand the proof to the
+    verification log). Raises the same ``UpdateError`` subclasses
+    ``verify_artifact`` does on a real failure (the bridge turns those into a
+    verify-fail).
     """
     appcast_raw, publisher_aid, kel_sn, kel_said, toad, _plat = loaded
-    result = verify_artifact(
+    return verify_artifact(
         artifact_path=artifact_path,
         appcast_raw=appcast_raw,
         platform=platform,
@@ -89,7 +101,6 @@ def _run_verify_artifact(artifact_path: Path, loaded: tuple, platform: str) -> b
         embedded_kel_said=kel_said,
         toad=toad,
     )
-    return bool(result.ok)
 
 
 def _download_to_temp(url: str) -> Path:
@@ -127,7 +138,7 @@ def _download_to_temp(url: str) -> Path:
     return path
 
 
-def _make_update_verifier_macos():
+def _make_update_verifier_macos(on_verified=None):
     """Return the URL-based ``(enclosure_url, info) -> bool`` gate for Sparkle.
 
     Sparkle's only veto fires BEFORE download and never exposes the staged
@@ -136,6 +147,10 @@ def _make_update_verifier_macos():
     the bytes it fetched — giving byte-level KERI binding. DARK (no anchor)
     short-circuits to True WITHOUT downloading; a download failure while trust
     is active fails CLOSED.
+
+    ``on_verified`` (optional) is called with the ``VerificationResult`` on an
+    enforced PASS so the app can persist the proof for the Release Verification
+    dialog.
     """
 
     def _verify(enclosure_url: str, info: dict) -> bool:
@@ -156,7 +171,10 @@ def _make_update_verifier_macos():
             )
             return False
         try:
-            return _run_verify_artifact(staged, loaded, platform)
+            result = _run_verify_artifact(staged, loaded, platform)
+            if on_verified is not None and result.ok:
+                on_verified(result)
+            return bool(result.ok)
         finally:
             try:
                 staged.unlink()
@@ -272,7 +290,9 @@ class LocksmithApplication:
                 # WinSparkle exposes the downloaded path, so it uses the
                 # path-based verifier.
                 dll, gate, cbs = init_winsparkle(
-                    verifier=_make_update_verifier(),
+                    verifier=_make_update_verifier(
+                        on_verified=record_verification_result
+                    ),
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: (
                         self.update_controller.report_verification_failed(v)
@@ -288,7 +308,9 @@ class LocksmithApplication:
                 # Sparkle never exposes the staged artifact + vetoes pre-download,
                 # so it uses the URL-based verifier (self-download + verify).
                 controller, py_delegate, objc_delegate = init_sparkle(
-                    verifier=_make_update_verifier_macos(),
+                    verifier=_make_update_verifier_macos(
+                        on_verified=record_verification_result
+                    ),
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
                     on_failure=lambda v: (
                         self.update_controller.report_verification_failed(v)

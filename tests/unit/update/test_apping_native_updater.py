@@ -79,7 +79,8 @@ def test_darwin_on_failure_routes_to_controller(monkeypatch):
     # Stub the macOS verifier factory so it doesn't need a real publisher anchor.
     from locksmith.core import apping as _apping
     monkeypatch.setattr(
-        _apping, "_make_update_verifier_macos", lambda: (lambda url, info: True)
+        _apping, "_make_update_verifier_macos",
+        lambda on_verified=None: (lambda url, info: True),
     )
 
     # Build just enough of LocksmithApplication for _init_update_controller.
