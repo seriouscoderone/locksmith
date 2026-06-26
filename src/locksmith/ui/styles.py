@@ -54,11 +54,25 @@ def set_global_styles(app: QApplication):
 
     asset_root = _asset_root()
 
-    icon_path = asset_root / "assets" / "custom" / "AppIcon.icns"
-    if icon_path.exists():
-        app.setWindowIcon(QIcon(str(icon_path)))
+    # Pick a window-icon format the running platform's Qt can actually render.
+    # Qt on Windows can't load .icns (a macOS format) — setting it yields an
+    # empty icon, which overrides the exe's embedded .ico and leaves a blank
+    # taskbar button. .ico renders on every platform; macOS prefers .icns (its
+    # dock icon comes from the app bundle regardless).
+    icon_dir = asset_root / "assets" / "custom"
+    _icon_names = (
+        ("AppIcon.icns", "AppIcon.ico") if sys.platform == "darwin"
+        else ("AppIcon.ico", "AppIcon.icns")
+    )
+    for _name in _icon_names:
+        cand = icon_dir / _name
+        if cand.exists():
+            app.setWindowIcon(QIcon(str(cand)))
+            break
     else:
-        logger.warning(f"App icon not found at {icon_path}; falling back to symbol logo")
+        logger.warning(
+            f"App icon not found in {icon_dir}; falling back to symbol logo"
+        )
         app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
     from locksmith.core.branding import brand
     from locksmith.ui import colors as _colors
