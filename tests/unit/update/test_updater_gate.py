@@ -297,6 +297,120 @@ def test_macos_gate_does_not_call_on_verified_in_dark(monkeypatch):
     assert seen == []  # dark allows but records no cryptographic proof
 
 
+# --- Windows gate (WinSparkle): no-arg self-fetch (() -> (ok, version)) -----
+#
+# WinSparkle 0.8.3 hands its callbacks nothing, so the gate derives the MSI URL
+# from the appcast itself, self-downloads, and verifies. It returns
+# ``(ok, version)`` and must NEVER raise (it runs in a C callback).
+
+
+def _fake_release(url="https://cdn.example.com/Locksmith-0.2.10.msi", version="0.2.10"):
+    return types.SimpleNamespace(
+        version=version, artifact_url=url, artifact_sha256="deadbeef",
+    )
+
+
+def test_windows_gate_downloads_then_verifies(monkeypatch, tmp_path):
+    anchor = _valid_anchor()
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: _loaded_anchor_tuple(anchor), raising=True,
+    )
+    monkeypatch.setattr(apping, "parse_appcast", lambda raw: object(), raising=True)
+    rel = _fake_release()
+    monkeypatch.setattr(
+        apping, "select_latest_for_platform", lambda ac, plat: rel, raising=True
+    )
+    downloaded = tmp_path / "Locksmith-0.2.10.msi.download"
+    downloaded.write_bytes(b"msi-bytes")
+    dl = []
+    monkeypatch.setattr(
+        apping, "_download_to_temp", lambda url: dl.append(url) or downloaded,
+        raising=True,
+    )
+    result = types.SimpleNamespace(ok=True, version="0.2.10")
+    monkeypatch.setattr(apping, "verify_artifact", lambda **k: result, raising=True)
+
+    seen = []
+    gate = apping._make_update_verifier_windows(on_verified=seen.append)
+    ok, version = gate()
+    assert ok is True and version == "0.2.10"
+    assert dl == [rel.artifact_url]          # self-downloaded the MSI URL from the appcast
+    assert seen == [result]                  # proof handed to on_verified
+    assert not downloaded.exists()           # temp cleaned
+
+
+def test_windows_gate_dark_allows_without_download(monkeypatch):
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: (_ for _ in ()).throw(FileNotFoundError("no anchor")),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        apping, "_download_to_temp",
+        lambda url: (_ for _ in ()).throw(AssertionError("downloaded in dark")),
+        raising=True,
+    )
+    assert apping._make_update_verifier_windows()() == (True, "")
+
+
+def test_windows_gate_blocks_on_download_failure(monkeypatch):
+    anchor = _valid_anchor()
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: _loaded_anchor_tuple(anchor), raising=True,
+    )
+    monkeypatch.setattr(apping, "parse_appcast", lambda raw: object(), raising=True)
+    monkeypatch.setattr(
+        apping, "select_latest_for_platform", lambda ac, plat: _fake_release(),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        apping, "_download_to_temp",
+        lambda url: (_ for _ in ()).throw(
+            update_errors.NetworkError("refused", log_fields={})),
+        raising=True,
+    )
+    monkeypatch.setattr(
+        apping, "verify_artifact",
+        lambda **k: (_ for _ in ()).throw(AssertionError("verify after dl fail")),
+        raising=True,
+    )
+    ok, version = apping._make_update_verifier_windows()()
+    assert ok is False and version == "0.2.10"
+
+
+def test_windows_gate_blocks_and_cleans_on_verify_failure(monkeypatch, tmp_path):
+    anchor = _valid_anchor()
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: _loaded_anchor_tuple(anchor), raising=True,
+    )
+    monkeypatch.setattr(apping, "parse_appcast", lambda raw: object(), raising=True)
+    monkeypatch.setattr(
+        apping, "select_latest_for_platform", lambda ac, plat: _fake_release(),
+        raising=True,
+    )
+    downloaded = tmp_path / "tampered.msi.download"
+    downloaded.write_bytes(b"tampered")
+    monkeypatch.setattr(
+        apping, "_download_to_temp", lambda url: downloaded, raising=True
+    )
+
+    def _raise_mismatch(**k):
+        raise update_errors.HashMismatchError("sha mismatch", log_fields={})
+
+    monkeypatch.setattr(apping, "verify_artifact", _raise_mismatch, raising=True)
+
+    seen = []
+    # The closure must SWALLOW the verify exception (C-callback safety) and
+    # return a clean block — NOT propagate.
+    ok, version = apping._make_update_verifier_windows(on_verified=seen.append)()
+    assert ok is False and version == "0.2.10"
+    assert seen == []                        # no proof recorded on failure
+    assert not downloaded.exists()           # temp cleaned even on failure
+
+
 def test_macos_gate_cleans_temp_and_propagates_verify_exception(monkeypatch, tmp_path):
     """verify_artifact raises on a real mismatch; the gate must not swallow it
     (the bridge turns it into verify_fail) but MUST clean the temp file."""

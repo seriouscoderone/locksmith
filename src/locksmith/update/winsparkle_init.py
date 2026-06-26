@@ -20,7 +20,7 @@ def _appcast_url() -> bytes:
 
 def init_winsparkle(
     *,
-    verifier: Callable[[str, dict], bool],
+    verifier: Callable[[], tuple[bool, str]],
     log_recorder: Callable[..., None],
     on_failure: Callable[[str], None],
 ):

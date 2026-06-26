@@ -14,6 +14,7 @@ from locksmith.core.vaulting import Vault
 from locksmith.db.basing import LocksmithBaser
 from locksmith.plugins.manager import PluginManager
 from locksmith.plugins.updates import PluginUpdateChecker
+from locksmith.update.appcast import parse_appcast, select_latest_for_platform
 from locksmith.update.cli import _detect_platform, _load_anchor_and_appcast
 from locksmith.update.errors import NetworkError
 from locksmith.update.log import record_verification_result
@@ -184,6 +185,62 @@ def _make_update_verifier_macos(on_verified=None):
     return _verify
 
 
+def _make_update_verifier_windows(on_verified=None):
+    """Return the no-arg ``() -> (ok, version)`` gate for WinSparkle.
+
+    WinSparkle 0.8.3 hands its callbacks NOTHING (no staged path, URL, or
+    version), so this closure derives the MSI URL from the appcast itself,
+    self-downloads it, and runs ``verify_artifact`` against the KEL — the
+    Windows analogue of ``_make_update_verifier_macos``. It MUST NOT raise (it
+    runs in WinSparkle's ``can_shutdown`` C callback): any failure returns
+    ``(False, version)`` so the gate cleanly blocks. DARK → ``(True, "")``.
+    ``on_verified`` is called with the ``VerificationResult`` on an enforced
+    PASS so the app can persist the proof for the Release Verification dialog.
+    """
+
+    def _verify() -> tuple[bool, str]:
+        platform = "windows"
+        loaded = _anchor_and_appcast_or_dark(platform)
+        if loaded is None:
+            logger.info(
+                "[update] verify gate DARK: no publisher anchor injected "
+                "(verification not yet active); allowing update"
+            )
+            return (True, "")
+        try:
+            rel = select_latest_for_platform(parse_appcast(loaded[0]), platform)
+        except Exception as exc:  # noqa: BLE001 - bad appcast -> block
+            logger.warning("[update] winsparkle appcast parse failed err=%s", exc)
+            return (False, "unknown")
+        version = rel.version
+        try:
+            staged = _download_to_temp(rel.artifact_url)
+        except Exception as exc:  # noqa: BLE001 - transport failure -> block
+            logger.warning(
+                "[update] verify download failed url=%s err=%s; blocking update",
+                rel.artifact_url, exc,
+            )
+            return (False, version)
+        try:
+            result = _run_verify_artifact(staged, loaded, platform)
+            if on_verified is not None and result.ok:
+                on_verified(result)
+            return (bool(result.ok), version)
+        except Exception as exc:  # noqa: BLE001 - verify failure -> block (never raise into C)
+            logger.warning(
+                "[update] winsparkle verify failed version=%s err=%s; blocking",
+                version, exc,
+            )
+            return (False, version)
+        finally:
+            try:
+                staged.unlink()
+            except OSError:
+                pass
+
+    return _verify
+
+
 class LocksmithApplication:
     """
     Main application class for Locksmith.
@@ -287,10 +344,10 @@ class LocksmithApplication:
         try:
             if _sys.platform == "win32":
                 from locksmith.update.winsparkle_init import init_winsparkle
-                # WinSparkle exposes the downloaded path, so it uses the
-                # path-based verifier.
+                # WinSparkle exposes NOTHING to its callbacks, so it uses the
+                # no-arg self-download verifier (fetches appcast + MSI itself).
                 dll, gate, cbs = init_winsparkle(
-                    verifier=_make_update_verifier(
+                    verifier=_make_update_verifier_windows(
                         on_verified=record_verification_result
                     ),
                     log_recorder=lambda **kw: logger.info("[update] log %s", kw),
