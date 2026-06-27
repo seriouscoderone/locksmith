@@ -356,6 +356,7 @@ class LocksmithApplication:
                         if getattr(self, "update_controller", None) is not None
                         else logger.warning("[update] verify_failed (no controller) %s", v)
                     ),
+                    on_shutdown_request=self._request_app_quit,
                 )
                 self._native_updater = gate
                 self._native_updater_dll = dll
@@ -380,6 +381,25 @@ class LocksmithApplication:
                 self._native_updater_objc_delegate = objc_delegate
         except Exception as exc:  # noqa: BLE001 — never let updater init crash the app
             logger.warning("native_updater.init_failed err=%s", exc)
+
+    def _request_app_quit(self) -> None:
+        """Gracefully quit the app for WinSparkle's installer (Windows).
+
+        WinSparkle fires its shutdown-request OFF the main thread after launching
+        the MSI installer; the app must exit so the installer can replace the
+        running exe (otherwise it retries + flickers dialogs). Post the quit to
+        the Qt main thread — calling quit() cross-thread directly is unsafe.
+        """
+        logger.info("[update] native_updater.quit_requested")
+        try:
+            from PySide6.QtCore import QCoreApplication, QMetaObject, Qt
+            app = QCoreApplication.instance()
+            if app is not None:
+                QMetaObject.invokeMethod(
+                    app, "quit", Qt.ConnectionType.QueuedConnection
+                )
+        except Exception as exc:  # noqa: BLE001
+            logger.error("[update] native_updater.quit_failed err=%s", exc)
 
     def check_for_updates_with_ui(self) -> None:
         """Trigger the native Sparkle/WinSparkle update prompt — fetches

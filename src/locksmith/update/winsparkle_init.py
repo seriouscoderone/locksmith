@@ -37,6 +37,7 @@ def init_winsparkle(
     verifier: Callable[[], tuple[bool, str]],
     log_recorder: Callable[..., None],
     on_failure: Callable[[str], None],
+    on_shutdown_request: Callable[[], None] | None = None,
 ):
     """Initialize WinSparkle.
 
@@ -44,6 +45,13 @@ def init_winsparkle(
     by the caller to keep ctypes callbacks alive (Python will free the
     CFUNCTYPE wrappers otherwise and WinSparkle will segfault). On
     non-Windows returns ``(None, None, None)``.
+
+    ``on_shutdown_request`` is invoked when WinSparkle has launched the
+    installer and needs the app to terminate so the MSI can replace the running
+    exe. It MUST gracefully quit the app — a no-op leaves the exe locked, so the
+    installer retries and flickers error/progress dialogs until the user closes
+    the app by hand. Called OFF the main thread, so the impl must marshal the
+    quit to the main thread.
     """
     if sys.platform != "win32":
         return None, None, None
@@ -63,7 +71,13 @@ def init_winsparkle(
 
     def _shutdown_request_cb() -> None:
         logger.info("[update] winsparkle.shutdown_requested")
-        # No-op here; WinSparkle proceeds with relaunch after this returns.
+        if on_shutdown_request is not None:
+            try:
+                on_shutdown_request()
+            except Exception as exc:  # noqa: BLE001 - C callback must never raise
+                logger.error(
+                    "[update] winsparkle.shutdown_request_error err=%s", exc
+                )
 
     c_can_shutdown = CAN_SHUTDOWN_CB(_can_shutdown_cb)
     c_shutdown_req = SHUTDOWN_REQUEST_CB(_shutdown_request_cb)
