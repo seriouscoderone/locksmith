@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Locksmith"
-version = "0.2.16"
+version = "0.2.17"
 description = "Locksmith – KERI identity vault application"
 readme = "README.md"
 requires-python = ">=3.14.0"
