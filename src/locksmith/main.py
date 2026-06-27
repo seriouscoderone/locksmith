@@ -84,7 +84,9 @@ if platform.system() in ("Darwin", "Windows"):
 import asyncio
 import logging
 
-from PySide6.QtWidgets import QApplication
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap
+from PySide6.QtWidgets import QApplication, QSplashScreen
 from keri import help
 from qasync import QEventLoop
 
@@ -92,6 +94,28 @@ from qasync import QEventLoop
 from locksmith import resources_rc  # noqa: F401
 
 FORMAT = "%(asctime)s [%(name)s] %(levelname)-8s %(message)s"
+
+
+def _make_splash() -> QSplashScreen | None:
+    """A Qt splash shown during the (slow) main-window construction.
+
+    Replaces PyInstaller's Tcl/Tk ``Splash()`` resource, which can't run inside
+    a macOS ``.app`` (so the splash had been dropped on macOS) and DPI-rescales
+    on Windows (the "moves and shrinks" jank). A ``QSplashScreen`` is DPI-correct
+    and works on every platform, so the splash is back on macOS and stable on
+    Windows. Returns ``None`` when the art is missing (no splash, never crash).
+    """
+    try:
+        from locksmith.ui.styles import _asset_root
+        path = _asset_root() / "assets" / "custom" / "SplashScreen.png"
+        pixmap = QPixmap(str(path))
+        if pixmap.isNull():
+            logger.warning("splash art not found at %s; skipping splash", path)
+            return None
+        return QSplashScreen(pixmap, Qt.WindowType.WindowStaysOnTopHint)
+    except Exception as exc:  # noqa: BLE001 - a splash must never block startup
+        logger.warning("splash init failed: %s; skipping", exc)
+        return None
 LOG_LEVEL = "INFO"
 
 help.ogler.level = logging.getLevelName(LOG_LEVEL)
@@ -160,6 +184,13 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_global_styles(app)
 
+    # Show the splash BEFORE the (slow) window construction so it covers the
+    # launch gap on every platform, then process events once to paint it now.
+    splash = _make_splash()
+    if splash is not None:
+        splash.show()
+        app.processEvents()
+
     loop = QEventLoop(app)
     asyncio.set_event_loop(loop)
 
@@ -170,20 +201,16 @@ if __name__ == "__main__":
     if target_vault and window.app.coordinator.request_raise(target_vault):
         # Another instance already owns this vault — raise it and exit
         # before showing our window, so there's no flash/Dock bounce.
+        if splash is not None:
+            splash.close()
         logger.info(f"instance.startup.focused_existing vault={target_vault}")
         sys.exit(0)
 
     window.show()
 
-    # Tear down the PyInstaller bootloader splash now that Qt is on screen.
-    # pyi_splash is only present in frozen builds whose .spec includes a
-    # Splash() resource — dev mode silently skips this.
-    try:
-        import pyi_splash  # type: ignore[import-not-found]
-        if pyi_splash.is_alive():
-            pyi_splash.close()
-    except ImportError:
-        pass
+    # Hand the splash off to the now-visible window (closes it cleanly).
+    if splash is not None:
+        splash.finish(window)
 
     # Cascade: if launched from another instance, open offset from it so both
     # windows are visible (set after show so the move sticks on all platforms).

@@ -148,18 +148,15 @@ a = Analysis(
 
 pyz = PYZ(a.pure, a.zipped_data, cipher=block_cipher)
 
-splash = Splash(
-    str(REPO_ROOT / "assets" / "custom" / "SplashScreen.png"),
-    binaries=a.binaries,
-    datas=a.datas,
-    text_pos=None,       # no progress text overlay; just the logo
-    max_img_size=(600, 360),
-)
+# NOTE: no PyInstaller Splash() here. Its Tcl/Tk splash can't run inside a macOS
+# .app (so the splash was absent there) and DPI-rescales on Windows (the splash
+# "moves and shrinks"). The app now shows a Qt QSplashScreen from main.py
+# (_make_splash) on every platform — DPI-correct and consistent. SplashScreen.png
+# ships in the bundled assets/ tree, which main.py loads at runtime.
 
 exe = EXE(
     pyz,
     a.scripts,
-    splash,
     [],
     exclude_binaries=True,
     name=_BRAND_NAME,
@@ -179,7 +176,6 @@ exe = EXE(
 
 coll = COLLECT(
     exe,
-    splash.binaries,
     a.binaries,
     a.zipfiles,
     a.datas,
