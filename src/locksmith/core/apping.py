@@ -23,47 +23,6 @@ from locksmith.update.verify import VerificationResult, verify_artifact
 logger = help.ogler.getLogger(__name__)
 
 
-def _make_update_verifier(on_verified=None):
-    """Return the ``(staged, info) -> bool`` gate handed to Sparkle/WinSparkle.
-
-    The closure runs the real KERI update-verification pipeline
-    (``verify.verify_artifact``) against the build-injected publisher trust
-    anchor, returning its ``.ok``.
-
-    DARK MODE: until a real publisher anchor is injected,
-    ``_load_anchor_and_appcast`` raises ``FileNotFoundError`` (no
-    ``$LOCKSMITH_PUBLISHER_ANCHOR`` and no packaged ``publisher_anchor.json``;
-    the committed ``.example.json`` is deliberately not a fallback). In that
-    pre-cutover state the gate returns ``True`` WITHOUT calling
-    ``verify_artifact`` so updates are never blocked before a trust root exists.
-
-    ``staged`` is the staged artifact path Sparkle/WinSparkle downloaded.
-    ``info`` is the captured SUAppcastItem release metadata (version,
-    anchor_said, artifact_sha256, ...); it does NOT carry the appcast feed —
-    the gate fetches the live appcast itself via ``_load_anchor_and_appcast``.
-
-    ``on_verified`` (optional) is called with the ``VerificationResult`` on an
-    enforced PASS — the app wires it to persist the proof for the Release
-    Verification dialog. Not called in dark mode (no cryptographic proof).
-    """
-
-    def _verify(staged: str, info: dict) -> bool:
-        platform = _detect_platform()
-        loaded = _anchor_and_appcast_or_dark(platform)
-        if loaded is None:
-            logger.info(
-                "[update] verify gate DARK: no publisher anchor injected "
-                "(verification not yet active); allowing update"
-            )
-            return True
-        result = _run_verify_artifact(Path(staged), loaded, platform)
-        if on_verified is not None and result.ok:
-            on_verified(result)
-        return bool(result.ok)
-
-    return _verify
-
-
 # Generous: the artifact (a DMG / installer) is tens of MB. The gate fetches
 # it once to verify; Sparkle fetches it again to install.
 _VERIFY_DOWNLOAD_TIMEOUT_SEC = 120
@@ -339,7 +298,8 @@ class LocksmithApplication:
         pop the native update prompt. The verifier closure runs the real
         ``verify_artifact`` gate against the build-injected publisher trust
         anchor; until a real anchor exists it stays DARK (returns True,
-        non-enforcing) — see ``_make_update_verifier``."""
+        non-enforcing) — see ``_make_update_verifier_macos`` /
+        ``_make_update_verifier_windows``."""
         import sys as _sys
         try:
             if _sys.platform == "win32":

@@ -43,9 +43,12 @@ def test_spec_reads_version_from_pyproject():
     assert "pyproject.toml" in s
 
 
-def test_spec_app_name_is_Locksmith():
+def test_spec_app_name_from_brand():
+    # App name is brand-driven (_BRAND_NAME = brand display_name). The resolved
+    # value ("Locksmith" for the default brand) is asserted in
+    # tests/unit/branding/test_spec_brand_values.py.
     s = SPEC.read_text()
-    assert "name='Locksmith'" in s or 'name="Locksmith"' in s
+    assert "name=_BRAND_NAME" in s
 
 
 def test_spec_uses_windows_ico_icon():

@@ -39,9 +39,11 @@ def test_spec_includes_qtawesome():
     assert "qtawesome" in s
 
 
-def test_spec_bundle_id_is_host_keri_locksmith():
+def test_spec_bundle_id_from_brand():
+    # Bundle id is brand-driven; the resolved value ("host.keri.locksmith") is
+    # asserted in tests/unit/branding/test_spec_brand_values.py.
     s = SPEC.read_text()
-    assert "host.keri.locksmith" in s
+    assert '_BRAND["identity"]["bundle_id"]' in s
 
 
 def test_spec_reads_version_from_pyproject():
@@ -49,6 +51,9 @@ def test_spec_reads_version_from_pyproject():
     assert "pyproject.toml" in s
 
 
-def test_spec_app_name_is_Locksmith():
+def test_spec_app_name_from_brand():
+    # App name is brand-driven (_BRAND_NAME = brand display_name). The resolved
+    # value ("Locksmith" for the default brand) is asserted in
+    # tests/unit/branding/test_spec_brand_values.py.
     s = SPEC.read_text()
-    assert "name='Locksmith'" in s or 'name="Locksmith"' in s
+    assert "name=_BRAND_NAME" in s
