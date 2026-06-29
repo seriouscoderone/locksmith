@@ -151,7 +151,7 @@ class MailboxDirector(doing.DoDoer):
                 _ = (yield self.tock)
             _ = (yield self.tock)
 
-    def add_poller(self, hab, mailbox):
+    def add_poller(self, hab, mailbox, extra_topics=None):
         """
         Adds a new Poller instance to the current object and extends its structure with the new Poller.
 
@@ -162,9 +162,15 @@ class MailboxDirector(doing.DoDoer):
         Parameters:
             hab: The habitat or context required to configure the Poller instance.
             mailbox: The witness or source used by the Poller instance for polling activities.
+            extra_topics: Optional list of additional mailbox topics this poller
+                should poll, on top of the director's default `self.topics`. Lets a
+                host that mounts an application AID (e.g. a micro-app Service-AID
+                whose command exns arrive under their own route-derived topic)
+                receive them without widening polling for every other AID.
         """
 
-        poller = Poller(hab=hab, topics=self.topics, mailbox=mailbox)
+        topics = self.topics + list(extra_topics or [])
+        poller = Poller(hab=hab, topics=topics, mailbox=mailbox)
         self.pollers.append(poller)
         self.extend([poller])
 
