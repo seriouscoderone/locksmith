@@ -46,6 +46,7 @@ dependencies = [
     "certifi>=2024.2.2",  # explicit: the update verify path uses certifi's CA bundle (frozen-app TLS)
     'cryptography>=46.0.3',
     'pymongo>=4.11.2',
+    'keri-serverless-mailbox',
 ]
 
 [project.optional-dependencies]

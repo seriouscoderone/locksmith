@@ -5,18 +5,10 @@ locksmith.core.indirecting module
 Mailbox director and supporting classes
 
 """
-import datetime
-import sys
-import traceback
-
 from hio.base import doing
 from hio.help import decking
 from keri import help, kering
-from keri.app import httping, agenting
-from keri.app.habbing import GroupHab
 from keri.core import (parsing, routing)
-from keri.db import basing
-from keri.help import helping
 from keri.vdr.eventing import Tevery
 from ordered_set import OrderedSet as oset
 
@@ -79,6 +71,7 @@ class MailboxDirector(doing.DoDoer):
         self.pollers = list()
         self.prefixes = oset()
         self.cues = cues if cues is not None else decking.Deck()
+        self.msgs = decking.Deck()
 
         self.ims = ims if ims is not None else bytearray()
 
@@ -176,28 +169,29 @@ class MailboxDirector(doing.DoDoer):
                     if t not in poller.topics:
                         poller.topics.append(t)
                 return
+        from keri_serverless_mailbox import MailboxClient, MailboxClientDoer
+        from locksmith.core.mailbox_cursor import DbTopsCursorStore
         topics = self.topics + extras
-        poller = Poller(hab=hab, topics=topics, mailbox=mailbox)
-        self.pollers.append(poller)
-        self.extend([poller])
+        client = MailboxClient(hab, topics=topics,
+                               on_message=lambda topic, raw: self.msgs.append(raw),
+                               cursor_store=DbTopsCursorStore(self.hby.db, hab.pre))
+        doer = MailboxClientDoer(client)
+        doer.hab = hab           # so the dedup guard's poller.hab.pre / poller.mailbox checks work
+        doer.mailbox = mailbox
+        doer.topics = topics     # the dedup guard merges into this list
+        doer.times = {}          # the director's times property merges poller.times
+        self.pollers.append(doer)
+        self.extend([doer])
 
     def processPollIter(self):
         """
-        Iterate through cues and yields one or more responses for each cue.
+        Drain the director's shared msgs deque and yield each raw message.
 
-        Parameters:
-            cues is deque of cues
-
+        on_message callbacks from all mounted MailboxClientDoers append directly
+        to self.msgs; this method drains it for the pollDo loop.
         """
-        mail = []
-        for poller in self.pollers:  # get responses from all behaviors
-            while poller.msgs:
-                msg = poller.msgs.popleft()
-                mail.append(msg)
-
-        while mail:  # iteratively process each response in responses
-            msg = mail.pop(0)
-            yield msg
+        while self.msgs:
+            yield self.msgs.popleft()
 
     def msgDo(self, tymth=None, tock=0.0, **kwa):
         """
@@ -292,124 +286,4 @@ class MailboxDirector(doing.DoDoer):
             logger.info(f"Removed poller for hab={hab.pre}, mailbox={mailbox}")
         else:
             logger.warning(f"No poller found for hab={hab.pre}, mailbox={mailbox}")
-
-
-class Poller(doing.DoDoer):
-    """
-    Polls remote SSE endpoint for event that are KERI messages to be processed
-
-    """
-
-    def __init__(self, hab, mailbox, topics, msgs=None, retry=1000, **kwa):
-        """
-        Initializes an instance of the Poller class.
-
-        Args:
-            hab: The habitat instance associated with the poller.
-            mailbox: The identifier or locator of the witness to be polled.
-            topics: The topics or channels to monitor or poll for events.
-            msgs: Optional; a deque or collection of messages to process. Defaults to None.
-            retry: Optional; the retry interval in milliseconds. Defaults to 1000.
-            **kwa: Additional keyword arguments for customization.
-        """
-        self.hab = hab
-        self.pre = hab.pre
-        self.mailbox = mailbox
-        self.topics = topics
-        self.retry = retry
-        self.msgs = None if msgs is not None else decking.Deck()
-        self.times = dict()
-
-        doers = [doing.doify(self.eventDo)]
-
-        super(Poller, self).__init__(doers=doers, **kwa)
-
-    def eventDo(self, tymth=None, tock=0.0, **kwa):
-        """
-        Handles event-driven processing and communication with a witness through HTTP, retrying operations
-        based on a given number of attempts and managing message queries and responses.
-
-        Args:
-            tymth: A generator function reference for timing control, which facilitates coroutine scheduling or
-                task management within the event loop. Defaults to None.
-            tock: A float representing the duration of the time slice (in seconds) for processing in the event loop.
-                Defaults to 0.0.
-            **kwa: Arbitrary keyword arguments that may be provided to the underlying functionality, allowing
-                flexibility in extending the method's behavior or integrating with external components.
-
-        Yields:
-            float: The duration of sleep intervals or processing delays during various operations, which may vary
-                based on the execution context and retry logic.
-
-        """
-        self.wind(tymth)
-        self.tock = tock
-        _ = (yield self.tock)
-
-        witrec = self.hab.db.tops.get((self.pre, self.mailbox))
-        if witrec is None:
-            witrec = basing.TopicsRecord(topics=dict())
-
-        while self.retry > 0:
-            try:
-                client, clientDoer = agenting.httpClient(self.hab, self.mailbox)
-            except kering.MissingEntryError as e:
-                traceback.print_exception(e, file=sys.stderr)  # logging
-                yield self.tock
-                continue
-
-            self.extend([clientDoer])
-
-            topics = dict()
-            q = dict(pre=self.pre, topics=topics)
-            for topic in self.topics:
-                if topic in witrec.topics:
-                    topics[topic] = witrec.topics[topic] + 1
-                else:
-                    topics[topic] = 0
-
-            # Create query message
-            if isinstance(self.hab, GroupHab):
-                msg = self.hab.mhab.query(pre=self.pre, src=self.mailbox, route="mbx", query=q)  # type: ignore
-            else:
-                msg = self.hab.query(pre=self.pre, src=self.mailbox, route="mbx", query=q)
-
-            httping.createCESRRequest(msg, client, dest=self.mailbox)
-
-            while client.requests:
-                yield self.tock
-
-            created = helping.nowUTC()
-            while True:
-
-                now = helping.nowUTC()
-                if now - created > datetime.timedelta(seconds=30):
-                    self.remove([clientDoer])
-                    break
-
-                while client.events:
-                    evt = client.events.popleft()
-                    if "retry" in evt:
-                        self.retry = evt["retry"]
-                    if "id" not in evt or "data" not in evt or "name" not in evt:
-                        logger.error(f"bad mailbox event: {evt}")
-                        continue
-                    idx = evt["id"]
-                    msg = evt["data"]
-                    tpc = evt["name"]
-
-                    if not idx or not msg or not tpc:
-                        logger.error(f"bad mailbox event: {evt}")
-                        continue
-
-                    self.msgs.append(msg.encode("utf=8"))
-                    yield self.tock
-
-                    witrec.topics[tpc] = int(idx)
-                    self.times[tpc] = helping.nowUTC()
-                    self.hab.db.tops.pin((self.pre, self.mailbox), witrec)
-
-                yield 0.25
-            yield self.retry / 1000
-
 
