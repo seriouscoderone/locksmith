@@ -243,6 +243,25 @@ class Vault(doing.DoDoer):
 
         self.mbx.add_poller(hab=hab, mailbox=mailbox_eid)
 
+    def seed_kel_mailboxes(self):
+        """Auto-seed db.mbx from each local AID's KEL-designated mailbox.
+
+        KERI-native target resolution (agenting.mailbox: the AID's mailbox end-role if
+        designated, else a witness). Pins a db.mbx entry for each AID whose mailbox
+        resolves and isn't already registered, so load_active_mailboxes then mounts a
+        poller for the mailbox the AID designated in its OWN KEL — instead of relying on
+        a manual UI designation that was never seeded. Explicit designations already in
+        db.mbx are left untouched (overrides). Idempotent.
+        """
+        for hab in self.hby.habs.values():
+            eid = agenting.mailbox(hab, hab.pre)
+            if eid is None:
+                continue
+            if self.db.mbx.get(keys=(eid,)) is not None:
+                continue  # explicit designation or a prior seed already owns this EID
+            self.db.mbx.pin(keys=(eid,),
+                            val=MailboxListener(cid=hab.pre, eid=eid, name=eid))
+
     def deactivate_mailbox(self, hab, mailbox_eid):
         self.db.mbx.rem(keys=(mailbox_eid,))
         self.mbx.remove_poller(hab=hab, mailbox=mailbox_eid)
@@ -316,6 +335,7 @@ class NotificationToastDoer(doing.Doer):
         logger.info("NotificationToastDoer started")
         # Initialize with the most recent notification to avoid showing old ones
         self._update_last_notification()
+        self.vault.seed_kel_mailboxes()        # auto-seed KEL-designated mailboxes first
         self.vault.load_active_mailboxes()
 
     def recur(self, tyme):
