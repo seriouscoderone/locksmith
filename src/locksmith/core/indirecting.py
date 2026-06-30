@@ -146,15 +146,15 @@ class MailboxDirector(doing.DoDoer):
 
     def add_poller(self, hab, mailbox, extra_topics=None):
         """
-        Adds a new Poller instance to the current object and extends its structure with the new Poller.
+        Adds a new MailboxClientDoer instance to the current object and extends its structure with it.
 
-        This method creates a Poller object using the provided `hab` and `mailbox` parameters. The newly
-        created Poller is added to the `pollers` list and also extends the current object's iterable
-        structure.
+        This method creates a MailboxClientDoer object using the provided `hab` and `mailbox`
+        parameters. The newly created MailboxClientDoer is added to the `pollers` list and also
+        extends the current object's iterable structure.
 
         Parameters:
-            hab: The habitat or context required to configure the Poller instance.
-            mailbox: The witness or source used by the Poller instance for polling activities.
+            hab: The habitat or context required to configure the MailboxClientDoer instance.
+            mailbox: The witness or source used by the MailboxClientDoer for polling activities.
             extra_topics: Optional list of additional mailbox topics this poller
                 should poll, on top of the director's default `self.topics`. Lets a
                 host that mounts an application AID (e.g. a micro-app Service-AID
@@ -264,14 +264,14 @@ class MailboxDirector(doing.DoDoer):
 
     def remove_poller(self, hab, mailbox):
         """
-        Remove a Poller instance from the director.
+        Remove a MailboxClientDoer instance from the director.
 
-        Finds the poller matching the hab and mailbox, removes it from the pollers list,
-        and properly closes it via the DoDoer remove mechanism.
+        Finds the MailboxClientDoer matching the hab and mailbox, removes it from the pollers
+        list, and properly closes it via the DoDoer remove mechanism.
 
         Parameters:
-            hab: The habitat associated with the poller to remove.
-            mailbox: The mailbox EID associated with the poller to remove.
+            hab: The habitat associated with the MailboxClientDoer to remove.
+            mailbox: The mailbox EID associated with the MailboxClientDoer to remove.
         """
         # Find the poller to remove
         poller_to_remove = None
