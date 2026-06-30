@@ -38,3 +38,18 @@ def test_add_poller_appends_extra_topics_for_that_poller_only():
         assert mbd.topics == BASE_TOPICS
     finally:
         hby.close()
+
+
+def test_add_poller_is_idempotent_and_merges_topics():
+    hby = _hby()
+    try:
+        hab = hby.makeHab(name="svc")
+        mbd = indirecting.MailboxDirector(hby=hby, topics=list(BASE_TOPICS))
+        mbd.add_poller(hab=hab, mailbox="BWan")                       # standard topics
+        mbd.add_poller(hab=hab, mailbox="BWan", extra_topics=["insurance"])  # SAME (hab,mbx)
+        same = [p for p in mbd.pollers if p.hab.pre == hab.pre and p.mailbox == "BWan"]
+        assert len(same) == 1                       # ONE poller, not two
+        assert "insurance" in same[0].topics        # extra topic merged in
+        assert all(t in same[0].topics for t in BASE_TOPICS)
+    finally:
+        hby.close()

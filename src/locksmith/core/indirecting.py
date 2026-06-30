@@ -169,7 +169,14 @@ class MailboxDirector(doing.DoDoer):
                 receive them without widening polling for every other AID.
         """
 
-        topics = self.topics + list(extra_topics or [])
+        extras = list(extra_topics or [])
+        for poller in self.pollers:                          # idempotent per (hab.pre, mailbox)
+            if poller.hab.pre == hab.pre and poller.mailbox == mailbox:
+                for t in extras:                             # merge new topics into the existing poller
+                    if t not in poller.topics:
+                        poller.topics.append(t)
+                return
+        topics = self.topics + extras
         poller = Poller(hab=hab, topics=topics, mailbox=mailbox)
         self.pollers.append(poller)
         self.extend([poller])

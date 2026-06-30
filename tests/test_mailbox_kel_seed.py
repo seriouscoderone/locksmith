@@ -50,3 +50,70 @@ def test_seed_kel_mailboxes_pins_designated_mailbox(monkeypatch, tmp_path):
             vault.notifier.noter.close()
         rgy.close()
         hby.close()
+
+
+def test_seed_kel_mailboxes_skips_when_no_mailbox_resolves(monkeypatch, tmp_path):
+    from keri.app import agenting
+
+    monkeypatch.setattr(vaulting, "LocksmithBaser",
+                        lambda name, reopen=True: LocksmithBaser(
+                            name=f"{name}-locksmith", headDirPath=str(tmp_path), reopen=reopen))
+    monkeypatch.setattr(vaulting, "TurretDoer", _NoTurret)
+
+    hby = habbing.Habery(name="vault-skip", temp=True,
+                         salt=signing.Salter(raw=b'abcdef0123456789').qb64)
+    rgy = credentialing.Regery(hby=hby, name=hby.name, temp=True)
+    vault = None
+    try:
+        vault = vaulting.Vault(app=SimpleNamespace(), hby=hby, rgy=rgy)
+        hby.makeHab(name="no-mailbox-hab")  # hab with no mailbox role and no witnesses
+
+        monkeypatch.setattr(agenting, "mailbox", lambda hab, cid: None)
+
+        before = len(list(vault.db.mbx.getTopItemIter()))
+        vault.seed_kel_mailboxes()
+        after = len(list(vault.db.mbx.getTopItemIter()))
+        assert after == before                       # None -> nothing pinned
+    finally:
+        if vault is not None:
+            vault.db.close()
+            vault.rep.mbx.close()
+            vault.notifier.noter.close()
+        rgy.close()
+        hby.close()
+
+
+def test_seed_kel_mailboxes_leaves_explicit_designation_untouched(monkeypatch, tmp_path):
+    from keri.app import agenting
+    from locksmith.db.basing import MailboxListener
+
+    monkeypatch.setattr(vaulting, "LocksmithBaser",
+                        lambda name, reopen=True: LocksmithBaser(
+                            name=f"{name}-locksmith", headDirPath=str(tmp_path), reopen=reopen))
+    monkeypatch.setattr(vaulting, "TurretDoer", _NoTurret)
+
+    hby = habbing.Habery(name="vault-explicit", temp=True,
+                         salt=signing.Salter(raw=b'fedcba9876543210').qb64)
+    rgy = credentialing.Regery(hby=hby, name=hby.name, temp=True)
+    vault = None
+    try:
+        vault = vaulting.Vault(app=SimpleNamespace(), hby=hby, rgy=rgy)
+        doi = hby.makeHab(name="state-doi-explicit")
+
+        # Pre-pin an explicit db.mbx entry the user "designated" (name="my-mailbox")
+        vault.db.mbx.pin(keys=("Embx",), val=MailboxListener(cid=doi.pre, eid="Embx", name="my-mailbox"))
+
+        # Resolver returns same EID — seed should skip because entry already exists
+        monkeypatch.setattr(agenting, "mailbox", lambda hab, cid: "Embx")
+
+        vault.seed_kel_mailboxes()
+
+        kept = vault.db.mbx.get(keys=("Embx",))
+        assert kept.name == "my-mailbox"             # explicit designation NOT clobbered
+    finally:
+        if vault is not None:
+            vault.db.close()
+            vault.rep.mbx.close()
+            vault.notifier.noter.close()
+        rgy.close()
+        hby.close()
