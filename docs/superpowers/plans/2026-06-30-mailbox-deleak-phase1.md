@@ -219,6 +219,7 @@ from hio.base import doing
 from keri.app import habbing
 from keri.core import signing
 from keri.kering import Roles
+from keri.recording import EndpointRecord
 from keri.vdr import credentialing
 
 from locksmith.core import vaulting
@@ -244,7 +245,9 @@ def test_seed_kel_mailboxes_pins_designated_mailbox(monkeypatch, tmp_path):
         vault = vaulting.Vault(app=SimpleNamespace(), hby=hby, rgy=rgy)
         mbx_hab = hby.makeHab(name="mailbox-svc")               # the dedicated mailbox AID
         doi = hby.makeHab(name="state-doi")
-        doi.makeEndRole(mbx_hab.pre, role=Roles.mailbox)        # designate it in the KEL
+        doi.db.ends.pin(keys=(doi.pre, Roles.mailbox, mbx_hab.pre),  # designate the mailbox
+                        val=EndpointRecord(allowed=True))            # end-role (makeEndRole
+        #                                                              alone doesn't persist to db.ends)
 
         vault.seed_kel_mailboxes()
 
