@@ -43,6 +43,9 @@ app_icon_icns     = "AppIcon.icns"
 app_icon_ico      = "AppIcon.ico"
 splash            = "SplashScreen.png"
 symbol_logo       = "SymbolLogo.svg"
+# Flat monochrome-white eye+globe (wordless, no gradient) for the dark toolbar,
+# where the full color lockup goes muddy at 28px. Derived from UsuranceLogo.svg.
+symbol_logo_on_dark = "SymbolLogoOnDark.svg"
 name_logo         = "NameLogo.svg"
 full_logo         = "FullLogo.svg"
 symbol_logo_black = "SymbolLogoBlack.svg"

@@ -25,8 +25,8 @@ sys.path.insert(0, str(_THIS.parent.parent / "packaging"))
 import brandlib  # noqa: E402
 
 _ASSET_KEYS = ("app_icon_icns", "app_icon_ico", "splash", "symbol_logo",
-               "name_logo", "full_logo", "symbol_logo_black", "name_logo_black",
-               "full_logo_black")
+               "symbol_logo_on_dark", "name_logo", "full_logo",
+               "symbol_logo_black", "name_logo_black", "full_logo_black")
 
 
 def _recompile_resources(repo_root: Path) -> bool:
@@ -40,6 +40,13 @@ def _recompile_resources(repo_root: Path) -> bool:
     the existing resources.qrc file list already covers them — no regen needed.
     """
     out = repo_root / "src" / "locksmith" / "resources_rc.py"
+    # Nothing to compile when there is no qrc (minimal trees / test fixtures) —
+    # skip cleanly rather than letting rcc fail the whole apply().
+    qrc = repo_root / "resources.qrc"
+    if not qrc.is_file():
+        print(f"WARNING: {qrc} not found; :/ brand assets NOT recompiled",
+              file=sys.stderr)
+        return False
     # Prefer the rcc next to the running interpreter — brand_apply is commonly
     # invoked as `.venv/bin/python scripts/brand_apply.py` without the venv on
     # PATH, so a bare which() would miss it and silently skip the recompile.
