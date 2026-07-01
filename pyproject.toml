@@ -30,7 +30,11 @@ classifiers = [
 dependencies = [
     "PySide6==6.10.3",
     "qasync>=0.28.0",
-    "keri @ git+https://github.com/WebOfTrust/keripy.git",
+    # Fork (not upstream WebOfTrust) until the `wss` loc scheme lands upstream: the serverless
+    # mailbox client (keri-serverless-mailbox) needs Schemes.wss to discover + select the WS
+    # notify-and-fetch strategy; without it discovery degrades to SSE polling. Revert to the
+    # WebOfTrust pin once the wss PR merges + a keri release carries it.
+    "keri @ git+https://github.com/seriouscoderone/keripy.git@development",
     "qtawesome>=1.4.0",
     "mnemonic==0.21",
     "multicommand==1.0.0",
