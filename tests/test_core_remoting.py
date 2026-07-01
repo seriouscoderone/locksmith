@@ -541,3 +541,66 @@ def test_resolve_oobi_blocking_uses_sync_doer_when_qtask_is_missing(monkeypatch)
     assert captured["doer_kwargs"]["timeout_seconds"] == 1.25
     assert len(captured["doers"]) == 1
     assert captured["limit"] == pytest.approx(1.26)
+
+
+def test_build_mailbox_kel_publisher_uses_https_and_replay(monkeypatch):
+    from locksmith.core import remoting
+    from keri import kering
+
+    captured = {}
+
+    class FakeMessenger:
+        def __init__(self, *, hab, wit, url, msg):
+            captured.update(hab=hab, wit=wit, url=url, msg=bytes(msg))
+
+    class FakeHab:
+        def fetchUrl(self, eid, scheme="http"):
+            return "https://mailbox.example/" if scheme == kering.Schemes.https else "http://mailbox.example/"
+        def replay(self, pre=None, fn=0):
+            return b"KELBYTES"
+
+    monkeypatch.setattr(remoting.agenting, "HTTPStreamMessenger", FakeMessenger)
+    hab = FakeHab()
+    result = remoting.build_mailbox_kel_publisher(hab, "EMBX")
+    assert isinstance(result, FakeMessenger)
+    assert captured["wit"] == "EMBX"
+    assert captured["url"] == "https://mailbox.example/"   # https preferred
+    assert captured["msg"] == b"KELBYTES"
+
+
+def test_build_mailbox_kel_publisher_falls_back_to_http(monkeypatch):
+    from locksmith.core import remoting
+    from keri import kering
+
+    captured = {}
+
+    class FakeMessenger:
+        def __init__(self, *, hab, wit, url, msg):
+            captured["url"] = url
+
+    class FakeHab:
+        def fetchUrl(self, eid, scheme="http"):
+            return "http://mailbox.example/" if scheme == kering.Schemes.http else None
+        def replay(self, pre=None, fn=0):
+            return b"KEL"
+
+    monkeypatch.setattr(remoting.agenting, "HTTPStreamMessenger", FakeMessenger)
+    remoting.build_mailbox_kel_publisher(FakeHab(), "EMBX")
+    assert captured["url"] == "http://mailbox.example/"
+
+
+def test_build_mailbox_kel_publisher_none_when_no_url(monkeypatch):
+    from locksmith.core import remoting
+
+    class FakeMessenger:
+        def __init__(self, **kw):
+            raise AssertionError("must not construct a messenger when no URL")
+
+    class FakeHab:
+        def fetchUrl(self, eid, scheme="http"):
+            return None
+        def replay(self, pre=None, fn=0):
+            return b""
+
+    monkeypatch.setattr(remoting.agenting, "HTTPStreamMessenger", FakeMessenger)
+    assert remoting.build_mailbox_kel_publisher(FakeHab(), "EMBX") is None

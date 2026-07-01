@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from hio.base import doing
 from keri import help, kering
-from keri.app import organizing, forwarding
+from keri.app import organizing, forwarding, agenting
 from keri.app.habbing import GroupHab
 from keri.core import exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
@@ -976,6 +976,26 @@ class ChallengeVerificationDoer(doing.DoDoer):
                     }
                 )
             return
+
+
+def build_mailbox_kel_publisher(hab, mailbox_eid):
+    """Return a hio DoDoer that PUTs ``hab``'s full KEL to ``mailbox_eid``'s HTTP
+    endpoint so the mailbox first-sees it into its key-state.
+
+    Standalone federation mailboxes are NOT witnesses, so an AID's KEL never
+    reaches them via witnessing; publishing it here lets the mailbox's subscribe
+    gate recognize the AID (see the 2026-07-01 mailbox KEL-registration design).
+
+    Returns an ``agenting.HTTPStreamMessenger`` (a DoDoer the caller extends onto
+    its own doer set and drives until ``.done``), or ``None`` if the mailbox has
+    no resolvable http(s) endpoint.
+    """
+    url = (hab.fetchUrl(mailbox_eid, scheme=kering.Schemes.https)
+           or hab.fetchUrl(mailbox_eid, scheme=kering.Schemes.http))
+    if not url:
+        return None
+    return agenting.HTTPStreamMessenger(
+        hab=hab, wit=mailbox_eid, url=url, msg=bytearray(hab.replay()))
 
 
 class SetRoleDoer(doing.DoDoer):
