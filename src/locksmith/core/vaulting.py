@@ -232,15 +232,14 @@ class Vault(doing.DoDoer):
 
     def load_active_mailboxes(self):
         """Load active mailbox listeners from db."""
-        for (eid,), mbl in self.db.mbx.getTopItemIter():
+        for _keys, mbl in self.db.mbx.getTopItemIter():
             hab = self.hby.habByPre(mbl.cid)
             if hab is not None:
-                self.activate_mailbox(hab, mbl.name, eid)
+                self.activate_mailbox(hab, mbl.name, mbl.eid)
 
     def activate_mailbox(self, hab, mailbox_name, mailbox_eid):
         mbl = MailboxListener(cid=hab.pre, eid=mailbox_eid, name=mailbox_name)
-        self.db.mbx.pin(keys=(mailbox_eid,), val=mbl)
-
+        self.db.mbx.pin(keys=(hab.pre, mailbox_eid), val=mbl)
         self.mbx.add_poller(hab=hab, mailbox=mailbox_eid)
 
     def seed_kel_mailboxes(self):
@@ -257,13 +256,13 @@ class Vault(doing.DoDoer):
             eid = agenting.mailbox(hab, hab.pre)
             if eid is None:
                 continue
-            if self.db.mbx.get(keys=(eid,)) is not None:
-                continue  # explicit designation or a prior seed already owns this EID
-            self.db.mbx.pin(keys=(eid,),
+            if self.db.mbx.get(keys=(hab.pre, eid)) is not None:
+                continue  # this AID already has this mailbox registered
+            self.db.mbx.pin(keys=(hab.pre, eid),
                             val=MailboxListener(cid=hab.pre, eid=eid, name=eid))
 
     def deactivate_mailbox(self, hab, mailbox_eid):
-        self.db.mbx.rem(keys=(mailbox_eid,))
+        self.db.mbx.rem(keys=(hab.pre, mailbox_eid))
         self.mbx.remove_poller(hab=hab, mailbox=mailbox_eid)
 
     def restart_peer_mode(self):

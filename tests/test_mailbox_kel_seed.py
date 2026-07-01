@@ -39,7 +39,7 @@ def test_seed_kel_mailboxes_pins_designated_mailbox(monkeypatch, tmp_path):
 
         vault.seed_kel_mailboxes()
 
-        seeded = vault.db.mbx.get(keys=(mbx_hab.pre,))
+        seeded = vault.db.mbx.get(keys=(doi.pre, mbx_hab.pre))
         assert seeded is not None, "db.mbx was not seeded from the AID's KEL mailbox role"
         assert seeded.cid == doi.pre
         assert seeded.eid == mbx_hab.pre
@@ -101,15 +101,50 @@ def test_seed_kel_mailboxes_leaves_explicit_designation_untouched(monkeypatch, t
         doi = hby.makeHab(name="state-doi-explicit")
 
         # Pre-pin an explicit db.mbx entry the user "designated" (name="my-mailbox")
-        vault.db.mbx.pin(keys=("Embx",), val=MailboxListener(cid=doi.pre, eid="Embx", name="my-mailbox"))
+        vault.db.mbx.pin(keys=(doi.pre, "Embx"), val=MailboxListener(cid=doi.pre, eid="Embx", name="my-mailbox"))
 
         # Resolver returns same EID — seed should skip because entry already exists
         monkeypatch.setattr(agenting, "mailbox", lambda hab, cid: "Embx")
 
         vault.seed_kel_mailboxes()
 
-        kept = vault.db.mbx.get(keys=("Embx",))
+        kept = vault.db.mbx.get(keys=(doi.pre, "Embx"))
         assert kept.name == "my-mailbox"             # explicit designation NOT clobbered
+    finally:
+        if vault is not None:
+            vault.db.close()
+            vault.rep.mbx.close()
+            vault.notifier.noter.close()
+        rgy.close()
+        hby.close()
+
+
+def test_seed_kel_mailboxes_pins_per_aid_when_sharing_one_mailbox(monkeypatch, tmp_path):
+    from keri.app import agenting
+
+    monkeypatch.setattr(vaulting, "LocksmithBaser",
+                        lambda name, reopen=True: LocksmithBaser(
+                            name=f"{name}-locksmith", headDirPath=str(tmp_path), reopen=reopen))
+    monkeypatch.setattr(vaulting, "TurretDoer", _NoTurret)
+
+    hby = habbing.Habery(name="vault-shared", temp=True,
+                         salt=signing.Salter(raw=b'sharedmailbox012').qb64)
+    rgy = credentialing.Regery(hby=hby, name=hby.name, temp=True)
+    vault = None
+    try:
+        vault = vaulting.Vault(app=SimpleNamespace(), hby=hby, rgy=rgy)
+        a = hby.makeHab(name="aid-a")
+        b = hby.makeHab(name="aid-b")
+
+        monkeypatch.setattr(agenting, "mailbox", lambda hab, cid: "Eshared")  # both share one mailbox
+
+        vault.seed_kel_mailboxes()
+
+        entries = {mbl.cid: mbl for _k, mbl in vault.db.mbx.getTopItemIter()}
+        assert a.pre in entries, "AID a not seeded"
+        assert b.pre in entries, "AID b not seeded (the bug: 2nd AID sharing a mailbox is skipped)"
+        assert entries[a.pre].eid == "Eshared"
+        assert entries[b.pre].eid == "Eshared"
     finally:
         if vault is not None:
             vault.db.close()
