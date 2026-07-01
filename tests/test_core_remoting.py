@@ -622,6 +622,7 @@ def test_maybe_publish_mailbox_kel_extends_publisher_for_mailbox_role(monkeypatc
         role = remoting.Roles.mailbox
         remote_id_pre = "EMBX"
         tock = 0.0
+        tyme = 0.0
         def extend(self, doers): calls["extend"].append(doers)
         def remove(self, doers): calls["remove"].append(doers)
 
@@ -704,6 +705,7 @@ def test_maybe_publish_mailbox_kel_drives_yield_loop_until_done(monkeypatch):
         role = remoting.Roles.mailbox
         remote_id_pre = "EMBX"
         tock = 0.25
+        tyme = 0.0
         def extend(self, doers): calls["extend"].append(doers)
         def remove(self, doers): calls["remove"].append(doers)
 
@@ -711,3 +713,33 @@ def test_maybe_publish_mailbox_kel_drives_yield_loop_until_done(monkeypatch):
     assert calls["extend"] == [[pub]]      # publisher extended before the wait loop
     assert yielded == [0.25]               # loop body entered once (done False on first check)
     assert calls["remove"] == [[pub]]      # publisher removed after done
+
+
+def test_maybe_publish_mailbox_kel_times_out_when_never_done(monkeypatch):
+    from locksmith.core import remoting
+
+    class NeverDonePub:
+        done = False
+
+    pub = NeverDonePub()
+    calls = {"extend": [], "remove": []}
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher", lambda hab, eid: pub)
+
+    class FakeSelf:
+        role = remoting.Roles.mailbox
+        remote_id_pre = "EMBX"
+        tock = 0.25
+        def __init__(self):
+            self._t = 0.0
+        @property
+        def tyme(self):
+            v = self._t
+            self._t += 15.0          # advances 15s per read; crosses the 30s deadline quickly
+            return v
+        def extend(self, doers): calls["extend"].append(doers)
+        def remove(self, doers): calls["remove"].append(doers)
+
+    yielded = list(remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB"))
+    assert calls["extend"] == [[pub]]
+    assert calls["remove"] == [[pub]]      # removed on timeout despite never done
+    assert len(yielded) >= 1               # yielded at least once before timing out

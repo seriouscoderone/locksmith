@@ -1155,12 +1155,14 @@ class SetRoleDoer(doing.DoDoer):
                 )
             return
 
+    _MAILBOX_PUBLISH_TIMEOUT = 30.0   # seconds; a silent/half-open mailbox must not hang role-setting
+
     def _maybe_publish_mailbox_kel(self, hab):
         """Generator: for a mailbox designation, PUT the hab's KEL to the mailbox
         so it enters the mailbox's key-state (a standalone mailbox is not a
         witness, so the KEL never arrives via witnessing). Non-fatal — the
-        end-role is already written; a publish failure is logged and skipped.
-        Caller drives with ``yield from``."""
+        end-role is already written; a publish failure, timeout, or missing
+        endpoint is logged and skipped. Caller drives with ``yield from``."""
         if self.role != Roles.mailbox:
             return
         try:
@@ -1170,9 +1172,15 @@ class SetRoleDoer(doing.DoDoer):
                                self.remote_id_pre)
                 return
             self.extend([pub])
+            deadline = self.tyme + SetRoleDoer._MAILBOX_PUBLISH_TIMEOUT
             while not pub.done:
+                if self.tyme >= deadline:
+                    logger.warning("mailbox KEL publish to %s timed out after %ss; skipping",
+                                   self.remote_id_pre, SetRoleDoer._MAILBOX_PUBLISH_TIMEOUT)
+                    break
                 yield self.tock
-            self.remove([pub])
-            logger.info("published KEL to mailbox %s", self.remote_id_pre)
+            self.remove([pub])          # reachable on done OR timeout — tears down the client doer
+            if pub.done:
+                logger.info("published KEL to mailbox %s", self.remote_id_pre)
         except Exception as ex:  # noqa: BLE001 — publish must never break role-setting
             logger.warning("mailbox KEL publish to %s failed: %s", self.remote_id_pre, ex)
