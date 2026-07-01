@@ -4,8 +4,9 @@ locksmith.ui.utils module
 
 This module contains utility functions for UI components.
 """
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QPixmap, QAction, QIcon
+from PySide6.QtCore import Qt, QSize, QRectF
+from PySide6.QtGui import QPixmap, QAction, QIcon, QPainter
+from PySide6.QtSvg import QSvgRenderer
 from PySide6.QtWidgets import QWidget, QSizePolicy
 
 from locksmith.ui.toolkit.widgets.buttons import HoverIconButton
@@ -59,6 +60,35 @@ def load_scaled_pixmap(path: str, width: int, height: int) -> QPixmap:
         Qt.AspectRatioMode.KeepAspectRatio,
         Qt.TransformationMode.SmoothTransformation
     )
+
+
+def load_symbol_pixmap(path: str, box: int, y_offset: float = 0.0,
+                       dpr: float = 2.0) -> QPixmap:
+    """Render an SVG symbol, aspect-fit, into a transparent ``box``x``box``
+    square: horizontally centered, vertically centered plus ``y_offset``.
+
+    ``load_scaled_pixmap`` returns a tightly-cropped pixmap whose placement is
+    then re-centered by the host widget, so a wide mark (e.g. the eye+globe)
+    can only ever land on the geometric center. This bakes the symbol's
+    position into a fixed square canvas instead, so it can be nudged to
+    *optically* align with adjacent text — a word with no descenders sits high
+    in its line box, so the mark must drop a hair to read as centered.
+    ``y_offset`` > 0 shifts the mark down. Rendered at ``dpr`` for retina.
+    """
+    path = ensure_resource_path(path)
+    renderer = QSvgRenderer(path)
+    vb = renderer.viewBoxF()
+    if vb.width() <= 0 or vb.height() <= 0:
+        return load_scaled_pixmap(path, box, box)
+    scale = min(box / vb.width(), box / vb.height())
+    w, h = vb.width() * scale, vb.height() * scale
+    pm = QPixmap(round(box * dpr), round(box * dpr))
+    pm.setDevicePixelRatio(dpr)
+    pm.fill(Qt.GlobalColor.transparent)
+    painter = QPainter(pm)  # paints in logical (box) coordinates
+    renderer.render(painter, QRectF((box - w) / 2, (box - h) / 2 + y_offset, w, h))
+    painter.end()
+    return pm
 
 def ensure_resource_path(path: str) -> str:
     """

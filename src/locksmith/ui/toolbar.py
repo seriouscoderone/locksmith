@@ -12,7 +12,7 @@ from keri import help
 
 from locksmith.peer.exposure import count_exposed
 from locksmith.ui import colors
-from locksmith.ui.toolkit.utils import create_spacer, load_scaled_pixmap
+from locksmith.ui.toolkit.utils import create_spacer, load_scaled_pixmap, load_symbol_pixmap
 from locksmith.ui.toolkit.widgets import HoverIconButton
 
 logger = help.ogler.getLogger(__name__)
@@ -85,7 +85,10 @@ class LocksmithToolbar(QToolBar):
         # monochrome symbol tuned for the dark toolbar, where the full-color
         # SymbolLogo goes muddy at 28px. brand_apply guarantees this slot always
         # resolves (falls back to the standard symbol for brands that omit it).
-        favicon_pixmap = load_scaled_pixmap(":/assets/custom/SymbolLogoWhite.svg", 28, 28)
+        # y_offset drops the wide mark ~1px so it optically centers with the
+        # (descender-less) app-name label beside it, which sits high in its box.
+        # Measured: shifts the eye's vcenter onto the label's (see git history).
+        favicon_pixmap = load_symbol_pixmap(":/assets/custom/SymbolLogoWhite.svg", 28, y_offset=1.0)
         favicon_button.setIcon(QIcon(favicon_pixmap))
         favicon_button.setIconSize(QSize(28, 28))
         favicon_button.setToolTip("Go to Home")
