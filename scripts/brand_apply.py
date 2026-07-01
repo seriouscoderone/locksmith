@@ -39,8 +39,12 @@ def _recompile_resources(repo_root: Path) -> bool:
     ``pyside6-rcc`` is unavailable. Asset filenames are fixed (_ASSET_KEYS), so
     the existing resources.qrc file list already covers them — no regen needed.
     """
-    rcc = shutil.which("pyside6-rcc")
     out = repo_root / "src" / "locksmith" / "resources_rc.py"
+    # Prefer the rcc next to the running interpreter — brand_apply is commonly
+    # invoked as `.venv/bin/python scripts/brand_apply.py` without the venv on
+    # PATH, so a bare which() would miss it and silently skip the recompile.
+    cand = Path(sys.executable).parent / "pyside6-rcc"
+    rcc = str(cand) if cand.exists() else shutil.which("pyside6-rcc")
     if not rcc:
         print("WARNING: pyside6-rcc not found; :/ brand assets NOT recompiled "
               "(branded logos may not appear via :/ paths)", file=sys.stderr)
