@@ -16,6 +16,7 @@ nothing and just reports what would happen.
 import argparse
 import json
 import shutil
+import subprocess
 import sys
 from pathlib import Path
 
@@ -26,6 +27,27 @@ import brandlib  # noqa: E402
 _ASSET_KEYS = ("app_icon_icns", "app_icon_ico", "splash", "symbol_logo",
                "name_logo", "full_logo", "symbol_logo_black", "name_logo_black",
                "full_logo_black")
+
+
+def _recompile_resources(repo_root: Path) -> bool:
+    """Recompile src/locksmith/resources_rc.py from resources.qrc.
+
+    The Qt resource bundle (``:/assets/custom/*``) is a COMPILED blob; the UI
+    loads brand logos through it (toolbar favicon, home, drawer). Staging files
+    into assets/custom/ is not enough — without recompiling, those ``:/`` logos
+    stay the compiled-in default brand's. Returns False (with a warning) if
+    ``pyside6-rcc`` is unavailable. Asset filenames are fixed (_ASSET_KEYS), so
+    the existing resources.qrc file list already covers them — no regen needed.
+    """
+    rcc = shutil.which("pyside6-rcc")
+    out = repo_root / "src" / "locksmith" / "resources_rc.py"
+    if not rcc:
+        print("WARNING: pyside6-rcc not found; :/ brand assets NOT recompiled "
+              "(branded logos may not appear via :/ paths)", file=sys.stderr)
+        return False
+    subprocess.run([rcc, "resources.qrc", "-o", str(out)],
+                   cwd=repo_root, check=True)
+    return True
 
 
 def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
@@ -70,6 +92,11 @@ def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
         dmg_out.write_text(
             json.dumps(brandlib.render_dmg_layout(manifest), indent=2) + "\n",
             encoding="utf-8")
+        # Recompile the Qt resource bundle so :/assets/custom/* carries THIS
+        # brand's logos. Only when we actually staged brand assets (the default
+        # locksmith brand ships none → committed resources_rc.py already matches).
+        if staged:
+            _recompile_resources(repo_root)
 
     return {
         "brand": manifest["brand"]["id"],
