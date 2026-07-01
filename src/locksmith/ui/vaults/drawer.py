@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING
 from PySide6.QtCore import Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QSize
 from PySide6.QtGui import QIcon, QFont
 from PySide6.QtWidgets import QWidget, QFrame, QVBoxLayout, QLabel, QGraphicsOpacityEffect, QHBoxLayout, \
-    QListWidgetItem, QListWidget, QMenu, QToolButton
+    QListWidgetItem, QListWidget, QMenu, QToolButton, QAbstractItemView
 from keri import help
 
 from locksmith.core.instancing import InstanceLauncher
@@ -213,10 +213,20 @@ class VaultDrawer(QWidget):
         self.vault_list.setObjectName("vaultDrawer.vaultList")
         self.vault_list.setIconSize(QSize(36, 36))
         self.vault_list.setCursor(Qt.CursorShape.PointingHandCursor)
+        # Rows own their actions (Open / Switch to / Close buttons); the list
+        # itself has no click or keyboard semantics. Disable selection AND focus
+        # so Qt draws neither the blue selection highlight nor the focus
+        # rectangle around the current item — only the per-row :hover remains.
+        self.vault_list.setSelectionMode(QAbstractItemView.SelectionMode.NoSelection)
+        self.vault_list.setFocusPolicy(Qt.FocusPolicy.NoFocus)
         # Each row is a custom widget (setItemWidget) that fills the item
         # width; keep horizontal scrolling off so wide rows never bleed
         # past the drawer edge.
         self.vault_list.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        # Row hover lives on the row QFrame itself (see _build_vault_row), NOT
+        # on ::item: a rounded ::item:hover background drawn behind a transparent
+        # setItemWidget row ghosts its corner as a stray arc when the mouse moves
+        # between rows. ::item keeps only the inter-row spacing.
         self.vault_list.setStyleSheet(f"""
             QListWidget {{
                 border: none;
@@ -224,10 +234,6 @@ class VaultDrawer(QWidget):
             }}
             QListWidget::item {{
                 margin: 2px 8px;
-                border-radius: 8px;
-            }}
-            QListWidget::item:hover {{
-                background-color: {colors.BACKGROUND_COLLAPSIBLE_HOVER};
             }}
         """)
 
@@ -534,6 +540,18 @@ class VaultDrawer(QWidget):
         """
         row = QFrame()
         row.setObjectName(f"vaultDrawer.row.{vault_name}")
+        # Hover highlight on the row frame (not the list ::item) so it repaints
+        # cleanly — a rounded ::item:hover behind this widget ghosts its corner
+        # as a stray arc when the mouse moves between rows. The base fill is the
+        # drawer's own background (NOT transparent): the item carries the vault
+        # name as its text for selectors/filters, and an opaque row is what hides
+        # that delegate-drawn text (a transparent row lets it show through as a
+        # faint offset duplicate). Bare QFrame selector: the row has no child
+        # QFrames, and the dotted objectName can't be used in a #id selector.
+        row.setStyleSheet(
+            f"QFrame {{ background-color: {colors.BACKGROUND_WINDOW}; border-radius: 8px; }}"
+            f"QFrame:hover {{ background-color: {colors.BACKGROUND_COLLAPSIBLE_HOVER}; }}"
+        )
         h = QHBoxLayout(row)
         h.setContentsMargins(14, 9, 12, 9)
         h.setSpacing(8)
@@ -541,14 +559,22 @@ class VaultDrawer(QWidget):
         # Left: name + status, stacked.
         name_col = QVBoxLayout()
         name_col.setSpacing(2)
+        # background: transparent is required, not cosmetic — a QLabel with a
+        # stylesheet gets WA_StyledBackground, and with no background specified
+        # Qt fills it with the palette window color (opaque). That painted an
+        # opaque box behind the text that stayed light while the row turned grey
+        # on hover. Transparent lets the row's hover fill show through uniformly.
         name_label = QLabel(vault_name)
         name_label.setStyleSheet(
-            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; font-weight: 600;"
+            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; font-weight: 600; "
+            f"background: transparent;"
         )
         name_col.addWidget(name_label)
         dot = self._STATE_DOT[state]
         status = QLabel(f'<span style="color:{dot};">●</span> {self._STATE_TEXT[state]}')
-        status.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 11px;")
+        status.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 11px; background: transparent;"
+        )
         name_col.addWidget(status)
         h.addLayout(name_col)
         h.addStretch()
