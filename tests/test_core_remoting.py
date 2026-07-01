@@ -665,3 +665,49 @@ def test_maybe_publish_mailbox_kel_non_fatal_when_no_publisher(monkeypatch):
 
     gen = remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB")
     list(gen)                             # completes without raising
+
+
+def test_maybe_publish_mailbox_kel_non_fatal_when_builder_raises(monkeypatch):
+    from locksmith.core import remoting
+
+    def raise_pub(hab, eid):
+        raise RuntimeError("boom")
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher", raise_pub)
+
+    class FakeSelf:
+        role = remoting.Roles.mailbox
+        remote_id_pre = "EMBX"
+        tock = 0.0
+        def extend(self, doers): raise AssertionError("must not extend when builder raises")
+        def remove(self, doers): raise AssertionError("must not remove when builder raises")
+
+    gen = remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB")
+    list(gen)  # must complete without re-raising (non-fatal contract)
+
+
+def test_maybe_publish_mailbox_kel_drives_yield_loop_until_done(monkeypatch):
+    from locksmith.core import remoting
+
+    class FakePub:
+        def __init__(self):
+            self._checks = 0
+        @property
+        def done(self):
+            self._checks += 1
+            return self._checks > 1   # False on the first check, True on the second
+
+    pub = FakePub()
+    calls = {"extend": [], "remove": []}
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher", lambda hab, eid: pub)
+
+    class FakeSelf:
+        role = remoting.Roles.mailbox
+        remote_id_pre = "EMBX"
+        tock = 0.25
+        def extend(self, doers): calls["extend"].append(doers)
+        def remove(self, doers): calls["remove"].append(doers)
+
+    yielded = list(remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB"))
+    assert calls["extend"] == [[pub]]      # publisher extended before the wait loop
+    assert yielded == [0.25]               # loop body entered once (done False on first check)
+    assert calls["remove"] == [[pub]]      # publisher removed after done
