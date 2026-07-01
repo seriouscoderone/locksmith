@@ -136,50 +136,66 @@ Notes:
 - Writing `hby.kevers[pre] = kever` mutates the same mapping `Baser.reload`
   populates, so the caller's later `pre in kevers` checks hit the cache.
 
-### Call sites (replace bare `pre in _hby.kevers` reads)
-1. **WS subscribe gate** — `keri_cdk/handlers/mailbox/ws_handlers.py:146`
-   (`if pre not in hby.kevers:` in `default(event, context)`). THE critical site
-   for notify-and-fetch; that Lambda has its own `_hby`. Becomes
-   `if ensure_kever(hby, pre) is None:`.
-2. **`/oobi` lookup** — `keri_cdk/handlers/mailbox/mailbox_handler.py:541`
-   (`if aid not in _hby.kevers:`). Becomes `if ensure_kever(_hby, aid) is None:`.
-3. **HTTP mbx-query gate** — `mailbox_handler.py` `_ingest` (the `q["i"]`/`pre`
-   validation before serving `_stream_mbx_response`). Same substitution for the
-   query's recipient `pre`.
+### Call site — ONE (verified during planning)
+The **only** kevers gate a mailbox client actually hits is:
+- **WS subscribe gate** — `keri_cdk/handlers/mailbox/ws_handlers.py:146`
+  (`if pre not in hby.kevers:` in `default(event, context)`). THE critical site
+  for notify-and-fetch; that Lambda has its own `_hby`. Becomes
+  `if ensure_kever(hby, pre) is None:`.
 
-Deposit sender-verify is out of scope: the `/fwd` deposit is verified against
-the **sender**, and depositing does not require the recipient in `kevers`; only
-the recipient's own subscribe/read does.
+Deliberately **out of scope** (verified against the handler source, not the
+original 3-site guess):
+- **`/oobi`** (`mailbox_handler.py:537`) has a prior gate `if aid != _hab.pre:
+  404` — the mailbox serves only its **own** OOBI by design; it must not serve
+  arbitrary peer OOBIs. (This — not stale kevers — is why the live `/oobi`
+  probe 404'd for the Carrier.)
+- **HTTP mbx-query drain** (`_ingest`) does **not** gate on kevers at all (it
+  only type-checks `q["i"]`/`topics` before `_stream_mbx_response`); the WS
+  subscribe is the gate. So the one-shot fetch already works once subscribed.
+- **Deposit sender-verify** is verified against the *sender*; depositing never
+  requires the recipient in `kevers`.
 
 ## Part 1 — Client: publish KEL on designation (Locksmith)
 
 In `SetRoleDoer.set_role_do` (`src/locksmith/core/remoting.py`), after the
-end-role is written and confirmed, when `role == Roles.mailbox`, publish the
-designating hab's full KEL to the mailbox's receive endpoint:
+end-role is written and confirmed (`loadEndRole`), when `role == Roles.mailbox`,
+publish the designating hab's full KEL to the mailbox's receive endpoint using
+the **hio-native** `agenting.HTTPStreamMessenger` — a `DoDoer` that streams the
+CESR to the endpoint and completes on response. This matches SetRoleDoer's
+existing `postman.deliver()` pattern (build a delivery doer → `self.extend` →
+yield until done) and does **not** block the vault's Doist (no `requests`, no
+thread — consistent with the hio-native direction taken for the WS client):
 
 ```python
-# after loadEndRole succeeds, mailbox role only:
+# in set_role_do, after `while not hab.loadEndRole(...): yield self.tock`:
 if self.role == Roles.mailbox:
-    url = hab.fetchUrl(self.remote_id_pre, scheme=Schemes.https) \
-          or hab.fetchUrl(self.remote_id_pre, scheme=Schemes.http)
+    url = (hab.fetchUrl(self.remote_id_pre, scheme=kering.Schemes.https)
+           or hab.fetchUrl(self.remote_id_pre, scheme=kering.Schemes.http))
     if url:
-        kel = bytes(hab.replay())                 # full KEL from fn=0 (robust to rotations)
-        requests.post(url.rstrip("/") + "/", data=kel,
-                      headers={"Content-Type": "application/cesr"}, timeout=30)
+        try:
+            witer = agenting.HTTPStreamMessenger(
+                hab=hab, wit=self.remote_id_pre, url=url,
+                msg=bytearray(hab.replay()))          # full KEL from fn=0 (robust to rotations)
+            self.extend([witer])
+            while not witer.done:
+                yield self.tock
+            self.remove([witer])
+        except Exception as ex:                       # non-fatal: end-role already written
+            logger.warning("mailbox KEL publish to %s failed: %s", self.remote_id_pre, ex)
 ```
 
-- The mailbox's `_ingest` first-sees the KEL → writes key-state to the **shared**
-  namespace → the whole federation can now resolve the AID; combined with Part 2
-  it is served regardless of container.
+- `HTTPStreamMessenger` PUTs the CESR to the endpoint's `/` (mailbox `_ingest`
+  handles both `on_post` and `on_put`). The mailbox first-sees the KEL → writes
+  key-state to the **shared** namespace → the whole federation can resolve the
+  AID; with Part 2 it is served regardless of container.
 - **Idempotent:** re-publishing an already-known KEL is a no-op at the mailbox.
 - **Mailbox-role only:** other roles (gateway/watcher/witness/controller) keep
   today's behavior; the existing `StreamPoster(topic="reply")` KEL-forward is
-  left in place (it may be load-bearing for those flows) — this ADDS a publish,
-  it does not replace.
-- `requests` is already a Locksmith dependency; `Schemes` from `keri.kering`.
-- Network failure is non-fatal to role-setting: log and continue (the end-role
-  is already written; Part 2 + a future re-publish can recover). Do not fail the
-  designation on a mailbox that is temporarily unreachable.
+  left in place (may be load-bearing for those flows) — this ADDS a publish.
+- Non-fatal on failure (bad/unreachable endpoint): log and continue — the
+  end-role is already written; Part 2 + a future re-publish can recover.
+- Imports: `from keri.app import agenting`, `from keri import kering` (both
+  already available to `remoting.py`; `agenting` is a new import there).
 
 ## Data flow (end to end)
 
@@ -205,13 +221,16 @@ runs harmlessly (idempotent).
   Kever; (c) absent everywhere → None; (d) state present but events missing →
   `MissingEntryError` caught → None.
 - Handler: WS subscribe **accepts** an AID present in `db.states` but absent from
-  the in-memory `kevers` (the exact regression); `/oobi` serves it likewise.
+  the in-memory `kevers` (the exact regression), by popping the AID from `kevers`
+  after parsing so only the shared state remains.
 
 **Client unit (Locksmith, `--import-mode=importlib`):**
-- `SetRoleDoer` with `role == mailbox` POSTs `hab.replay()` bytes to the resolved
-  mailbox URL (mock HTTP; assert endpoint + body).
-- Non-mailbox role → no POST.
-- Unreachable mailbox URL → role still set, error logged, doer completes.
+- `SetRoleDoer` with `role == mailbox` constructs `agenting.HTTPStreamMessenger`
+  with the resolved mailbox `url` and `hab.replay()` bytes (fake the messenger
+  class à la the existing `test_introduce_watcher_*` fakes; assert url + msg).
+- Non-mailbox role → messenger NOT constructed.
+- Unreachable mailbox (fetchUrl → None, or messenger raises) → role still set,
+  warning logged, doer completes.
 
 **E2E (live, deploy-gated):** deploy the keripy server change to the 5 Mailbox
 stacks (user OK), relaunch the dev-build wallet, designate the mailbox on the
