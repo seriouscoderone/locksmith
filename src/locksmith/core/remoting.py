@@ -979,7 +979,7 @@ class ChallengeVerificationDoer(doing.DoDoer):
 
 
 def build_mailbox_kel_publisher(hab, mailbox_eid):
-    """Return a hio DoDoer that PUTs ``hab``'s full KEL to ``mailbox_eid``'s HTTP
+    """Return a hio DoDoer that will PUT ``hab``'s full KEL to ``mailbox_eid``'s HTTP
     endpoint so the mailbox first-sees it into its key-state.
 
     Standalone federation mailboxes are NOT witnesses, so an AID's KEL never

@@ -563,6 +563,7 @@ def test_build_mailbox_kel_publisher_uses_https_and_replay(monkeypatch):
     hab = FakeHab()
     result = remoting.build_mailbox_kel_publisher(hab, "EMBX")
     assert isinstance(result, FakeMessenger)
+    assert captured["hab"] is hab
     assert captured["wit"] == "EMBX"
     assert captured["url"] == "https://mailbox.example/"   # https preferred
     assert captured["msg"] == b"KELBYTES"
@@ -585,7 +586,8 @@ def test_build_mailbox_kel_publisher_falls_back_to_http(monkeypatch):
             return b"KEL"
 
     monkeypatch.setattr(remoting.agenting, "HTTPStreamMessenger", FakeMessenger)
-    remoting.build_mailbox_kel_publisher(FakeHab(), "EMBX")
+    result = remoting.build_mailbox_kel_publisher(FakeHab(), "EMBX")
+    assert result is not None
     assert captured["url"] == "http://mailbox.example/"
 
 
