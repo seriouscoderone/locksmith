@@ -35,12 +35,16 @@ name = "keri.host"
 app_icon_icns     = "AppIcon.icns"
 app_icon_ico      = "AppIcon.ico"
 splash            = "SplashScreen.png"
+# Treatments: standard (color) / white (reversed, dark surfaces) / black
+# (mono-dark, light surfaces). Locksmith ships real distinct black art; it has
+# no bespoke white mark, so brand_apply/committed defaults fall the white slot
+# back to the standard symbol (toolbar stays as-is for the reference brand).
 symbol_logo       = "SymbolLogo.svg"
-symbol_logo_on_dark = "SymbolLogoOnDark.svg"
-name_logo         = "NameLogo.svg"
-full_logo         = "FullLogo.svg"
+symbol_logo_white = "SymbolLogoWhite.svg"
 symbol_logo_black = "SymbolLogoBlack.svg"
+name_logo         = "NameLogo.svg"
 name_logo_black   = "NameLogoBlack.svg"
+full_logo         = "FullLogo.svg"
 full_logo_black   = "FullLogoBlack.svg"
 
 [publisher]

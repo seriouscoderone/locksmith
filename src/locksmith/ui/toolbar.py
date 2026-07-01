@@ -81,11 +81,11 @@ class LocksmithToolbar(QToolBar):
         # Add clickable favicon icon (navigates to home)
         favicon_button = QPushButton()
         favicon_button.setFixedSize(36, 36)
-        # On-dark toolbar mark: a flat monochrome symbol tuned for the dark
-        # toolbar (the color/gradient SymbolLogo goes muddy at 28px on dark).
-        # Brands that ship no on-dark variant get a copy of SymbolLogo, so this
-        # is always a valid resource and never regresses the default brand.
-        favicon_pixmap = load_scaled_pixmap(":/assets/custom/SymbolLogoOnDark.svg", 28, 28)
+        # "white" logo treatment (reversed, for dark surfaces): a flat
+        # monochrome symbol tuned for the dark toolbar, where the full-color
+        # SymbolLogo goes muddy at 28px. brand_apply guarantees this slot always
+        # resolves (falls back to the standard symbol for brands that omit it).
+        favicon_pixmap = load_scaled_pixmap(":/assets/custom/SymbolLogoWhite.svg", 28, 28)
         favicon_button.setIcon(QIcon(favicon_pixmap))
         favicon_button.setIconSize(QSize(28, 28))
         favicon_button.setToolTip("Go to Home")

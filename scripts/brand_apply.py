@@ -24,9 +24,26 @@ _THIS = Path(__file__).resolve()
 sys.path.insert(0, str(_THIS.parent.parent / "packaging"))
 import brandlib  # noqa: E402
 
-_ASSET_KEYS = ("app_icon_icns", "app_icon_ico", "splash", "symbol_logo",
-               "symbol_logo_on_dark", "name_logo", "full_logo",
-               "symbol_logo_black", "name_logo_black", "full_logo_black")
+# White-label logo vocabulary: {form} x {treatment}.
+#   forms      : symbol (logomark), full (lockup), name (wordmark)
+#   treatments : standard (full color, the base slot) |
+#                white (reversed, for dark surfaces) |
+#                black (mono-dark, for light surfaces)
+# Further forms a white-labeler may add follow the same pattern and fallback
+# (e.g. symbol_logo_square, symbol_logo_simplified) — add the asset key here,
+# the file to resources.qrc, and a _VARIANT_FALLBACK entry.
+_ASSET_KEYS = ("app_icon_icns", "app_icon_ico", "splash",
+               "symbol_logo", "symbol_logo_white", "symbol_logo_black",
+               "name_logo", "name_logo_black",
+               "full_logo", "full_logo_black")
+
+# A treatment variant a brand omits falls back to its standard form, so a brand
+# that ships only a standard mark still renders correctly on every surface.
+# Maps: variant slot -> (base slot, canonical filename the UI references).
+_VARIANT_FALLBACK = {
+    "symbol_logo_white": ("symbol_logo", "SymbolLogoWhite.svg"),
+    "symbol_logo_black": ("symbol_logo", "SymbolLogoBlack.svg"),
+}
 
 
 def _recompile_resources(repo_root: Path) -> bool:
@@ -76,13 +93,31 @@ def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
     wxs_tmpl = repo_root / "packaging" / "wix" / "Locksmith.wxs.in"
     dmg_out = repo_root / "packaging" / "dmg" / "layout.json"
 
+    assets = manifest.get("assets", {})
     staged = []
     for key in _ASSET_KEYS:
-        fname = manifest.get("assets", {}).get(key)
+        fname = assets.get(key)
         if fname and (brand_dir / fname).is_file():
             staged.append(fname)
             if not check:
                 shutil.copyfile(brand_dir / fname, assets_dst / fname)
+
+    # Fill omitted treatment variants from the brand's standard form so every
+    # surface resolves. Only for brands that ship assets — the locksmith
+    # reference uses the committed defaults (which include real variant art).
+    filled = []
+    if not check and staged:
+        for slot, (base_slot, canon) in _VARIANT_FALLBACK.items():
+            provided = assets.get(slot)
+            if provided and (brand_dir / provided).is_file():
+                continue  # brand shipped this variant
+            base_fname = assets.get(base_slot)
+            base_src = (brand_dir / base_fname
+                        if base_fname and (brand_dir / base_fname).is_file()
+                        else assets_dst / canon)
+            if base_src.is_file():
+                shutil.copyfile(base_src, assets_dst / canon)
+                filled.append(canon)
 
     injected = []
     for key, dst_name in (("anchor", "publisher_anchor.json"),
@@ -112,6 +147,7 @@ def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
     return {
         "brand": manifest["brand"]["id"],
         "staged_assets": staged,
+        "filled_variants": filled,
         "injected": injected,
         "check": check,
     }

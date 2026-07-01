@@ -119,7 +119,11 @@ class VaultDrawer(QWidget):
 
 
         favicon_label = QLabel()
-        favicon_pixmap = load_scaled_pixmap(":/assets/custom/SymbolLogo.svg", 36, 36)
+        # "black" logo treatment (mono-dark, for light surfaces): the drawer
+        # header sits on the light window background, where the full-color
+        # SymbolLogo goes muddy at 36px. brand_apply guarantees this slot always
+        # resolves (falls back to the standard symbol for brands that omit it).
+        favicon_pixmap = load_scaled_pixmap(":/assets/custom/SymbolLogoBlack.svg", 36, 36)
         favicon_label.setPixmap(favicon_pixmap)
         drawer_header_layout.addWidget(favicon_label)
 
