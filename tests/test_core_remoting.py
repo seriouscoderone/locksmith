@@ -606,3 +606,62 @@ def test_build_mailbox_kel_publisher_none_when_no_url(monkeypatch):
 
     monkeypatch.setattr(remoting.agenting, "HTTPStreamMessenger", FakeMessenger)
     assert remoting.build_mailbox_kel_publisher(FakeHab(), "EMBX") is None
+
+
+def test_maybe_publish_mailbox_kel_extends_publisher_for_mailbox_role(monkeypatch):
+    from locksmith.core import remoting
+
+    class FakePub:
+        done = True                       # completes on first check → loop body not entered
+
+    calls = {"build": [], "extend": [], "remove": []}
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher",
+                        lambda hab, eid: (calls["build"].append((hab, eid)) or FakePub()))
+
+    class FakeSelf:
+        role = remoting.Roles.mailbox
+        remote_id_pre = "EMBX"
+        tock = 0.0
+        def extend(self, doers): calls["extend"].append(doers)
+        def remove(self, doers): calls["remove"].append(doers)
+
+    gen = remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB")
+    list(gen)                             # drive the generator to completion
+
+    assert calls["build"] == [("HAB", "EMBX")]
+    assert len(calls["extend"]) == 1 and isinstance(calls["extend"][0][0], FakePub)
+    assert len(calls["remove"]) == 1
+
+
+def test_maybe_publish_mailbox_kel_noop_for_non_mailbox_role(monkeypatch):
+    from locksmith.core import remoting
+
+    called = []
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher",
+                        lambda hab, eid: called.append((hab, eid)))
+
+    class FakeSelf:
+        role = remoting.Roles.gateway
+        remote_id_pre = "EMBX"
+        tock = 0.0
+        def extend(self, doers): raise AssertionError("must not extend for non-mailbox role")
+        def remove(self, doers): raise AssertionError("must not remove for non-mailbox role")
+
+    gen = remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB")
+    list(gen)
+    assert called == []                   # builder never invoked for gateway
+
+
+def test_maybe_publish_mailbox_kel_non_fatal_when_no_publisher(monkeypatch):
+    from locksmith.core import remoting
+    monkeypatch.setattr(remoting, "build_mailbox_kel_publisher", lambda hab, eid: None)
+
+    class FakeSelf:
+        role = remoting.Roles.mailbox
+        remote_id_pre = "EMBX"
+        tock = 0.0
+        def extend(self, doers): raise AssertionError("no publisher → nothing to extend")
+        def remove(self, doers): raise AssertionError("no publisher → nothing to remove")
+
+    gen = remoting.SetRoleDoer._maybe_publish_mailbox_kel(FakeSelf(), hab="HAB")
+    list(gen)                             # completes without raising

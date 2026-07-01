@@ -25,6 +25,7 @@ from keri.help import helping
 from mnemonic import Mnemonic
 
 logger = help.ogler.getLogger(__name__)
+Roles = kering.Roles
 
 
 def message_version(ims: bytes | bytearray) -> kering.Versionage:
@@ -1096,6 +1097,8 @@ class SetRoleDoer(doing.DoDoer):
             while not hab.loadEndRole(cid=hab.pre, role=self.role, eid=self.remote_id_pre):
                 yield self.tock
 
+            yield from self._maybe_publish_mailbox_kel(hab)
+
             # Create postman for sending messages
             postman = forwarding.StreamPoster(
                 hby=self.hby,
@@ -1151,3 +1154,25 @@ class SetRoleDoer(doing.DoDoer):
                     }
                 )
             return
+
+    def _maybe_publish_mailbox_kel(self, hab):
+        """Generator: for a mailbox designation, PUT the hab's KEL to the mailbox
+        so it enters the mailbox's key-state (a standalone mailbox is not a
+        witness, so the KEL never arrives via witnessing). Non-fatal — the
+        end-role is already written; a publish failure is logged and skipped.
+        Caller drives with ``yield from``."""
+        if self.role != Roles.mailbox:
+            return
+        try:
+            pub = build_mailbox_kel_publisher(hab, self.remote_id_pre)
+            if pub is None:
+                logger.warning("mailbox %s has no http(s) endpoint; skipping KEL publish",
+                               self.remote_id_pre)
+                return
+            self.extend([pub])
+            while not pub.done:
+                yield self.tock
+            self.remove([pub])
+            logger.info("published KEL to mailbox %s", self.remote_id_pre)
+        except Exception as ex:  # noqa: BLE001 — publish must never break role-setting
+            logger.warning("mailbox KEL publish to %s failed: %s", self.remote_id_pre, ex)
