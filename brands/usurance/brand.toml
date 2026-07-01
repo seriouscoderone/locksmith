@@ -1,0 +1,57 @@
+[brand]
+id            = "usurance"
+display_name  = "Usurance"
+tagline       = "Usurance identity wallet"
+manufacturer  = "Usurance"
+
+[identity]
+bundle_id       = "com.usurance.wallet"
+# New, brand-unique Windows upgrade code (must differ from Locksmith's).
+upgrade_code    = "366AED70-0781-4108-86F8-F92975EBF7CA"
+data_dir        = "Usurance"
+artifact_prefix = "Usurance"
+org_domain      = "usurance.com"
+
+[urls]
+website         = "https://usurance.com"
+support         = "https://usurance.com/support"
+# Same publisher (keri.host) + CDN, brand-namespaced feed so a Usurance install
+# checks its own appcast rather than Locksmith's.
+appcast_macos       = "https://releases.keri.host/usurance/appcast/v1/macos.json"
+appcast_windows     = "https://releases.keri.host/usurance/appcast/v1/windows.json"
+appcast_macos_xml   = "https://releases.keri.host/usurance/appcast/v1/macos.xml"
+appcast_windows_xml = "https://releases.keri.host/usurance/appcast/v1/windows.xml"
+
+# Theme from the Usurance design system (~/code/usurance/spec/suite/design-system.md):
+# Teal 600 is the primary interactive color (buttons/links/CTA); Teal 700 the
+# hover/pressed; dark surfaces are the design system's Gray 900/950 family.
+[theme]
+primary         = "#2AABB3"
+primary_hover   = "#1E8E95"
+primary_pressed = "#17838A"
+toolbar_dark    = "#1A202C"
+
+[org]
+name = "Usurance"
+
+# Logo variants derived from ~/code/usafe/.../UsuranceLogo.svg (blue gradient
+# lockup). The color logo is reused for the *Black variants for now — refine
+# with true monochrome/symbol-only marks later. Rasters are generated from the
+# SVG (splash + app icon).
+[assets]
+app_icon_icns     = "AppIcon.icns"
+app_icon_ico      = "AppIcon.ico"
+splash            = "SplashScreen.png"
+symbol_logo       = "SymbolLogo.svg"
+name_logo         = "NameLogo.svg"
+full_logo         = "FullLogo.svg"
+symbol_logo_black = "SymbolLogoBlack.svg"
+name_logo_black   = "NameLogoBlack.svg"
+full_logo_black   = "FullLogoBlack.svg"
+
+# Same publisher as Locksmith: Usurance reuses the shared keri.host publisher
+# trust anchor + deploy config, build-injected exactly like Locksmith (not
+# shipped in this brand dir). No separate Usurance publisher AID.
+[publisher]
+anchor        = "publisher_anchor.json"
+deploy_config = "deploy_config.json"
