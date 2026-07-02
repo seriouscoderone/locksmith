@@ -3,6 +3,15 @@
 Locksmith is a desktop **KERI key wallet** (PySide6 UI over a transport-agnostic `src/locksmith/core/`).
 This file captures conventions and gotchas that aren't obvious from the code. Keep it short and accurate.
 
+## Guiding principle: BE KERI NATIVE (LAW)
+
+For any KERI-core or KERI-adjacent concept, use KERI's **own** primitives — never a generic substitute.
+Canonical case: authz is **represented by credentials** (AIDs / ACDC edges / key-state, verified by
+IPEX + KEL/TEL), **never computed** by a general expression language or app-logic predicate. Generic
+expression languages are for non-KERI app logic only (validation, state guards, projections). If a
+KERI-core concept is being handled non-natively, that's a smell — stop and find the primitive.
+Full rationale: `docs/BE-KERI-NATIVE.md` in the `locksmith-micro-app-designer` repo.
+
 ## Running tests
 
 - Venv: `.venv/bin/python` at the repo root.
