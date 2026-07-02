@@ -106,13 +106,14 @@ class S3:
             content_type="application/json",
         )
 
-    def list_release_versions(self, *, bucket: str) -> list[str]:
-        """Enumerate ``X.Y.Z`` directories under ``releases/`` in S3."""
+    def list_release_versions(self, *, bucket: str, prefix: str = "releases") -> list[str]:
+        """Enumerate ``X.Y.Z`` directories under ``<prefix>/`` in S3."""
         paginator = self.client.get_paginator("list_objects_v2")
         versions: set[str] = set()
-        for page in paginator.paginate(Bucket=bucket, Prefix="releases/"):
+        depth = len(prefix.split("/"))  # index of the X.Y.Z segment after prefix
+        for page in paginator.paginate(Bucket=bucket, Prefix=f"{prefix}/"):
             for obj in page.get("Contents", []):
                 parts = obj["Key"].split("/")
-                if len(parts) >= 2 and parts[0] == "releases":
-                    versions.add(parts[1])
+                if len(parts) > depth and "/".join(parts[:depth]) == prefix:
+                    versions.add(parts[depth])
         return sorted(versions)
