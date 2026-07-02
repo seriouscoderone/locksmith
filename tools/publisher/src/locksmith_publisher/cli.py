@@ -161,8 +161,8 @@ class _AppcastS3Adapter:
     def __init__(self, s3):
         self._s3 = s3
 
-    def list_release_versions(self, *, bucket):
-        return self._s3.list_release_versions(bucket=bucket)
+    def list_release_versions(self, *, bucket, prefix="releases"):
+        return self._s3.list_release_versions(bucket=bucket, prefix=prefix)
 
     def get_object(self, *, Bucket, Key):  # noqa: N803 — boto3-style
         return self._s3.get_object(bucket=Bucket, key=Key)
@@ -202,6 +202,7 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
     """
     from locksmith.release import load_deploy_config
 
+    from . import brand
     from .appcast import GeneratorConfig, generate_and_upload_appcasts
 
     # Federation/CDN domains are no longer hardcoded here — pull unset options
@@ -237,6 +238,9 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
             publisher_kel_url=publisher_kel_url,
             releases_cdn_base=releases_cdn_base,
             channel=channel,
+            release_prefix=brand.release_prefix(),
+            release_notes_base=brand.website(),
+            brand_title=brand.artifact_prefix(),
         ),
     )
     click.echo(f"published s3://{bucket}/appcast/v1/macos.json")

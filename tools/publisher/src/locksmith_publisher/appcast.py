@@ -31,6 +31,15 @@ class GeneratorConfig:
     releases_cdn_base: str | None = None
     schema_version: int = 1
     channel: str = "stable"
+    #: Brand-specific S3/CDN key prefix (``<prefix>/<version>/…``). Defaults to
+    #: the locksmith ``releases`` prefix so existing callers are byte-identical.
+    release_prefix: str = "releases"
+    #: Base URL of the brand website whose ``/releases/<v>`` page the appcast's
+    #: ``release_notes_url`` points at (no trailing slash).
+    release_notes_base: str = "https://locksmith.app"
+    #: Human-readable brand name for the RSS feed ``<title>``; falls back to the
+    #: publisher AID when unset (the pre-brand behavior).
+    brand_title: str | None = None
 
     def cdn_base(self) -> str:
         """Resolve the release CDN base, deferring to deploy_config if unset."""
@@ -165,7 +174,10 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
     ``get_object(Bucket=, Key=) -> bytes`` (or ``-> object with ['Body'].read()``),
     and ``put_object(Bucket=, Key=, Body=, ContentType=)``.
     """
-    all_versions = sorted(s3.list_release_versions(bucket=config.bucket), key=_semver_key)
+    all_versions = sorted(
+        s3.list_release_versions(bucket=config.bucket, prefix=config.release_prefix),
+        key=_semver_key,
+    )
     if not all_versions:
         return
 
@@ -179,7 +191,7 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
         try:
             raw_or_resp = s3.get_object(
                 Bucket=config.bucket,
-                Key=f"releases/{v}/release-anchor-{v}.cesr",
+                Key=f"{config.release_prefix}/{v}/release-anchor-{v}.cesr",
             )
         except Exception:  # noqa: BLE001 — NoSuchKey, ClientError, etc.
             # Un-anchored — leave out of the appcast. Verifier wouldn't
@@ -219,14 +231,14 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
                 "minimum_system_version":
                     seal["minimum_system_versions"][platform],
                 "artifact_url":
-                    f"{cdn_base}/releases/{v}/{artifact['filename']}",
+                    f"{cdn_base}/{config.release_prefix}/{v}/{artifact['filename']}",
                 "artifact_sha256": artifact["sha256"],
                 "artifact_size": artifact["size"],
                 "anchor_url":
-                    f"{cdn_base}/releases/{v}/release-anchor-{v}.cesr",
+                    f"{cdn_base}/{config.release_prefix}/{v}/release-anchor-{v}.cesr",
                 "anchor_said": parsed["said"],
                 "release_notes_url":
-                    f"https://locksmith.app/releases/{v}",
+                    f"{config.release_notes_base}/releases/{v}",
                 "is_major": seal.get("is_major", False),
                 "is_critical": seal.get("is_critical", False),
             })
@@ -255,7 +267,7 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             ContentType="application/json",
         )
         xml_body = build_appcast_xml(
-            title=config.publisher_aid,  # brand name not available here; cosmetic
+            title=config.brand_title or config.publisher_aid,
             releases=[{"version": r["version"], "artifact_url": r["artifact_url"],
                        "artifact_size": r["artifact_size"],
                        "released_at": r["released_at"]} for r in releases],
