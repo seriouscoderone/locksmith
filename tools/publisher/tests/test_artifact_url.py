@@ -1,5 +1,6 @@
 """Tests for the _artifact_url helper and artifact_prefix config key."""
 from locksmith_publisher import cli
+from locksmith_publisher.cli import _artifact_url
 
 
 def test_artifact_url_custom_prefix():
@@ -25,3 +26,14 @@ def test_artifact_url_msi_extension():
     """_artifact_url works for Windows .msi artifacts too."""
     url = cli._artifact_url("https://releases.example.com", "0.9.1", "MyApp", "msi")
     assert url == "https://releases.example.com/releases/0.9.1/MyApp-0.9.1.msi"
+
+
+def test_artifact_url_default_prefix():
+    assert _artifact_url("https://releases.keri.host", "1.2.3", "Locksmith", "dmg") \
+        == "https://releases.keri.host/releases/1.2.3/Locksmith-1.2.3.dmg"
+
+
+def test_artifact_url_brand_prefix():
+    assert _artifact_url("https://releases.keri.host", "0.3.0", "Usurance", "dmg",
+                         release_prefix="usurance/releases") \
+        == "https://releases.keri.host/usurance/releases/0.3.0/Usurance-0.3.0.dmg"

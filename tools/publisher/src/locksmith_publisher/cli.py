@@ -62,9 +62,10 @@ def _bundled_publisher_anchor_path() -> Path | None:
 _DEFAULT_ARTIFACT_PREFIX = "Locksmith"
 
 
-def _artifact_url(cdn: str, version: str, prefix: str, ext: str) -> str:
-    """Return the CDN URL for a release artifact with the given brand prefix."""
-    return f"{cdn.rstrip('/')}/releases/{version}/{prefix}-{version}.{ext}"
+def _artifact_url(cdn: str, version: str, prefix: str, ext: str,
+                  release_prefix: str = "releases") -> str:
+    """Return the CDN URL for a release artifact under the brand's prefix."""
+    return f"{cdn.rstrip('/')}/{release_prefix}/{version}/{prefix}-{version}.{ext}"
 
 
 def _publisher_anchor_path() -> Path:
@@ -282,7 +283,9 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     bucket = cfg["s3_bucket"]
     cdn = cfg["releases_cdn_base"].rstrip("/")
     kel_url = cfg["publisher_kel_url"]
-    artifact_prefix = cfg.get("artifact_prefix", _DEFAULT_ARTIFACT_PREFIX)
+    from . import brand
+    artifact_prefix = brand.artifact_prefix()
+    release_prefix = brand.release_prefix()
     aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
 
     out = Path(out_dir)
@@ -297,7 +300,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     s3 = S3.default()
 
     def _key(ext):
-        return f"releases/{version}/{artifact_prefix}-{version}.{ext}"
+        return f"{release_prefix}/{version}/{artifact_prefix}-{version}.{ext}"
 
     def _size(ext):
         return s3.head_object_size(bucket=bucket, key=_key(ext))
@@ -305,14 +308,14 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     def _json(platform, sha, ext):
         rel = {"version": version, "platform": platform, "anchor_said": anchor_said,
                "anchor_url": anchor_url, "artifact_sha256": sha,
-               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext),
+               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext, release_prefix),
                "artifact_size": _size(ext)}
         return build_appcast(publisher_aid=aid, publisher_kel_url=kel_url,
                              releases=[rel], current_version=version).encode()
 
     def _xml(ext):
         rel = {"version": version,
-               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext),
+               "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext, release_prefix),
                "artifact_size": _size(ext), "released_at": ""}
         return build_appcast_xml(title=artifact_prefix, releases=[rel]).encode()
 

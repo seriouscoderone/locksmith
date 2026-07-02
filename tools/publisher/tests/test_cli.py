@@ -4,6 +4,7 @@ from pathlib import Path
 import pytest
 from click.testing import CliRunner
 
+from locksmith_publisher import brand as brand_mod
 from locksmith_publisher import cli as cli_mod
 from locksmith_publisher.witnesses import WitnessInfo
 
@@ -160,6 +161,8 @@ def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
         "releases_cdn_base": "https://releases.example.com",
         "publisher_kel_url": "https://releases.example.com/publisher/v1/kel.cesr",
     })
+    monkeypatch.setattr(brand_mod, "artifact_prefix", lambda: "Locksmith")
+    monkeypatch.setattr(brand_mod, "release_prefix", lambda: "releases")
     monkeypatch.setattr(cli_mod, "_read_publisher_aid", lambda **k: "EpubAID")
     # Bypass the self-verify guard in this integration test (the guard itself is tested
     # in test_self_verify.py via monkeypatching publish.replay_kel).
