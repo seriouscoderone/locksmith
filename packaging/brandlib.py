@@ -8,6 +8,7 @@ locksmith.core.branding. Selection: $LOCKSMITH_BRAND (default 'locksmith').
 """
 import os
 import re
+import sys
 import tomllib
 from pathlib import Path
 
@@ -96,6 +97,36 @@ def render_dmg_layout(manifest: dict) -> dict:
              "type": "symlink", "target": "/Applications"},
         ],
     }
+
+
+def _identity_value(field: str, brand_id: str | None = None) -> str:
+    m = load_brand_manifest(brand_id)
+    if field == "id":
+        return m["brand"]["id"]
+    if field == "display_name":
+        return m["brand"]["display_name"]
+    ident = m.get("identity", {})
+    if field not in ident:
+        raise KeyError(field)
+    return ident[field]
+
+
+def _main(argv: list[str]) -> int:
+    # Minimal CLI for shell/PowerShell: `python -m brandlib id <field>`.
+    if len(argv) == 3 and argv[1] == "id":
+        try:
+            print(_identity_value(argv[2]))
+            return 0
+        except KeyError:
+            print(f"unknown brand identity field: {argv[2]}", file=sys.stderr)
+            return 2
+    print("usage: python -m brandlib id "
+          "<display_name|artifact_prefix|bundle_id|data_dir|id>", file=sys.stderr)
+    return 2
+
+
+if __name__ == "__main__":
+    raise SystemExit(_main(sys.argv))
 
 
 def macos_info_plist(manifest: dict, version: str) -> dict:
