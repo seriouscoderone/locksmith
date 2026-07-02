@@ -6,12 +6,15 @@ on:
 jobs:
   build-macos:
     runs-on: macos-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        brand: [locksmith, usurance]
     permissions:
       id-token: write   # required for GitHub Actions OIDC
       contents: read
     env:
-      APP_ID: host.keri.locksmith
-      KC_PROFILE: host.keri.locksmith
+      LOCKSMITH_BRAND: ${{ matrix.brand }}
       LOCKSMITH_RELEASE_CHANNEL: stable
       AWS_REGION: us-east-1
       S3_BUCKET: releases.keri.host
@@ -50,6 +53,13 @@ jobs:
           pip install --upgrade pip setuptools wheel boto3 pyyaml
           pip install -e .[build-macos]
 
+      - name: Resolve brand identity into env
+        run: |
+          source /tmp/venv/bin/activate
+          BID="$(cd packaging && python -m brandlib id bundle_id)"
+          echo "APP_ID=$BID" >> $GITHUB_ENV
+          echo "KC_PROFILE=$BID" >> $GITHUB_ENV
+
       - name: Configure git to verify SSH-signed tags via .gitsigners
         run: |
           git config --global gpg.format ssh
@@ -66,6 +76,13 @@ jobs:
           version="${{ github.event.release.tag_name }}"
           if [[ "$version" == v* ]]; then version="${version:1}"; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve artifact prefix
+        id: prefix
+        shell: bash
+        run: |
+          source /tmp/venv/bin/activate 2>/dev/null || true
+          echo "value=$(cd packaging && python -m brandlib id artifact_prefix)" >> "$GITHUB_OUTPUT"
 
       - name: Install create-dmg
         run: brew install create-dmg
@@ -130,25 +147,28 @@ jobs:
         run: |
           echo "DEVELOPER_ID_APP_CERT=$DEVELOPER_ID_APP_CERT" >> $GITHUB_ENV
 
-      - name: Inject publisher trust anchor (real, from secret)
+      - name: Inject shared trust material (both brands use the keri.host publisher)
+        shell: bash
         env:
           PUBLISHER_ANCHOR: ${{ secrets.LOCKSMITH_PUBLISHER_ANCHOR }}
-        run: |
-          mkdir -p src/locksmith/release
-          printf '%s' "$PUBLISHER_ANCHOR" > src/locksmith/release/publisher_anchor.json
-          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
-
-      - name: Inject deploy config (real, from secret)
-        # Both PyInstaller specs bundle deploy_config.json (federation/CDN
-        # domains) so the in-app KERI verify gate can fetch the real appcast/KEL.
-        # Without it the gate would ship resolving example.com and block updates.
-        env:
           DEPLOY_CONFIG: ${{ secrets.LOCKSMITH_DEPLOY_CONFIG }}
         run: |
-          mkdir -p src/locksmith/release
-          printf '%s' "$DEPLOY_CONFIG" > src/locksmith/release/deploy_config.json
-          python -c "import json,sys; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
-            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG secret missing or not valid JSON'; exit 1; }
+          # check-brand-complete + brand_apply read brands/<brand>/publisher_anchor.json;
+          # write the shared anchor there (gitignored) so the gate passes and
+          # brand_apply copies it to release/. deploy_config goes straight to release/.
+          mkdir -p "brands/${LOCKSMITH_BRAND}" src/locksmith/release
+          printf '%s' "$PUBLISHER_ANCHOR" > "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
+          printf '%s' "$DEPLOY_CONFIG"    > src/locksmith/release/deploy_config.json
+          python -c "import json; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG missing or invalid JSON'; exit 1; }
+
+      - name: Apply brand (stages assets, brand.json, resources_rc, wix/dmg, trust)
+        shell: bash
+        run: |
+          source /tmp/venv/bin/activate 2>/dev/null || true
+          python scripts/brand_apply.py --brand "$LOCKSMITH_BRAND"
+          python scripts/check-brand-complete.py --brand "$LOCKSMITH_BRAND"
+          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
 
       - name: Build, sign, notarize, staple DMG
         env:
@@ -168,14 +188,19 @@ jobs:
         run: |
           source /tmp/venv/bin/activate
           VERSION="${{ steps.set_version.outputs.version }}"
+          PREFIX="${{ steps.prefix.outputs.value }}"
           python scripts/upload.py \
             --bucket "$S3_BUCKET" \
-            --object-key "releases/${VERSION}/Locksmith-${VERSION}.dmg" \
-            --file "dist/Locksmith-${VERSION}.dmg" \
+            --object-key "releases/${VERSION}/${PREFIX}-${VERSION}.dmg" \
+            --file "dist/${PREFIX}-${VERSION}.dmg" \
             --content-type application/x-apple-diskimage
 
   build-windows:
     runs-on: windows-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        brand: [locksmith, usurance]
     # `windows-signing` GitHub Environment gates this job on the tag glob v*
     # and supplies the AZURE_* + ARTIFACT_SIGNING_* variables consumed by
     # the azure/login and trusted-signing steps below.
@@ -184,6 +209,7 @@ jobs:
       id-token: write   # required for GitHub Actions OIDC (AWS + Azure)
       contents: read
     env:
+      LOCKSMITH_BRAND: ${{ matrix.brand }}
       LOCKSMITH_RELEASE_CHANNEL: stable
       AWS_REGION: us-east-1
       S3_BUCKET: releases.keri.host
@@ -231,6 +257,16 @@ jobs:
           version="${{ github.event.release.tag_name }}"
           if [[ "$version" == v* ]]; then version="${version:1}"; fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
+
+      - name: Resolve artifact prefix
+        id: prefix
+        shell: bash
+        run: |
+          echo "value=$(cd packaging && python -m brandlib id artifact_prefix)" >> "$GITHUB_OUTPUT"
+          # display_name is the PyInstaller output dir (dist/<display_name>) that
+          # the trusted-signing step below points its files-folder at — brand-derived
+          # so the usurance leg signs dist/Usurance, not the (absent) dist/Locksmith.
+          echo "app_name=$(cd packaging && python -m brandlib id display_name)" >> "$GITHUB_OUTPUT"
 
       - name: Install libsodium (download MSVC build from jedisct1/libsodium)
         shell: pwsh
@@ -304,27 +340,27 @@ jobs:
       # signed tree into an MSI; then the MSI itself is signed. Two distinct
       # azure/trusted-signing-action calls (one per artifact set).
 
-      - name: Inject publisher trust anchor (real, from secret)
+      - name: Inject shared trust material (both brands use the keri.host publisher)
         shell: bash
         env:
           PUBLISHER_ANCHOR: ${{ secrets.LOCKSMITH_PUBLISHER_ANCHOR }}
-        run: |
-          mkdir -p src/locksmith/release
-          printf '%s' "$PUBLISHER_ANCHOR" > src/locksmith/release/publisher_anchor.json
-          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
-
-      - name: Inject deploy config (real, from secret)
-        # Both PyInstaller specs bundle deploy_config.json (federation/CDN
-        # domains) so the in-app KERI verify gate can fetch the real appcast/KEL.
-        # Without it the gate would ship resolving example.com and block updates.
-        shell: bash
-        env:
           DEPLOY_CONFIG: ${{ secrets.LOCKSMITH_DEPLOY_CONFIG }}
         run: |
-          mkdir -p src/locksmith/release
-          printf '%s' "$DEPLOY_CONFIG" > src/locksmith/release/deploy_config.json
-          python -c "import json,sys; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
-            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG secret missing or not valid JSON'; exit 1; }
+          # check-brand-complete + brand_apply read brands/<brand>/publisher_anchor.json;
+          # write the shared anchor there (gitignored) so the gate passes and
+          # brand_apply copies it to release/. deploy_config goes straight to release/.
+          mkdir -p "brands/${LOCKSMITH_BRAND}" src/locksmith/release
+          printf '%s' "$PUBLISHER_ANCHOR" > "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
+          printf '%s' "$DEPLOY_CONFIG"    > src/locksmith/release/deploy_config.json
+          python -c "import json; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+            || { echo '::error::LOCKSMITH_DEPLOY_CONFIG missing or invalid JSON'; exit 1; }
+
+      - name: Apply brand (stages assets, brand.json, resources_rc, wix/dmg, trust)
+        shell: bash
+        run: |
+          python scripts/brand_apply.py --brand "$LOCKSMITH_BRAND"
+          python scripts/check-brand-complete.py --brand "$LOCKSMITH_BRAND"
+          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
 
       - name: Build .exe (PyInstaller stage)
         shell: pwsh
@@ -348,7 +384,7 @@ jobs:
           endpoint: ${{ vars.ARTIFACT_SIGNING_ENDPOINT }}
           trusted-signing-account-name: ${{ vars.ARTIFACT_SIGNING_ACCOUNT }}
           certificate-profile-name: ${{ vars.ARTIFACT_SIGNING_CERT_PROFILE }}
-          files-folder: dist/Locksmith
+          files-folder: dist/${{ steps.prefix.outputs.app_name }}
           files-folder-filter: exe,dll,pyd
           files-folder-recurse: true
           file-digest: SHA256
@@ -386,22 +422,23 @@ jobs:
         shell: bash
         env:
           VERSION: ${{ steps.set_version.outputs.version }}
+          PREFIX: ${{ steps.prefix.outputs.value }}
           S3_BUCKET: ${{ env.S3_BUCKET }}
         run: |
-          MSI="build/windows/Locksmith-${VERSION}.msi"
+          MSI="build/windows/${PREFIX}-${VERSION}.msi"
           if [ ! -f "$MSI" ]; then
             echo "MSI not found at $MSI" >&2
             exit 1
           fi
           python scripts/upload.py \
             --bucket "$S3_BUCKET" \
-            --object-key "releases/${VERSION}/Locksmith-${VERSION}.msi" \
+            --object-key "releases/${VERSION}/${PREFIX}-${VERSION}.msi" \
             --file "$MSI" \
             --content-type application/x-msi
 
       - name: Capture MSI artifact
         uses: actions/upload-artifact@v4
         with:
-          name: Locksmith-${{ steps.set_version.outputs.version }}-msi
-          path: build/windows/Locksmith-${{ steps.set_version.outputs.version }}.msi
+          name: ${{ steps.prefix.outputs.value }}-${{ steps.set_version.outputs.version }}-msi
+          path: build/windows/${{ steps.prefix.outputs.value }}-${{ steps.set_version.outputs.version }}.msi
           retention-days: 7
