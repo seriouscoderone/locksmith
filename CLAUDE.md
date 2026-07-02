@@ -51,6 +51,11 @@ or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceipto
   else the example). CI/release builds MUST inject the real files (the PyInstaller specs assume the path).
 - The in-app updater verify gate (`core/apping.py`) is wired but stays **dark** (non-enforcing) until a real
   publisher anchor is injected.
+- **Multi-brand cuts (Phase 3).** One signed `vX.Y.Z` tag builds BOTH brands via the `brand` matrix in
+  `release.ci.yml`; each brand's DMG/MSI lands under its own S3 prefix (`releases/…` for locksmith,
+  `usurance/releases/…` for usurance). Publishing (appcast + KEL anchor) stays off-CI and is run **once per
+  brand**: `LOCKSMITH_BRAND=<brand> locksmith-publisher anchor …` then `… publish …`, so each brand's appcast
+  (its `[urls].appcast_*`) points at that brand's artifacts.
 
 ## Design docs
 
