@@ -184,15 +184,28 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gha-locksmith-release-publisher
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upload DMG to s3://releases.keri.host/releases/<version>/
+      # Object-key convention: locksmith → releases/<ver>/…  (back-compatible)
+      # all other brands → <brand>/releases/<ver>/…
+      # The prefix here MUST match the appcast artifact base in each brand's
+      # deploy_config.json — maintainer must confirm before the first real cut
+      # for any new brand.
+      - name: Resolve S3 key prefix for brand
+        id: s3prefix
+        shell: bash
+        run: |
+          case "$LOCKSMITH_BRAND" in
+            locksmith) echo "value=releases" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "value=${LOCKSMITH_BRAND}/releases" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Upload DMG to s3://releases.keri.host/<s3prefix>/<version>/
         run: |
           source /tmp/venv/bin/activate
           VERSION="${{ steps.set_version.outputs.version }}"
-          PREFIX="${{ steps.prefix.outputs.value }}"
           python scripts/upload.py \
             --bucket "$S3_BUCKET" \
-            --object-key "releases/${VERSION}/${PREFIX}-${VERSION}.dmg" \
-            --file "dist/${PREFIX}-${VERSION}.dmg" \
+            --object-key "${{ steps.s3prefix.outputs.value }}/${VERSION}/${{ steps.prefix.outputs.value }}-${VERSION}.dmg" \
+            --file "dist/${{ steps.prefix.outputs.value }}-${VERSION}.dmg" \
             --content-type application/x-apple-diskimage
 
   build-windows:
@@ -418,7 +431,21 @@ jobs:
           role-to-assume: arn:aws:iam::${{ secrets.AWS_ACCOUNT_ID }}:role/gha-locksmith-release-publisher
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Upload MSI to s3://releases.keri.host/releases/<version>/
+      # Object-key convention: locksmith → releases/<ver>/…  (back-compatible)
+      # all other brands → <brand>/releases/<ver>/…
+      # The prefix here MUST match the appcast artifact base in each brand's
+      # deploy_config.json — maintainer must confirm before the first real cut
+      # for any new brand.
+      - name: Resolve S3 key prefix for brand
+        id: s3prefix
+        shell: bash
+        run: |
+          case "$LOCKSMITH_BRAND" in
+            locksmith) echo "value=releases" >> "$GITHUB_OUTPUT" ;;
+            *)         echo "value=${LOCKSMITH_BRAND}/releases" >> "$GITHUB_OUTPUT" ;;
+          esac
+
+      - name: Upload MSI to s3://releases.keri.host/<s3prefix>/<version>/
         shell: bash
         env:
           VERSION: ${{ steps.set_version.outputs.version }}
@@ -432,7 +459,7 @@ jobs:
           fi
           python scripts/upload.py \
             --bucket "$S3_BUCKET" \
-            --object-key "releases/${VERSION}/${PREFIX}-${VERSION}.msi" \
+            --object-key "${{ steps.s3prefix.outputs.value }}/${VERSION}/${PREFIX}-${VERSION}.msi" \
             --file "$MSI" \
             --content-type application/x-msi
 
