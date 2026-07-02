@@ -1,20 +1,9 @@
-"""CursorStore adapter over Locksmith's db.tops (TopicsRecord keyed by (pre, eid))."""
-from __future__ import annotations
-from keri.db import basing
+"""Re-export DbTopsCursorStore from the shared keri-serverless-mailbox library.
 
+The implementation moved to keri_serverless_mailbox.cursor_store so the concierge-api
+CLI host and the Locksmith wallet share one class. This module keeps the historical
+import path (locksmith.core.mailbox_cursor.DbTopsCursorStore) stable for existing
+importers (core/indirecting.py, tests)."""
+from keri_serverless_mailbox import DbTopsCursorStore
 
-class DbTopsCursorStore:
-    def __init__(self, db, pre):
-        self.db = db
-        self.pre = pre
-
-    def get(self, eid, topic):
-        rec = self.db.tops.get((self.pre, eid))
-        if rec is None or topic not in rec.topics:
-            return None
-        return rec.topics[topic]
-
-    def set(self, eid, topic, idx):
-        rec = self.db.tops.get((self.pre, eid)) or basing.TopicsRecord(topics=dict())
-        rec.topics[topic] = int(idx)
-        self.db.tops.pin((self.pre, eid), rec)
+__all__ = ["DbTopsCursorStore"]

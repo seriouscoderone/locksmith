@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from hio.base import doing
 from keri import help, kering
-from keri.app import organizing, forwarding
+from keri.app import organizing, forwarding, agenting
 from keri.app.habbing import GroupHab
 from keri.core import exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
@@ -25,6 +25,7 @@ from keri.help import helping
 from mnemonic import Mnemonic
 
 logger = help.ogler.getLogger(__name__)
+Roles = kering.Roles
 
 
 def message_version(ims: bytes | bytearray) -> kering.Versionage:
@@ -978,6 +979,26 @@ class ChallengeVerificationDoer(doing.DoDoer):
             return
 
 
+def build_mailbox_kel_publisher(hab, mailbox_eid):
+    """Return a hio DoDoer that will PUT ``hab``'s full KEL to ``mailbox_eid``'s HTTP
+    endpoint so the mailbox first-sees it into its key-state.
+
+    Standalone federation mailboxes are NOT witnesses, so an AID's KEL never
+    reaches them via witnessing; publishing it here lets the mailbox's subscribe
+    gate recognize the AID (see the 2026-07-01 mailbox KEL-registration design).
+
+    Returns an ``agenting.HTTPStreamMessenger`` (a DoDoer the caller extends onto
+    its own doer set and drives until ``.done``), or ``None`` if the mailbox has
+    no resolvable http(s) endpoint.
+    """
+    url = (hab.fetchUrl(mailbox_eid, scheme=kering.Schemes.https)
+           or hab.fetchUrl(mailbox_eid, scheme=kering.Schemes.http))
+    if not url:
+        return None
+    return agenting.HTTPStreamMessenger(
+        hab=hab, wit=mailbox_eid, url=url, msg=bytearray(hab.replay()))
+
+
 class SetRoleDoer(doing.DoDoer):
     """
     Doer for setting roles on remote identifiers.
@@ -1076,6 +1097,8 @@ class SetRoleDoer(doing.DoDoer):
             while not hab.loadEndRole(cid=hab.pre, role=self.role, eid=self.remote_id_pre):
                 yield self.tock
 
+            yield from self._maybe_publish_mailbox_kel(hab)
+
             # Create postman for sending messages
             postman = forwarding.StreamPoster(
                 hby=self.hby,
@@ -1131,3 +1154,33 @@ class SetRoleDoer(doing.DoDoer):
                     }
                 )
             return
+
+    _MAILBOX_PUBLISH_TIMEOUT = 30.0   # seconds; a silent/half-open mailbox must not hang role-setting
+
+    def _maybe_publish_mailbox_kel(self, hab):
+        """Generator: for a mailbox designation, PUT the hab's KEL to the mailbox
+        so it enters the mailbox's key-state (a standalone mailbox is not a
+        witness, so the KEL never arrives via witnessing). Non-fatal — the
+        end-role is already written; a publish failure, timeout, or missing
+        endpoint is logged and skipped. Caller drives with ``yield from``."""
+        if self.role != Roles.mailbox:
+            return
+        try:
+            pub = build_mailbox_kel_publisher(hab, self.remote_id_pre)
+            if pub is None:
+                logger.warning("mailbox %s has no http(s) endpoint; skipping KEL publish",
+                               self.remote_id_pre)
+                return
+            self.extend([pub])
+            deadline = self.tyme + SetRoleDoer._MAILBOX_PUBLISH_TIMEOUT
+            while not pub.done:
+                if self.tyme >= deadline:
+                    logger.warning("mailbox KEL publish to %s timed out after %ss; skipping",
+                                   self.remote_id_pre, SetRoleDoer._MAILBOX_PUBLISH_TIMEOUT)
+                    break
+                yield self.tock
+            self.remove([pub])          # reachable on done OR timeout — tears down the client doer
+            if pub.done:
+                logger.info("published KEL to mailbox %s", self.remote_id_pre)
+        except Exception as ex:  # noqa: BLE001 — publish must never break role-setting
+            logger.warning("mailbox KEL publish to %s failed: %s", self.remote_id_pre, ex)
