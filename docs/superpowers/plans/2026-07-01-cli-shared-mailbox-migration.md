@@ -543,9 +543,9 @@ dependencies = ["keri-serverless-mailbox"]
 
 ```bash
 cd /Users/seriouscoderone/code/concierge-api
-/Users/seriouscoderone/code/locksmith/.venv/bin/python -c "import concierge_api_local.cli.microapp; import concierge_api_local.mailbox_mount; print('import OK')"
+PYTHONPATH=src:/Users/seriouscoderone/code/keripy /Users/seriouscoderone/code/locksmith/.venv/bin/python -c "import concierge_api_local.cli.microapp; import concierge_api_local.mailbox_mount; print('import OK')"
 ```
-Expected: `import OK` (no ImportError; confirms the microapp edit references the real helper).
+Expected: `import OK`. (NOTE: `concierge_api_local` is NOT pip-installed in the venv, so `PYTHONPATH=src` is REQUIRED — this mirrors pytest's `pythonpath=["src","../keripy"]`; `../keripy` supplies `keri_serviceaid`, while `keri`/`keri_serverless_mailbox` come from the venv. A bare `python -c` without `PYTHONPATH` will fail with `ModuleNotFoundError` — that is an environment/path issue, NOT a code defect.)
 
 - [ ] **Step 8: Confirm the hermetic gate is unaffected**
 
