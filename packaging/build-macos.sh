@@ -21,13 +21,19 @@ cd "$REPO_ROOT"
 : "${KC_PROFILE:?KC_PROFILE must be set (notarytool keychain profile)}"
 CHANNEL="${LOCKSMITH_RELEASE_CHANNEL:-stable}"
 
+# ---- 0. Resolve brand identity (build-time white-label). Default = locksmith.
+export LOCKSMITH_BRAND="${LOCKSMITH_BRAND:-locksmith}"
+APP_NAME="$(cd packaging && python -m brandlib id display_name)"
+ARTIFACT_PREFIX="$(cd packaging && python -m brandlib id artifact_prefix)"
+echo "build-macos: brand=$LOCKSMITH_BRAND app=$APP_NAME.app prefix=$ARTIFACT_PREFIX"
+
 # ---- 1. Read version from pyproject.toml ---------------------------------
 VERSION="$(python3 -c '
 import tomllib, sys
 with open("pyproject.toml", "rb") as f:
     print(tomllib.load(f)["project"]["version"])
 ')"
-echo "build-macos: building Locksmith $VERSION (channel=$CHANNEL)"
+echo "build-macos: building $APP_NAME $VERSION (channel=$CHANNEL)"
 
 # ---- 2. Bake version + channel into src/locksmith/build_info.py ---------
 cat > src/locksmith/build_info.py <<EOF
@@ -45,8 +51,8 @@ rm -rf build dist
 echo "build-macos: running pyinstaller"
 pyinstaller --noconfirm --clean packaging/Locksmith.macos.spec
 
-if [[ ! -d "dist/Locksmith.app" ]]; then
-    echo "build-macos: PyInstaller did not produce dist/Locksmith.app" >&2
+if [[ ! -d "dist/${APP_NAME}.app" ]]; then
+    echo "build-macos: PyInstaller did not produce dist/${APP_NAME}.app" >&2
     exit 1
 fi
 
@@ -59,10 +65,10 @@ fi
 SPARKLE_SRC="packaging/macos/Sparkle.framework"
 if [[ -d "$SPARKLE_SRC" ]]; then
     echo "build-macos: embedding Sparkle.framework into Contents/Frameworks/"
-    mkdir -p "dist/Locksmith.app/Contents/Frameworks"
-    rm -rf "dist/Locksmith.app/Contents/Frameworks/Sparkle.framework"
+    mkdir -p "dist/${APP_NAME}.app/Contents/Frameworks"
+    rm -rf "dist/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
     # -R preserves symlinks (Frameworks rely on Versions/Current/* symlink chain).
-    cp -R "$SPARKLE_SRC" "dist/Locksmith.app/Contents/Frameworks/Sparkle.framework"
+    cp -R "$SPARKLE_SRC" "dist/${APP_NAME}.app/Contents/Frameworks/Sparkle.framework"
 else
     echo "build-macos: WARNING — $SPARKLE_SRC not present; in-app updates will be a no-op"
 fi
@@ -72,23 +78,24 @@ echo "build-macos: signing libsodium dylibs"
 ./signLibs.sh
 
 # ---- 6. Sign the .app (entitlements applied, hardened runtime) ----------
-echo "build-macos: signing dist/Locksmith.app"
-APP_BUNDLE="dist/Locksmith.app" ENTITLEMENTS="entitlements.plist" \
+echo "build-macos: signing dist/${APP_NAME}.app"
+APP_BUNDLE="dist/${APP_NAME}.app" ENTITLEMENTS="entitlements.plist" \
     ./scripts/sign.sh
 
 # ---- 7. Build the DMG ---------------------------------------------------
-DMG_NAME="Locksmith-${VERSION}.dmg"
+DMG_NAME="${ARTIFACT_PREFIX}-${VERSION}.dmg"
 DMG_PATH="dist/${DMG_NAME}"
 rm -f "$DMG_PATH"
 
 # Pull window + icon coords from layout.json
-read APP_X APP_Y APPS_X APPS_Y WIN_W WIN_H ICON_SIZE < <(python3 - <<'PY'
-import json
+read APP_X APP_Y APPS_X APPS_Y WIN_W WIN_H ICON_SIZE < <(APP_NAME="$APP_NAME" python3 - <<'PY'
+import json, os
+name = os.environ["APP_NAME"]
 d = json.load(open("packaging/dmg/layout.json"))
-icons = {i["name"]: i for i in d["icons"]}
+icons = {i["name"]: i for i in d["icons"]} if isinstance(d["icons"], list) else d["icons"]
 print(
-    icons["Locksmith.app"]["pos"][0],
-    icons["Locksmith.app"]["pos"][1],
+    icons[f"{name}.app"]["pos"][0],
+    icons[f"{name}.app"]["pos"][1],
     icons["Applications"]["pos"][0],
     icons["Applications"]["pos"][1],
     d["window"]["size"][0],
@@ -100,18 +107,18 @@ PY
 
 echo "build-macos: creating $DMG_PATH"
 create-dmg \
-    --volname "Locksmith" \
+    --volname "${APP_NAME}" \
     --volicon "assets/custom/AppIcon.icns" \
     --background "packaging/dmg/background.png" \
     --window-pos 200 200 \
     --window-size "$WIN_W" "$WIN_H" \
     --icon-size "$ICON_SIZE" \
-    --icon "Locksmith.app" "$APP_X" "$APP_Y" \
+    --icon "${APP_NAME}.app" "$APP_X" "$APP_Y" \
     --app-drop-link "$APPS_X" "$APPS_Y" \
-    --hide-extension "Locksmith.app" \
+    --hide-extension "${APP_NAME}.app" \
     --format UDZO \
     "$DMG_PATH" \
-    "dist/Locksmith.app"
+    "dist/${APP_NAME}.app"
 
 # ---- 8. Sign the DMG ----------------------------------------------------
 echo "build-macos: signing $DMG_PATH"
