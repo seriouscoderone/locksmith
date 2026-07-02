@@ -50,7 +50,10 @@ dependencies = [
     "certifi>=2024.2.2",  # explicit: the update verify path uses certifi's CA bundle (frozen-app TLS)
     'cryptography>=46.0.3',
     'pymongo>=4.11.2',
-    'keri-serverless-mailbox',
+    # Git-only (not published to PyPI): the serverless mailbox client lives in its
+    # own public repo. Pin like `keri` above so CI/packaged builds can install it;
+    # its transitive bare `keri` is satisfied by the top-level fork pin.
+    "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@main",
 ]
 
 [project.optional-dependencies]
