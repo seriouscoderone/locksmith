@@ -105,6 +105,13 @@ def _identity_value(field: str, brand_id: str | None = None) -> str:
         return m["brand"]["id"]
     if field == "display_name":
         return m["brand"]["display_name"]
+    if field == "release_prefix":
+        # Convention (single source of truth for CI + publisher): locksmith is
+        # back-compatible `releases`; every other brand is namespaced.
+        bid = m["brand"]["id"]
+        return "releases" if bid == "locksmith" else f"{bid}/releases"
+    if field == "website":
+        return m["urls"]["website"]
     ident = m.get("identity", {})
     if field not in ident:
         raise KeyError(field)
@@ -121,7 +128,8 @@ def _main(argv: list[str]) -> int:
             print(f"unknown brand identity field: {argv[2]}", file=sys.stderr)
             return 2
     print("usage: python -m brandlib id "
-          "<display_name|artifact_prefix|bundle_id|data_dir|id>", file=sys.stderr)
+          "<display_name|artifact_prefix|bundle_id|data_dir|id|release_prefix|website>",
+          file=sys.stderr)
     return 2
 
 

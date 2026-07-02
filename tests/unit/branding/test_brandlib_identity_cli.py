@@ -28,3 +28,13 @@ def test_usurance_identity_fields():
 
 def test_unknown_field_exits_nonzero():
     assert _run("nope", "locksmith").returncode == 2
+
+
+def test_release_prefix():
+    assert _run("release_prefix", "locksmith").stdout.strip() == "releases"
+    assert _run("release_prefix", "usurance").stdout.strip() == "usurance/releases"
+
+
+def test_website():
+    assert _run("website", "locksmith").stdout.strip() == "https://locksmith.app"
+    assert _run("website", "usurance").stdout.strip() == "https://usurance.com"
