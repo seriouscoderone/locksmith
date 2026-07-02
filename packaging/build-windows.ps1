@@ -5,7 +5,7 @@
 .DESCRIPTION
     Drives the Phase 3A (unsigned) Windows release pipeline:
       1. Write src/locksmith/build_info.py with version + channel
-      2. PyInstaller        -> dist/Locksmith/Locksmith.exe + _internal/
+      2. PyInstaller        -> dist/<AppName>/<AppName>.exe + _internal/
       3. packaging/wix/harvest.py (pure-Python harvester)
                             -> build/windows/HarvestedComponents.wxs
       4. wix build          -> build/windows/Locksmith-X.Y.Z.msi
@@ -43,11 +43,21 @@ $ErrorActionPreference = "Stop"
 $repoRoot     = (Resolve-Path "$PSScriptRoot\..").Path
 $packagingDir = Join-Path $repoRoot "packaging"
 $wixDir       = Join-Path $packagingDir "wix"
-$distDir      = Join-Path $repoRoot "dist\Locksmith"
 $buildDir     = Join-Path $repoRoot "build\windows"
 $iconSourceDir = Join-Path $repoRoot "assets\custom"
 
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
+
+# --- 0. Resolve brand identity (build-time white-label). Default brand = locksmith. ---
+
+if (-not $env:LOCKSMITH_BRAND) { $env:LOCKSMITH_BRAND = "locksmith" }
+Push-Location $packagingDir
+$AppName        = (& python -m brandlib id display_name).Trim()
+$ArtifactPrefix = (& python -m brandlib id artifact_prefix).Trim()
+Pop-Location
+Write-Host "[build] brand=$($env:LOCKSMITH_BRAND) app=$($AppName).exe prefix=$ArtifactPrefix"
+
+$distDir = Join-Path $repoRoot "dist\$AppName"
 
 # --- 1. Resolve version -------------------------------------------------------
 
@@ -90,7 +100,7 @@ if ($Stage -eq "all" -or $Stage -eq "pyinstaller") {
         Pop-Location
     }
 
-    $exePath = Join-Path $distDir "Locksmith.exe"
+    $exePath = Join-Path $distDir "$($AppName).exe"
     if (-not (Test-Path -LiteralPath $exePath)) {
         throw "[build] PyInstaller did not produce $exePath"
     }
@@ -124,7 +134,7 @@ if (-not (Test-Path -LiteralPath $harvestedWxs)) {
 
 # --- 5. wix build -> MSI ------------------------------------------------------
 
-$msiName = "Locksmith-$Version.msi"
+$msiName = "$ArtifactPrefix-$($Version).msi"
 $msiPath = Join-Path $buildDir $msiName
 Write-Host "[build] linking $msiPath"
 
