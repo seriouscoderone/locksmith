@@ -40,6 +40,11 @@ class GeneratorConfig:
     #: Human-readable brand name for the RSS feed ``<title>``; falls back to the
     #: publisher AID when unset (the pre-brand behavior).
     brand_title: str | None = None
+    #: Brand-specific S3 namespace root for the appcast (before ``/v1/`` and
+    #: ``/archive/``). Defaults to the locksmith ``appcast`` root so existing
+    #: callers stay byte-identical; other brands are namespaced (``<brand>/appcast``)
+    #: so each brand's app polls its own feed instead of clobbering another's.
+    appcast_prefix: str = "appcast"
 
     def cdn_base(self) -> str:
         """Resolve the release CDN base, deferring to deploy_config if unset."""
@@ -252,8 +257,8 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             "releases": releases,
         }
         body = json.dumps(appcast, indent=2).encode()
-        live_key = f"appcast/v1/{platform}.json"
-        archive_key = f"appcast/archive/{timestamp}/{platform}.json"
+        live_key = f"{config.appcast_prefix}/v1/{platform}.json"
+        archive_key = f"{config.appcast_prefix}/archive/{timestamp}/{platform}.json"
         s3.put_object(
             Bucket=config.bucket,
             Key=live_key,
@@ -274,13 +279,13 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
         ).encode()
         s3.put_object(
             Bucket=config.bucket,
-            Key=f"appcast/v1/{platform}.xml",
+            Key=f"{config.appcast_prefix}/v1/{platform}.xml",
             Body=xml_body,
             ContentType="application/xml",
         )
         s3.put_object(
             Bucket=config.bucket,
-            Key=f"appcast/archive/{timestamp}/{platform}.xml",
+            Key=f"{config.appcast_prefix}/archive/{timestamp}/{platform}.xml",
             Body=xml_body,
             ContentType="application/xml",
         )

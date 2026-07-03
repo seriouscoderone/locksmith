@@ -18,6 +18,11 @@ def test_artifact_prefix_from_brandlib(monkeypatch):
     assert brand.artifact_prefix() == "Usurance"
 
 
+def test_appcast_prefix_from_brandlib(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(0, "usurance/appcast\n"))
+    assert brand.appcast_prefix() == "usurance/appcast"
+
+
 def test_website_from_brandlib(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(0, "https://usurance.com\n"))
     assert brand.website() == "https://usurance.com"

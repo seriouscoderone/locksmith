@@ -41,6 +41,10 @@ def release_prefix() -> str:
     return _brandlib_id("release_prefix")
 
 
+def appcast_prefix() -> str:
+    return _brandlib_id("appcast_prefix")
+
+
 def artifact_prefix() -> str:
     return _brandlib_id("artifact_prefix")
 

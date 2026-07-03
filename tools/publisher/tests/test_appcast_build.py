@@ -88,13 +88,18 @@ def test_appcast_urls_use_brand_prefix(monkeypatch):
         release_prefix="usurance/releases",
         release_notes_base="https://usurance.com",
         brand_title="Usurance",
+        appcast_prefix="usurance/appcast",
     )
     generate_and_upload_appcasts(s3=s3, config=config)
 
     # enumeration used the branded prefix
     assert s3.seen_prefix == "usurance/releases"
 
-    macos = json.loads(s3.puts["appcast/v1/macos.json"].decode())
+    # the appcast itself lands under the brand's namespace — NOT the shared
+    # appcast/v1/ key — so Usurance's app polls its own feed and does not
+    # clobber Locksmith's.
+    macos = json.loads(s3.puts["usurance/appcast/v1/macos.json"].decode())
+    assert "appcast/v1/macos.json" not in s3.puts  # never the shared locksmith key
     rel = macos["releases"][0]
     assert rel["artifact_url"].endswith("/usurance/releases/0.3.0/Usurance-0.3.0.dmg")
     assert rel["anchor_url"].endswith("/usurance/releases/0.3.0/release-anchor-0.3.0.cesr")
@@ -102,8 +107,10 @@ def test_appcast_urls_use_brand_prefix(monkeypatch):
     assert rel["release_notes_url"] == "https://usurance.com/releases/0.3.0"
 
     # XML feed title comes from the brand name, not the AID
-    macos_xml = s3.puts["appcast/v1/macos.xml"].decode()
+    macos_xml = s3.puts["usurance/appcast/v1/macos.xml"].decode()
     assert "Usurance" in macos_xml and "EPub" not in macos_xml
+    # archive is namespaced too (history stays per-brand)
+    assert any(k.startswith("usurance/appcast/archive/") for k in s3.puts)
 
 
 def test_appcast_urls_default_to_locksmith(monkeypatch):

@@ -242,10 +242,12 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
             release_prefix=brand.release_prefix(),
             release_notes_base=brand.website(),
             brand_title=brand.artifact_prefix(),
+            appcast_prefix=brand.appcast_prefix(),
         ),
     )
-    click.echo(f"published s3://{bucket}/appcast/v1/macos.json")
-    click.echo(f"published s3://{bucket}/appcast/v1/windows.json")
+    _pfx = brand.appcast_prefix()
+    click.echo(f"published s3://{bucket}/{_pfx}/v1/macos.json")
+    click.echo(f"published s3://{bucket}/{_pfx}/v1/windows.json")
 
 
 @cli.command("anchor")
@@ -286,6 +288,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     from . import brand
     artifact_prefix = brand.artifact_prefix()
     release_prefix = brand.release_prefix()
+    appcast_prefix = brand.appcast_prefix()
     aid = _read_publisher_aid(name=name, base=base, bran=_bran(bran_env))
 
     out = Path(out_dir)
@@ -321,16 +324,16 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
 
     s3.upload_release(bucket=bucket, kel=kel, anchors={anchor_said: anchor_bytes},
                       appcast=_json("macos", macos_sha256, "dmg"),
-                      appcast_key="appcast/v1/macos.json")
-    s3.put_object(bucket=bucket, key="appcast/v1/windows.json",
+                      appcast_key=f"{appcast_prefix}/v1/macos.json")
+    s3.put_object(bucket=bucket, key=f"{appcast_prefix}/v1/windows.json",
                   data=_json("windows", windows_sha256, "msi"),
                   content_type="application/json")
-    s3.put_object(bucket=bucket, key="appcast/v1/macos.xml",
+    s3.put_object(bucket=bucket, key=f"{appcast_prefix}/v1/macos.xml",
                   data=_xml("dmg"), content_type="application/xml")
-    s3.put_object(bucket=bucket, key="appcast/v1/windows.xml",
+    s3.put_object(bucket=bucket, key=f"{appcast_prefix}/v1/windows.xml",
                   data=_xml("msi"), content_type="application/xml")
     click.echo(f"published v{version}: publisher/v1/kel.cesr + anchors/{anchor_said}.cesr "
-               f"+ appcast/v1/{{macos,windows}}.{{json,xml}}")
+               f"+ {appcast_prefix}/v1/{{macos,windows}}.{{json,xml}}")
 
 
 if __name__ == "__main__":

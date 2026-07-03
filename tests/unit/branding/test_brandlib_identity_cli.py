@@ -35,6 +35,11 @@ def test_release_prefix():
     assert _run("release_prefix", "usurance").stdout.strip() == "usurance/releases"
 
 
+def test_appcast_prefix():
+    assert _run("appcast_prefix", "locksmith").stdout.strip() == "appcast"
+    assert _run("appcast_prefix", "usurance").stdout.strip() == "usurance/appcast"
+
+
 def test_website():
     assert _run("website", "locksmith").stdout.strip() == "https://locksmith.app"
     assert _run("website", "usurance").stdout.strip() == "https://usurance.com"

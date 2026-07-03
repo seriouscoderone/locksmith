@@ -110,6 +110,12 @@ def _identity_value(field: str, brand_id: str | None = None) -> str:
         # back-compatible `releases`; every other brand is namespaced.
         bid = m["brand"]["id"]
         return "releases" if bid == "locksmith" else f"{bid}/releases"
+    if field == "appcast_prefix":
+        # Namespace root for this brand's appcast (before /v1/ and /archive/).
+        # locksmith keeps the back-compatible `appcast`; every other brand is
+        # namespaced so its app polls its own feed, not another brand's.
+        bid = m["brand"]["id"]
+        return "appcast" if bid == "locksmith" else f"{bid}/appcast"
     if field == "website":
         return m["urls"]["website"]
     ident = m.get("identity", {})
@@ -128,7 +134,8 @@ def _main(argv: list[str]) -> int:
             print(f"unknown brand identity field: {argv[2]}", file=sys.stderr)
             return 2
     print("usage: python -m brandlib id "
-          "<display_name|artifact_prefix|bundle_id|data_dir|id|release_prefix|website>",
+          "<display_name|artifact_prefix|bundle_id|data_dir|id|release_prefix|"
+          "appcast_prefix|website>",
           file=sys.stderr)
     return 2
 
