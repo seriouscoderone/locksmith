@@ -25,3 +25,8 @@ def test_example_org_name_falls_back_to_domain():
     doc = brandlib.runtime_brand_json(m)
     # example/brand.toml omits [org], so org_name falls back to org_domain
     assert doc["org_name"] == "example.com"
+
+
+def test_runtime_json_carries_brand_id():
+    assert brandlib.runtime_brand_json(brandlib.load_brand_manifest("locksmith"))["id"] == "locksmith"
+    assert brandlib.runtime_brand_json(brandlib.load_brand_manifest("usurance"))["id"] == "usurance"

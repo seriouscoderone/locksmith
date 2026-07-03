@@ -61,3 +61,20 @@ def test_default_brand_carries_xml_feeds():
     b = branding.load_brand()
     assert b.appcast_macos_xml == "https://releases.keri.host/appcast/v1/macos.xml"
     assert b.appcast_windows_xml == "https://releases.keri.host/appcast/v1/windows.xml"
+
+
+def test_default_brand_id_is_locksmith():
+    assert branding.load_brand().id == "locksmith"
+
+
+def test_brand_id_from_injected_json(tmp_path, monkeypatch):
+    cfg = tmp_path / "brand.json"
+    cfg.write_text(json.dumps({
+        "id": "usurance", "display_name": "Usurance", "tagline": "t",
+        "org_name": "usurance.com", "org_domain": "usurance.com",
+        "website": "https://usurance.com", "support": "https://usurance.com/help",
+        "theme": {},
+    }))
+    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
+    branding._reset_cache_for_tests()
+    assert branding.brand().id == "usurance"

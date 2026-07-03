@@ -40,6 +40,7 @@ def _org_name(manifest: dict) -> str:
 def runtime_brand_json(manifest: dict) -> dict:
     """The brand.json runtime subset consumed by locksmith.core.branding."""
     return {
+        "id": manifest["brand"]["id"],
         "display_name": manifest["brand"]["display_name"],
         "tagline": manifest["brand"]["tagline"],
         "org_name": _org_name(manifest),

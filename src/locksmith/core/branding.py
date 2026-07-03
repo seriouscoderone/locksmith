@@ -28,6 +28,7 @@ class Brand:
     org_domain: str
     website: str
     support: str
+    id: str = "locksmith"
     appcast_macos_xml: str = ""
     appcast_windows_xml: str = ""
     theme: dict = field(default_factory=dict)
@@ -41,6 +42,7 @@ _DEFAULT = Brand(
     org_domain="keri.host",
     website="https://locksmith.app",
     support="https://locksmith.app/support",
+    id="locksmith",
     appcast_macos_xml="https://releases.keri.host/appcast/v1/macos.xml",
     appcast_windows_xml="https://releases.keri.host/appcast/v1/windows.xml",
     theme={
@@ -60,6 +62,7 @@ def _from_dict(doc: dict) -> Brand:
         org_domain=doc.get("org_domain", _DEFAULT.org_domain),
         website=doc.get("website", _DEFAULT.website),
         support=doc.get("support", _DEFAULT.support),
+        id=doc.get("id", _DEFAULT.id),
         appcast_macos_xml=doc.get("appcast_macos_xml", _DEFAULT.appcast_macos_xml),
         appcast_windows_xml=doc.get("appcast_windows_xml", _DEFAULT.appcast_windows_xml),
         theme=dict(doc.get("theme", {})),
