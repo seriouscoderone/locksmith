@@ -16,6 +16,52 @@ from locksmith.update.errors import (
     WitnessThresholdError,
 )
 from locksmith.update.verify import VerificationResult, verify_artifact
+from locksmith.update.kel_replay import KelState, ReplayedEvent
+from locksmith.update.verify import _assert_current_for_brand
+
+
+def _mkstate(events):
+    return KelState(publisher_aid="Epub", current_sn=events[-1].sn,
+                    current_said=events[-1].said, current_keys=("K",),
+                    next_digest="N", toad=3, events=events)
+
+
+def _mkev(sn, brand, ver):
+    rel = {"v": ver, "artifacts": []}
+    if brand is not None:
+        rel["brand"] = brand
+    return ReplayedEvent(sn=sn, said=f"E{sn}", ilk="ixn",
+                         seals=[{"release": rel}], receipts=3)
+
+
+def test_current_for_brand_passes_when_not_tip_but_same_version():
+    # Reproduces v0.2.18: Locksmith (sn=12) is NOT the tip (Usurance sn=13 is),
+    # yet it must pass because no higher Locksmith version exists.
+    st = _mkstate([_mkev(12, "locksmith", "0.2.18"), _mkev(13, "usurance", "0.2.18")])
+    _assert_current_for_brand(st, version="0.2.18", embedded_brand="locksmith",
+                              anchor_said="E12")  # no raise
+    _assert_current_for_brand(st, version="0.2.18", embedded_brand="usurance",
+                              anchor_said="E13")  # no raise
+
+
+def test_current_for_brand_rejects_cross_brand_anchor():
+    st = _mkstate([_mkev(12, "locksmith", "0.2.18")])
+    with pytest.raises(SignatureError):
+        _assert_current_for_brand(st, version="0.2.18", embedded_brand="usurance",
+                                  anchor_said="E12")
+
+
+def test_current_for_brand_rejects_freeze_when_higher_version_exists():
+    st = _mkstate([_mkev(12, "locksmith", "0.2.18"), _mkev(14, "locksmith", "0.2.19")])
+    with pytest.raises(StaleAppcastError):
+        _assert_current_for_brand(st, version="0.2.18", embedded_brand="locksmith",
+                                  anchor_said="E12")
+
+
+def test_current_for_brand_brandless_anchor_is_locksmith():
+    st = _mkstate([_mkev(12, None, "0.2.18")])
+    _assert_current_for_brand(st, version="0.2.18", embedded_brand="locksmith",
+                              anchor_said="E12")  # no raise
 
 FIXTURES = Path(__file__).resolve().parents[2] / "fixtures" / "update"
 

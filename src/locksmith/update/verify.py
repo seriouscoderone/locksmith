@@ -31,6 +31,7 @@ from keri.core import serdering
 from locksmith.update.appcast import (
     Appcast,
     Release,
+    _semver_key,
     parse_appcast,
     select_latest_for_platform,
 )
@@ -45,6 +46,7 @@ from locksmith.update.errors import (
 from locksmith.update.kel_replay import (
     KelState,
     extract_release_seal,
+    highest_version_for_brand,
     replay_kel,
 )
 
@@ -110,6 +112,30 @@ def _sha256_file(path: Path) -> tuple[str, int]:
     return h.hexdigest(), size
 
 
+def _assert_current_for_brand(state, *, version, embedded_brand, anchor_said):
+    """Brand-aware, version-based stale/spoofing defense.
+
+    Rejects (1) an anchor whose seal brand isn't this app's brand, and (2) a
+    release that a higher-version anchor for THIS brand supersedes (freeze).
+    A seal with no ``brand`` field counts as ``"locksmith"``.
+    """
+    seal = extract_release_seal(state, anchor_said=anchor_said)
+    anchor_brand = seal["release"].get("brand", "locksmith")
+    if anchor_brand != embedded_brand:
+        raise SignatureError(
+            f"anchor brand {anchor_brand!r} does not match app brand {embedded_brand!r}",
+            log_fields={"anchor_brand": anchor_brand, "embedded_brand": embedded_brand},
+        )
+    highest = highest_version_for_brand(state, embedded_brand)
+    if highest is not None and _semver_key(highest) > _semver_key(version):
+        raise StaleAppcastError(
+            f"a newer {embedded_brand} release (v{highest}) exists; "
+            f"appcast points at v{version}",
+            log_fields={"brand": embedded_brand, "latest_version": highest,
+                        "appcast_version": version},
+        )
+
+
 def verify_artifact(
     *,
     artifact_path: Path,
@@ -119,6 +145,7 @@ def verify_artifact(
     embedded_kel_sn: int,
     embedded_kel_said: str | None,
     toad: int,
+    embedded_brand: str = "locksmith",
 ) -> VerificationResult:
     """Run the full update-verification pipeline for one artifact.
 
@@ -164,37 +191,9 @@ def verify_artifact(
             },
         )
     anchor_event = matching[0]
-    if anchor_event.sn < state.current_sn:
-        # Older anchor offered as current. If the seal's version mismatches
-        # the appcast's claimed version, it's a downgrade; else it's stale.
-        try:
-            seal = extract_release_seal(state, anchor_said=rel.anchor_said)
-        except SchemaError:
-            raise StaleAppcastError(
-                f"appcast points at sn={anchor_event.sn} but KEL tip is "
-                f"sn={state.current_sn}",
-                log_fields={
-                    "anchor_sn": anchor_event.sn,
-                    "kel_tip_sn": state.current_sn,
-                },
-            )
-        if seal["release"]["v"] != rel.version:
-            raise DowngradeError(
-                f"appcast claims {rel.version} but seal says "
-                f"{seal['release']['v']}",
-                log_fields={
-                    "appcast_version": rel.version,
-                    "seal_version": seal["release"]["v"],
-                },
-            )
-        raise StaleAppcastError(
-            f"appcast points at sn={anchor_event.sn} but KEL tip is "
-            f"sn={state.current_sn}",
-            log_fields={
-                "anchor_sn": anchor_event.sn,
-                "kel_tip_sn": state.current_sn,
-            },
-        )
+    _assert_current_for_brand(state, version=rel.version,
+                              embedded_brand=embedded_brand,
+                              anchor_said=rel.anchor_said)
 
     # 6. Fetch the anchor event and confirm its SAID matches.
     anchor_raw = _fetch_url(rel.anchor_url)
