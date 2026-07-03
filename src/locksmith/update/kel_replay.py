@@ -21,6 +21,7 @@ from keri.core import eventing, parsing, serdering
 from keri.core.counting import Vrsn_1_0
 from keri.db import basing, dbing
 
+from locksmith.update.appcast import _semver_key
 from locksmith.update.errors import (
     RotationMismatchError,
     SchemaError,
@@ -203,3 +204,20 @@ def extract_release_seal(state: KelState, *, anchor_said: str) -> dict:
         f"no event in KEL matches anchor_said={anchor_said}",
         log_fields={"anchor_said": anchor_said},
     )
+
+
+def highest_version_for_brand(state: KelState, brand: str) -> str | None:
+    """Highest semver among release seals in the KEL whose brand == ``brand``.
+
+    A seal with no ``brand`` field counts as brand ``"locksmith"`` (every
+    pre-multibrand release was Locksmith). Returns ``None`` if no release seal
+    for ``brand`` exists.
+    """
+    versions = []
+    for ev in state.events:
+        for s in ev.seals:
+            if isinstance(s, dict) and "release" in s:
+                rel = s["release"]
+                if rel.get("brand", "locksmith") == brand and "v" in rel:
+                    versions.append(rel["v"])
+    return max(versions, key=_semver_key) if versions else None

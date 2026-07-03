@@ -12,6 +12,7 @@ from locksmith.update.errors import (
 )
 from locksmith.update.kel_replay import (
     KelState,
+    ReplayedEvent,
     extract_release_seal,
     replay_kel,
 )
@@ -186,3 +187,31 @@ def test_extract_release_seal_event_without_release_seal_raises():
     icp_event = next(e for e in state.events if e.sn == 0)
     with pytest.raises(SchemaError):
         extract_release_seal(state, anchor_said=icp_event.said)
+
+
+def _ev(sn, brand, ver):
+    seal = {"release": {"v": ver, "artifacts": []}}
+    if brand is not None:
+        seal["release"]["brand"] = brand
+    return ReplayedEvent(sn=sn, said=f"E{sn}", ilk="ixn", seals=[seal], receipts=3)
+
+
+def _state(events):
+    return KelState(publisher_aid="Epub", current_sn=events[-1].sn,
+                    current_said=events[-1].said, current_keys=("K",),
+                    next_digest="N", toad=3, events=events)
+
+
+def test_highest_version_for_brand_scopes_by_brand():
+    from locksmith.update.kel_replay import highest_version_for_brand
+    st = _state([_ev(10, "locksmith", "0.2.17"), _ev(12, "locksmith", "0.2.18"),
+                 _ev(13, "usurance", "0.2.18"), _ev(14, "usurance", "0.2.20")])
+    assert highest_version_for_brand(st, "locksmith") == "0.2.18"
+    assert highest_version_for_brand(st, "usurance") == "0.2.20"
+
+
+def test_highest_version_brandless_counts_as_locksmith():
+    from locksmith.update.kel_replay import highest_version_for_brand
+    st = _state([_ev(1, None, "0.1.0"), _ev(2, None, "0.2.18")])
+    assert highest_version_for_brand(st, "locksmith") == "0.2.18"
+    assert highest_version_for_brand(st, "usurance") is None
