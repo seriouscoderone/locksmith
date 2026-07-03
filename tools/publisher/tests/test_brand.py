@@ -38,3 +38,8 @@ def test_fail_loud_on_empty(monkeypatch):
     monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(0, "  \n"))
     with pytest.raises(RuntimeError):
         brand.artifact_prefix()
+
+
+def test_brand_id_from_brandlib(monkeypatch):
+    monkeypatch.setattr(subprocess, "run", lambda *a, **k: _R(0, "usurance\n"))
+    assert brand.brand_id() == "usurance"

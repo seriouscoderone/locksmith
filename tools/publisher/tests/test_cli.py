@@ -142,6 +142,7 @@ def test_anchor_invokes_anchor_release(monkeypatch, tmp_path):
                             "anchor_said": "Eanchor", "anchor_sn": 1,
                             "kel_path": str(tmp_path / "kel.cesr"),
                             "anchor_event_path": str(tmp_path / "Eanchor.cesr")})
+    monkeypatch.setattr(brand_mod, "brand_id", lambda: "locksmith")
     monkeypatch.setenv("LOCKSMITH_PUBLISHER_BRAN", "BRAN0000000000000000")
     r = CliRunner().invoke(cli_mod.cli, [
         "anchor", "--name", "pub", "--base", "/ks", "--version", "0.1.7",
@@ -151,6 +152,7 @@ def test_anchor_invokes_anchor_release(monkeypatch, tmp_path):
     assert [p for p, _ in seen["artifacts"]] == ["macos", "windows"]
     # Env bran must propagate into anchor_release kwargs.
     assert seen["bran"] == "BRAN0000000000000000"
+    assert seen["brand"] == "locksmith"
 
 
 def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):

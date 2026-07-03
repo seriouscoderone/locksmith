@@ -263,8 +263,10 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
 @click.option("--out-dir", default="out", show_default=True)
 def anchor_cmd(name, base, alias, bran_env, version, macos_path, windows_path, out_dir):
     """Sign + witness the release seal over the (served) artifacts; export the KEL."""
+    from . import brand
     info = publish.anchor_release(
         name=name, alias=alias, bran=_bran(bran_env), base=base, version=version,
+        brand=brand.brand_id(),
         artifacts=[("macos", macos_path), ("windows", windows_path)], out_dir=out_dir)
     click.echo(json.dumps(info, indent=2))
 

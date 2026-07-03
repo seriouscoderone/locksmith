@@ -31,10 +31,10 @@ def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
     return n
 
 
-def anchor_release(*, name, alias, bran, base, version,
+def anchor_release(*, name, alias, bran, base, version, brand,
                    artifacts: list[tuple[str, Path]], out_dir: str) -> dict:
     """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path}."""
-    seal = build_release_seal(version=version, artifacts=artifacts)
+    seal = build_release_seal(version=version, artifacts=artifacts, brand=brand)
     kli.kli_interact(name=name, alias=alias, bran=bran, base=base, data=json.dumps(seal))
 
     # Read the KEL back (no keys needed to read). clonePreIter yields one msg per

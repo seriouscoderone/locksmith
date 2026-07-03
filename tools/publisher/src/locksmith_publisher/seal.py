@@ -15,8 +15,8 @@ def _sha256(path: Path) -> str:
     return h.hexdigest()
 
 
-def build_release_seal(*, version: str, artifacts: list[tuple[str, Path]]) -> dict:
+def build_release_seal(*, version: str, artifacts: list[tuple[str, Path]], brand: str) -> dict:
     """artifacts = [(platform, path), ...] in publish order."""
-    return {"release": {"v": version, "artifacts": [
+    return {"release": {"brand": brand, "v": version, "artifacts": [
         {"platform": plat, "sha256": _sha256(path)} for plat, path in artifacts
     ]}}
