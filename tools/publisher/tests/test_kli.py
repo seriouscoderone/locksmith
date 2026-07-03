@@ -41,8 +41,8 @@ def test_run_redacts_secrets_in_error_message(monkeypatch):
 
     class FakeProc:
         returncode = 1
-        stderr = "boom"
-        stdout = ""
+        stderr = ""
+        stdout = "real kli error on stdout"
 
     monkeypatch.setattr(kli.subprocess, "run", lambda *a, **k: FakeProc())
     import pytest
@@ -55,6 +55,8 @@ def test_run_redacts_secrets_in_error_message(monkeypatch):
     assert "SECRETSALTVALUE" not in msg
     assert "***" in msg
     assert "init" in msg  # non-secret tokens still present
+    # stdout-only errors (keri's common case) must be surfaced, not swallowed
+    assert "real kli error on stdout" in msg
 
 
 def test_kli_resolve_oobi_argv(monkeypatch):

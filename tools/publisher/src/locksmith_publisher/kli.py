@@ -24,7 +24,11 @@ def _redact(argv: list[str]) -> list[str]:
 def _run(argv: list[str], *, check: bool = True) -> str:
     proc = subprocess.run(argv, capture_output=True, text=True)
     if check and proc.returncode != 0:
-        raise RuntimeError(f"{' '.join(_redact(argv))} failed ({proc.returncode}):\n{proc.stderr}")
+        # keri's kli reports many failures on stdout (click/print), not stderr —
+        # surface BOTH so the real error isn't swallowed. Neither carries the
+        # passcode (only argv does, and that is redacted).
+        detail = "\n".join(s for s in (proc.stderr, proc.stdout) if s and s.strip())
+        raise RuntimeError(f"{' '.join(_redact(argv))} failed ({proc.returncode}):\n{detail}")
     return proc.stdout
 
 
