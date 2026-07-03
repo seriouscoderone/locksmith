@@ -8,6 +8,7 @@ from pathlib import Path
 
 from keri import help
 
+from locksmith.core import branding
 from locksmith.core.configing import LocksmithConfig
 from locksmith.core.instancing import InstanceCoordinator
 from locksmith.core.vaulting import Vault
@@ -30,15 +31,20 @@ _VERIFY_DOWNLOAD_TIMEOUT_SEC = 120
 
 def _anchor_and_appcast_or_dark(platform: str):
     """Return the loaded ``(appcast_raw, aid, sn, said, toad, platform)`` tuple,
-    or ``None`` when DARK (no real publisher anchor injected yet).
+    or ``None`` when OFF (no enforceable publisher anchor injected yet).
 
-    Only ``FileNotFoundError`` (missing anchor) means DARK; a ``NetworkError``
-    from the appcast fetch propagates so the gate fails closed.
+    OFF means: the anchor file is missing (``FileNotFoundError``), OR it is
+    present but half-filled — no pinned KEL ``sn``/``said`` to enforce against.
+    A ``NetworkError`` from the appcast fetch propagates so the gate fails closed.
     """
     try:
-        return _load_anchor_and_appcast(platform)
+        loaded = _load_anchor_and_appcast(platform)
     except FileNotFoundError:
         return None
+    _appcast_raw, _aid, kel_sn, kel_said, _toad, _plat = loaded
+    if kel_sn is None or kel_said is None:
+        return None
+    return loaded
 
 
 def _run_verify_artifact(
@@ -60,6 +66,7 @@ def _run_verify_artifact(
         embedded_kel_sn=kel_sn,
         embedded_kel_said=kel_said,
         toad=toad,
+        embedded_brand=branding.brand().id,
     )
 
 

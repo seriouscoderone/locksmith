@@ -16,6 +16,7 @@ macOS returns ``bool`` (Sparkle's pre-download veto); Windows returns
 from __future__ import annotations
 
 import types
+from pathlib import Path
 
 import pytest
 
@@ -319,6 +320,35 @@ def test_windows_gate_blocks_and_cleans_on_verify_failure(monkeypatch, tmp_path)
     assert ok is False and version == "0.2.10"
     assert seen == []                        # no proof recorded on failure
     assert not downloaded.exists()           # temp cleaned even on failure
+
+
+def test_gate_dark_when_anchor_half_filled(monkeypatch):
+    # A present-but-incomplete anchor (null sn/said) must be treated as OFF,
+    # not fed into verify_artifact (which would raise TypeError).
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast",
+        lambda platform: ("<appcast/>", "Epub", None, None, 3, platform),
+        raising=True,
+    )
+    assert apping._anchor_and_appcast_or_dark("macos") is None
+
+
+def test_gate_returns_tuple_when_anchor_complete(monkeypatch):
+    complete = ("<appcast/>", "Epub", 5, "Esaid", 3, "macos")
+    monkeypatch.setattr(
+        apping, "_load_anchor_and_appcast", lambda platform: complete, raising=True,
+    )
+    assert apping._anchor_and_appcast_or_dark("macos") == complete
+
+
+def test_run_verify_artifact_passes_embedded_brand(monkeypatch):
+    from locksmith.core import branding
+    monkeypatch.setattr(branding, "brand", lambda: types.SimpleNamespace(id="usurance"), raising=True)
+    seen = {}
+    monkeypatch.setattr(apping, "verify_artifact", lambda **k: seen.update(k), raising=True)
+    loaded = ("<appcast/>", "Epub", 5, "Esaid", 3, "macos")
+    apping._run_verify_artifact(Path("/tmp/x"), loaded, "macos")
+    assert seen["embedded_brand"] == "usurance"
 
 
 def test_macos_gate_cleans_temp_and_propagates_verify_exception(monkeypatch, tmp_path):
