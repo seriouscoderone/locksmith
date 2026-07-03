@@ -487,6 +487,26 @@ class SendGrantDoer(doing.DoDoer):
             return
 
 
+def _send_attachment(hab, exn, atc, hby):
+    """Attachment bytes for the outbound admit exn.
+
+    Single-sig: the builder's ``atc`` (from ``protocoling.ipexAdmitExn``) is already
+    complete and CESR quadlet-aligned, so use it directly — mirrors the grant-send
+    path. Group (multisig): the fully-aggregated signatures are written to the db
+    during coordination, so re-fetch the messagized exn and strip the serder to get
+    just the aggregated attachment.
+
+    The old code always re-fetched (``serializeMessage(...)`` then ``del
+    gatc[:exn.size]``), which crashed on a ``(None, None)`` not-found tuple and could
+    emit a non-quadlet-aligned attachment ("nonintegral quadlets").
+    """
+    if isinstance(hab, habbing.GroupHab):
+        gatc = exchanging.serializeMessage(hby, exn.said)
+        del gatc[:exn.size]
+        return gatc
+    return atc
+
+
 class AdmitDoer(doing.DoDoer):
     """
     Doer for admitting credentials from IPEX grant messages.
@@ -805,10 +825,10 @@ class AdmitDoer(doing.DoDoer):
                     topic="credential",
                 )
 
-                # Serialize and send admit message with attachments
-                gatc = exchanging.serializeMessage(self.hby, exn.said)
-                del gatc[:exn.size]
-                postman.send(serder=exn, attachment=gatc)
+                # Send admit exn with the builder's own attachment (single-sig) or
+                # the aggregated multisig signatures (group hab). See _send_attachment.
+                postman.send(serder=exn,
+                             attachment=_send_attachment(hab, exn, atc, self.hby))
 
                 # Deliver message
                 doer = doing.DoDoer(doers=postman.deliver())
