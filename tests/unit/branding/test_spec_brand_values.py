@@ -21,3 +21,17 @@ def test_macos_info_plist_from_locksmith():
 
 def test_exe_name_locksmith():
     assert brandlib.exe_name(brandlib.load_brand_manifest("locksmith")) == "Locksmith"
+
+
+def test_specs_bundle_the_runtime_release_triad():
+    """Both PyInstaller specs MUST bundle all three build-generated files from
+    locksmith/release/ — publisher_anchor.json, deploy_config.json, AND
+    brand.json. If brand.json is missing, branding.load_brand() finds no
+    packaged file at runtime and falls back to the baked-in Locksmith default,
+    so a non-locksmith brand renders as "Locksmith" in the window title,
+    toolbar, and theme (the v0.2.19 Usurance bug)."""
+    for name in ("Locksmith.macos.spec", "Locksmith.windows.spec"):
+        text = (REPO_ROOT / "packaging" / name).read_text(encoding="utf-8")
+        for fname in ("publisher_anchor.json", "deploy_config.json", "brand.json"):
+            assert fname in text, f"{name} datas is missing {fname}"
+        assert '"locksmith/release"' in text, f"{name} missing locksmith/release datas dest"
