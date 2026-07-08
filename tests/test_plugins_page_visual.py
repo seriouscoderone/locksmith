@@ -52,7 +52,12 @@ def fake_app_with_states():
     return app
 
 
-def test_page_renders_all_states(qapp, fake_app_with_states):
+def test_page_renders_all_states(qapp, fake_app_with_states, monkeypatch):
+    # Isolate the on-disk plugin index: _refresh() appends installed-but-not-loaded
+    # plugins from storage.read_index(), which otherwise reads the real ~/.locksmith
+    # and makes this test depend on what's installed on the machine.
+    monkeypatch.setattr("locksmith.plugins.storage.read_index",
+                        lambda: {"plugins": []})
     page = PluginsPage(fake_app_with_states)
     page.resize(900, 700)
     page.show()
@@ -82,7 +87,13 @@ def test_page_renders_all_states(qapp, fake_app_with_states):
     page.grab().save(str(SCREENSHOT_DIR / "plugins_page_mixed_states.png"))
 
 
-def test_empty_state(qapp):
+def test_empty_state(qapp, monkeypatch):
+    # Genuine empty = no loaded plugins AND none installed on disk. _refresh()
+    # also surfaces on-disk-but-not-loaded plugins via storage.read_index(), so
+    # isolate that (the real ~/.locksmith may have plugins installed — e.g. the
+    # ui-tester harness — which would make the page non-empty).
+    monkeypatch.setattr("locksmith.plugins.storage.read_index",
+                        lambda: {"plugins": []})
     app = MagicMock()
     app.plugin_update_checker = None
     app.plugin_manager.all_states.return_value = []
