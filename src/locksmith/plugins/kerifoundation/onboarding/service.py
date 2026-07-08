@@ -15,6 +15,7 @@ from uuid import uuid4
 import pyotp
 import requests
 from keri import help
+from keri.kering import Vrsn_1_0
 from keri.app import agenting
 from keri.app.httping import CESR_ATTACHMENT_HEADER, CESR_CONTENT_TYPE, CESR_DESTINATION_HEADER
 from keri.core import exchange, parsing
@@ -1129,6 +1130,8 @@ class KFOnboardingService:
             nsith="1",
             wits=[],
             toad=0,
+            # TRANSITIONAL: hold at v1 (makeHab defaults v2); lift with serviceaid.
+            version=Vrsn_1_0,
         )
         logger.info("Created permanent local account AID %s for alias '%s'", hab.pre, alias)
         return hab
@@ -1170,6 +1173,8 @@ class KFOnboardingService:
             nsith="0",
             wits=[],
             toad=0,
+            # TRANSITIONAL: hold at v1 (makeHab defaults v2); lift with serviceaid.
+            version=Vrsn_1_0,
         )
         return hab, True
 

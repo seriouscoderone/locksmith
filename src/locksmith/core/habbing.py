@@ -384,6 +384,12 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
             'DnD': kwargs.get('DnD', False),
             'wits': kwargs.get('wits', []),
             'toad': kwargs.get('toad', '0'),
+            # TRANSITIONAL: keripy v2 ACDC issuance/registry/IPEX not implemented
+            # upstream; hold Locksmith's own events at v1. makeHab does NOT inherit
+            # hby.version (defaults v2), so pin here. Covers both the InceptDoer path
+            # (:654) and the local-delegation makeHab (:498). Lift as a unit when
+            # upstream ships v2 registry+IPEX (grep TRANSITIONAL).
+            'version': kering.Vrsn_1_0,
         }
 
         # Add delegator if specified
