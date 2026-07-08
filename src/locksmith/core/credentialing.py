@@ -376,13 +376,22 @@ class IssueCredentialDoer(doing.DoDoer):
                 _, edges_block = coring.Saider.saidify(sad=edges_block, kind=Kinds.json, label=coring.Saids.d)
 
 
+            # TRANSITIONAL (KERI v2 v1-hold): pin the ACDC to v1 via the fork's
+            # additive Credentialer.create(version=) seam. keripy's v2 ACDC
+            # issuance is stubbed upstream — proving.credential still hardcodes
+            # the v1 `ri` registry field, which the v2 SerderACDC rejects
+            # (SerializeError: Unallowed extra field 'ri'). version=Vrsn_1_0
+            # yields a valid v1 ACDC (ACDC10JSON, ri). The registry vcp/iss are
+            # already v1 (VDR stack v1-pinned upstream). Lift as a unit with
+            # serviceaid when upstream ships v2 ACDC issuance (grep TRANSITIONAL).
             creder = credentialer.create(regname=registry_name,
                                          recp=self.recipient_pre,
                                          schema=self.schema_said,
                                          source=edges_block,
                                          rules=self.rules,
                                          data=self.attributes,
-                                         private=private)
+                                         private=private,
+                                         version=Vrsn_1_0)
 
             dt = creder.attrib["dt"] if "dt" in creder.attrib else helping.nowIso8601()
             iserder = registry.issue(said=creder.said, dt=dt)
