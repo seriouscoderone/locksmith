@@ -13,7 +13,7 @@ from keri.core import scheming, coring, serdering, eventing, signing as core_sig
 from keri.core.eventing import SealEvent
 from keri.db.dbing import dgKey
 from keri.help import helping
-from keri.kering import Kinds
+from keri.kering import Kinds, Vrsn_1_0
 from keri.vdr import credentialing, verifying
 
 logger = help.ogler.getLogger(__name__)
@@ -221,8 +221,12 @@ class LoadSchemaDoer(doing.DoDoer):
             smids.remove(hab.mhab.pre)
 
             for recp in smids:  # this goes to other participants only as a signaling mechanism
+                # TRANSITIONAL (KERI v2 v1-hold): pin v1 attachment framing
+                # (gvrsn) — specialExchange sender=pre does not inherit the
+                # ghab version. Lift with serviceaid (grep TRANSITIONAL).
                 exn, atc = grouping.multisigRegistryInceptExn(ghab=hab, vcp=registry.vcp.raw, anc=anc,
-                                                              usage=f"Registry for schema {schema_title}")
+                                                              usage=f"Registry for schema {schema_title}",
+                                                              version=Vrsn_1_0)
                 postman.send(src=hab.mhab.pre,
                              dest=recp,
                              topic="multisig",

@@ -19,6 +19,7 @@ from keri import help, kering
 from keri.app import organizing, forwarding, agenting
 from keri.app.habbing import GroupHab
 from keri.core import exchange, parsing, serdering
+from keri.kering import Vrsn_1_0, Kinds
 from keri.core.serdering import SerderKERI
 from keri.db import basing
 from keri.help import helping
@@ -926,7 +927,12 @@ class ChallengeVerificationDoer(doing.DoDoer):
             payload = dict(i=self.hab_pre, words=self.challenge_words)
 
             # Create exchange message
-            exn = exchange(route='/challenge/response',attributes=payload, sender=hab.pre)
+            # TRANSITIONAL (KERI v2 v1-hold): exchange() takes sender=pre (not
+            # the hab), so it does NOT inherit the hab's v1 version — it defaults
+            # to v2 CESR-native on the v2 base. Pin v1 JSON so the challenge exn
+            # interops with v1 peers. Lift with serviceaid (grep TRANSITIONAL).
+            exn = exchange(route='/challenge/response', attributes=payload, sender=hab.pre,
+                           version=Vrsn_1_0, kind=Kinds.json)
 
             # Endorse the message
             ims = hab.endorse(serder=exn, last=False, framed=True)

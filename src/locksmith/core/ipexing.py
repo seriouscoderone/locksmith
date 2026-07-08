@@ -7,6 +7,7 @@ Dialog for granting (sending or saving) issued credentials.
 from hio.base import doing
 from keri import help
 from keri.app import organizing, signing, grouping, forwarding, habbing, agenting
+from keri.kering import Vrsn_1_0
 
 from locksmith.peer.posting import PeerAwarePoster
 from keri.app.notifying import Notifier
@@ -355,7 +356,11 @@ class SendGrantDoer(doing.DoDoer):
                 sender = hab.mhab
 
                 # Create multisig exn wrapper
-                wexn, watc = grouping.multisigExn(hab, exn=msg)
+                # TRANSITIONAL (KERI v2 v1-hold): pin v1 so the outer stream
+                # framing (gvrsn) uses v1 attachment count codes; the embedded
+                # exn body is already v1. Without this gvrsn defaults to v2.
+                # Lift with serviceaid (grep TRANSITIONAL).
+                wexn, watc = grouping.multisigExn(hab, exn=msg, version=Vrsn_1_0)
 
                 # Get signing members (excluding self)
                 smids = hab.db.signingMembers(pre=hab.pre)
@@ -760,7 +765,11 @@ class AdmitDoer(doing.DoDoer):
                 sender = hab.mhab
 
                 # Create multisig exn wrapper
-                wexn, watc = grouping.multisigExn(hab, exn=msg)
+                # TRANSITIONAL (KERI v2 v1-hold): pin v1 so the outer stream
+                # framing (gvrsn) uses v1 attachment count codes; the embedded
+                # exn body is already v1. Without this gvrsn defaults to v2.
+                # Lift with serviceaid (grep TRANSITIONAL).
+                wexn, watc = grouping.multisigExn(hab, exn=msg, version=Vrsn_1_0)
 
                 # Get signing members (excluding self)
                 smids = hab.db.signingMembers(pre=hab.pre)
