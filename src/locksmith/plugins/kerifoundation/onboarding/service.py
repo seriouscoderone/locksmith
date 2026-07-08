@@ -1419,7 +1419,7 @@ class KFOnboardingService:
                 f"Witness {witness_eid} rejected the rotation event with status {response.status_code}"
             )
 
-        hab.psr.parseOne(ims=bytearray(response.content))
+        hab.psr.parseOne(ims=bytearray(response.content), version=message_version(response.content))
         dgkey = dbing.dgKey(hab.pre, hab.kever.serder.said)
         wigs = hab.db.wigs.get(keys=dgkey)
         if len(wigs) < hab.kever.toader.num:

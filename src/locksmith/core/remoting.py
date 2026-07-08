@@ -245,9 +245,18 @@ def introduce_watcher_observed_aid(
         raise ValueError(f"Failed introducing observed AID {observed_aid} to watcher {watcher_eid}: {exc}") from exc
 
 
-async def resolve_oobi(app, pre: str, oobi: str | None = None, force=False, alias=None, cid=None, tag=None):
+async def resolve_oobi(
+        app,
+        pre: str,
+        oobi: str | None = None,
+        force=False,
+        alias=None,
+        cid=None,
+        tag=None,
+        timeout_seconds: float = 15.0,
+):
     """
-    Resolves an OOBI with the connected Vault's Habery and recreates the full Remote ID data in Organizer.
+    Resolves an OOBI with the connected Vault's Habery using a vault doer.
     This includes a workaround because resolving an OOBI resets all attributes for a Remote ID including the alias.
 
     Parameters:
@@ -258,43 +267,45 @@ async def resolve_oobi(app, pre: str, oobi: str | None = None, force=False, alia
         alias (str): The alias of the target AID to resolve the OOBI against
         cid (str): The controller AID of the target
         tag (str): The tag of the target
+        timeout_seconds (float): Maximum time to wait for the resolver doer
 
     Returns:
         bool: True if OOBI resolved successfully, False otherwise
     """
-    obr = basing.OobiRecord(date=helping.nowIso8601())
-    obr.oobialias = alias
-
-    if force:
-        app.vault.hby.db.roobi.rem(keys=(oobi,))
-
-    start_time = helping.nowUTC()
-    timeout_delta = datetime.timedelta(seconds=15)
     poll_interval = 0.125
+    vault = getattr(app, "vault", None)
+    qtask = getattr(app, "qtask", None)
 
-    app.vault.hby.db.oobis.put(keys=(oobi,), val=obr)
+    if vault is None or qtask is None:
+        raise RuntimeError("Cannot resolve an OOBI without a running vault")
 
-    while not app.vault.hby.db.roobi.get(keys=(oobi,)):
-        if helping.nowUTC() > start_time + timeout_delta:
-            logger.info(f'OOBI resolve timeout for {alias} ({oobi})')
-            return False
-        await asyncio.sleep(poll_interval)
-
-    if pre not in app.vault.hby.kevers:
-        logger.error(f'OOBI Resolution failed for alias {alias} and OOBI {oobi}, {pre} not found in KERI DB.')
-        return False
-
-    upsert_remote_id_metadata(
-        app,
-        pre,
+    doer = ResolveOobiDoer(
+        app=app,
+        pre=pre,
+        oobi=oobi,
+        force=force,
         alias=alias,
         cid=cid,
         tag=tag,
-        oobi=oobi,
+        timeout_seconds=timeout_seconds,
     )
 
-    logger.info(f'OOBI resolved: {alias} {oobi}')
-    return True
+    vault.extend([doer])
+    try:
+        loop = asyncio.get_running_loop()
+        deadline = loop.time() + timeout_seconds + poll_interval
+        while not doer.done:
+            remaining = deadline - loop.time()
+            if remaining <= 0:
+                logger.warning("OOBI resolve timeout for %s (%s)", alias, oobi)
+                return False
+            await asyncio.sleep(min(poll_interval, remaining))
+        return doer.resolved
+    finally:
+        try:
+            vault.remove([doer])
+        except Exception:
+            logger.warning("Failed removing OOBI resolver doer for %s", oobi, exc_info=True)
 
 
 def get_remote_identifiers_for_dropdown(app):
@@ -467,7 +478,6 @@ class ResolveOobiDoer(doing.DoDoer):
         self.signal_bridge = signal_bridge
         self.timeout_seconds = timeout_seconds
         self.resolved = False
-        self.completed = False
 
         doers = [doing.doify(self.resolve_do)]
 
@@ -528,11 +538,13 @@ class ResolveOobiDoer(doing.DoDoer):
                                 'success': False
                             }
                         )
-                    self.completed = True
                     return
 
                 yield self.tock
 
+            # The loop above only exits (without returning) once self.pre is in
+            # kevers, so no redundant re-check is needed here (our fork already
+            # completed the non-blocking-doer refactor upstream's PR #81 began).
             upsert_remote_id_metadata(
                 self.app,
                 self.pre,
@@ -561,7 +573,6 @@ class ResolveOobiDoer(doing.DoDoer):
 
             logger.info(f'OOBI resolved successfully: {self.alias} ({self.oobi})')
             self.resolved = True
-            self.completed = True
             return
 
         except Exception as e:
@@ -580,7 +591,6 @@ class ResolveOobiDoer(doing.DoDoer):
                         'success': False
                         }
                     )
-            self.completed = True
             return
 
 

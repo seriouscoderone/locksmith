@@ -1,3 +1,4 @@
+import asyncio
 import os
 import threading
 from types import SimpleNamespace
@@ -211,6 +212,80 @@ def test_resolve_oobi_blocking_times_out_without_live_resolution():
     )
 
     assert resolved is False
+
+
+def test_resolve_oobi_returns_false_when_doer_finishes_unresolved(monkeypatch):
+    class FakeResolveOobiDoer:
+        def __init__(self, **kwa):
+            self.kwa = kwa
+            self.done = False
+            self.resolved = False
+
+    class FakeVault:
+        def __init__(self):
+            self.extended = []
+            self.removed = []
+
+        def extend(self, doers):
+            self.extended.extend(doers)
+            doers[0].done = True
+
+        def remove(self, doers):
+            self.removed.extend(doers)
+
+    monkeypatch.setattr(remoting, "ResolveOobiDoer", FakeResolveOobiDoer)
+
+    vault = FakeVault()
+    app = SimpleNamespace(vault=vault, qtask=SimpleNamespace(run=lambda: None))
+    resolved = asyncio.run(
+        remoting.resolve_oobi(
+            app,
+            pre="AID_1",
+            oobi="http://example.test/oobi/AID_1/controller",
+            alias="witness-1",
+        )
+    )
+
+    assert resolved is False
+    assert len(vault.extended) == 1
+    assert vault.removed == vault.extended
+
+
+def test_resolve_oobi_removes_unfinished_doer_after_timeout(monkeypatch):
+    class FakeResolveOobiDoer:
+        def __init__(self, **kwa):
+            self.kwa = kwa
+            self.done = False
+            self.resolved = False
+
+    class FakeVault:
+        def __init__(self):
+            self.extended = []
+            self.removed = []
+
+        def extend(self, doers):
+            self.extended.extend(doers)
+
+        def remove(self, doers):
+            self.removed.extend(doers)
+
+    monkeypatch.setattr(remoting, "ResolveOobiDoer", FakeResolveOobiDoer)
+
+    vault = FakeVault()
+    app = SimpleNamespace(vault=vault, qtask=SimpleNamespace(run=lambda: None))
+    resolved = asyncio.run(
+        remoting.resolve_oobi(
+            app,
+            pre="AID_TIMEOUT",
+            oobi="http://example.test/oobi/AID_TIMEOUT/controller",
+            alias="timeout-witness",
+            timeout_seconds=0.0,
+        )
+    )
+
+    assert resolved is False
+    assert len(vault.extended) == 1
+    assert vault.removed == vault.extended
 
 
 def test_purge_oobi_resolution_state_removes_retry_records():

@@ -544,8 +544,12 @@ class LocksmithApplication:
         if self.rgy is not None and hasattr(self.rgy, 'reger') and self.rgy.reger is not None:
             databases_to_clear.append(('Reger', self.rgy.reger))
 
-        # Habery databases (Baser, Keeper, Configer)
-        # Use Habery.close(clear=True) which handles all three
+        # Current keripy clears the Habery LMDB stores, but does not remove
+        # the persistent Configer file. Delete it here as part of the vault.
+        if self.hby is not None and getattr(self.hby, 'cf', None) is not None:
+            databases_to_clear.append(('HaberyConfiger', self.hby.cf))
+
+        # Habery databases (Baser, Keeper)
         if self.hby is not None:
             databases_to_clear.append(('Habery', self.hby))
 

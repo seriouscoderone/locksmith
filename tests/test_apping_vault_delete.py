@@ -1,4 +1,7 @@
+from pathlib import Path
 from types import SimpleNamespace
+
+from keri.app.configing import Configer
 
 from locksmith.core.apping import LocksmithApplication
 
@@ -23,6 +26,13 @@ class FakeQTask:
         self._calls.append(("qtask.cleanup",))
 
 
+class FakeHabery(FakeCloser):
+    def __init__(self, name: str, calls: list[tuple], *, cf=None):
+        super().__init__(name, calls)
+        self.name = name
+        self.cf = cf
+
+
 def _make_app(plugin_manager, calls=None):
     app = LocksmithApplication(
         config=SimpleNamespace(
@@ -40,8 +50,7 @@ def _make_app(plugin_manager, calls=None):
         notifier=SimpleNamespace(noter=FakeCloser("vault.notifier.noter", calls)),
         hby=SimpleNamespace(name="test-vault"),
     )
-    hby = FakeCloser("hby", calls)
-    hby.name = "test-vault"
+    hby = FakeHabery("hby", calls, cf=FakeCloser("hby.cf", calls))
 
     app.name = "test-vault"
     app.vault = vault
@@ -74,6 +83,7 @@ def test_delete_vault_prepares_plugins_before_local_clear():
     assert ("vault.rep.mbx", True) in timeline
     assert ("vault.notifier.noter", True) in timeline
     assert ("rgy.reger", True) in timeline
+    assert ("hby.cf", True) in timeline
     assert ("hby", True) in timeline
     assert app.vault is None
     assert app.hby is None
@@ -103,3 +113,24 @@ def test_delete_vault_aborts_when_plugin_prepare_fails():
     assert app.vault is original_vault
     assert app.hby is original_hby
     assert app.qtask is not None
+
+
+def test_delete_vault_clears_habery_config_file(tmp_path):
+    calls: list[tuple] = []
+    cf = Configer(name="test-vault", base="", headDirPath=str(tmp_path), reopen=True)
+    cf_path = Path(cf.path)
+
+    class PluginManager:
+        def prepare_vault_deletion(self, vault):
+            calls.append(("prepare", vault))
+
+        def on_vault_closed(self, vault, *, clear=False):
+            calls.append(("plugin_close", vault, clear))
+
+    app, _ = _make_app(PluginManager(), calls=calls)
+    app.hby = FakeHabery("hby", calls, cf=cf)
+
+    success = app.delete_vault("test-vault")
+
+    assert success is True
+    assert not cf_path.exists()
