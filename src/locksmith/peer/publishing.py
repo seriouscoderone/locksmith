@@ -22,9 +22,11 @@ the dialog has been falling back to a manual endpoint field.
 from __future__ import annotations
 
 from hio.base import doing
-from keri import Vrsn_1_0, help, kering
+from keri import help, kering
 from keri.app.agenting import messenger
 from keri.core import parsing
+
+from locksmith.core.remoting import message_version
 
 logger = help.ogler.getLogger(__name__)
 
@@ -94,10 +96,17 @@ class PublishPeerRoleDoer(doing.DoDoer):
                 data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre),
             )
 
-            parsing.Parser(version=Vrsn_1_0).parse(
+            # Parse each rpy back at the version it was BUILT at. hab.reply
+            # inherits the hab's protocol version (v1 under the KERI v2 v1-hold,
+            # v2 for a v2-native AID), so a hardcoded Vrsn_1_0 parser silently
+            # fails to route a v2 rpy — nothing lands in db.ends/db.locs. Detect
+            # the version from the bytes (same message_version() pattern used in
+            # ipexing/remoting/adjudication) so the round-trip is self-consistent
+            # regardless of the hab's version.
+            parsing.Parser(version=message_version(loc_msg)).parse(
                 ims=bytearray(loc_msg), kvy=hab.kvy, rvy=hab.rvy,
             )
-            parsing.Parser(version=Vrsn_1_0).parse(
+            parsing.Parser(version=message_version(end_msg)).parse(
                 ims=bytearray(end_msg), kvy=hab.kvy, rvy=hab.rvy,
             )
 

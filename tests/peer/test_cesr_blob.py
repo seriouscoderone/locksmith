@@ -73,24 +73,31 @@ def test_import_peer_blob_roundtrips_v1_kel():
     from hio.base import doing
     from keri.app import habbing
     from keri.core import signing
+    from keri.kering import Vrsn_1_0
 
     from locksmith.peer import publishing
 
+    # Under the KERI-v2 v1-hold every Locksmith AID is v1, so peer blobs are v1
+    # streams — build v1 habs so the round-trip mirrors reality (a v2 hab would
+    # export a v2 blob, which peer mode does not yet import; see cesr_blob note).
     hby_export = habbing.Habery(
         name="exporter",
         bran="A" * 21,
         salt=signing.Salter(raw=b"export0123456789").qb64,
         temp=True,
+        version=Vrsn_1_0,
     )
     hby_import = habbing.Habery(
         name="importer",
         bran="B" * 21,
         salt=signing.Salter(raw=b"import0123456789").qb64,
         temp=True,
+        version=Vrsn_1_0,
     )
     try:
         hab = hby_export.makeHab(
-            name="alice", isith="1", icount=1, transferable=True
+            name="alice", isith="1", icount=1, transferable=True,
+            version=Vrsn_1_0,
         )
 
         # Publish peer role locally (no wits — skips the messenger path).
@@ -131,23 +138,29 @@ def test_import_peer_blob_returns_imported_aid_not_local_peer():
     from hio.base import doing
     from keri.app import habbing
     from keri.core import signing
+    from keri.kering import Vrsn_1_0
     from unittest.mock import patch
 
     from locksmith.peer import publishing
 
+    # v1-hold: all Locksmith AIDs are v1, so peer blobs are v1 streams.
     # Importer has its own exposed AID at port 5621
     hby_importer = habbing.Habery(
         name="imp", bran="A" * 21,
         salt=signing.Salter(raw=b"importer01234567").qb64, temp=True,
+        version=Vrsn_1_0,
     )
     # Exporter has alice exposed at port 5622
     hby_exporter = habbing.Habery(
         name="exp", bran="B" * 21,
         salt=signing.Salter(raw=b"exporter01234567").qb64, temp=True,
+        version=Vrsn_1_0,
     )
     try:
-        my_aid = hby_importer.makeHab(name="me", isith="1", icount=1, transferable=True)
-        their_aid = hby_exporter.makeHab(name="alice", isith="1", icount=1, transferable=True)
+        my_aid = hby_importer.makeHab(name="me", isith="1", icount=1, transferable=True,
+                                      version=Vrsn_1_0)
+        their_aid = hby_exporter.makeHab(name="alice", isith="1", icount=1, transferable=True,
+                                         version=Vrsn_1_0)
 
         # Publish peer role for both, on their own habs.
         with patch.object(publishing, "_witnesses_for", return_value=[]):

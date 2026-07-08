@@ -270,3 +270,49 @@ def test_publish_records_non_2xx_as_rejected(monkeypatch, hab_with_witnesses):
     _, _, data = complete[0]
     assert data["witnesses"][0]["status"] == 504
     assert data["witnesses"][0]["ok"] is False
+
+
+@pytest.mark.parametrize("hab_version_name", ["v1", "v2"])
+def test_publish_lands_locally_for_v1_and_v2_habs(hab_version_name):
+    """The local rpy round-trip must persist to db.ends/db.locs regardless of the
+    hab's protocol version.
+
+    hab.reply inherits the hab's version (v1 under the KERI-v2 v1-hold, v2 for a
+    v2-native AID). publishing.py parses each rpy back at the version it was built
+    at (message_version), so BOTH round-trip. With the old hardcoded Vrsn_1_0
+    parser the v2 case silently dropped — db.ends/db.locs stayed None.
+    """
+    from keri import kering
+    from keri.app import habbing
+    from keri.core import signing
+    from keri.kering import Vrsn_1_0, Vrsn_2_0
+
+    from locksmith.peer.publishing import PublishPeerRoleDoer
+
+    version = Vrsn_1_0 if hab_version_name == "v1" else Vrsn_2_0
+    hby = habbing.Habery(
+        name="pubver",
+        bran="A" * 21,
+        salt=signing.Salter(raw=b"0123456789abcdef").qb64,
+        temp=True,
+        version=version,
+    )
+    try:
+        hab = hby.makeHab(name="alice", transferable=True, version=version)
+        # sanity: the hab (and thus its rpys) is the version under test
+        expected_prefix = "KERI10" if hab_version_name == "v1" else "KERICAACAA"
+        assert hab.kever.serder.sad["v"].startswith(expected_prefix)
+
+        doer = PublishPeerRoleDoer(hby=hby, hab=hab, url="tcp://127.0.0.1:5621")
+        doing.Doist(limit=2.0, tock=0.03125, real=False).do(doers=[doer])
+
+        end = hby.db.ends.get(keys=(hab.pre, kering.Roles.peer, hab.pre))
+        loc = hby.db.locs.get(keys=(hab.pre, kering.Schemes.tcp))
+        assert end is not None and (end.enabled or end.allowed), \
+            f"peer end-role must persist for a {hab_version_name} hab"
+        assert loc is not None and loc.url == "tcp://127.0.0.1:5621", \
+            f"tcp loc must persist for a {hab_version_name} hab"
+        urls = hab.fetchUrls(eid=hab.pre, scheme=kering.Schemes.tcp)
+        assert dict(urls).get("tcp") == "tcp://127.0.0.1:5621"
+    finally:
+        hby.close()

@@ -77,11 +77,14 @@ def import_peer_blob(hby, blob: str) -> str:
     rvy = routing.Revery(db=db)
     kvy = eventing.Kevery(db=db, lax=True, local=False, rvy=rvy)
     kvy.registerReplyRoutes(router=rvy.rtr)
-    # Pin version=Vrsn_1_0: the default Parser version is KERI 2.0; the
-    # blob is built from hab.replyToOobi which serializes v1 events. The
-    # version mismatch causes Parser.allParsator to loop forever on
-    # CESR counter codes that don't exist in v2 — Wallet pegged at 100%
-    # CPU with no exception ever raised. Same fix as publishing.py.
+    # Pin version=Vrsn_1_0. Under the KERI-v2 v1-hold every Locksmith AID is v1,
+    # so a peer's hab.replyToOobi blob is a v1 stream — parse it v1. (A mismatched
+    # parser silently drops the endpoint rpys, so the AID imports with no tcp loc,
+    # or against older keripy spun Parser.allParsator at 100% CPU with no error.)
+    # NOTE: v2-native peer blobs are NOT yet supported — their KEL parses but the
+    # embedded /end/role + /loc/scheme rpys don't route into db.ends/db.locs on a
+    # combined-stream import. That lifts with the v1-hold (grep TRANSITIONAL);
+    # until then peer mode is v1-to-v1.
     parser = parsing.Parser(kvy=kvy, rvy=rvy, version=Vrsn_1_0)
 
     # Snapshot kevers BEFORE parse: walking hby.kevers after parse hits
