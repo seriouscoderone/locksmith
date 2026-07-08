@@ -86,3 +86,52 @@ def test_ensure_migrated_is_noop_when_current(v1_head):
     migrating.ensure_migrated(_NAME, "", backup_root=v1_head.parent / "b1")
     result = migrating.ensure_migrated(_NAME, "", backup_root=v1_head.parent / "b2")
     assert result is None, "an already-current vault must not be re-migrated"
+
+
+# --- Task 8: open_hby hook (migrate-on-open before the Habery) --------------
+from types import SimpleNamespace  # noqa: E402
+
+from locksmith.core import habbing  # noqa: E402
+
+
+def test_open_hby_migrates_then_opens_and_surfaces_backup(v1_head, monkeypatch):
+    """open_hby migrates the stale vault, opens the Habery cleanly, and stashes the
+    backup path on the app for the UI notice. run_vault_controller is stubbed to
+    avoid the Qt Vault; we assert the real (post-migration) Habery loaded the AIDs."""
+    captured = {}
+
+    def fake_run_vault_controller(app, hby, rgy):
+        captured["hby"] = hby
+        rgy.close()
+        return ("VAULT", "QTASK")
+
+    monkeypatch.setattr(habbing, "run_vault_controller", fake_run_vault_controller)
+    app = SimpleNamespace()
+
+    vault, qtask = habbing.open_hby(name=_NAME, base="", bran=None, app=app,
+                                    salt="0123456789abcdef")
+
+    assert (vault, qtask) == ("VAULT", "QTASK")
+    assert getattr(app, "vault_migration_backup", None) is not None
+    assert app.vault_migration_backup.exists()
+    hby = captured["hby"]
+    try:
+        assert _ALICE in hby.kevers, "alice must load after migrate-on-open"
+        assert hby.habByName("bob") is not None, "bob must load after migrate-on-open"
+    finally:
+        hby.close()
+
+
+def test_open_hby_raises_vault_migration_error_on_failure(v1_head, monkeypatch):
+    """A migration failure surfaces VaultMigrationError (backup already restored),
+    never a bricked open."""
+    def boom(*a, **k):
+        raise RuntimeError("simulated migrate failure")
+
+    monkeypatch.setattr(habbing.migrating, "ensure_migrated", boom)
+    monkeypatch.setattr(habbing, "run_vault_controller",
+                        lambda **k: pytest.fail("must not open the Habery on failure"))
+
+    with pytest.raises(habbing.VaultMigrationError, match="Could not upgrade"):
+        habbing.open_hby(name=_NAME, base="", bran=None, app=SimpleNamespace(),
+                         salt="0123456789abcdef")

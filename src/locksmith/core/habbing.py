@@ -14,8 +14,17 @@ from keri.vdr import credentialing
 
 from locksmith.core.vaulting import run_vault_controller
 from locksmith.core.grouping import GroupMultisigInceptDoer
+from locksmith.core import migrating
 
 logger = help.ogler.getLogger(__name__)
+
+
+class VaultMigrationError(Exception):
+    """A vault's DB schema could not be migrated to the running keripy version.
+
+    The pre-migration backup has been restored, so the vault is unchanged — the
+    caller should surface this to the user rather than opening a bricked vault.
+    """
 
 
 def format_bran(bran):
@@ -123,6 +132,24 @@ def open_hby(name, base, bran, app, salt=None):
                     salt = signing.Salter(raw=salt.encode("utf-8")).qb64
                 else:
                     salt = signing.Salter(raw=salt).qb64
+
+    # Migrate-on-open: an old (pre-v2) vault DB schema (e.g. keri 1.3.4 from an
+    # earlier release) makes the Habery constructor below raise keripy's schema
+    # guard — a hard brick. Migrate first, backing up, and never brick: a failed
+    # migration restores the backup and surfaces VaultMigrationError. Stashes the
+    # backup path on the app so the UI can show a one-time upgrade notice.
+    try:
+        backup = migrating.ensure_migrated(name, base)
+    except Exception as exc:  # noqa: BLE001 — backup already restored inside
+        logger.error(f"Vault migration failed for {name}: {exc}")
+        raise VaultMigrationError(
+            f"Could not upgrade the vault '{name}' to the current format. "
+            f"Your data is unchanged. Details: {exc}"
+        ) from exc
+    if backup is not None:
+        logger.info(f"Vault {name} migrated to current schema; backup at {backup}")
+        if app is not None:
+            app.vault_migration_backup = backup
 
     try:
         # TRANSITIONAL (KERI v2 v1-hold): pin the Habery to v1 so its parser
