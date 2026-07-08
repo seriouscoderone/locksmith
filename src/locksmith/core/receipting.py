@@ -29,7 +29,7 @@ from keri.core import coring, serdering
 from keri.core.counting import Codens, Counter
 from keri.core.eventing import receipt as eventing_receipt
 from keri.db import dbing
-from keri.kering import Vrsn_1_0
+from keri.kering import Kinds, Vrsn_1_0
 
 
 logger = help.ogler.getLogger(__name__)
@@ -245,7 +245,14 @@ class LocksmithReceiptor(agenting.Receiptor):
                     ("ba" in ser.ked and wit in ser.ked["ba"]):
                 propagate.extend(schemes(self.hby.db, eids=ewits))
 
-            rserder = eventing_receipt(pre=hab.pre, sn=sn, said=ser.said)
+            # TRANSITIONAL (KERI v2 v1-hold): pin the propagated receipt to v1
+            # JSON. On the v2 keripy base eventing_receipt defaults to v2
+            # CESR-native, whose raw starts with a count code (not a JSON `{`);
+            # streamCESRRequests.sniff then rejects the stream with a
+            # ColdStartError ("Expecting message counter tritet=txt"). The
+            # controller + witnesses are v1, so frame the receipt v1.
+            rserder = eventing_receipt(pre=hab.pre, sn=sn, said=ser.said,
+                                       version=Vrsn_1_0, kind=Kinds.json)
             propagate.extend(rserder.raw)
             propagate.extend(Counter(Codens.NonTransReceiptCouples,
                                      count=len(wigers), version=Vrsn_1_0).qb64b)

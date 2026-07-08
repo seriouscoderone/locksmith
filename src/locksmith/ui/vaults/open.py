@@ -5,7 +5,7 @@ locksmith.ui.vaults.open module
 Dialog for opening existing vaults
 """
 from PySide6.QtCore import Signal
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QMessageBox
 from keri import help
 from keri import kering
 
@@ -215,6 +215,13 @@ class OpenVaultDialog(LocksmithDialog):
 
             logger.info(f"Vault opened successfully: {self.vault_name}")
 
+            # One-time upgrade notice: open_hby stashes a backup path on the app
+            # when it migrated an old (pre-v2) vault DB schema on open.
+            backup = getattr(self.app, "vault_migration_backup", None)
+            if backup is not None:
+                self.app.vault_migration_backup = None
+                self._show_migration_notice(backup)
+
             # Emit signal
             self.vault_opened.emit(self.vault_name)
 
@@ -238,3 +245,20 @@ class OpenVaultDialog(LocksmithDialog):
             if claimed:
                 self.app.coordinator.release(self.vault_name)
             self.show_error(f"An unexpected error occurred: {str(ex)}")
+
+    def _show_migration_notice(self, backup_path):
+        """Show a one-time notice that the vault was upgraded to the current
+        secure format, and where its backup was saved. Non-modal and parented to
+        the main window so it survives this dialog closing. objectName is stable
+        for the UI harness (`vaultMigrationNotice`)."""
+        box = QMessageBox(self._parent_window)
+        box.setObjectName("vaultMigrationNotice")
+        box.setIcon(QMessageBox.Information)
+        box.setWindowTitle("Vault Upgraded")
+        box.setText("Your vault was upgraded to the latest secure format.")
+        box.setInformativeText(
+            f"A backup of the previous version was saved to:\n{backup_path}"
+        )
+        box.setStandardButtons(QMessageBox.Ok)
+        box.setModal(False)
+        box.show()

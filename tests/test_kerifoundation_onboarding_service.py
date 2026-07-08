@@ -616,6 +616,8 @@ def test_onboarding_service_runs_step_4_5_6_flow(tmp_path, monkeypatch):
                 "nsith": "1",
                 "wits": [],
                 "toad": 0,
+                # TRANSITIONAL: v1-hold pin on the account-hab makeHab.
+                "version": kering.Vrsn_1_0,
             },
         }
         assert app.vault.hby.make_hab_calls[1] == {
@@ -629,6 +631,8 @@ def test_onboarding_service_runs_step_4_5_6_flow(tmp_path, monkeypatch):
                 "nsith": "0",
                 "wits": [],
                 "toad": 0,
+                # TRANSITIONAL: v1-hold pin on the onboarding-auth makeHab.
+                "version": kering.Vrsn_1_0,
             },
         }
         assert rotation_calls == [

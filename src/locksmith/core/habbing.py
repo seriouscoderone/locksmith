@@ -14,8 +14,17 @@ from keri.vdr import credentialing
 
 from locksmith.core.vaulting import run_vault_controller
 from locksmith.core.grouping import GroupMultisigInceptDoer
+from locksmith.core import migrating
 
 logger = help.ogler.getLogger(__name__)
+
+
+class VaultMigrationError(Exception):
+    """A vault's DB schema could not be migrated to the running keripy version.
+
+    The pre-migration backup has been restored, so the vault is unchanged — the
+    caller should surface this to the user rather than opening a bricked vault.
+    """
 
 
 def format_bran(bran):
@@ -124,8 +133,35 @@ def open_hby(name, base, bran, app, salt=None):
                 else:
                     salt = signing.Salter(raw=salt).qb64
 
+    # Migrate-on-open: an old (pre-v2) vault DB schema (e.g. keri 1.3.4 from an
+    # earlier release) makes the Habery constructor below raise keripy's schema
+    # guard — a hard brick. Migrate first, backing up, and never brick: a failed
+    # migration restores the backup and surfaces VaultMigrationError. Stashes the
+    # backup path on the app so the UI can show a one-time upgrade notice.
     try:
-        hby = habbing.Habery(name=name, bran=bran, free=True, cf=None, base=base, salt=salt)
+        backup = migrating.ensure_migrated(name, base)
+    except Exception as exc:  # noqa: BLE001 — backup already restored inside
+        logger.error(f"Vault migration failed for {name}: {exc}")
+        raise VaultMigrationError(
+            f"Could not upgrade the vault '{name}' to the current format. "
+            f"Your data is unchanged. Details: {exc}"
+        ) from exc
+    if backup is not None:
+        logger.info(f"Vault {name} migrated to current schema; backup at {backup}")
+        if app is not None:
+            app.vault_migration_backup = backup
+
+    try:
+        # TRANSITIONAL (KERI v2 v1-hold): pin the Habery to v1 so its parser
+        # (hby.psr) and Kevery (hby.kvy) interpret Locksmith's own v1 events +
+        # v1 witness receipts with v1 CESR attachment framing. Without this the
+        # v2 keripy base defaults hby.psr to v2 and misreads inbound v1
+        # receipts (they never land as wigs). makeHab still needs its own
+        # per-call v1 pin (it does NOT inherit hby.version). The DB schema axis
+        # is independent (stays v2 — driven by keri.__version__). Lift as a
+        # unit with serviceaid when upstream ships v2 registry+IPEX.
+        hby = habbing.Habery(name=name, bran=bran, free=True, cf=None, base=base,
+                             salt=salt, version=kering.Vrsn_1_0)
     except kering.AuthError:
         logger.error(f'Passcode incorrect for {name}')
         raise
@@ -384,6 +420,12 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
             'DnD': kwargs.get('DnD', False),
             'wits': kwargs.get('wits', []),
             'toad': kwargs.get('toad', '0'),
+            # TRANSITIONAL: keripy v2 ACDC issuance/registry/IPEX not implemented
+            # upstream; hold Locksmith's own events at v1. makeHab does NOT inherit
+            # hby.version (defaults v2), so pin here. Covers both the InceptDoer path
+            # (:654) and the local-delegation makeHab (:498). Lift as a unit when
+            # upstream ships v2 registry+IPEX (grep TRANSITIONAL).
+            'version': kering.Vrsn_1_0,
         }
 
         # Add delegator if specified

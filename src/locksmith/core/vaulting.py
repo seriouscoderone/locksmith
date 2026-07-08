@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer
 from hio.base import doing
 from hio.help import decking
 from keri import help
+from keri.kering import Vrsn_1_0
 from keri.app import (
     agenting,
     organizing,
@@ -75,7 +76,11 @@ class Vault(doing.DoDoer):
             if (hab := self.hby.habByName(self.pluginSettings.locksmith_alias, ns="settings")) is None:
                 hab = self.hby.makeHab(name=self.pluginSettings.locksmith_alias,
                                        transferable=True,
-                                       ns="settings")
+                                       ns="settings",
+                                       # TRANSITIONAL: hold Locksmith events at v1
+                                       # (makeHab defaults v2 on the v2 keripy base);
+                                       # lift with serviceaid. grep TRANSITIONAL.
+                                       version=Vrsn_1_0)
             self.pluginSettings.locksmith_identifier = hab.pre
             self.db.pluginSettings.pin(keys=("default",), val=self.pluginSettings)
 
