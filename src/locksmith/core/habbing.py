@@ -125,7 +125,16 @@ def open_hby(name, base, bran, app, salt=None):
                     salt = signing.Salter(raw=salt).qb64
 
     try:
-        hby = habbing.Habery(name=name, bran=bran, free=True, cf=None, base=base, salt=salt)
+        # TRANSITIONAL (KERI v2 v1-hold): pin the Habery to v1 so its parser
+        # (hby.psr) and Kevery (hby.kvy) interpret Locksmith's own v1 events +
+        # v1 witness receipts with v1 CESR attachment framing. Without this the
+        # v2 keripy base defaults hby.psr to v2 and misreads inbound v1
+        # receipts (they never land as wigs). makeHab still needs its own
+        # per-call v1 pin (it does NOT inherit hby.version). The DB schema axis
+        # is independent (stays v2 — driven by keri.__version__). Lift as a
+        # unit with serviceaid when upstream ships v2 registry+IPEX.
+        hby = habbing.Habery(name=name, bran=bran, free=True, cf=None, base=base,
+                             salt=salt, version=kering.Vrsn_1_0)
     except kering.AuthError:
         logger.error(f'Passcode incorrect for {name}')
         raise

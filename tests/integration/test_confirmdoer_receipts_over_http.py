@@ -111,17 +111,27 @@ def _seed_delegable_dip(ctrl_db, src_db, dipser):
 
 @pytest.mark.integration
 def test_confirmdoer_collects_delegator_receipts_over_http():
-    with habbing.openHby(name="withby", salt=Salter(raw=b"witsaltwitsalt00").qb64) as witHby, \
-            habbing.openHby(name="delegator", salt=Salter(raw=b"0123456789abcdef").qb64) as dgrHby, \
-            habbing.openHby(name="delegate", salt=Salter(raw=b"delegatedelegate").qb64) as delHby:
+    # KERI v2 v1-hold: Locksmith holds its own events at v1, so pin every
+    # Habery (=> v1 hby.psr, matching the v1 seeding + v1 receipts), the witness
+    # (=> v1 hab + v1 inbound parser), and every makeHab to Vrsn_1_0. On the v2
+    # keripy base the unpinned defaults are v2 and the v1 seed/receipt framing
+    # would not round-trip.
+    with habbing.openHby(name="withby", salt=Salter(raw=b"witsaltwitsalt00").qb64,
+                         version=Vrsn_1_0) as witHby, \
+            habbing.openHby(name="delegator", salt=Salter(raw=b"0123456789abcdef").qb64,
+                            version=Vrsn_1_0) as dgrHby, \
+            habbing.openHby(name="delegate", salt=Salter(raw=b"delegatedelegate").qb64,
+                            version=Vrsn_1_0) as delHby:
         # Real keripy witness, HTTP only (tcpPort=None) on the canonical
         # WitnessUrls port for alias "wan".
         witDoers = indirecting.setupWitness(alias=WIT_ALIAS, hby=witHby,
-                                            tcpPort=None, httpPort=WIT_HTTP_PORT)
+                                            tcpPort=None, httpPort=WIT_HTTP_PORT,
+                                            version=Vrsn_1_0)
         witHab = witHby.habByName(WIT_ALIAS)
 
         # Delegator D with the witness in its TOAD=1 pool.
-        dgr = dgrHby.makeHab(name="D", transferable=True, wits=[witHab.pre], toad=1)
+        dgr = dgrHby.makeHab(name="D", transferable=True, wits=[witHab.pre], toad=1,
+                             version=Vrsn_1_0)
 
         # Let D resolve the witness HTTP URL.
         _seed_wit_ends(dgrHby.db, witHab)
@@ -134,7 +144,8 @@ def test_confirmdoer_collects_delegator_receipts_over_http():
         assert dgr.pre in witHby.kevers
 
         # Delegate G's delegated inception (delpre = D).
-        dele = delHby.makeHab(name="G", transferable=True, delpre=dgr.pre)
+        dele = delHby.makeHab(name="G", transferable=True, delpre=dgr.pre,
+                              version=Vrsn_1_0)
         dipser = dele.kever.serder
 
         # Place G's pending dip into D's delegable escrow (evts + delegables),
