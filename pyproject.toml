@@ -53,7 +53,10 @@ dependencies = [
     # Git-only (not published to PyPI): the serverless mailbox client lives in its
     # own public repo. Pin like `keri` above so CI/packaged builds can install it;
     # its transitive bare `keri` is satisfied by the top-level fork pin.
-    "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@main",
+    # Pinned to an exact commit (not @main) so a moving main can't drop the
+    # DbTopsCursorStore export locksmith imports (core/mailbox_cursor.py) —
+    # bump this hash deliberately when adopting newer mailbox-lib changes.
+    "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@c8dbdd79d94d57da2ebd58ca9cea8f62571f805b",
 ]
 
 [project.optional-dependencies]

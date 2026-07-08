@@ -64,7 +64,17 @@ def test_installs_build_macos_extras():
     assert ".[build-macos]" in src or "[build-macos]" in src
 
 
-def test_bundle_id_is_host_keri_locksmith():
+def test_bundle_id_is_brand_derived_and_locksmith_is_host_keri_locksmith():
+    # Since the multi-brand matrix, bundle_id is resolved PER BRAND via
+    # `brandlib id bundle_id` rather than hardcoded in the workflow. Verify the
+    # workflow derives it (no hardcoded/placeholder id) AND that the locksmith
+    # brand still resolves to the real value.
     src = WORKFLOW.read_text()
-    assert "host.keri.locksmith" in src
+    assert "brandlib id bundle_id" in src
     assert "com.CHANGEME.locksmith" not in src
+
+    import importlib
+    import sys
+    sys.path.insert(0, str(WORKFLOW.parents[2] / "packaging"))
+    brandlib = importlib.import_module("brandlib")
+    assert brandlib._identity_value("bundle_id", "locksmith") == "host.keri.locksmith"
