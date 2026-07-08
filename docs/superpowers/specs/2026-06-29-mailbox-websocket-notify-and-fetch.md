@@ -290,17 +290,31 @@ while idle.
   `connectionId`. **Idempotent**; never assume it runs (best-effort).
 - **subscribe** via `$default` (`ws_default_fn`): **heavy**.
   1. Parse JSON envelope `{"action":"subscribe", "qry":"<qb64 CESR>"}`.
-  2. **Verify the embedded signed `qry`** with the same machinery the REST handler
-     uses — `_hby.psr.parse(ims=..., framed=True)`, then extract `q.pre` /
-     `q.topics` (reuse `_detect_mbx_query` logic, `:369-383`). If the signature
-     can't be verified against a known KEL, **do not register**; reply with an
-     error frame.
+  2. **Accept the embedded `qry` with EXACTLY the native mailbox acceptance check**
+     (reuse `_detect_mbx_query`, `:369-383`): it must be a well-formed `qry r=/mbx`
+     and its mailbox owner `q["i"]` (canonical; or `q["pre"]`) must be a known AID
+     (`pre in _hby.kevers`) — mirroring keripy's `Kevery.processQuery`
+     (`escrowQueryNotFoundEvent` when `pre not in kevers`). If not, reply with an
+     error frame and **do not register**.
   3. `PutItem` the registry row `{connectionId, pre, topics, connectedAt,
      expireAt}`.
   4. Optionally push an initial nudge so the client drains any backlog immediately
      (or let the client do one fetch right after subscribe — §7).
 - The KERI `qry` stays a signed CESR blob carried inside the JSON envelope. We
   transport the existing signed `qry` over WS; we do not invent a new auth scheme.
+
+> **DECISION REVISION (2026-06-30, native parity):** an earlier draft of step 2
+> said "verify the embedded signed `qry`… if the signature can't be verified, do
+> not register." That was **dropped** as a non-native invention. keripy's own
+> mailbox (`Kevery.processQuery`, `parsing.py:1463`) does **not** cryptographically
+> verify the `qry` signature — acceptance is structural + `q["i"] in kevers`. To
+> BE KERI NATIVE, the WS subscribe applies that **same** check and **no signer↔owner
+> binding** — the serverless mailbox has the identical trust model as the live
+> federation witnesses. Consequence (accepted): anyone who knows an AID can
+> subscribe/drain its mailbox, exactly as in native KERI (contents are
+> sender-signed; privacy, if needed, comes from sealed/encrypted payloads — a
+> separate, explicit, future KERI-native mechanism, NOT a subscribe gate). Abuse/
+> compute is handled by **WAF rate-limiting (fast-follow)**, not this gate.
 
 ### 5.4 The fetch (one-shot drain) — REPLACES the long-poll
 
