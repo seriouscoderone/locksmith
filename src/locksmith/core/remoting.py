@@ -6,7 +6,6 @@ Functions and services for resolving OOBIs and managing remote identifiers
 """
 import asyncio
 import datetime
-import time
 from typing import TYPE_CHECKING
 
 from keri.app.forwarding import StreamPoster
@@ -334,11 +333,14 @@ def get_remote_identifiers_for_dropdown(app):
 
 
 def resolve_oobi_sync(app, pre: str | None, oobi: str | None = None, force=False, alias=None, cid=None, tag=None):
-    """
-    Synchronous wrapper to resolve an OOBI using a Doer.
+    """Schedule an OOBI resolution on the vault's doer chain and return the
+    running ``ResolveOobiDoer`` immediately (fire-and-forget; NON-blocking).
 
-    For async operations in the vault's doer chain, use ResolveOobiDoer directly.
-    For immediate resolution with blocking, use this function.
+    The doer is already ``vault.extend``-ed here, so it runs on the vault's Doist
+    alongside the Oobiery — the caller does not schedule it. Poll ``doer.resolved``
+    / ``doer.done`` for the outcome. For a value-returning wait, use
+    ``await resolve_oobi(...)`` (async) or ``resolve_oobi_blocking(...)`` (sync,
+    non-UI).
 
     Parameters:
         app: Application instance with vault access
@@ -350,7 +352,7 @@ def resolve_oobi_sync(app, pre: str | None, oobi: str | None = None, force=False
         tag (str): The tag of the target
 
     Returns:
-        ResolveOobiDoer: The doer instance (add to vault.extend() to run)
+        ResolveOobiDoer: the scheduled, already-running doer.
     """
     doer = ResolveOobiDoer(
         app=app,
@@ -378,57 +380,35 @@ def resolve_oobi_blocking(
         timeout_seconds: float = 15.0,
         tock: float = 0.125,
 ):
-    """Resolve an OOBI synchronously without blocking the UI event loop."""
+    """Resolve an OOBI synchronously by driving ``ResolveOobiDoer`` to completion
+    on a private ``Doist``; return True iff the AID landed in ``hby.kevers``.
 
-    qtask = getattr(app, "qtask", None)
-    if qtask is None:
-        doer = ResolveOobiDoer(
-            app=app,
-            pre=pre,
-            oobi=oobi,
-            force=force,
-            alias=alias,
-            cid=cid,
-            tag=tag,
-            timeout_seconds=timeout_seconds,
-        )
-        doing.Doist(tock=tock, real=True).do(doers=[doer], limit=timeout_seconds + tock)
-        return doer.resolved
+    BLOCKS the calling thread until resolution or timeout — for non-UI contexts
+    (CLI, scripts, tests) ONLY. Do NOT call from the Qt main thread: it would
+    stall the UI and the vault's own doer loop. Async UI code should
+    ``await resolve_oobi(...)``; fire-and-forget UI code should use
+    ``resolve_oobi_sync(...)``.
 
-    obr = basing.OobiRecord(date=helping.nowIso8601())
-    obr.oobialias = alias
+    All the resolution logic — writing the OOBI, the roobi-race-safe wait on
+    ``hby.kevers`` (NOT the early Oobiery marker), and the metadata upsert — lives
+    in ``ResolveOobiDoer``. This is a thin synchronous driver over it, so that
+    behavior has a single source of truth.
 
-    if force:
-        app.vault.hby.db.roobi.rem(keys=(oobi,))
-        logger.info(f"Forcing re-resolution of OOBI: {oobi}")
-
-    app.vault.hby.db.oobis.put(keys=(oobi,), val=obr)
-    logger.info(f"OOBI written to database: {alias} ({oobi})")
-
-    start_time = helping.nowUTC()
-    timeout_delta = datetime.timedelta(seconds=timeout_seconds)
-    sleep_interval = max(tock, 0.05)
-
-    # keripy ≥ 2.0 writes the `roobi` record with state='resolved' as soon as
-    # the Oobiery finishes the HTTP fetch — before Kevery has routed the
-    # parsed CESR events into hby.kevers. Wait for the positive signal
-    # (presence in kevers), not the Oobiery marker.
-    while pre not in app.vault.hby.kevers:
-        if helping.nowUTC() > start_time + timeout_delta:
-            logger.warning("OOBI resolve timeout for %s (%s)", alias, oobi)
-            return False
-        time.sleep(sleep_interval)
-
-    upsert_remote_id_metadata(
-        app,
-        pre,
+    Returns:
+        bool: True if resolved (``pre`` in ``hby.kevers``), False on timeout.
+    """
+    doer = ResolveOobiDoer(
+        app=app,
+        pre=pre,
+        oobi=oobi,
+        force=force,
         alias=alias,
         cid=cid,
         tag=tag,
-        oobi=oobi,
+        timeout_seconds=timeout_seconds,
     )
-    logger.info(f"OOBI resolved: {alias} {oobi}")
-    return True
+    doing.Doist(tock=tock, real=True).do(doers=[doer], limit=timeout_seconds + tock)
+    return doer.resolved
 
 
 class ResolveOobiDoer(doing.DoDoer):
