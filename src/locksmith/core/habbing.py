@@ -317,6 +317,10 @@ def list_eligible_local_identifiers(app):
     logger.info("Loading eligible local identifiers")
 
     hby = app.vault.hby
+    if getattr(hby, "db", None) is None or (hasattr(hby.db, "env") and hby.db.env is None):
+        logger.info("Eligible local identifier load skipped: vault database is closed")
+        return identifiers
+
     for (ns, alias), prefix in hby.db.names.getTopItemIter(keys=()):
         if ns != "":
             continue
