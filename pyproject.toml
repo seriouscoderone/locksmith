@@ -56,7 +56,7 @@ dependencies = [
     # Pinned to an exact commit (not @main) so a moving main can't drop the
     # DbTopsCursorStore export locksmith imports (core/mailbox_cursor.py) —
     # bump this hash deliberately when adopting newer mailbox-lib changes.
-    "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@c8dbdd79d94d57da2ebd58ca9cea8f62571f805b",
+    "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@f98cec69eac7aa600ededca1328e2572241eeef0",
 ]
 
 [project.optional-dependencies]
