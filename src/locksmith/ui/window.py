@@ -44,6 +44,7 @@ class LocksmithWindow(QMainWindow):
         super().__init__()
 
         self.app = LocksmithApplication(config=config)
+        self.app.on_vault_crash = self._on_vault_crash
 
         # Let an incoming "open this vault" request from another launch
         # raise this window to the front (VS Code focus-existing behavior).
@@ -560,6 +561,27 @@ class LocksmithWindow(QMainWindow):
         from locksmith.core.branding import app_title
         self.setWindowTitle(app_title(None))
         self.toolbar.set_vault_name(None)
+
+    def _on_vault_crash(self, exc):
+        """A vault background doer crashed. Tear down honestly (close + home + notice)
+        instead of leaving a live-but-dead app.vault. Wired via app.on_vault_crash and
+        invoked (deferred) from run_vault_controller's QtTask on_error hook."""
+        logger.error(f"Vault background task crashed; closing vault: {exc}")
+        if self.app.is_vault_open:
+            self._disconnect_toast_signals()
+            if self.current_toast:
+                self.current_toast.close_toast()
+            self.app.close_vault()
+        self.nav_manager.clear_navigation_stack()
+        self.nav_manager.navigate_to(Pages.HOME)
+        from locksmith.core.branding import app_title
+        self.setWindowTitle(app_title(None))
+        self.toolbar.set_vault_name(None)
+        from PySide6.QtWidgets import QMessageBox
+        QMessageBox.warning(
+            self, "Vault closed",
+            "The vault closed because a background task failed. Your data is safe — "
+            "please reopen the vault to continue.")
 
     def on_home(self):
         """Handle home icon click - close vault if open and navigate to home."""
