@@ -41,6 +41,11 @@ from locksmith.plugins.kerifoundation.watchers.register import WatcherRegisterPa
 
 logger = help.ogler.getLogger(__name__)
 
+# KERI Foundation is a distinct third-party plugin and must keep its own
+# identity regardless of the active white-label brand. This asset lives
+# OUTSIDE assets/custom/, so scripts/brand_apply.py never overwrites it.
+KF_ICON_RESOURCE = ":/assets/kerifoundation/SymbolLogo.svg"
+
 
 class KeriFoundationPlugin(VaultPlugin, WitnessProviderPlugin, AccountProviderPlugin):
     """KERI Foundation witness/watcher provider plugin.
@@ -315,7 +320,7 @@ class KeriFoundationPlugin(VaultPlugin, WitnessProviderPlugin, AccountProviderPl
         return page_key, should_push_menu
 
     def get_menu_entry(self) -> MenuButton:
-        icon = QIcon(":/assets/custom/SymbolLogo.svg")
+        icon = QIcon(KF_ICON_RESOURCE)
         return MenuButton(icon=icon, label="KERI Foundation")
 
     def get_menu_section(self) -> list[QWidget]:
@@ -662,7 +667,7 @@ class KeriFoundationPlugin(VaultPlugin, WitnessProviderPlugin, AccountProviderPl
         layout.setAlignment(Qt.AlignmentFlag.AlignTop | Qt.AlignmentFlag.AlignHCenter)
 
         icon_label = QLabel()
-        pixmap = QPixmap(":/assets/custom/SymbolLogo.svg")
+        pixmap = QPixmap(KF_ICON_RESOURCE)
         if not pixmap.isNull():
             icon_label.setPixmap(pixmap.scaled(
                 40, 40,
