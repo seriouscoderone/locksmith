@@ -243,6 +243,10 @@ class LocksmithApplication:
         self.qtask = None  # QtTask running the vault
         self.rgy = None  # Regery instance
 
+        # Set by the window (ui/window.py): called when a vault background doer crashes,
+        # so the vault is torn down honestly instead of left live-but-dead. None until set.
+        self.on_vault_crash = None
+
         # API client
         self._essr = None
 

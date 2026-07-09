@@ -11,7 +11,7 @@ from keri import help
 logger = help.ogler.getLogger(__name__)
 
 class QtTask:
-    def __init__(self, doist, timer, limit=None, tyme=None):
+    def __init__(self, doist, timer, limit=None, tyme=None, on_error=None):
         """
         A task that allows scheduling a HIO Doist to run KERIpy Doers in Qt event loop.
 
@@ -24,6 +24,7 @@ class QtTask:
         self.doist = doist
         self.timer = timer
         self.shutdown_requested = False
+        self.on_error = on_error
 
         self.doist.done = False
 
@@ -82,7 +83,10 @@ class QtTask:
         except Exception as e:
             logger.exception(f'QtTask exception: {e}')
             self.timer.stop()
-            raise
+            if self.on_error is not None:
+                self.on_error(e)
+            else:
+                raise
 
     def shutdown(self):
         """Request graceful shutdown"""

@@ -521,8 +521,16 @@ def run_vault_controller(app, hby, rgy, expire=0.0):
     tock = 0.03125  # ~31.25ms tick rate
     doist = doing.Doist(doers=doers, limit=expire, tock=tock, real=True)
 
+    def _on_doer_crash(exc):
+        # Defer: run the teardown on a fresh event-loop turn, not inside the crashed tick.
+        handler = getattr(app, "on_vault_crash", None)
+        if handler is not None:
+            QTimer.singleShot(0, lambda: handler(exc))
+        else:
+            logger.error(f"Vault doer crashed and no crash handler is set: {exc}")
+
     timer = QTimer()
-    qtask = QtTask(doist=doist, timer=timer, limit=expire)
+    qtask = QtTask(doist=doist, timer=timer, limit=expire, on_error=_on_doer_crash)
 
     timer.timeout.connect(qtask.run)
     timer.start(int(tock * 1000))  # Convert to milliseconds
