@@ -61,13 +61,32 @@ The KF plugin's other `:/assets/custom/*.png` glyphs (`identifiers.png`, etc.) a
 
 ### Why the crash (grounding for Track B)
 
-`app.vault.hby.db.env is None` means the vault's Habery LMDB env is closed. The only
-code that closes it is `AppCore.close_vault()` (`apping.py:470`, `self.hby.close()`),
-which runs at the top of `open_vault()` (`apping.py:424`). So the crash implies the KF
-onboarding page is enumerating identifiers against a vault whose db is closed — a
-stale `self._app.vault`, a mid-transition open/close, or a v2 migrate-on-open window.
-The exact trigger is unknown until reproduced, so Track B is investigate-then-fix, not
-a blind guard.
+`app.vault.hby.db.env is None` means the vault's Habery LMDB env is closed. **Root
+cause CONFIRMED (live repro on `carrier2`, 2026-07-09):** the KF crash is a *downstream
+symptom*, not a KF-plugin bug. Timeline:
+
+1. `12:22:19` vault `carrier2` opens successfully; the serverless-mailbox
+   `ServerlessStrategy` poller is scheduled on the vault's Doist.
+2. `12:22:20` on its first fetch, `keri_serverless_mailbox` `fetch_once` →
+   `build_and_post` → `hab.query` builds a v2 `qry` event whose map carries a
+   mailbox-topic label `/receipt`; on the v2 CESR-native base keri's `Labeler`
+   rejects it — `InvalidValueError: Invalid label=b'/receipt'` → `SerializeError`.
+3. That exception propagates out of the vault's Doist; hio's Doist teardown closes
+   all doers, including `HaberyDoer` → `hby.close()` → `db.env = None`. `QtTask`
+   (`core/tasking.py:82`) only logs the exception; `AppCore.close_vault()` never runs,
+   so `app.vault` still references the vault whose db is now closed.
+4. `12:23:09` clicking "KERI Foundation" → `list_eligible_local_identifiers` reads
+   `app.vault.hby.db` → env is `None` → pre-guard `AttributeError: 'NoneType' ...
+   'begin'`; post-guard, a graceful skip and the onboarding page renders.
+
+So Track B's guard (Task 2) is the correct **symptom-level** fix within this branch —
+and hardening `list_eligible_local_identifiers` (3 UI callers) against a closed db is
+right regardless. The **real root cause** — the serverless-mailbox v2 query
+`/receipt`-label `SerializeError`, plus the robustness gap where one background doer's
+exception tears down the whole vault db while `app.vault` stays referenced — is a
+larger, cross-repo v2 issue **out of scope for the KF-plugin branch**; filed separately
+(`backlog/2026-07-09-serverless-mailbox-v2-query-serializeerror.md`). No KF-plugin
+source fix is warranted.
 
 ## Track A — Brand-independent KF icon
 
