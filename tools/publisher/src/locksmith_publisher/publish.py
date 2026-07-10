@@ -39,7 +39,7 @@ def export_kel(hby, hab, *, version: str, brand: str) -> tuple[bytes, dict | Non
     anchor = None
     for sn in range(hab.kever.sn + 1):
         serder, sigers, _duple = hab.getOwnEvent(sn=sn)
-        dgkey = dbing.dgKey(hab.pre.encode(), serder.saidb)
+        dgkey = dbing.dgKey(hab.pre, serder.saidb)
         wigers = [signing.Siger(qb64b=w.qb64b)
                   for w in (hby.db.wigs.get(keys=dgkey) or [])]
         # gvrsn = the event's own protocol version; genusify once at the stream
@@ -50,7 +50,14 @@ def export_kel(hby, hab, *, version: str, brand: str) -> tuple[bytes, dict | Non
         kel.extend(msg)
         for s in serder.ked.get("a", []):
             if isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand:
-                anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(msg))
+                # Build a self-contained genusified event for the standalone anchor
+                # .cesr artifact — independently replayable.  The kel accumulator
+                # already uses genusify=(sn==0) so the anchor's ixn (sn=1) is NOT
+                # genusified there; double-genusifying the kel stream would corrupt it.
+                anchor_msg = eventing.messagize(serder, sigers=sigers, wigers=wigers,
+                                               framed=True, gvrsn=serder.pvrsn,
+                                               genusify=True)
+                anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(anchor_msg))
     return bytes(kel), anchor
 
 

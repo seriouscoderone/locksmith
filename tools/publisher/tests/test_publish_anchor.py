@@ -74,13 +74,6 @@ def test_anchor_release_returns_release_sad(tmp_path, monkeypatch):
                         lambda hby, hab, *, version, brand: (fake_kel, fake_anchor))
 
     # --- Fake hby ----------------------------------------------------------------
-    class _FakeKever2:
-        class toader:
-            num = 0  # toad=0 → receipt wait satisfied immediately
-        sn = 1
-        class serder:
-            said = fake_said
-
     class _FakeHby:
         class db:
             class wigs:
@@ -91,7 +84,7 @@ def test_anchor_release_returns_release_sad(tmp_path, monkeypatch):
         def habByName(self, alias):
             class _Hab:
                 pre = fake_pre
-                kever = _FakeKever2()
+                kever = _FakeKever()
             return _Hab()
 
         def close(self):

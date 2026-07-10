@@ -156,6 +156,24 @@ def test_export_kel_stream_starts_with_genus_code():
 # Regression guard: clonePreIter FAILS for v2 (confirming the RED state).
 # ---------------------------------------------------------------------------
 
+def test_export_kel_anchor_bytes_start_with_genus_code():
+    """The standalone anchor bytes must begin with a genus-version code '-_'.
+
+    The anchor dict's ``bytes`` are written to ``{said}.cesr`` and uploaded to
+    S3 as a self-contained genusified event — independently replayable without
+    the full KEL stream.  If genusify=False, the standalone artifact cannot be
+    parsed by a v2-aware consumer on its own.
+    """
+    with habbing.openHby(name="v2-anchor-genus-test", temp=True, bran=_BRAN) as hby:
+        hab, kel_bytes, anchor, ixn_said = _make_v2_hab_and_export(hby)
+
+    assert anchor is not None, "export_kel must find the anchor for matching version/brand"
+    assert anchor["bytes"][:2] == b"-_", (
+        f"anchor bytes must start with genus-version code '-_', "
+        f"got {anchor['bytes'][:8]!r}"
+    )
+
+
 def test_clone_pre_iter_fails_for_v2_hab():
     """Baseline: the OLD clonePreIter approach fails replay_kel on a v2 hab.
 
@@ -163,9 +181,6 @@ def test_clone_pre_iter_fails_for_v2_hab():
     upstream (keripy cloneEvtMsg) was fixed — the export_kel fix can then
     be simplified back, but the GREEN tests must still hold.
     """
-    from keri.db import dbing as _dbing
-    from keri.core import serdering as _serdering
-
     with habbing.openHby(name="v2-clone-fail-test", temp=True, bran=_BRAN) as hby:
         hab = hby.makeHab("pub", icount=1, ncount=1, wits=[], toad=0)
         hab.interact(data=_SEAL)
