@@ -1,16 +1,57 @@
 """Greenfield publisher orchestration: build seal → kli interact (sign+witness) →
-read the KEL back via clonePreIter (export + anchor lookup). No re-implemented
+read the KEL back as a genusified CESR stream (export + anchor lookup). No re-implemented
 KERI logic — kli for keys, keri lib read-only for the KEL stream."""
 import json
 import time
 from pathlib import Path
 from keri.app import agenting, habbing
-from keri.core import serdering
+from keri.core import eventing, signing
 from keri.db import dbing
 from hio.base import doing
 from .seal import build_release_seal, build_release_sad
 from . import kli
 from locksmith.update.kel_replay import replay_kel
+
+
+def export_kel(hby, hab, *, version: str, brand: str) -> tuple[bytes, dict | None]:
+    """Export the publisher's full KEL as a genusified CESR stream.
+
+    Returns ``(kel_bytes, anchor)`` where ``anchor`` is
+    ``{"said": str, "sn": int, "bytes": bytes}`` for the event whose ``a``
+    field carries the matching ``version``/``brand`` seal, or ``None`` when no
+    such anchor is found (caller should raise).
+
+    Replaces the old ``clonePreIter`` export loop.  ``clonePreIter`` /
+    ``cloneEvtMsg`` hardcode v1 CESR attachment count codes and emit no
+    genus-version code, so a v2 event body is framed with v1 attachments — a
+    self-inconsistent stream the verifier cannot re-ingest.
+
+    This loop uses ``eventing.messagize(..., gvrsn=serder.pvrsn,
+    genusify=(sn==0))`` so the stream:
+      - carries a leading genus-version count code (auto-raises the verifier's
+        ``Parser(version=Vrsn_1_0)`` to v2, per parsing.py:1030-1032), and
+      - frames each event's attachments with version-correct count codes.
+
+    Witness receipts (wigs) are included inline so the toad gate in
+    ``replay_kel`` can count them.
+    """
+    kel = bytearray()
+    anchor = None
+    for sn in range(hab.kever.sn + 1):
+        serder, sigers, _duple = hab.getOwnEvent(sn=sn)
+        dgkey = dbing.dgKey(hab.pre.encode(), serder.saidb)
+        wigers = [signing.Siger(qb64b=w.qb64b)
+                  for w in (hby.db.wigs.get(keys=dgkey) or [])]
+        # gvrsn = the event's own protocol version; genusify once at the stream
+        # head so the verifier's Parser auto-switches to the right count-code
+        # tables (parsing.py:1029-1043).
+        msg = eventing.messagize(serder, sigers=sigers, wigers=wigers,
+                                 framed=True, gvrsn=serder.pvrsn, genusify=(sn == 0))
+        kel.extend(msg)
+        for s in serder.ked.get("a", []):
+            if isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand:
+                anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(msg))
+    return bytes(kel), anchor
 
 
 def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
@@ -73,14 +114,7 @@ def anchor_release(*, name, alias, bran, base, version, brand,
         print(f"anchor: {n}/{toad} witness receipts for sn={hab.kever.sn} "
               f"before export")
 
-        kel = bytearray()
-        anchor = None
-        for msg in hby.db.clonePreIter(pre=hab.pre):
-            kel.extend(msg)
-            serder = serdering.SerderKERI(raw=bytes(msg))
-            for s in serder.ked.get("a", []):
-                if isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand:
-                    anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(msg))
+        kel, anchor = export_kel(hby, hab, version=version, brand=brand)
         if anchor is None:
             raise RuntimeError(f"no anchor event for version {version} in publisher KEL")
         pre = hab.pre

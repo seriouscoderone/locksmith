@@ -62,36 +62,37 @@ def test_anchor_release_returns_release_sad(tmp_path, monkeypatch):
         pre = fake_pre
         kever = _FakeKever()
 
-    # --- Fake wigs (receipt store) -----------------------------------------------
-    class _FakeWigs:
-        def get(self, *, keys):
-            return []  # toad=0 so empty list is still >= 0
+    # --- Fake anchor from export_kel ------------------------------------------
+    # Patch export_kel (the genusified CESR exporter) to return a minimal but
+    # structurally correct (kel_bytes, anchor) pair.  The real CESR encoding is
+    # tested by test_publish_export.py; here we only assert anchor_release's
+    # SAD-return contract.
+    fake_kel = b"fake-kel-bytes"
+    fake_anchor = dict(said=fake_said, sn=1, bytes=b"fake-anchor-event")
 
-    # --- Fake clonePreIter: yield one message whose parsed form carries our seal -
-    # Patch SerderKERI so we don't need real CESR bytes.
-    fake_msg = b"fake-cesr-event"
-
-    class _FakeSerder:
-        said = fake_said
-        sn = 1
-        ked = {"a": [{"ver": version, "brand": brand, "d": expected_sad["d"]}]}
-
-    monkeypatch.setattr(publish.serdering, "SerderKERI",
-                        lambda *, raw: _FakeSerder())
-
-    # --- Fake db -----------------------------------------------------------------
-    class _FakeDb:
-        wigs = _FakeWigs()
-
-        def clonePreIter(self, *, pre):
-            yield fake_msg
+    monkeypatch.setattr(publish, "export_kel",
+                        lambda hby, hab, *, version, brand: (fake_kel, fake_anchor))
 
     # --- Fake hby ----------------------------------------------------------------
+    class _FakeKever2:
+        class toader:
+            num = 0  # toad=0 → receipt wait satisfied immediately
+        sn = 1
+        class serder:
+            said = fake_said
+
     class _FakeHby:
-        db = _FakeDb()
+        class db:
+            class wigs:
+                @staticmethod
+                def get(*, keys):
+                    return []  # toad=0, empty wigs is fine
 
         def habByName(self, alias):
-            return _FakeHab()
+            class _Hab:
+                pre = fake_pre
+                kever = _FakeKever2()
+            return _Hab()
 
         def close(self):
             pass
