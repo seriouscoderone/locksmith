@@ -1,6 +1,14 @@
-"""Greenfield publisher orchestration: build seal → kli interact (sign+witness) →
-read the KEL back as a genusified CESR stream (export + anchor lookup). No re-implemented
-KERI logic — kli for keys, keri lib read-only for the KEL stream."""
+"""Greenfield publisher orchestration: build seal → interact (sign) + collect
+witness receipts via a stock keripy Receiptor → export the KEL as a genusified
+CESR stream (export + anchor lookup).
+
+The interaction event is created PROGRAMMATICALLY (``hab.interact``) rather than
+via ``kli interact --receipt-endpoint``: on the KERI v2 base the fork's
+``kli interact`` receipt path spins up a ``MailboxDirector(topics=['/receipt',
+…])`` whose ``/mbx`` query serializes slash-prefixed topic-map labels, which the
+v2 CESR ``Labeler`` rejects ("Invalid value while serializing"). The programmatic
+``Receiptor`` path (what ``InceptDoer``/``RotateDoer``/``ConfirmDoer`` use) has no
+such query and works on v2."""
 import json
 import time
 from pathlib import Path
@@ -9,7 +17,6 @@ from keri.core import eventing, signing
 from keri.db import dbing
 from hio.base import doing
 from .seal import build_release_seal, build_release_sad
-from . import kli
 from locksmith.update.kel_replay import replay_kel
 
 
@@ -81,22 +88,34 @@ def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
 
 def anchor_release(*, name, alias, bran, base, version, brand,
                    artifacts: list[tuple[str, Path]], out_dir: str) -> dict:
-    """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path, release_sad}."""
+    """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path, release_sad}.
+
+    Idempotent: if the latest event already anchors this (version, brand) seal
+    (e.g. a prior run created the ixn but died before its receipts landed), the
+    existing event is reused rather than duplicated.
+    """
     seal = build_release_seal(version=version, artifacts=artifacts, brand=brand)
     sad = build_release_sad(version=version, artifacts=artifacts, brand=brand)
-    kli.kli_interact(name=name, alias=alias, bran=bran, base=base, data=json.dumps(seal))
 
-    # Read the KEL back (no keys needed to read). clonePreIter yields one msg per
-    # event = event bytes + its inline attachments (sigs/wigs); SerderKERI parses
-    # the leading event. The anchor is the event whose `a` carries our release seal.
     hby = habbing.Habery(name=name, base=base, bran=bran)
     try:
         hab = hby.habByName(alias)
 
-        # Wait until the just-anchored ixn has >= toad witness receipts BEFORE the
-        # clonePreIter export. Federation receipts arrive async (witness-side
-        # eventual consistency), so a too-soon export carries an under-receipted
-        # anchor that the client gate escrows + rejects (the 0.2.4-class failure).
+        # Create the interaction event in-process (v2-native — matches the v2
+        # hab). Idempotent: skip if the latest event already carries this release
+        # seal, so a re-run after a receipt-collection failure reuses the ixn
+        # instead of appending a duplicate anchor.
+        latest = hab.kever.serder
+        already = latest.ked.get("t") == "ixn" and any(
+            isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand
+            for s in latest.ked.get("a", []))
+        if not already:
+            hab.interact(data=[seal], framed=True)
+
+        # Wait until the anchored ixn has >= toad witness receipts BEFORE the
+        # export. Federation receipts arrive async (witness-side eventual
+        # consistency), so a too-soon export carries an under-receipted anchor
+        # that the client gate escrows + rejects (the 0.2.4-class failure).
         # Re-collect each short round via a stock keripy Receiptor pass — NOT
         # WitnessReceiptor, which hangs over HTTP (see ~/code/KERI-COMMUNICATION-MODEL.md).
         toad = hab.kever.toader.num
