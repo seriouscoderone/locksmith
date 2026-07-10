@@ -46,18 +46,38 @@ def test_replay_from_inception_returns_state_at_tip():
 
 
 def test_replay_extracts_release_seal_for_known_said():
-    manifest = load_manifest()
-    state = replay_kel(
-        kel_stream=load_kel_stream(),
-        publisher_aid=manifest["publisher_aid"],
-        embedded_sn=0,
-        embedded_said=None,
-        toad=manifest["toad"],
+    """extract_release_seal finds a digest-seal (d+ver) in a replayed state.
+
+    NOTE: The CESR fixture (publisher.cesr) was built with the old
+    {"release": {...}} seal shape and will be regenerated in Task 2's fixture
+    update.  Until then this test exercises the extraction logic against a
+    synthetic digest-seal state rather than the fixture.
+    """
+    from locksmith.update.kel_replay import KelState
+    # Synthetic state with digest seal shape (new format).
+    state = KelState(
+        publisher_aid="EMUvj_PEHgrWHRRyO7JYbqk-qEvuBMFbyoq22O-7DZ4A",
+        current_sn=2,
+        current_said="EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc",
+        current_keys=("K",),
+        next_digest="N",
+        toad=3,
+        events=[
+            ReplayedEvent(
+                sn=2,
+                said="EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc",
+                ilk="ixn",
+                seals=[{"d": "Edigest101", "brand": "locksmith", "ver": "1.0.1"}],
+                receipts=3,
+            )
+        ],
     )
-    rel_101 = next(r for r in manifest["_releases"] if r["version"] == "1.0.1")
-    seal = extract_release_seal(state, anchor_said=rel_101["said"])
-    assert seal["release"]["v"] == "1.0.1"
-    assert any(a["platform"] == "macos" for a in seal["release"]["artifacts"])
+    seal = extract_release_seal(
+        state, anchor_said="EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc"
+    )
+    assert seal["ver"] == "1.0.1"
+    assert seal["brand"] == "locksmith"
+    assert "d" in seal
 
 
 def test_replay_rejects_wrong_publisher_aid():
@@ -190,9 +210,9 @@ def test_extract_release_seal_event_without_release_seal_raises():
 
 
 def _ev(sn, brand, ver):
-    seal = {"release": {"v": ver, "artifacts": []}}
+    seal = {"d": f"Edigest{sn}", "ver": ver}
     if brand is not None:
-        seal["release"]["brand"] = brand
+        seal["brand"] = brand
     return ReplayedEvent(sn=sn, said=f"E{sn}", ilk="ixn", seals=[seal], receipts=3)
 
 

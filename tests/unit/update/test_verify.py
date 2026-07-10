@@ -27,11 +27,11 @@ def _mkstate(events):
 
 
 def _mkev(sn, brand, ver):
-    rel = {"v": ver, "artifacts": []}
-    if brand is not None:
-        rel["brand"] = brand
+    # Digest seal shape: {"d", "brand", "ver"} — Task 2 / Task 5 contract.
+    # brand=None defaults to "locksmith" per spec (legacy pre-multibrand).
+    seal = {"d": f"E{sn}D", "ver": ver, "brand": brand if brand is not None else "locksmith"}
     return ReplayedEvent(sn=sn, said=f"E{sn}", ilk="ixn",
-                         seals=[{"release": rel}], receipts=3)
+                         seals=[seal], receipts=3)
 
 
 def test_current_for_brand_passes_when_not_tip_but_same_version():

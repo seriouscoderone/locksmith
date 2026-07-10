@@ -243,6 +243,7 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
             release_notes_base=brand.website(),
             brand_title=brand.artifact_prefix(),
             appcast_prefix=brand.appcast_prefix(),
+            brand_id=brand.brand_id(),
         ),
     )
     _pfx = brand.appcast_prefix()
@@ -296,6 +297,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
     out = Path(out_dir)
     kel = (out / f"{aid}-kel.cesr").read_bytes()
     anchor_bytes = (out / f"{anchor_said}.cesr").read_bytes()
+    release_sad = json.loads((out / f"{anchor_said}-sad.json").read_text())
     anchor_url = f"{cdn}/publisher/v1/anchors/{anchor_said}.cesr"
 
     from .publish import assert_kel_anchors_release
@@ -314,7 +316,7 @@ def publish_cmd(name, base, bran_env, version, anchor_said,
         rel = {"version": version, "platform": platform, "anchor_said": anchor_said,
                "anchor_url": anchor_url, "artifact_sha256": sha,
                "artifact_url": _artifact_url(cdn, version, artifact_prefix, ext, release_prefix),
-               "artifact_size": _size(ext)}
+               "artifact_size": _size(ext), "release_sad": release_sad}
         return build_appcast(publisher_aid=aid, publisher_kel_url=kel_url,
                              releases=[rel], current_version=version).encode()
 

@@ -23,6 +23,8 @@ from pathlib import Path
 
 from keri.app import habbing
 from keri.core import eventing, indexing, serdering
+from keri.core.coring import Saider
+from keri.core.counting import Vrsn_1_0
 from keri.db import dbing
 
 
@@ -45,8 +47,12 @@ def make_witnesses(suffix: str, count: int = 3) -> tuple[list[habbing.Hab], list
     hbys: list[habbing.Habery] = []
     streams: list[bytes] = []
     for i in range(count):
-        hby = habbing.Habery(name=f"fixture_w{i}_{suffix}", base="", temp=True)
-        wh = hby.makeHab(name=f"witness{i}", transferable=False, isith="1", icount=1)
+        # version=Vrsn_1_0 forces KERI10JSON... format so replay_kel (which
+        # uses Parser(version=Vrsn_1_0)) can parse the fixture.
+        hby = habbing.Habery(name=f"fixture_w{i}_{suffix}", base="", temp=True,
+                             version=Vrsn_1_0)
+        wh = hby.makeHab(name=f"witness{i}", transferable=False, isith="1", icount=1,
+                         version=Vrsn_1_0)
         hbys.append(hby)
         habs.append(wh)
         stream = b"".join(bytes(e) for e in wh.db.clonePreIter(pre=wh.pre, fn=0))
@@ -63,7 +69,8 @@ def make_publisher(
 
     kt=1, nt=1, icount=1, ncount=1. Per Phase 4 user deviation #1.
     """
-    hby = habbing.Habery(name=f"fixture_pub_{suffix}", base="", temp=True)
+    hby = habbing.Habery(name=f"fixture_pub_{suffix}", base="", temp=True,
+                         version=Vrsn_1_0)
     hab = hby.makeHab(
         name="publisher",
         transferable=True,
@@ -73,6 +80,7 @@ def make_publisher(
         ncount=1,
         wits=witness_prefixes,
         toad=toad,
+        version=Vrsn_1_0,
     )
     return hab, hby
 
@@ -122,37 +130,39 @@ def make_stub_artifact(out: Path, version: str, platform: str) -> tuple[Path, st
     return path, sha256(body)
 
 
-def build_seal(
+def build_release_sad_and_seal(
     *,
     version: str,
-    is_major: bool,
-    is_critical: bool,
-    previous_version: str | None,
+    brand: str = "locksmith",
     artifacts: list[dict],
-) -> dict:
-    """Build the anchored-seal payload per spec §7.4 / plan Task 10.
+) -> tuple[dict, dict]:
+    """Build the saidified release SAD and the corresponding digest seal.
 
-    Canonical field order: v, channel, released_at, is_major, is_critical,
-    previous_version, minimum_system_versions, artifacts, release_notes_said.
+    The release SAD shape is ``{"d", "brand", "ver", "artifacts": [{platform, sha256}]}``.
+    It is saidified so that ``sad["d"]`` is the SAID of the SAD itself.
+
+    The digest seal is ``{"d": sad["d"], "brand": ..., "ver": ...}`` — this is
+    what gets anchored in the publisher's ixn event (Task 2 / Task 5 contract).
+
+    Returns (release_sad, digest_seal).
     """
-    return {
-        "release": {
-            "v": version,
-            "channel": "stable",
-            "released_at": "2026-05-28T00:00:00Z",
-            "is_major": is_major,
-            "is_critical": is_critical,
-            "previous_version": previous_version,
-            "minimum_system_versions": {"macos": "13.0", "windows": "10.0.19041"},
-            "artifacts": artifacts,
-            "release_notes_said": "EHshFixtureReleaseNotesSAIDPlaceholderXXXXXX",
-        }
+    sad_template = {
+        "d": "",
+        "brand": brand,
+        "ver": version,
+        "artifacts": [{"platform": a["platform"], "sha256": a["sha256"]}
+                      for a in artifacts],
     }
+    _, release_sad = Saider.saidify(sad=sad_template)
+    digest_seal = {"d": release_sad["d"], "brand": brand, "ver": version}
+    return release_sad, digest_seal
 
 
 def anchor_release(pub: habbing.Hab, witnesses: list[habbing.Hab], seal: dict) -> serdering.SerderKERI:
     """Append an ixn event anchoring `seal`, attach witness wigs."""
-    msg = pub.interact(data=[seal])
+    # Vrsn_1_0 + gvrsn=Vrsn_1_0 forces KERI10JSON... format so Parser(version=Vrsn_1_0)
+    # in replay_kel can consume the event.
+    msg = pub.interact(data=[seal], version=Vrsn_1_0, gvrsn=Vrsn_1_0)
     serder = serdering.SerderKERI(raw=bytearray(msg))
     attach_wigs(pub, witnesses, serder)
     return serder
@@ -198,33 +208,55 @@ def generate_happy_path(out: Path) -> dict:
     for (v, is_major, is_critical, prev) in versions:
         mac_path, mac_sha = make_stub_artifact(out, v, "macos")
         win_path, win_sha = make_stub_artifact(out, v, "windows")
-        artifacts = [
-            {"platform": "macos", "filename": mac_path.name,
-             "sha256": mac_sha, "size": mac_path.stat().st_size},
-            {"platform": "windows", "filename": win_path.name,
-             "sha256": win_sha, "size": win_path.stat().st_size},
+        # Per-seal artifact list: only platform + sha256 (no filenames — those
+        # live in the appcast, not the KERI-anchored SAD).
+        artifacts_for_sad = [
+            {"platform": "macos", "sha256": mac_sha},
+            {"platform": "windows", "sha256": win_sha},
         ]
-        seal = build_seal(
-            version=v, is_major=is_major, is_critical=is_critical,
-            previous_version=prev, artifacts=artifacts,
+        release_sad, digest_seal = build_release_sad_and_seal(
+            version=v, artifacts=artifacts_for_sad,
         )
-        serder = anchor_release(pub, wit_habs, seal)
+        serder = anchor_release(pub, wit_habs, digest_seal)
 
         # Persist this event's bytes (single-event CESR) to anchor/.
         evt_bytes = single_event_bytes(pub, sn=sn)
         (anchor_dir / f"{v}.cesr").write_bytes(evt_bytes)
 
+        # Write the companion metadata JSON so generate_and_upload_appcasts can
+        # look up full artifact details (filename, size, min_sys_ver, etc.) that
+        # the digest seal no longer embeds.  The key mirrors what the publisher
+        # CLI uploads alongside the anchor CESR in S3.
+        anchor_meta = {
+            "release_sad": release_sad,
+            "artifacts": [
+                {"platform": "macos", "filename": mac_path.name,
+                 "sha256": mac_sha, "size": mac_path.stat().st_size},
+                {"platform": "windows", "filename": win_path.name,
+                 "sha256": win_sha, "size": win_path.stat().st_size},
+            ],
+            "released_at": "2026-05-28T00:00:00Z",
+            "minimum_system_versions": {"macos": "13.0", "windows": "10.0.19041"},
+            "is_major": is_major,
+            "is_critical": is_critical,
+        }
+        # Key mirrors: releases/{v}/release-anchor-{v}-meta.json in S3.
+        (anchor_dir / f"{v}-meta.json").write_text(
+            json.dumps(anchor_meta, indent=2) + "\n"
+        )
+
         release_records.append({
             "version": v,
             "sn": sn,
             "said": serder.said,
+            "release_sad": release_sad,
             "artifacts": {
                 "macos": {"path": str(mac_path), "sha256": mac_sha,
                           "size": mac_path.stat().st_size, "filename": mac_path.name},
                 "windows": {"path": str(win_path), "sha256": win_sha,
                             "size": win_path.stat().st_size, "filename": win_path.name},
             },
-            "released_at": seal["release"]["released_at"],
+            "released_at": "2026-05-28T00:00:00Z",
             "is_major": is_major,
             "is_critical": is_critical,
         })
@@ -259,7 +291,13 @@ def generate_happy_path(out: Path) -> dict:
 
 
 def write_appcasts(out: Path, publisher_aid: str, releases: list[dict]) -> None:
-    """Emit per-platform appcast JSON."""
+    """Emit per-platform appcast JSON.
+
+    Each release entry embeds the saidified ``release_sad`` (computed during
+    fixture generation) whose ``d`` field equals the digest seal anchored in the
+    KEL ixn event.  The appcast ``artifact_sha256`` must equal the per-platform
+    sha256 found inside that SAD (downgrade-cross-check in the verifier).
+    """
     appcast_dir = out / "appcast"
     appcast_dir.mkdir(parents=True, exist_ok=True)
     for platform, ext in [("macos", "dmg"), ("windows", "msi")]:
@@ -267,6 +305,10 @@ def write_appcasts(out: Path, publisher_aid: str, releases: list[dict]) -> None:
         rels: list[dict] = []
         for r in releases:
             a = r["artifacts"][platform]
+            # The release SAD was already saidified during KEL construction;
+            # it contains entries for ALL platforms so the verifier can find
+            # the right one by platform name.
+            release_sad = r["release_sad"]
             rels.append({
                 "version": r["version"],
                 "released_at": r["released_at"],
@@ -282,6 +324,7 @@ def write_appcasts(out: Path, publisher_aid: str, releases: list[dict]) -> None:
                 "release_notes_url": f"https://locksmith.app/releases/{r['version']}",
                 "is_major": r["is_major"],
                 "is_critical": r["is_critical"],
+                "release_sad": release_sad,
             })
         appcast = {
             "schema_version": 1,

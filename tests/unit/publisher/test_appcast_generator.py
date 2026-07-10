@@ -24,10 +24,28 @@ def _real_anchors() -> dict[str, bytes]:
     }
 
 
+def _real_anchor_metas() -> dict[str, bytes]:
+    """Pull the companion metadata JSON files for each version."""
+    return {
+        v: (FIXTURES / "anchor" / f"{v}-meta.json").read_bytes()
+        for v in ("1.0.0", "1.0.1", "1.1.0")
+    }
+
+
 def _build_s3_mock(anchors: dict[str, bytes]) -> MagicMock:
+    metas = _real_anchor_metas()
     s3 = MagicMock()
     s3.list_release_versions.return_value = sorted(anchors.keys())
-    s3.get_object.side_effect = lambda Bucket, Key: anchors[Key.split("/")[1]]
+
+    def _get_object(Bucket, Key):
+        # Key shape: "{prefix}/{version}/release-anchor-{version}{suffix}"
+        parts = Key.split("/")
+        v = parts[1]  # version segment
+        if Key.endswith("-meta.json"):
+            return metas[v]
+        return anchors[v]
+
+    s3.get_object.side_effect = _get_object
     return s3
 
 
@@ -75,9 +93,10 @@ def test_generator_retains_full_history_no_pruning():
 
 def test_generator_current_version_is_highest_semver():
     anchors = _real_anchors()
-    s3 = MagicMock()
+    # Use _build_s3_mock so meta JSON is also served (needed for new digest-seal shape).
+    s3 = _build_s3_mock(anchors)
+    # Override versions to be in non-sorted order so sort-by-semver is tested.
     s3.list_release_versions.return_value = ["1.1.0", "1.0.1", "1.0.0"]
-    s3.get_object.side_effect = lambda Bucket, Key: anchors[Key.split("/")[1]]
     captured: dict[str, bytes] = {}
     s3.put_object.side_effect = (
         lambda Bucket, Key, Body, **kw: captured.update({Key: Body})

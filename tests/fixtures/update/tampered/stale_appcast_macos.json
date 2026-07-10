@@ -1,7 +1,7 @@
 {
   "schema_version": 1,
   "channel": "stable",
-  "publisher_aid": "EMUvj_PEHgrWHRRyO7JYbqk-qEvuBMFbyoq22O-7DZ4A",
+  "publisher_aid": "EDkEDo_SJELQEmTBJM3xKdkHc_GCF37ka7NAB15qU7ZQ",
   "publisher_kel_url": "https://releases.keri.host/publisher/v1/publisher-kel.cesr",
   "current_version": "1.0.0",
   "releases": [
@@ -14,10 +14,25 @@
       "artifact_sha256": "95349d17da3a15220c62a3daa302145271a4458c9d4c8371c949cc1d46b99475",
       "artifact_size": 44,
       "anchor_url": "https://releases.keri.host/releases/1.0.0/release-anchor-1.0.0.cesr",
-      "anchor_said": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
+      "anchor_said": "EGOIKCd6lLfXgJHx1PB2DrJJJtKFrpW1yTzwm5VP_691",
       "release_notes_url": "https://locksmith.app/releases/1.0.0",
       "is_major": false,
-      "is_critical": false
+      "is_critical": false,
+      "release_sad": {
+        "d": "ELYl986EHoty3_vYiHcfeOfnbn3nyYS2CR6-dwYa9HTQ",
+        "brand": "locksmith",
+        "ver": "1.0.0",
+        "artifacts": [
+          {
+            "platform": "macos",
+            "sha256": "95349d17da3a15220c62a3daa302145271a4458c9d4c8371c949cc1d46b99475"
+          },
+          {
+            "platform": "windows",
+            "sha256": "5995aa262b86422778fb30980019038a712a000c70bc3a1976f73efead61fe7e"
+          }
+        ]
+      }
     }
   ]
 }

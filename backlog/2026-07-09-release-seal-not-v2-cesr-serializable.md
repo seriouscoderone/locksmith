@@ -1,45 +1,82 @@
-# Release seal not v2-CESR-serializable — publisher anchor fails on the v2 base
+# Release seal fails to anchor on the v2 base — publisher anchor `kli interact` fails
 
-**Filed:** 2026-07-09 (blocks the v0.2.20 *publish*; build is fine)
-**Domain:** publisher ↔ verifier seal contract × KERI-v2 (full-CESR) serialization
-**Severity:** release-blocking for publish (the in-app KERI gate has nothing to verify without a KEL anchor)
+**Filed:** 2026-07-09 (blocked the v0.2.20 *publish*; build was fine)
+**Domain:** publisher ↔ verifier seal contract × KERI-v2 (full-CESR)
+**Severity:** was release-blocking for publish
+**Status:** ✅ RESOLVED via `feat/publisher-v2-reset` (spec/plan `docs/superpowers/{specs,plans}/2026-07-09-publisher-v2-reset*`).
 
 ## Symptom
-`locksmith-publisher anchor` fails at `kli interact`:
+`locksmith-publisher anchor` failed at `kli interact`:
 ```
-kli interact --name publisher --alias publisher --base publisher --receipt-endpoint
-  --data {"release": {"brand": "locksmith", "v": "0.2.20", "artifacts":
-          [{"platform": "macos", "sha256": "…"}, {"platform": "windows", "sha256": "…"}]}}
-  failed (255):
-ERR: Invalid value while serializing
+kli interact --name publisher --alias publisher --base publisher --receipt-endpoint --data {...}
+  failed (255): ERR: Invalid value while serializing
 ```
-Raised at `keri/core/mapping.py:611` → `SerializeError("Invalid value while serializing")` (from an `InvalidValueError` in the v2 field-map serializer).
 
-## Root cause
-The release seal is a **v1-style free-form nested dict** (`tools/publisher/src/locksmith_publisher/seal.py`, `build_release_seal`):
-```python
-{"release": {"brand": brand, "v": version,
-             "artifacts": [{"platform": plat, "sha256": hex}, ...]}}
-```
-Under the **v2 full-CESR** base, the ixn `a` (anchor/seal) field is serialized via `keri/core/mapping.py`. A value that is a **nested dict / list-of-dicts** is not CESR-serializable there → `Invalid value while serializing`. This is not a kli-version problem: both the venv `kli` and the homebrew `kli` resolve keri from `~/code/keripy/src` (the v2 fork `6ab5019e`), so both reject it. 0.2.18/0.2.19 anchored the same shape only because they published on the pre-v2 keri.
+## Root cause (CORRECTED — the original theory below was DISPROVEN)
 
-## Scope of the fix (publisher AND verifier — they're one contract)
-1. **Publisher** (`seal.py` `build_release_seal`, `publish.py` `anchor_release`): emit a seal value that v2-CESR can serialize. Options to evaluate:
-   - Anchor a **SAID/digest** of the release payload (publish the full payload separately, anchor only its digest) — most v2-native.
-   - Or JSON-encode the release payload into a **single scalar string** value the mapping serializer accepts, and parse it back on read.
-   - Or use the v1-serialization hold the migration already applies elsewhere (`feat/keri-v2-migration` pinned hab inception + exns to v1 — an anchor-event v1-hold may be the smallest change).
-2. **Verifier** (`src/locksmith/update/kel_replay.py` `extract_release_seal`, and `verify.py` which reads `seal["release"]["v"|"brand"|"artifacts"]`): read whatever new shape the publisher emits. This is the brand-aware verifier from the 2026-07-03 work — keep `brand`/version/artifact-digest binding intact.
-3. Add a round-trip test on the **v2 base**: `build_release_seal(...)` → anchor via `kli interact` (or the v2 serializer directly) → `extract_release_seal(...)` returns the same version/brand/artifact digests. This is the test that was missing (the publisher runs off-CI and wasn't re-tested against v2).
+**Original (wrong) theory:** the seal was a v1-style free-form nested dict
+(`{"release": {"brand", "v", "artifacts": [...]}}`) and v2 full-CESR's field-map
+serializer (`keri/core/mapping.py`) can't serialize a nested dict / list-of-dicts
+in the ixn `a` field.
 
-## Constraints / notes
-- Must preserve the brand-aware verify semantics (per `docs/superpowers/specs/2026-07-02-multibrand-verify-brand-aware.md`): seal carries `brand`; verifier does version-based-per-brand stale defense + per-(brand,platform) artifact-digest binding.
-- The v0.2.20 built artifacts already exist in S3 (`releases/0.2.20/…`, `usurance/releases/0.2.20/…`) — once the seal is v2-serializable, re-run the publish (`/tmp/promote-0.2.20/promote.sh`); no rebuild needed. The publisher KEL is unchanged (interact failed before writing).
-- Decide who owns this: it's the publisher+verifier contract (release-tooling) intersecting v2-CESR serialization (the migration). Coordinate.
+**Why it's wrong (verified this session):** the exact seal serializes fine via
+`eventing.interact`, `hab.interact`, and a real `kli interact` on a *clean v2*
+hab. The `a` field accepts a mapping value.
 
-## Repro
+**Actual root cause:** the `publisher` hab's KEL is **v1** (`KERI10JSON` icp + the
+v1 0.2.18/0.2.19 ixns). On the v2 keripy base, `kli interact` (no `--version`)
+appends a **v2 ixn onto the v1 KEL** — a protocol-version mismatch mid-KEL. A KEL
+cannot change protocol version mid-stream; the mismatch breaks the witness-receipt
+path (`agenting.Receiptor.receipt` → `hab.msgOwnEvent`), surfacing as the generic
+serialization error. Nothing to do with the seal *shape*.
+
+## Resolution (SHIPPED)
+
+Greenfield — nobody is bound to the old v1 publisher AID — so the fix is a
+**publisher v2 reset**, done right:
+
+1. **Re-incept the publisher as a clean v2 AID** (destroy/back up the v1 keystore;
+   `kli incept --version 2.0 --receipt-endpoint`). A fresh v2 KEL takes v2 ixns
+   with no mid-stream version change. (`publisher_anchor.json` regenerated to bind
+   the new v2 AID.)
+2. **SAID-native release seal** (also more BE-KERI-NATIVE — a seal references a
+   digest, not free-form app data):
+   - Release **SAD** (saidified via `Saider.saidify`):
+     `{"d": <said>, "brand", "ver", "artifacts": [{"platform", "sha256"}, ...]}`
+     — note `ver`, **never** the reserved `v` label (`deversify` would choke).
+   - KEL anchor = a **digest seal** `{"d": <said>, "brand", "ver"}`. `brand`/`ver`
+     stay in the KEL seal so the multibrand freeze-defense
+     (`highest_version_for_brand`) is omission-resistant (reads from the tamper-proof
+     KEL, not the mutable appcast). The SAD carries the per-platform artifact detail
+     and is embedded per-release in the JSON appcast.
+3. **Genusified KEL export** (`publish.export_kel`): stock keripy `clonePreIter` /
+   `cloneEvtMsg` hardcode v1 CESR attachment count codes and emit no genus code, so
+   a v2 event body framed with v1 attachments is a self-inconsistent, unparseable
+   stream. `eventing.messagize(..., gvrsn=serder.pvrsn, genusify=(sn==0))` prepends
+   the genus-version count code, which auto-raises the verifier's
+   `Parser(version=Vrsn_1_0)` to v2 — so `update/kel_replay.replay_kel` replays a v2
+   publisher KEL **unchanged**.
+4. **Verifier** (`update/kel_replay.extract_release_seal`, `update/verify._verify_sad_against_anchor`):
+   read the `{d, brand, ver}` digest seal from the KEL, resolve the SAD from the
+   appcast, assert `Saider.saidify(SAD)["d"] == seal["d"]`, and bind the per-platform
+   sha256. Brand-aware freeze-defense preserved.
+
+## Notes
+- The brand-aware verify semantics
+  (`docs/superpowers/specs/2026-07-02-multibrand-verify-brand-aware.md`) are preserved:
+  seal carries `brand`; version-based-per-brand stale defense + per-(brand,platform)
+  artifact-digest binding.
+- The v0.2.20 built artifacts already exist in S3; re-run the publish
+  (`/tmp/promote-0.2.20/promote.sh`) after the v2 re-inception — no rebuild.
+- Registered as ✅ ON-V2 in `docs/keri-v2-hold-registry.md`, with the note that
+  stock keripy has no v2 clone-export (`kli export` is clonePreIter-only) — Locksmith
+  genusifies its own export.
+
+## Original repro (v1 keystore + v2 base)
 ```
 LOCKSMITH_PUBLISHER_BRAN=<bran> LOCKSMITH_BRAND=locksmith \
   .venv/bin/locksmith-publisher anchor --name publisher --base publisher --version 0.2.20 \
   --macos /tmp/promote-0.2.20/Locksmith-0.2.20.dmg --windows /tmp/promote-0.2.20/Locksmith-0.2.20.msi --out-dir /tmp/x
 ```
-→ `SerializeError: Invalid value while serializing`.
+→ `SerializeError: Invalid value while serializing`. Fixed by re-incepting the
+publisher at v2 (fresh v2 KEL).

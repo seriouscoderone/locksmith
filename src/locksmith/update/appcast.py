@@ -34,6 +34,7 @@ REQUIRED_REL = (
     "release_notes_url",
     "is_major",
     "is_critical",
+    "release_sad",
 )
 
 
@@ -51,6 +52,7 @@ class Release:
     release_notes_url: str
     is_major: bool
     is_critical: bool
+    release_sad: dict
 
 
 @dataclass(frozen=True)
@@ -135,6 +137,7 @@ def parse_appcast(raw: str | bytes) -> Appcast:
                 release_notes_url=r["release_notes_url"],
                 is_major=bool(r["is_major"]),
                 is_critical=bool(r["is_critical"]),
+                release_sad=r["release_sad"],
             )
         )
 

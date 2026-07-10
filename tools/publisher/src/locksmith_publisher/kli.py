@@ -44,10 +44,11 @@ def kli_incept(*, name, alias, bran, base, wits: list[str], toad: int,
     return _run(argv)
 
 
-def kli_interact(*, name, alias, bran, base, data: str) -> str:
-    argv = [KLI, "interact", "--name", name, "--alias", alias, "--base", base,
-            "--passcode", bran, "--receipt-endpoint", "--data", data]
-    return _run(argv)
+# NOTE: no kli_interact wrapper. On the KERI v2 base the fork's `kli interact
+# --receipt-endpoint` fails ("Invalid value while serializing" — its MailboxDirector
+# builds a slash-topic /mbx query the v2 CESR Labeler rejects), so the publisher
+# creates the anchor ixn programmatically (publish.anchor_release -> hab.interact)
+# and collects receipts via agenting.Receiptor instead.
 
 
 def kli_init(*, name, base, bran, salt=None) -> str:

@@ -1,0 +1,38 @@
+{
+  "release_sad": {
+    "d": "EOMDewKBgNRG6RyAHGICXmU8v2o9ru9QY50xLjju-9ab",
+    "brand": "locksmith",
+    "ver": "1.1.0",
+    "artifacts": [
+      {
+        "platform": "macos",
+        "sha256": "f3d2cbd71ad288e4aeca09d2a68cefbb3a1cf68732354c6684a6ab94edc55c2c"
+      },
+      {
+        "platform": "windows",
+        "sha256": "672c61b933cc940079e1af3f0f7203991b29ec8b0dc211fc72aed357fbdf6690"
+      }
+    ]
+  },
+  "artifacts": [
+    {
+      "platform": "macos",
+      "filename": "Locksmith-1.1.0.dmg.stub",
+      "sha256": "f3d2cbd71ad288e4aeca09d2a68cefbb3a1cf68732354c6684a6ab94edc55c2c",
+      "size": 44
+    },
+    {
+      "platform": "windows",
+      "filename": "Locksmith-1.1.0.msi.stub",
+      "sha256": "672c61b933cc940079e1af3f0f7203991b29ec8b0dc211fc72aed357fbdf6690",
+      "size": 46
+    }
+  ],
+  "released_at": "2026-05-28T00:00:00Z",
+  "minimum_system_versions": {
+    "macos": "13.0",
+    "windows": "10.0.19041"
+  },
+  "is_major": true,
+  "is_critical": false
+}
