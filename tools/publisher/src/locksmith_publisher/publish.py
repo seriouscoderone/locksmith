@@ -57,13 +57,16 @@ def export_kel(hby, hab, *, version: str, brand: str) -> tuple[bytes, dict | Non
         kel.extend(msg)
         for s in serder.ked.get("a", []):
             if isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand:
-                # Build a self-contained genusified event for the standalone anchor
-                # .cesr artifact — independently replayable.  The kel accumulator
-                # already uses genusify=(sn==0) so the anchor's ixn (sn=1) is NOT
-                # genusified there; double-genusifying the kel stream would corrupt it.
+                # Standalone anchor .cesr artifact: the event + its sigs/wigs,
+                # framed but NOT genusified. The verifier fetches this artifact and
+                # parses it with SerderKERI(raw=...) to confirm the anchor's SAID; a
+                # leading genus count-code ('-_') breaks that bare-event parse
+                # (ShortageError). The genus code belongs only on the full KEL stream
+                # (genusify=(sn==0) above), which the verifier *replays* (the genus
+                # code auto-raises its Parser to v2).
                 anchor_msg = eventing.messagize(serder, sigers=sigers, wigers=wigers,
                                                framed=True, gvrsn=serder.pvrsn,
-                                               genusify=True)
+                                               genusify=False)
                 anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(anchor_msg))
     return bytes(kel), anchor
 

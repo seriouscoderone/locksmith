@@ -156,21 +156,29 @@ def test_export_kel_stream_starts_with_genus_code():
 # Regression guard: clonePreIter FAILS for v2 (confirming the RED state).
 # ---------------------------------------------------------------------------
 
-def test_export_kel_anchor_bytes_start_with_genus_code():
-    """The standalone anchor bytes must begin with a genus-version code '-_'.
+def test_export_kel_anchor_bytes_parse_as_bare_leading_event():
+    """The standalone anchor bytes must be parseable by ``SerderKERI(raw=...)``.
 
-    The anchor dict's ``bytes`` are written to ``{said}.cesr`` and uploaded to
-    S3 as a self-contained genusified event — independently replayable without
-    the full KEL stream.  If genusify=False, the standalone artifact cannot be
-    parsed by a v2-aware consumer on its own.
+    The verifier (``update/verify.py`` step 6) fetches the anchor ``.cesr`` and
+    does exactly ``SerderKERI(raw=anchor_raw)`` to confirm the anchor SAID. So the
+    artifact must lead with the bare event (framed with sigs/wigs, but NOT
+    genusified) — a leading genus count-code ('-_') breaks that parse with
+    ShortageError. (The genus code belongs only on the full KEL stream, which the
+    verifier replays.)
     """
-    with habbing.openHby(name="v2-anchor-genus-test", temp=True, bran=_BRAN) as hby:
+    from keri.core import serdering
+
+    with habbing.openHby(name="v2-anchor-bare-test", temp=True, bran=_BRAN) as hby:
         hab, kel_bytes, anchor, ixn_said = _make_v2_hab_and_export(hby)
 
     assert anchor is not None, "export_kel must find the anchor for matching version/brand"
-    assert anchor["bytes"][:2] == b"-_", (
-        f"anchor bytes must start with genus-version code '-_', "
+    assert anchor["bytes"][:1] == b"{", (
+        f"anchor bytes must lead with the bare event JSON (no genus code), "
         f"got {anchor['bytes'][:8]!r}"
+    )
+    serder = serdering.SerderKERI(raw=bytearray(anchor["bytes"]))
+    assert serder.said == ixn_said == anchor["said"], (
+        "SerderKERI(raw=anchor_bytes).said must equal the anchor event SAID"
     )
 
 
