@@ -186,18 +186,18 @@ def replay_kel(
 
 
 def extract_release_seal(state: KelState, *, anchor_said: str) -> dict:
-    """Find the event with SAID == ``anchor_said`` and return its release seal.
+    """Find the event with SAID == ``anchor_said`` and return its release digest seal.
 
-    Returns the first seal dict in ``a`` that contains a ``release`` key.
-    Raises ``SchemaError`` if no such event or seal exists.
+    Returns the first seal dict in ``a`` that is a digest seal (has ``d`` and
+    ``ver`` keys). Raises ``SchemaError`` if no such event or seal exists.
     """
     for ev in state.events:
         if ev.said == anchor_said:
             for s in ev.seals:
-                if isinstance(s, dict) and "release" in s:
+                if isinstance(s, dict) and "d" in s and "ver" in s:
                     return s
             raise SchemaError(
-                f"event {anchor_said} has no `release` seal",
+                f"event {anchor_said} has no release digest seal",
                 log_fields={"anchor_said": anchor_said, "sn": ev.sn},
             )
     raise SchemaError(
@@ -207,7 +207,7 @@ def extract_release_seal(state: KelState, *, anchor_said: str) -> dict:
 
 
 def highest_version_for_brand(state: KelState, brand: str) -> str | None:
-    """Highest semver among release seals in the KEL whose brand == ``brand``.
+    """Highest semver among release digest seals in the KEL whose brand == ``brand``.
 
     A seal with no ``brand`` field counts as brand ``"locksmith"`` (every
     pre-multibrand release was Locksmith). Returns ``None`` if no release seal
@@ -216,8 +216,8 @@ def highest_version_for_brand(state: KelState, brand: str) -> str | None:
     versions = []
     for ev in state.events:
         for s in ev.seals:
-            if isinstance(s, dict) and "release" in s:
-                rel = s["release"]
-                if rel.get("brand", "locksmith") == brand and "v" in rel:
-                    versions.append(rel["v"])
+            if isinstance(s, dict) and "d" in s and "ver" in s:
+                seal_brand = s.get("brand", "locksmith")
+                if seal_brand == brand:
+                    versions.append(s["ver"])
     return max(versions, key=_semver_key) if versions else None
