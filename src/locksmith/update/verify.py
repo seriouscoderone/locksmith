@@ -27,6 +27,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from keri.core import serdering
+from keri.core.coring import Saider
 
 from locksmith.update.appcast import (
     Appcast,
@@ -112,15 +113,34 @@ def _sha256_file(path: Path) -> tuple[str, int]:
     return h.hexdigest(), size
 
 
+def _verify_sad_against_anchor(sad: dict, *, anchor_d: str, platform: str) -> str:
+    """Verify the release SAD self-addresses to ``anchor_d`` and return the
+    per-platform sha256. Raises SignatureError on a SAID mismatch or a missing
+    platform entry."""
+    _, recomputed = Saider.saidify(sad=dict(sad))
+    if recomputed["d"] != sad["d"] or sad["d"] != anchor_d:
+        raise SignatureError(
+            "release SAD does not self-address to the KEL anchor",
+            log_fields={"sad_d": sad.get("d"), "anchor_d": anchor_d})
+    for art in sad.get("artifacts", []):
+        if art.get("platform") == platform:
+            return art["sha256"]
+    raise SignatureError(f"release SAD has no artifact for platform {platform!r}",
+                        log_fields={"platform": platform})
+
+
 def _assert_current_for_brand(state, *, version, embedded_brand, anchor_said):
     """Brand-aware, version-based stale/spoofing defense.
 
     Rejects (1) an anchor whose seal brand isn't this app's brand, and (2) a
     release that a higher-version anchor for THIS brand supersedes (freeze).
     A seal with no ``brand`` field counts as ``"locksmith"``.
+
+    The seal is now a digest seal with shape ``{"d", "brand", "ver"}``
+    (Task 5 / Task 2 contract); there is no ``"release"`` wrapper.
     """
     seal = extract_release_seal(state, anchor_said=anchor_said)
-    anchor_brand = seal["release"].get("brand", "locksmith")
+    anchor_brand = seal.get("brand", "locksmith")
     if anchor_brand != embedded_brand:
         raise SignatureError(
             f"anchor brand {anchor_brand!r} does not match app brand {embedded_brand!r}",
@@ -214,50 +234,45 @@ def verify_artifact(
             },
         )
 
-    # 7. Extract the seal from KEL replay (authoritative — not from fetched bytes).
+    # 7. Extract the digest seal from KEL replay (authoritative — not from fetched bytes).
+    #    Shape: {"d": <sad_said>, "brand": ..., "ver": ...}  (Task 2 / Task 5 contract)
     seal = extract_release_seal(state, anchor_said=rel.anchor_said)
-    if seal["release"]["v"] != rel.version:
+    if seal["ver"] != rel.version:
         raise DowngradeError(
             f"appcast version {rel.version} mismatches seal "
-            f"version {seal['release']['v']}",
+            f"version {seal['ver']}",
             log_fields={
                 "appcast_version": rel.version,
-                "seal_version": seal["release"]["v"],
+                "seal_version": seal["ver"],
             },
         )
 
-    # 8. Find the artifact entry for this platform in the seal.
-    artifact_entry = None
-    for a in seal["release"].get("artifacts", []):
-        if a.get("platform") == platform:
-            artifact_entry = a
-            break
-    if artifact_entry is None:
-        raise SchemaError(
-            f"seal has no artifact for platform={platform}",
-            log_fields={"platform": platform, "version": rel.version},
-        )
+    # 8. Resolve the release SAD from the appcast, verify its SAID against the
+    #    KEL anchor, and extract the per-platform sha256 (Task 6).
+    seal_sha = _verify_sad_against_anchor(
+        rel.release_sad, anchor_d=seal["d"], platform=platform
+    )
 
     # 9. Hash the file, compare to seal AND to appcast.
     actual_sha, actual_size = _sha256_file(artifact_path)
-    if actual_sha != artifact_entry["sha256"]:
+    if actual_sha != seal_sha:
         raise HashMismatchError(
             f"artifact sha256 {actual_sha} does not match seal "
-            f"{artifact_entry['sha256']}",
+            f"{seal_sha}",
             log_fields={
-                "expected_sha256": artifact_entry["sha256"],
+                "expected_sha256": seal_sha,
                 "actual_sha256": actual_sha,
                 "artifact_path": str(artifact_path),
             },
         )
-    if rel.artifact_sha256 != artifact_entry["sha256"]:
+    if rel.artifact_sha256 != seal_sha:
         # Appcast disagrees with KEL — appcast is tampered.
         raise DowngradeError(
             f"appcast sha256 {rel.artifact_sha256} disagrees with "
-            f"seal sha256 {artifact_entry['sha256']}",
+            f"seal sha256 {seal_sha}",
             log_fields={
                 "appcast_sha256": rel.artifact_sha256,
-                "seal_sha256": artifact_entry["sha256"],
+                "seal_sha256": seal_sha,
             },
         )
 

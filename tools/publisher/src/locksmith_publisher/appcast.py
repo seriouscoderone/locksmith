@@ -57,7 +57,12 @@ class GeneratorConfig:
 
 
 def _parse_anchor(raw: bytes) -> dict[str, Any]:
-    """Parse a CESR-encoded release anchor; return ``{said, seal}``."""
+    """Parse a CESR-encoded release anchor; return ``{said, seal}``.
+
+    ``seal`` is the first dict in the ``a`` field.  With the digest-seal shape
+    (Task 2 / Task 5 contract) this is ``{"d", "brand", "ver"}``; the old
+    ``{"release": {...}}`` shape may appear in pre-Task-2 anchors.
+    """
     serder = serdering.SerderKERI(raw=bytearray(raw))
     seals = serder.ked.get("a", [])
     if not seals:
@@ -224,40 +229,85 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
     cdn_base = config.cdn_base()
 
+    # Read companion metadata for each version (written alongside the anchor by
+    # ``anchor_release``).  The companion JSON carries the full per-artifact
+    # metadata (filename, size, minimum_system_version, released_at, …) that
+    # the digest seal no longer embeds.  Fall back to extracting from the
+    # old-shape ``{"release": …}`` seal for pre-Task-2 anchors.
+    meta_by_version: dict[str, dict[str, Any]] = {}
+    for v in versions:
+        parsed = anchors_by_version[v]
+        anchor_said = parsed["said"]
+        try:
+            raw_or_resp = s3.get_object(
+                Bucket=config.bucket,
+                Key=f"{config.release_prefix}/{v}/release-anchor-{v}-meta.json",
+            )
+            if isinstance(raw_or_resp, (bytes, bytearray)):
+                raw_meta = bytes(raw_or_resp)
+            elif isinstance(raw_or_resp, dict) and "Body" in raw_or_resp:
+                raw_meta = raw_or_resp["Body"].read()
+            else:
+                raw_meta = raw_or_resp  # already bytes-like
+            meta_by_version[v] = json.loads(raw_meta)
+        except Exception:  # noqa: BLE001 — NoSuchKey or old-format anchor
+            seal = parsed["seal"]
+            if "release" in seal:
+                # Old shape: {"release": {"artifacts": [...], "released_at": ...}}
+                rel = seal["release"]
+                meta_by_version[v] = {
+                    "release_sad": {
+                        "d": anchor_said,
+                        "brand": config.brand_id,
+                        "ver": v,
+                        "artifacts": [
+                            {"platform": a["platform"], "sha256": a["sha256"]}
+                            for a in rel.get("artifacts", [])
+                        ],
+                    },
+                    "artifacts": rel.get("artifacts", []),
+                    "released_at": rel.get("released_at", ""),
+                    "minimum_system_versions": rel.get("minimum_system_versions", {}),
+                    "is_major": rel.get("is_major", False),
+                    "is_critical": rel.get("is_critical", False),
+                }
+            else:
+                # New digest-seal shape but no companion meta — skip this version.
+                meta_by_version[v] = {}
+
     for platform, ext in [("macos", "dmg"), ("windows", "msi")]:
         releases: list[dict[str, Any]] = []
         for v in versions:
             parsed = anchors_by_version[v]
-            seal = parsed["seal"]["release"]
+            meta = meta_by_version.get(v, {})
+            if not meta:
+                continue  # no usable metadata for this version — skip
+            release_sad = meta.get("release_sad", {})
+            platform_artifacts = meta.get("artifacts", [])
             artifact = next(
-                a for a in seal["artifacts"] if a["platform"] == platform
+                (a for a in platform_artifacts if a.get("platform") == platform),
+                None,
             )
-            release_sad = {
-                "d": parsed["said"],
-                "brand": config.brand_id,
-                "ver": v,
-                "artifacts": [
-                    {"platform": a["platform"], "sha256": a["sha256"]}
-                    for a in seal["artifacts"]
-                ],
-            }
+            if artifact is None:
+                continue  # no entry for this platform — skip
+            minimum_system_versions = meta.get("minimum_system_versions", {})
             releases.append({
                 "version": v,
-                "released_at": seal["released_at"],
+                "released_at": meta.get("released_at", ""),
                 "platform": platform,
                 "minimum_system_version":
-                    seal["minimum_system_versions"][platform],
+                    minimum_system_versions.get(platform, ""),
                 "artifact_url":
-                    f"{cdn_base}/{config.release_prefix}/{v}/{artifact['filename']}",
+                    f"{cdn_base}/{config.release_prefix}/{v}/{artifact.get('filename', '')}",
                 "artifact_sha256": artifact["sha256"],
-                "artifact_size": artifact["size"],
+                "artifact_size": artifact.get("size", 0),
                 "anchor_url":
                     f"{cdn_base}/{config.release_prefix}/{v}/release-anchor-{v}.cesr",
                 "anchor_said": parsed["said"],
                 "release_notes_url":
                     f"{config.release_notes_base}/releases/{v}",
-                "is_major": seal.get("is_major", False),
-                "is_critical": seal.get("is_critical", False),
+                "is_major": meta.get("is_major", False),
+                "is_critical": meta.get("is_critical", False),
                 "release_sad": release_sad,
             })
 
