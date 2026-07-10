@@ -15,7 +15,7 @@ def _state(events):
 def test_guard_passes_when_anchor_accepted(monkeypatch):
     monkeypatch.setattr(publish, "replay_kel", lambda **kw: _state([
         (0, "Eicp", []),
-        (1, "Eanchor", [{"release": {"v": "0.2.4"}}]),
+        (1, "Eanchor", [{"d": "E" + "A" * 43, "brand": "locksmith", "ver": "0.2.4"}]),
     ]))
     # Should not raise.
     publish.assert_kel_anchors_release(

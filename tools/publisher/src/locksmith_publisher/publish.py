@@ -8,7 +8,7 @@ from keri.app import agenting, habbing
 from keri.core import serdering
 from keri.db import dbing
 from hio.base import doing
-from .seal import build_release_seal
+from .seal import build_release_seal, build_release_sad
 from . import kli
 from locksmith.update.kel_replay import replay_kel
 
@@ -35,6 +35,7 @@ def anchor_release(*, name, alias, bran, base, version, brand,
                    artifacts: list[tuple[str, Path]], out_dir: str) -> dict:
     """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path}."""
     seal = build_release_seal(version=version, artifacts=artifacts, brand=brand)
+    sad = build_release_sad(version=version, artifacts=artifacts, brand=brand)
     kli.kli_interact(name=name, alias=alias, bran=bran, base=base, data=json.dumps(seal))
 
     # Read the KEL back (no keys needed to read). clonePreIter yields one msg per
@@ -78,7 +79,7 @@ def anchor_release(*, name, alias, bran, base, version, brand,
             kel.extend(msg)
             serder = serdering.SerderKERI(raw=bytes(msg))
             for s in serder.ked.get("a", []):
-                if isinstance(s, dict) and s.get("release", {}).get("v") == version:
+                if isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand:
                     anchor = dict(said=serder.said, sn=serder.sn, bytes=bytes(msg))
         if anchor is None:
             raise RuntimeError(f"no anchor event for version {version} in publisher KEL")
@@ -91,7 +92,8 @@ def anchor_release(*, name, alias, bran, base, version, brand,
     anchor_event_path = Path(out_dir) / f"{anchor['said']}.cesr"
     anchor_event_path.write_bytes(anchor["bytes"])
     return dict(anchor_said=anchor["said"], anchor_sn=anchor["sn"],
-                kel_path=str(kel_path), anchor_event_path=str(anchor_event_path))
+                kel_path=str(kel_path), anchor_event_path=str(anchor_event_path),
+                release_sad=sad)
 
 
 def assert_kel_anchors_release(*, kel_bytes: bytes, publisher_aid: str,
@@ -104,7 +106,7 @@ def assert_kel_anchors_release(*, kel_bytes: bytes, publisher_aid: str,
     for ev in state.events:
         if ev.said == anchor_said:
             for s in ev.seals:
-                if isinstance(s, dict) and s.get("release", {}).get("v") == version:
+                if isinstance(s, dict) and s.get("ver") == version:
                     return
             raise RuntimeError(
                 f"anchor {anchor_said} accepted but does not carry release v{version}")
