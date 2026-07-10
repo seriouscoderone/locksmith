@@ -267,6 +267,12 @@ def write_appcasts(out: Path, publisher_aid: str, releases: list[dict]) -> None:
         rels: list[dict] = []
         for r in releases:
             a = r["artifacts"][platform]
+            release_sad = {
+                "d": r["said"],
+                "brand": "locksmith",
+                "ver": r["version"],
+                "artifacts": [{"platform": platform, "sha256": a["sha256"]}],
+            }
             rels.append({
                 "version": r["version"],
                 "released_at": r["released_at"],
@@ -282,6 +288,7 @@ def write_appcasts(out: Path, publisher_aid: str, releases: list[dict]) -> None:
                 "release_notes_url": f"https://locksmith.app/releases/{r['version']}",
                 "is_major": r["is_major"],
                 "is_critical": r["is_critical"],
+                "release_sad": release_sad,
             })
         appcast = {
             "schema_version": 1,

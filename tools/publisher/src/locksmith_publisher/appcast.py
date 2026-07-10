@@ -45,6 +45,8 @@ class GeneratorConfig:
     #: callers stay byte-identical; other brands are namespaced (``<brand>/appcast``)
     #: so each brand's app polls its own feed instead of clobbering another's.
     appcast_prefix: str = "appcast"
+    #: Brand identifier embedded in each release SAD. Defaults to "locksmith".
+    brand_id: str = "locksmith"
 
     def cdn_base(self) -> str:
         """Resolve the release CDN base, deferring to deploy_config if unset."""
@@ -115,6 +117,7 @@ def build_appcast(
             "release_notes_url": r.get("release_notes_url", ""),
             "is_major": bool(r.get("is_major", False)),
             "is_critical": bool(r.get("is_critical", False)),
+            "release_sad": r["release_sad"],
         })
 
     if current_version is None:
@@ -229,6 +232,15 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             artifact = next(
                 a for a in seal["artifacts"] if a["platform"] == platform
             )
+            release_sad = {
+                "d": parsed["said"],
+                "brand": config.brand_id,
+                "ver": v,
+                "artifacts": [
+                    {"platform": a["platform"], "sha256": a["sha256"]}
+                    for a in seal["artifacts"]
+                ],
+            }
             releases.append({
                 "version": v,
                 "released_at": seal["released_at"],
@@ -246,6 +258,7 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
                     f"{config.release_notes_base}/releases/{v}",
                 "is_major": seal.get("is_major", False),
                 "is_critical": seal.get("is_critical", False),
+                "release_sad": release_sad,
             })
 
         appcast = {

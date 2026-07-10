@@ -23,7 +23,9 @@ def test_build_appcast_roundtrips_through_verifier_parser():
         releases=[dict(version="0.2.0", anchor_said="EAnch", platform="macos",
                        anchor_url="https://releases.example.com/publisher/v1/anchors/EAnch.cesr",
                        artifact_sha256="ab" * 32,
-                       artifact_url="https://releases.example.com/0.2.0/Locksmith-macos.dmg")],
+                       artifact_url="https://releases.example.com/0.2.0/Locksmith-macos.dmg",
+                       release_sad={"d": "EAnch", "brand": "locksmith", "ver": "0.2.0",
+                                    "artifacts": [{"platform": "macos", "sha256": "ab" * 32}]})],
     )
     ac = parse_appcast(raw)
     assert ac.publisher_aid == "EPub"

@@ -158,6 +158,11 @@ def test_anchor_invokes_anchor_release(monkeypatch, tmp_path):
 def test_publish_uploads_kel_anchor_and_two_appcasts(monkeypatch, tmp_path):
     (tmp_path / "EpubAID-kel.cesr").write_bytes(b"KEL")
     (tmp_path / "Eanchor.cesr").write_bytes(b"ANCHOR")
+    import json as _json
+    (tmp_path / "Eanchor-sad.json").write_text(_json.dumps({
+        "d": "Eanchor", "brand": "locksmith", "ver": "0.1.7",
+        "artifacts": [{"platform": "macos", "sha256": "a"*64},
+                      {"platform": "windows", "sha256": "b"*64}]}))
     monkeypatch.setattr(cli_mod, "load_deploy_config", lambda: {
         "s3_bucket": "releases.example.com",
         "releases_cdn_base": "https://releases.example.com",
@@ -210,6 +215,11 @@ def test_publish_usurance_uploads_appcast_under_brand_namespace(monkeypatch, tmp
     and Usurance's app (which polls `usurance/appcast/v1/`) sees nothing."""
     (tmp_path / "EpubAID-kel.cesr").write_bytes(b"KEL")
     (tmp_path / "Eanchor.cesr").write_bytes(b"ANCHOR")
+    import json as _json
+    (tmp_path / "Eanchor-sad.json").write_text(_json.dumps({
+        "d": "Eanchor", "brand": "usurance", "ver": "0.1.7",
+        "artifacts": [{"platform": "macos", "sha256": "a"*64},
+                      {"platform": "windows", "sha256": "b"*64}]}))
     monkeypatch.setattr(cli_mod, "load_deploy_config", lambda: {
         "s3_bucket": "releases.example.com",
         "releases_cdn_base": "https://releases.example.com",

@@ -17,7 +17,13 @@
       "anchor_said": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
       "release_notes_url": "https://locksmith.app/releases/1.0.0",
       "is_major": false,
-      "is_critical": false
+      "is_critical": false,
+      "release_sad": {
+        "d": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
+        "brand": "locksmith",
+        "ver": "1.0.0",
+        "artifacts": [{"platform": "windows", "sha256": "5995aa262b86422778fb30980019038a712a000c70bc3a1976f73efead61fe7e"}]
+      }
     },
     {
       "version": "1.0.1",
@@ -31,7 +37,13 @@
       "anchor_said": "EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc",
       "release_notes_url": "https://locksmith.app/releases/1.0.1",
       "is_major": false,
-      "is_critical": false
+      "is_critical": false,
+      "release_sad": {
+        "d": "EBa1ObArnkSs1ynBfUcJTOIzYj9tiPHPfj6GmDrojYrc",
+        "brand": "locksmith",
+        "ver": "1.0.1",
+        "artifacts": [{"platform": "windows", "sha256": "6ac1996dade358e8f9805abaa293091628832cd358ee7daf2adeca0ceb562797"}]
+      }
     },
     {
       "version": "1.1.0",
@@ -45,7 +57,13 @@
       "anchor_said": "EPhiL-zxvya6JJLnZDcfF6DEBQkMtKbxwi_HoltooIj5",
       "release_notes_url": "https://locksmith.app/releases/1.1.0",
       "is_major": true,
-      "is_critical": false
+      "is_critical": false,
+      "release_sad": {
+        "d": "EPhiL-zxvya6JJLnZDcfF6DEBQkMtKbxwi_HoltooIj5",
+        "brand": "locksmith",
+        "ver": "1.1.0",
+        "artifacts": [{"platform": "windows", "sha256": "672c61b933cc940079e1af3f0f7203991b29ec8b0dc211fc72aed357fbdf6690"}]
+      }
     }
   ]
 }

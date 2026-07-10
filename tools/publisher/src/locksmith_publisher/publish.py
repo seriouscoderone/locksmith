@@ -91,6 +91,8 @@ def anchor_release(*, name, alias, bran, base, version, brand,
     kel_path.write_bytes(bytes(kel))
     anchor_event_path = Path(out_dir) / f"{anchor['said']}.cesr"
     anchor_event_path.write_bytes(anchor["bytes"])
+    sad_path = Path(out_dir) / f"{anchor['said']}-sad.json"
+    sad_path.write_text(json.dumps(sad))
     return dict(anchor_said=anchor["said"], anchor_sn=anchor["sn"],
                 kel_path=str(kel_path), anchor_event_path=str(anchor_event_path),
                 release_sad=sad)

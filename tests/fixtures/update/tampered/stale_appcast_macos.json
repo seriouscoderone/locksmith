@@ -17,7 +17,13 @@
       "anchor_said": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
       "release_notes_url": "https://locksmith.app/releases/1.0.0",
       "is_major": false,
-      "is_critical": false
+      "is_critical": false,
+      "release_sad": {
+        "d": "EFy3Py1Obj2Sj7se60aIKxFxlL28ZMt2JLAOCeCul0Eh",
+        "brand": "locksmith",
+        "ver": "1.0.0",
+        "artifacts": [{"platform": "macos", "sha256": "95349d17da3a15220c62a3daa302145271a4458c9d4c8371c949cc1d46b99475"}]
+      }
     }
   ]
 }
