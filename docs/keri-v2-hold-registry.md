@@ -55,6 +55,7 @@ they come off together when the 🔴 items unblock and the wallet's event layer 
 | Hold | Location | Why v1 today | What it takes to go v2 |
 |---|---|---|---|
 | Peer-blob import | `src/locksmith/peer/cesr_blob.py:86` | v2 Revery does not route embedded `/end/role` + `/loc/scheme` rpys into `db.ends`/`db.locs` on a combined-stream import (the KEL parses; only the endpoint rpys don't route) | Investigate: is this a Revery wiring fix on our side, or an upstream v2 gap? If ours, route the rpys explicitly on import. (Peer export already works; this is the import leg.) |
+| **`kli oobi resolve` (witness discovery)** | keripy fork `kli oobi resolve`; observed publishing v0.2.20 (2026-07-09) | On the v2 base, resolving a witness OOBI into a **fresh** keystore persisted **nothing** — neither witness key-state (`db.states`) nor endpoints (`db.locs`). Same class as peer-blob import (v2 Revery/Oobiery not routing the OOBI's KEL + `/loc`/`/end` rpys). Left the re-incepted v2 publisher unable to reach its witnesses (`Receiptor` no-op'd → 0 receipts). | **Workaround used** (publisher v2 reset): seed witness KEL-state + `db.locs` into the keystore from a known-good source (copied from the prior keystore, which had them). **Real fix**: make the v2 Oobiery/Revery route a resolved witness OOBI into `states`/`locs`/`ends` (likely the same fix as peer-blob import). Until then, any fresh v2 keystore needs its witness discovery seeded. |
 
 ## 🟡 COUPLED-TO-KERIPY-PROTOCOL (not an isolated wallet fix)
 

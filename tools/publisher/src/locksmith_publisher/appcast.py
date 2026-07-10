@@ -223,7 +223,14 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
         versions.append(v)
 
     if not versions:
-        return
+        raise RuntimeError(
+            f"appcast regen found {len(all_versions)} release version(s) in S3 but "
+            f"NONE had an anchor at {config.release_prefix}/<v>/release-anchor-<v>.cesr. "
+            f"`publish` uploads anchors to publisher/v1/anchors/<said>.cesr (and embeds "
+            f"the SAD in the appcast), so this regen layout has diverged. Refusing to "
+            f"upload an empty appcast — use `publish` for releases, or reconcile the "
+            f"regen layout with the publish layout."
+        )
 
     current_version = versions[-1]
     timestamp = _dt.datetime.now(_dt.timezone.utc).strftime("%Y%m%dT%H%M%SZ")
@@ -272,8 +279,19 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
                     "is_critical": rel.get("is_critical", False),
                 }
             else:
-                # New digest-seal shape but no companion meta — skip this version.
-                meta_by_version[v] = {}
+                # New digest-seal anchor with NO companion meta on S3. `publish`
+                # embeds the SAD in the appcast and uploads the anchor to
+                # publisher/v1/anchors/<said>.cesr — it does NOT write the
+                # release-anchor-<v>-meta.json this regen path reads. Rather than
+                # SILENTLY DROP an anchored (published, receipted) version from the
+                # regenerated appcast — an omission/downgrade risk — fail loud.
+                raise RuntimeError(
+                    f"cannot regenerate appcast for v{v}: digest-seal anchor present "
+                    f"but no companion {config.release_prefix}/{v}/release-anchor-{v}-meta.json "
+                    f"on S3. The `appcast` regen layout has diverged from `publish` "
+                    f"(which embeds the SAD in the appcast). Use `publish`, or upload the "
+                    f"per-version SAD/meta and reconcile the regen layout."
+                )
 
     for platform, ext in [("macos", "dmg"), ("windows", "msi")]:
         releases: list[dict[str, Any]] = []
@@ -281,7 +299,10 @@ def generate_and_upload_appcasts(*, s3, config: GeneratorConfig) -> None:
             parsed = anchors_by_version[v]
             meta = meta_by_version.get(v, {})
             if not meta:
-                continue  # no usable metadata for this version — skip
+                # Unreachable: every anchored version above either reconstructs
+                # meta (old shape) or raises (new shape w/o companion meta). Guard
+                # loudly rather than silently dropping the version.
+                raise RuntimeError(f"appcast regen: no usable metadata for v{v}")
             release_sad = meta.get("release_sad", {})
             platform_artifacts = meta.get("artifacts", [])
             artifact = next(

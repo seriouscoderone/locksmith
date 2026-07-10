@@ -243,6 +243,7 @@ def appcast_cmd(bucket: str | None, publisher_aid: str | None,
             release_notes_base=brand.website(),
             brand_title=brand.artifact_prefix(),
             appcast_prefix=brand.appcast_prefix(),
+            brand_id=brand.brand_id(),
         ),
     )
     _pfx = brand.appcast_prefix()
