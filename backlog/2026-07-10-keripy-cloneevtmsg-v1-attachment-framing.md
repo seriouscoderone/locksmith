@@ -18,7 +18,7 @@ The route handlers (`eventing.py:4965 processReplyEndRole`→`updateEnd`; `event
 This is the **same class** as the publisher KEL-export bug already fixed (`tools/publisher/src/locksmith_publisher/publish.py export_kel` uses `messagize(..., gvrsn=serder.pvrsn, genusify=(sn==0))` precisely to route around `clonePreIter`'s v1 framing). The `Vrsn_1_0` pins are **upstream** (WebOfTrust, from the 2024 CESR-v2 counting migration) — an incomplete v2 migration, not a fork change.
 
 ## Fix (keripy fork, one change fixes both symptoms)
-In `basing.py cloneEvtMsg`, version-track the attachment framing: derive `pvrsn = serder.pvrsn` and pass `version=pvrsn` to the six hardcoded `Counter(..., version=Vrsn_1_0)` calls; and prepend the KERIACDCGenusVersion code once at stream head (in the `clonePreIter` iterator, ~`basing.py:1649`, genusify only the first event). The head genus code auto-raises any parser to the right version (`parsing.py:1040-1043`), so v1 consumers still work.
+In `basing.py cloneEvtMsg`, version-track the attachment framing: derive `pvrsn = serder.pvrsn` and pass `version=pvrsn` to the six hardcoded `Counter(..., version=Vrsn_1_0)` calls; and prepend the KERIACDCGenusVersion code once at stream head (in the `clonePreIter` iterator, ~`basing.py:1649`, genusify only the first event). A **genus-aware** parser auto-raises to the right version off the head genus code (`parsing.py:1040-1043`); a v1-floor parser with no genus code still reads plain v1 streams. **Caveat (see Backwards compatibility below):** a *pre-genus* v1-ONLY consumer may not tolerate a leading genus code, so the write side must stay version-AWARE — do not blanket-genusify federation-wide without coordinating the convention (this is what upstream PR #1472 is working through).
 
 **Proven offline** (`messagize(serder, sigers=sigers, framed=True, gvrsn=serder.pvrsn, genusify=(sn==0))` + v2 rpys):
 - BROKEN (`replay`/`clonePreIter`), Parser v2: `srcKEL=False ends=0 locs=0` [GAP]
@@ -28,10 +28,17 @@ In `basing.py cloneEvtMsg`, version-track the attachment framing: derive `pvrsn 
 
 One fix covers both because both flow through `cloneEvtMsg`/`replay`. The witness `role=witness` OOBI path (`habbing.py:2469 replyEndRole` witness branch) also calls `self.replay(cid)` → same path → covered.
 
-## What it unblocks / lets us delete
-- OOBI witness-discovery on fresh v2 keystores (no more manual seeding).
-- Peer-blob import on v2 (no Locksmith change needed — `replyToOobi` flows through the fixed `cloneEvtMsg`).
-- The publisher's `export_kel` genusify workaround and Locksmith `receipting.replay_with_evidence`'s reimplemented loop could be simplified back onto the fixed `cloneEvtMsg`.
+## Backwards compatibility (REQUIRED — do NOT go v2-only)
+The ecosystem is heterogeneous: v1 and v2 clients (witnesses, peers, contacts) coexist indefinitely, and we don't control their upgrade timelines. The goal is **handle BOTH versions in one path**, not replace v1 with v2. Anything that can speak only one version — v1-pinned *or* v2-pinned — is the fragile thing.
+
+- **KEEP the version-agnostic READ path.** A v1-floor parser that auto-raises on a genus code (`Parser(version=Vrsn_1_0)` — already used by `cesr_blob.py` import and the verifier's `replay_kel`) parses an old plain-v1 stream (no genus) AND a v2/genusified stream, in one code path. That is the *correct* interop design, NOT a workaround to delete. Never pin the read path to a single version.
+- **Produce version-AWARE output, not blanket-genusified.** Genusifying helps v2 consumers, but genus count-codes are newer and a pre-genus v1-only consumer may choke on one (see upstream PR #1472, "consume and discard KERIACDCGenusVersion"). The write side must emit what the peer can consume; the output-framing convention is ecosystem-wide — coordinate with upstream (Sam / #1472) before changing how we frame emitted streams.
+- **What actually retires** (carefully, and only once the version-agnostic path is proven): the single-version *pins* and the operational witness-seeding hack — NOT the ability to produce/parse v1 for v1-only parties. Keep full v1 interop.
+
+## What it enables
+- OOBI witness-discovery works on fresh v2 keystores (retires the manual seeding).
+- Peer-blob import works on v2 with the existing v1-floor import parser (no Locksmith read-side change — `replyToOobi` output just becomes correctly framed).
+- The publisher's `export_kel` loop + Locksmith `receipting.replay_with_evidence`'s reimplemented loop consolidate onto the fixed `cloneEvtMsg` (dedupe, not behavior change).
 
 ## Cost / why deferred
 - It's a **load-bearing keripy-fork function** (used by `replay`, `replyToOobi`, `clonePreIter`, publisher export). Needs TDD + the full `tests/core/test_replay.py` + `tests/app/test_oobiing.py` + `test_eventing`/`test_parsing` suites green.
