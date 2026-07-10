@@ -77,8 +77,35 @@ def _bootstrap_libsodium() -> None:
     ctypes.util.find_library = _find_library
 
 
+def _bootstrap_ssl_certs() -> None:
+    """Point OpenSSL's default verify path at certifi's bundled CA file.
+
+    A frozen PyInstaller app ships its own OpenSSL whose baked-in default CA
+    paths point at the BUILD machine — absent on the user's machine — so the
+    DEFAULT ssl context (``ssl.create_default_context()``, which keri/hio's
+    TCP-TLS clients use for every witness/mailbox HTTPS connection) raises
+    ``CERTIFICATE_VERIFY_FAILED: unable to get local issuer certificate`` and the
+    vault's background tasks die on open (the vault-crash backstop then closes
+    the vault). ``update/verify.py`` already passes ``certifi.where()`` explicitly
+    for the update path; the vault/keri path uses the process default context, so
+    set ``SSL_CERT_FILE`` (which OpenSSL reads for its default verify path) once at
+    startup — before any keri import. No-op unfrozen (a source checkout's OpenSSL
+    CA paths are valid) and never overrides a caller-set value.
+    """
+    if not getattr(sys, "frozen", False):
+        return
+    try:
+        import certifi
+        cafile = certifi.where()
+    except Exception:  # noqa: BLE001 - never block startup on cert setup
+        return
+    if os.path.exists(cafile):
+        os.environ.setdefault("SSL_CERT_FILE", cafile)
+
+
 if platform.system() in ("Darwin", "Windows"):
     _bootstrap_libsodium()
+    _bootstrap_ssl_certs()
 
 # ---- safe to import the rest of the world now ---------------------------
 import asyncio
