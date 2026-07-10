@@ -33,7 +33,7 @@ def _wait_for_receipts(hby, hab, *, toad, timeout_s=90.0, recollect):
 
 def anchor_release(*, name, alias, bran, base, version, brand,
                    artifacts: list[tuple[str, Path]], out_dir: str) -> dict:
-    """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path}."""
+    """Anchor one release. Returns {anchor_said, anchor_sn, kel_path, anchor_event_path, release_sad}."""
     seal = build_release_seal(version=version, artifacts=artifacts, brand=brand)
     sad = build_release_sad(version=version, artifacts=artifacts, brand=brand)
     kli.kli_interact(name=name, alias=alias, bran=bran, base=base, data=json.dumps(seal))
