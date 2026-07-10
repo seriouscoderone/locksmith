@@ -21,6 +21,7 @@ import tomllib
 from pathlib import Path
 
 import qtawesome  # noqa: F401 — bundling its data only
+from PyInstaller.utils.hooks import copy_metadata, collect_submodules
 
 # ---- Resolve paths -------------------------------------------------------
 # Use SPECPATH-relative absolute paths: PyInstaller resolves Analysis script
@@ -81,6 +82,13 @@ datas = [
     (str(_QTA_FONTS), "qtawesome/fonts"),
 ]
 
+# Bundled entry-point plugins (e.g. KERI Foundation): discovered ONLY via
+# importlib.metadata.entry_points(group="locksmith.plugins"). PyInstaller strips
+# the Locksmith dist-info, so without copy_metadata that lookup returns an empty
+# set and the plugin is INVISIBLE in a frozen app (works from source).
+# See backlog/2026-07-09-kerifoundation-plugin-missing-in-frozen-builds.md.
+datas += copy_metadata("Locksmith")
+
 # ---- Binaries: native libs ----------------------------------------------
 # libsodium.dll is installed via choco in CI and copied into packaging/windows/
 # before pyinstaller runs (see build-windows.ps1 / release.ci.yml). The
@@ -130,6 +138,11 @@ hiddenimports = [
     "keri.core.eventing",
     "keri.db.basing",
 ]
+
+# The KERI Foundation plugin package is reached only via an entry-point
+# ep.load() at runtime, so PyInstaller's static analysis never sees it — pull its
+# submodules in explicitly (paired with the copy_metadata above).
+hiddenimports += collect_submodules("locksmith.plugins.kerifoundation")
 
 block_cipher = None
 
