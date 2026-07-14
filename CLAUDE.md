@@ -10,7 +10,7 @@ Canonical case: authz is **represented by credentials** (AIDs / ACDC edges / key
 IPEX + KEL/TEL), **never computed** by a general expression language or app-logic predicate. Generic
 expression languages are for non-KERI app logic only (validation, state guards, projections). If a
 KERI-core concept is being handled non-natively, that's a smell — stop and find the primitive.
-Full rationale: `docs/BE-KERI-NATIVE.md` in the `locksmith-micro-app-designer` repo.
+Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KERI-NATIVE.md` in the `locksmith-micro-app-designer` repo).
 
 ## Running tests
 
@@ -28,7 +28,7 @@ Full rationale: `docs/BE-KERI-NATIVE.md` in the `locksmith-micro-app-designer` r
 
 ## KERI communication model (read before touching witnessing / receipts)
 
-Field guide: `~/code/KERI-COMMUNICATION-MODEL.md`. The load-bearing rule: a witness `/` event POST returns
+Field guide: `~/code/ugard/docs/canon/keri-communication-model.md`. The load-bearing rule: a witness `/` event POST returns
 **`204`**; the receipt comes back via the synchronous **`/receipts`** endpoint (keripy `agenting.Receiptor`)
 or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceiptor` encodes the direct-mode
 "push the receipt back on the connection" model and **hangs over HTTP**. Collect receipts with
