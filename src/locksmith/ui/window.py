@@ -15,11 +15,13 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.core.apping import LocksmithApplication
+from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
 from locksmith.ui.toolbar import LocksmithToolbar
 from locksmith.ui.toolkit.widgets.toast import NotificationToast
+from locksmith.ui.vault.hoa_page import HoaVaultPage
 from locksmith.ui.vault.page import VaultPage
 from locksmith.ui.vaults.drawer import VaultDrawer
 
@@ -102,7 +104,12 @@ class LocksmithWindow(QMainWindow):
         self.pages = {}
         self.pages[Pages.HOME] = HomePage(self)
         self.pages[Pages.PLUGINS] = PluginsPage(self.app, self)
-        self.pages[Pages.VAULT] = VaultPage(self)
+        # Peel-light: an HOA brand suppresses the built-in wallet pages by
+        # swapping in HoaVaultPage (same constructor, no-op core-page
+        # registration). Default brand -> peel_core_pages=False -> stock
+        # VaultPage, behaviorally unchanged.
+        _VaultPageCls = HoaVaultPage if brand().peel_core_pages else VaultPage
+        self.pages[Pages.VAULT] = _VaultPageCls(self)
 
         # Wire PluginsPage signals
         plugins_page = self.pages[Pages.PLUGINS]
