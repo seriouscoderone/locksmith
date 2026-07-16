@@ -289,17 +289,25 @@ class VaultNavMenu(QFrame):
     # Plugin menu signal — emits plugin_id when a plugin entry button is clicked
     plugin_section_clicked = Signal(str)
 
-    def __init__(self, parent=None, collapsible: bool = True):
+    def __init__(self, parent=None, collapsible: bool = True, include_core_items: bool = True):
         """
         Initialize the VaultNavMenu.
 
         Args:
             parent: Parent widget
             collapsible: Whether the menu should be collapsible (default: True)
+            include_core_items: Whether to build the built-in wallet nav
+                buttons (identifiers/remotes/groups/credentials/settings) and
+                the credentials submenu (issued/received/schema). Defaults to
+                True (stock Locksmith, unchanged). An HOA build that doesn't
+                register any core pages passes False so no dead nav buttons
+                are shown — plugin-contributed sections are unaffected, since
+                those are added later via register_plugin_section().
         """
         super().__init__(parent)
 
         self.collapsible = collapsible
+        self.include_core_items = include_core_items
         self.is_locked_open = False
         self.is_expanded = False
         self.active_nav_button = None  # Track the currently active navigation button
@@ -359,10 +367,12 @@ class VaultNavMenu(QFrame):
             self.menu_items.append(self.lock_button_spacer)
 
         # Menu items
-        self._add_menu_items()
+        if self.include_core_items:
+            self._add_menu_items()
 
         # Credentials menu items (hidden initially)
-        self._create_credentials_menu_items()
+        if self.include_core_items:
+            self._create_credentials_menu_items()
 
         # Track where plugin entry buttons should be inserted (before the stretch)
         self._plugin_insert_index = self.layout.count()

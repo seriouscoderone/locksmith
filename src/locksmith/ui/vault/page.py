@@ -59,7 +59,7 @@ class VaultPage(BasePage):
         main_layout.setSpacing(0)
 
         # Create left navigation menu
-        self.nav_menu = VaultNavMenu(self)
+        self.nav_menu = self._create_nav_menu()
         main_layout.addWidget(self.nav_menu, 0)
 
         # Create stacked widget for sub-pages
@@ -83,6 +83,14 @@ class VaultPage(BasePage):
         self._connect_navigation()
 
         logger.info("VaultPage container initialized")
+
+    def _create_nav_menu(self) -> VaultNavMenu:
+        """Construct the nav menu. Overridable hook (benign default: the
+        stock nav menu, unchanged) so an HOA build that suppresses the
+        built-in wallet pages (see HoaVaultPage._register_core_pages) can
+        also suppress their now-dead nav buttons without altering this
+        class's default behavior."""
+        return VaultNavMenu(self)
 
     def _register_core_pages(self):
         """Register the built-in core vault pages."""

@@ -34,6 +34,7 @@ from typing import Any, TYPE_CHECKING
 
 from keri import help
 
+from locksmith.core.branding import brand
 from locksmith.plugins import storage
 from locksmith.plugins.base import (
     AccountProviderPlugin,
@@ -49,6 +50,14 @@ if TYPE_CHECKING:
 logger = help.ogler.getLogger(__name__)
 
 ENTRY_POINT_GROUP = "locksmith.plugins"
+
+# In-tree entry-point plugin excluded from HOA (peel_core_pages) brands at
+# runtime. pyproject.toml's entry-point declaration is shared across brands
+# and is NOT brand-gated — deleting it there broke the default Locksmith
+# build (see backlog/2026-07-09-kerifoundation-plugin-brand-leak-and-onboarding-crash.md).
+# The exclusion instead happens here, filtered by plugin_id before the
+# plugin class is even loaded/instantiated.
+HOA_PEELED_PLUGIN_IDS = frozenset({"kerifoundation"})
 
 
 @dataclass
@@ -121,7 +130,13 @@ class PluginManager:
         except Exception:
             logger.exception("plugin.entry_points.discovery_failed")
             return
+        peel_core_pages = brand().peel_core_pages
         for ep in eps:
+            if peel_core_pages and ep.name in HOA_PEELED_PLUGIN_IDS:
+                logger.info(
+                    "plugin.skipped reason=hoa_peel plugin_id=%s", ep.name,
+                )
+                continue
             try:
                 plugin_cls = ep.load()
                 plugin = plugin_cls()
