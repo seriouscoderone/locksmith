@@ -467,6 +467,17 @@ class IssueCredentialDialog(LocksmithDialog):
                                 'description': prop_def.get('description', prop_name),
                                 'schema_said': schema_const
                             }
+
+                            # Propagate a pinned edge operator (the 'o' const)
+                            # so the issued edge block satisfies schemas that
+                            # mandate it. ACDC edges that require 'o' with
+                            # additionalProperties:false (e.g. NI2I) reject a
+                            # bare n/s edge, so a dropped operator fails schema
+                            # validation at issuance.
+                            o_def = nested_props.get('o')
+                            if isinstance(o_def, dict) and o_def.get('const'):
+                                edge_req['operator'] = o_def['const']
+
                             edge_requirements.append(edge_req)
                             logger.debug(f"Found edge requirement: {prop_name} -> schema {schema_const}")
 
@@ -1006,7 +1017,13 @@ class IssueCredentialDialog(LocksmithDialog):
             if current_index > 0:  # Skip placeholder at index 0
                 cred_said = dropdown.itemData(current_index)
                 if cred_said:
-                    edges[edge_name] = {'cred_said': cred_said, 'schema_said': edge_req['schema_said']}
+                    edge = {'cred_said': cred_said, 'schema_said': edge_req['schema_said']}
+                    # Carry the schema-pinned edge operator through to the doer
+                    # so the issued edge block includes 'o' (see
+                    # _parse_edge_requirements).
+                    if edge_req.get('operator'):
+                        edge['operator'] = edge_req['operator']
+                    edges[edge_name] = edge
 
         return edges
 

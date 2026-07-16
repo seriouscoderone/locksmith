@@ -19,6 +19,38 @@ from keri.vdr import credentialing, verifying
 logger = help.ogler.getLogger(__name__)
 
 
+def build_edges_block(edges):
+    """Build a saidified ACDC edge (source) block from the GUI's selected edge
+    credentials.
+
+    ``edges`` is the mapping produced by the issue dialog's
+    ``_extract_edge_credentials``: ``{edge_name: {'cred_said', 'schema_said',
+    'operator'?}}``. Each edge carries ``n`` (node SAID) and ``s`` (schema
+    SAID); when the schema pins an edge operator, ``operator`` is present and is
+    emitted as ``o`` so the issued ACDC satisfies edge constraints that require
+    ``n``/``s``/``o`` with ``additionalProperties: false`` (e.g. an NI2I edge).
+    Omitting ``o`` for such a schema makes issuance fail schema validation.
+
+    Returns the saidified edge block, or ``None`` when there are no edges.
+    """
+    if not edges:
+        return None
+
+    edges_block = {'d': ""}
+    for edge_name, edge_def in edges.items():
+        edge = {
+            'n': edge_def['cred_said'],
+            's': edge_def['schema_said'],
+        }
+        operator = edge_def.get('operator')
+        if operator:
+            edge['o'] = operator
+        edges_block[edge_name] = edge
+
+    _, edges_block = coring.Saider.saidify(sad=edges_block, kind=Kinds.json, label=coring.Saids.d)
+    return edges_block
+
+
 class LoadSchemaDoer(doing.DoDoer):
     """Doer for asynchronous schema loading and registry creation."""
 
@@ -363,18 +395,7 @@ class IssueCredentialDoer(doing.DoDoer):
             creder_data.update(self.attributes)
 
             # Build edges block if edge credentials are specified
-            edges_block = None
-            if self.edges:
-                edges_block = dict()
-                edges_block['d'] = ""
-                for edge_name, edge_def in self.edges.items():
-                    edges_block[edge_name] = {
-                        'n': edge_def['cred_said'],
-                        's': edge_def['schema_said']
-                    }
-
-                _, edges_block = coring.Saider.saidify(sad=edges_block, kind=Kinds.json, label=coring.Saids.d)
-
+            edges_block = build_edges_block(self.edges)
 
             # TRANSITIONAL (KERI v2 v1-hold): pin the ACDC to v1 via the fork's
             # additive Credentialer.create(version=) seam. keripy's v2 ACDC
