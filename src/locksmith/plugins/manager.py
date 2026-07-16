@@ -42,6 +42,8 @@ from locksmith.plugins.base import (
     PluginCore,
     VaultPlugin,
 )
+from locksmith.plugins.credential_gate import RequiredCredential, gate_satisfied
+from locksmith.plugins.role_activation import RevealBundledSurface, RoleActivationStrategy
 
 if TYPE_CHECKING:
     from locksmith.ui.vault.menu import VaultNavMenu
@@ -70,6 +72,19 @@ class PluginState:
     in_tree: bool = False
 
 
+@dataclass(frozen=True)
+class HeldCredential:
+    """Gate-shaped view of one held ACDC, projected from the vault's real
+    credential store (``core/credentialing`` / keripy ``reger``) into exactly
+    the attributes ``credential_gate.gate_satisfied`` reads. See
+    ``PluginManager._held_credentials`` for the precise derivation."""
+
+    schema_said: str
+    issuer_aid: str
+    state: str            # active | revoked | unknown (from the TEL Tever vcState)
+    chain_verified: bool  # True iff present in the reger `saved` (fully-verified) index
+
+
 class PluginManager:
     """Discovers, initializes, and manages Locksmith plugins."""
 
@@ -79,6 +94,14 @@ class PluginManager:
         self._plugins: dict[str, PluginCore] = {}
         self._states: dict[str, PluginState] = {}
         self._started_services: dict[str, list[Any]] = {}
+        # Role-activation (credential-gated) state. The strategy turns a
+        # satisfied gate into a revealed surface; _active_roles tracks which
+        # gated plugin_ids are currently revealed so reevaluate_role_gates can
+        # fire activate/deactivate only on transitions. _surface_host is the
+        # VaultPage/HoaVaultPage, captured at vault-UI init.
+        self._activation_strategy: RoleActivationStrategy = RevealBundledSurface()
+        self._active_roles: set[str] = set()
+        self._surface_host: Any | None = None
 
     # ------------------- discovery ---------------------------------
 
@@ -271,9 +294,22 @@ class PluginManager:
     def discover_and_initialize_vault_ui(
         self, vault_page: "VaultPage", nav_menu: "VaultNavMenu",
     ) -> None:
-        """Register vault-plugin pages and menus into the VaultPage."""
+        """Register vault-plugin pages and menus into the VaultPage.
+
+        Ungated plugins register exactly as before. Credential-gated plugins
+        (``required_credential is not None``) are NOT auto-registered here —
+        their surface is withheld until their gate is satisfied and
+        ``reevaluate_role_gates`` reveals it via the activation strategy. The
+        surface host is captured here so gate re-evaluation can target it.
+        """
+        self._surface_host = vault_page
         for pid, plugin in self._plugins.items():
             if not isinstance(plugin, VaultPlugin):
+                continue
+            if getattr(plugin, "required_credential", None) is not None:
+                logger.info(
+                    "plugin.vault_ui.gated_deferred plugin_id=%s", pid,
+                )
                 continue
             try:
                 for key, widget in plugin.get_pages().items():
@@ -283,6 +319,119 @@ class PluginManager:
                 )
             except Exception:
                 logger.exception("plugin.vault_ui.register_failed plugin_id=%s", pid)
+
+    # ------------------- Role-activation (credential gate) ---------
+
+    def reevaluate_role_gates(self, vault: Any) -> None:
+        """Recompute every gated plugin's gate against the vault's held
+        credentials and drive the activation strategy on state transitions.
+
+        On unsatisfied->satisfied: activate the plugin's surface and fire the
+        ``on_role_credential_activated`` seam. On satisfied->unsatisfied:
+        deactivate. Steady states are no-ops. This is the ONLY path that
+        registers a gated plugin's surface; the live triggers that call it are
+        wired in a later task.
+        """
+        host = self._surface_host
+        held = self._held_credentials(vault)
+        for plugin in self._gated_plugins():
+            req = plugin.required_credential
+            satisfied = gate_satisfied(held, req)
+            active = plugin.plugin_id in self._active_roles
+            if satisfied and not active:
+                cred = self._matching_credential(held, req)
+                self._activation_strategy.activate(plugin, cred, host)
+                self._active_roles.add(plugin.plugin_id)
+                self.on_role_credential_activated(plugin, cred)
+            elif active and not satisfied:
+                self._activation_strategy.deactivate(plugin, host)
+                self._active_roles.discard(plugin.plugin_id)
+
+    def on_role_credential_activated(self, plugin: Any, credential: Any) -> None:
+        """Named seam fired once when a role credential activates a plugin.
+
+        POC no-op beyond the surface activation already performed by the
+        strategy; future strategies/consumers hook here (analytics, agent
+        provisioning, notifications, etc.)."""
+
+    def _gated_plugins(self) -> list[PluginCore]:
+        """Loaded plugins that declare a credential gate."""
+        return [
+            p for p in self._plugins.values()
+            if getattr(p, "required_credential", None) is not None
+        ]
+
+    def _held_credentials(self, vault: Any) -> list[HeldCredential]:
+        """Project the vault's real held ACDCs into gate-shaped views.
+
+        Enumeration mirrors the received-credentials list page: for each local
+        hab, the reger subject index (``reger.subjs``) yields the SAIDs of
+        credentials held (issued *to*) that identifier. For each SAID we read:
+
+        - ``schema_said`` / ``issuer_aid`` from the stored ACDC
+          (``reger.creds`` -> ``creder.schema`` / ``creder.issuer``);
+        - ``state`` from the registry Tever TEL status
+          (``reger.tevers[regid].vcState(said).et``): iss/bis -> "active",
+          rev/brv -> "revoked", otherwise "unknown" (e.g. the registry Tever is
+          not present locally);
+        - ``chain_verified`` from the reger ``saved`` index. keripy only pins
+          ``saved`` in ``Verifier.saveCredential``, which runs *after* the full
+          chain (all required edges, e.g. a carrier_license's NI2I edge to its
+          application ACDC), schema, and registry all verify. A credential
+          still sitting in a missing-chain/registry/schema escrow (mce/mre/mse)
+          is never in ``saved`` (and, in fact, never indexed in ``subjs``), so
+          it maps to ``chain_verified=False`` — we never treat mere storage as
+          verification.
+        """
+        reger = vault.rgy.reger
+        habs = vault.hby.habs
+        views: list[HeldCredential] = []
+        seen: set[str] = set()
+        for pre in habs.keys():
+            for saider in reger.subjs.get(keys=(pre,)):
+                said = saider.qb64
+                if said in seen:
+                    continue
+                seen.add(said)
+                views.append(self._held_credential_view(reger, said))
+        return views
+
+    @staticmethod
+    def _held_credential_view(reger: Any, said: str) -> HeldCredential:
+        creder = reger.creds.get(keys=(said,))
+        chain_verified = reger.saved.get(keys=(said,)) is not None
+        state = "unknown"
+        try:
+            status = reger.tevers[creder.regid].vcState(said)
+            et = getattr(status, "et", None)
+            if et in ("iss", "bis"):
+                state = "active"
+            elif et in ("rev", "brv"):
+                state = "revoked"
+        except Exception:  # noqa: BLE001 — missing/partial TEL => state unknown
+            logger.warning(
+                "role_gate.vcstate_unavailable said=%s (state=unknown)", said,
+            )
+        return HeldCredential(
+            schema_said=creder.schema,
+            issuer_aid=creder.issuer,
+            state=state,
+            chain_verified=chain_verified,
+        )
+
+    @staticmethod
+    def _matching_credential(
+        held: list[HeldCredential], req: RequiredCredential,
+    ) -> HeldCredential | None:
+        """The first held credential that satisfies ``req`` (schema, trusted
+        issuer, required TEL state, fully chain-verified), or None."""
+        for c in held:
+            if (c.schema_said == req.schema_said
+                    and c.issuer_aid in req.issuer_aids
+                    and c.state == req.required_state
+                    and c.chain_verified):
+                return c
+        return None
 
     def on_vault_opened(self, vault: Any) -> None:
         for pid, plugin in self._plugins.items():
