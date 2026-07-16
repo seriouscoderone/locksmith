@@ -49,3 +49,37 @@ Building with `LOCKSMITH_BRAND=usurance` produces the Higher-Order Application b
 the wallet pages are peeled (brand-gated) and the app boots into a single default
 vault + AID, retaining KERI primitives and the plugin host. The default `locksmith`
 brand is unchanged.
+
+### Building the usurance HOA (macOS / Windows)
+
+Every white-label build is two steps: stage the brand, then run the existing
+per-platform packaging pipeline (which reads the staged `brand.json` +
+brand-parameterized `.spec`/`.wxs`/dmg-layout produced by the first step).
+
+1. **Stage the brand** — writes `src/locksmith/release/brand.json` (including
+   the `[bootstrap]` table), stages `assets/custom/`, and renders
+   `packaging/wix/Locksmith.wxs` + `packaging/dmg/layout.json` from
+   `brands/usurance/brand.toml`'s `[identity]`:
+
+   ```bash
+   LOCKSMITH_BRAND=usurance python scripts/brand_apply.py
+   ```
+
+2. **Package** — the standard macOS / Windows build scripts, unchanged; they
+   resolve the app name / artifact prefix / bundle id / upgrade code from the
+   brand staged above via `packaging/brandlib.py`:
+
+   ```bash
+   # macOS (produces dist/Usurance.app + dist/Usurance-<version>.dmg)
+   LOCKSMITH_BRAND=usurance packaging/build-macos.sh
+
+   # Windows (produces build/windows/Usurance-<version>.msi)
+   $env:LOCKSMITH_BRAND = "usurance"; pwsh packaging/build-windows.ps1
+   ```
+
+Producing **signed** installers additionally requires the org's Apple
+Developer ID application cert + notarytool profile (macOS) or a code-signing
+cert (Windows) — those are CI/manual steps requiring credentials that don't
+belong on a dev machine; see `.github/workflows/release.ci.yml` for the full
+signed pipeline. Do not attempt to build signed installers outside of CI
+without the relevant certs.
