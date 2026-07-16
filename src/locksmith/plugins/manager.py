@@ -102,6 +102,10 @@ class PluginManager:
         self._activation_strategy: RoleActivationStrategy = RevealBundledSurface()
         self._active_roles: set[str] = set()
         self._surface_host: Any | None = None
+        # The vault most recently opened, so a live credential-changed
+        # signal (see _on_credential_changed) knows what to re-evaluate
+        # gates against without needing the caller to pass it through.
+        self._current_vault: Any | None = None
 
     # ------------------- discovery ---------------------------------
 
@@ -442,6 +446,38 @@ class PluginManager:
                 vault.doers.extend(plugin.get_doers())
             except Exception:
                 logger.exception("plugin.on_vault_opened_failed plugin_id=%s", pid)
+
+        # Trigger (a): evaluate role gates against whatever credentials this
+        # vault already holds. Catches credentials admitted in a prior
+        # session (no re-auth needed on relaunch). Cheap no-op when there are
+        # no gated plugins, so the default (ungated) build is unaffected.
+        self._current_vault = vault
+        signals = getattr(vault, "signals", None)
+        if signals is not None:
+            # Trigger (b): live re-evaluation on IPEX admit, with no restart.
+            # ``vault.signals`` is the same DoerSignalBridge instance AdmitDoer
+            # is handed (see ui/vault/credentials/received/accept_grant.py),
+            # and "AdmitDoer"/"admit_complete" is the same event the
+            # received-credentials list page already refreshes on (see
+            # ui/vault/credentials/received/list.py:_on_doer_event). Piggy-
+            # backing on it means no new signal/emit site is needed.
+            signals.doer_event.connect(self._on_doer_event)
+        self.reevaluate_role_gates(vault)
+
+    def _on_doer_event(self, doer_name: str, event_type: str, data: dict) -> None:
+        """Filter the vault's general doer-event bus down to a successful
+        IPEX admit landing in the credential store, and re-evaluate role
+        gates live (no restart)."""
+        if doer_name == "AdmitDoer" and event_type == "admit_complete" and data.get("success"):
+            self._on_credential_changed()
+
+    def _on_credential_changed(self) -> None:
+        """Re-evaluate role gates against the currently-open vault.
+
+        A no-op if no vault is current (e.g. called before any vault has
+        been opened)."""
+        if getattr(self, "_current_vault", None) is not None:
+            self.reevaluate_role_gates(self._current_vault)
 
     def prepare_vault_deletion(self, vault: Any) -> None:
         for pid, plugin in self._plugins.items():
