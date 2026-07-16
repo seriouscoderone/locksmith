@@ -30,3 +30,21 @@ def test_example_org_name_falls_back_to_domain():
 def test_runtime_json_carries_brand_id():
     assert brandlib.runtime_brand_json(brandlib.load_brand_manifest("locksmith"))["id"] == "locksmith"
     assert brandlib.runtime_brand_json(brandlib.load_brand_manifest("usurance"))["id"] == "usurance"
+
+
+def test_runtime_json_copies_bootstrap_table_verbatim():
+    # None of the committed brand.toml fixtures carry a non-empty [bootstrap]
+    # table, so exercise the copy with an in-memory manifest to prove the
+    # HOA bootstrap section round-trips into brand.json unchanged (mirrors
+    # how [theme] is copied a few lines above it).
+    m = brandlib.load_brand_manifest("locksmith")
+    m["bootstrap"] = {
+        "peel_core_pages": True,
+        "default_vault_name": "Carrier",
+        "default_passcode": "",
+        "default_aid_alias": "carrier",
+        "default_witnesses": ["BwitnessAID"],
+        "default_toad": 1,
+    }
+    doc = brandlib.runtime_brand_json(m)
+    assert doc["bootstrap"] == m["bootstrap"]
