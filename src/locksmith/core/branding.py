@@ -20,41 +20,48 @@ BRAND_CONFIG_ENV_VAR = "LOCKSMITH_BRAND_CONFIG"
 _PACKAGED_BRAND_JSON = Path(__file__).resolve().parents[1] / "release" / "brand.json"
 
 
-@dataclass(frozen=True)
-class Brand:
-    display_name: str
-    tagline: str
-    org_name: str
-    org_domain: str
-    website: str
-    support: str
-    id: str = "locksmith"
-    appcast_macos_xml: str = ""
-    appcast_windows_xml: str = ""
-    theme: dict = field(default_factory=dict)
-
-
-# The reference brand (#1). This is the SINGLE canonical hard-coded brand name.
-_DEFAULT = Brand(
-    display_name="Locksmith",
-    tagline="KERI identity vault",
-    org_name="keri.host",
-    org_domain="keri.host",
-    website="https://locksmith.app",
-    support="https://locksmith.app/support",
-    id="locksmith",
-    appcast_macos_xml="https://releases.keri.host/appcast/v1/macos.xml",
-    appcast_windows_xml="https://releases.keri.host/appcast/v1/windows.xml",
-    theme={
+def _reference_theme() -> dict:
+    return {
         "primary": "#F57B03",
         "primary_hover": "#D66A02",
         "primary_pressed": "#E67E00",
         "toolbar_dark": "#1A252C",
-    },
-)
+    }
+
+
+@dataclass(frozen=True)
+class Brand:
+    # Every field below carries the reference Locksmith brand's own value as
+    # its default, so the bare ``Brand()`` (no args) IS the reference brand —
+    # matching the module-level promise that an unconfigured build is
+    # Locksmith with zero setup. See ``_DEFAULT`` below.
+    display_name: str = "Locksmith"
+    tagline: str = "KERI identity vault"
+    org_name: str = "keri.host"
+    org_domain: str = "keri.host"
+    website: str = "https://locksmith.app"
+    support: str = "https://locksmith.app/support"
+    id: str = "locksmith"
+    appcast_macos_xml: str = "https://releases.keri.host/appcast/v1/macos.xml"
+    appcast_windows_xml: str = "https://releases.keri.host/appcast/v1/windows.xml"
+    theme: dict = field(default_factory=_reference_theme)
+    # --- [bootstrap] section: first-run HOA defaults (Locksmith itself never
+    # sets these — a non-HOA brand.toml simply omits [bootstrap] and every
+    # field below stays at its safe, inert default). ---
+    peel_core_pages: bool = False
+    default_vault_name: str = ""
+    default_passcode: str = ""
+    default_aid_alias: str = ""
+    default_witnesses: list[str] = field(default_factory=list)
+    default_toad: int = 0
+
+
+# The reference brand (#1). This is the SINGLE canonical hard-coded brand name.
+_DEFAULT = Brand()
 
 
 def _from_dict(doc: dict) -> Brand:
+    bs = doc.get("bootstrap", {}) or {}
     return Brand(
         display_name=doc.get("display_name", _DEFAULT.display_name),
         tagline=doc.get("tagline", _DEFAULT.tagline),
@@ -66,6 +73,12 @@ def _from_dict(doc: dict) -> Brand:
         appcast_macos_xml=doc.get("appcast_macos_xml", _DEFAULT.appcast_macos_xml),
         appcast_windows_xml=doc.get("appcast_windows_xml", _DEFAULT.appcast_windows_xml),
         theme=dict(doc.get("theme", {})),
+        peel_core_pages=bool(bs.get("peel_core_pages", False)),
+        default_vault_name=bs.get("default_vault_name", ""),
+        default_passcode=bs.get("default_passcode", ""),
+        default_aid_alias=bs.get("default_aid_alias", ""),
+        default_witnesses=list(bs.get("default_witnesses", [])),
+        default_toad=int(bs.get("default_toad", 0)),
     )
 
 

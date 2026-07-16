@@ -50,6 +50,7 @@ def runtime_brand_json(manifest: dict) -> dict:
         "appcast_macos_xml": manifest["urls"]["appcast_macos_xml"],
         "appcast_windows_xml": manifest["urls"]["appcast_windows_xml"],
         "theme": dict(manifest.get("theme", {})),
+        "bootstrap": dict(manifest.get("bootstrap", {})),
     }
 
 
