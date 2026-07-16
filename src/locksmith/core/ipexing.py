@@ -22,6 +22,27 @@ from locksmith.core.remoting import message_version
 logger = help.ogler.getLogger(__name__)
 
 
+def _embed_serder(label, ked):
+    """Version-agnostic re-serialization of a grant embed.
+
+    ``coring.Sadder`` serializes only the library's current protocol version
+    (v2 in keri 2.0.0-dev6, via ``sizeify``), so it raises
+    ``Unsupported version`` on the v1 events the wallet still emits during the
+    KERI v2 v1-hold. Selecting the concrete Serder by embed label instead keeps
+    this version-agnostic: each Serder reads the protocol version from the ked's
+    own version string, so it handles v1 today and v2 later unchanged.
+
+    Parameters:
+        label (str): grant embed label ("acdc", "anc", or "iss").
+        ked (dict): the embedded key/credential event dict.
+
+    Returns:
+        Serder: SerderACDC for the ``acdc`` embed, SerderKERI otherwise.
+    """
+    if label == "acdc":
+        return serdering.SerderACDC(sad=ked)
+    return serdering.SerderKERI(sad=ked)
+
 
 class Granter:
     """
@@ -172,10 +193,16 @@ class Admitter:
         embeds = grant.ked['e']
         acdc = embeds["acdc"]
 
-        for label in ("anc", "reg", "iss", "acdc"):
-            ked = embeds[label]
-            sadder = coring.Sadder(ked=ked)
-            ims = bytearray(sadder.raw) + pathed[label]
+        # keripy's ipexGrantExn no longer emits a `reg` embed; the receiver
+        # reconstructs TEL/registry state from `anc` + `iss`. Parse only the
+        # labels the grant actually carries, version-agnostically (see
+        # _embed_serder — coring.Sadder is v2-only and breaks the v1-hold).
+        for label in ("anc", "iss", "acdc"):
+            ked = embeds.get(label)
+            if not ked:
+                continue
+            sadder = _embed_serder(label, ked)
+            ims = bytearray(sadder.raw) + pathed.get(label, b'')
             parsing.Parser(
                 kvy=self.kvy,
                 tvy=self.tvy,
@@ -672,11 +699,13 @@ class AdmitDoer(doing.DoDoer):
                     }
                 )
 
-            # Parse embedded messages (skip "reg" as per KERIpy)
+            # Parse embedded messages (skip "reg" as per KERIpy). Re-serialize
+            # version-agnostically (see _embed_serder — coring.Sadder is v2-only
+            # and breaks the v1-hold).
             for label in ("anc", "iss", "acdc"):
                 ked = embeds.get(label)
                 if ked:
-                    sadder = coring.Sadder(ked=ked)
+                    sadder = _embed_serder(label, ked)
                     ims = bytearray(sadder.raw) + pathed.get(label, b'')
                     parsing.Parser(
                         kvy=self.kvy,
