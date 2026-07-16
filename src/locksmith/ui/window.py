@@ -15,6 +15,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.core.apping import LocksmithApplication
+from locksmith.core.bootstrapping import bootstrap_default_environment
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.ui.home import HomePage
@@ -182,6 +183,19 @@ class LocksmithWindow(QMainWindow):
         # Run app-lifecycle hooks for any AppPlugin instances loaded above.
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
+
+        # First-run bootstrap (HOA brands only): auto-create the brand's
+        # default vault + witnessless default AID so the app boots straight
+        # into an app experience with no manual vault/identifier creation.
+        # Deferred via QTimer.singleShot(0, ...) rather than called inline,
+        # so it runs AFTER plugin discovery + on_app_started above — opening
+        # the vault fires plugin_manager.on_vault_opened, which plugins
+        # expect only once they've been discovered and started. Gated on
+        # brand().default_vault_name so only an HOA brand.toml's
+        # [bootstrap] section opts in; the default Locksmith brand carries
+        # "" and is unaffected.
+        if brand().default_vault_name:
+            QTimer.singleShot(0, lambda: bootstrap_default_environment(self.app, brand()))
 
         # --- App-update menu + controller wiring (Phase 5) ---
         self._install_help_menu()
