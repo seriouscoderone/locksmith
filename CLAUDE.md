@@ -15,6 +15,12 @@ Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KER
 ## Running tests
 
 - Venv: `.venv/bin/python` at the repo root.
+- **Dev install:** `pip install -e .[test]` installs the runtime deps plus the test
+  toolchain (`pytest`, `pytest-qt` for the `qtbot` fixture, and the publisher runtime
+  deps `click`/`fido2`/`boto3` that `tests/integration/test_publisher_roundtrip.py`
+  needs — it bootstraps `tools/publisher/src` onto `sys.path` rather than installing
+  the publisher package). Do **not** `pip install -e tools/publisher` to get those:
+  its unpinned upstream `keri` git dep conflicts with the fork pinned in `[project]`.
 - **Always pass `--import-mode=importlib`.** The repo has a top-level `packaging/` directory (wix/installer
   assets) that otherwise shadows the real `packaging` library on `sys.path`, giving a spurious
   `ModuleNotFoundError: packaging.version`.
