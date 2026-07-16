@@ -467,6 +467,26 @@ class IssueCredentialDialog(LocksmithDialog):
                                 'description': prop_def.get('description', prop_name),
                                 'schema_said': schema_const
                             }
+
+                            # Propagate the edge operator so the issued edge
+                            # block satisfies schemas that mandate it. ACDC edges
+                            # that require 'o' with additionalProperties:false
+                            # (e.g. NI2I) reject a bare n/s edge, so a dropped
+                            # operator fails schema validation at issuance.
+                            #
+                            # A 'const' pins the operator: issue it silently. An
+                            # 'o' that is *required but unpinned* (e.g. an enum
+                            # of I2I/NI2I/DI2I) leaves the choice to the issuer,
+                            # so surface the allowed values for a dropdown.
+                            o_def = nested_props.get('o')
+                            if isinstance(o_def, dict):
+                                if o_def.get('const'):
+                                    edge_req['operator'] = o_def['const']
+                                elif 'o' in prop_def.get('required', []):
+                                    enum = o_def.get('enum')
+                                    if isinstance(enum, list) and enum:
+                                        edge_req['operator_options'] = list(enum)
+
                             edge_requirements.append(edge_req)
                             logger.debug(f"Found edge requirement: {prop_name} -> schema {schema_const}")
 
@@ -646,6 +666,34 @@ class IssueCredentialDialog(LocksmithDialog):
         # Populate dropdown
         for cred in credentials:
             dropdown.addItem(cred['display_name'], userData=cred['said'])
+
+        return dropdown
+
+    def _create_operator_dropdown(self, edge_req: dict) -> FloatingLabelComboBox:
+        """
+        Create a dropdown for selecting an edge's operator when the schema
+        requires ``o`` but does not pin it via ``const`` (e.g. an enum of
+        I2I/NI2I/DI2I). The issuer must pick one so the issued edge block
+        satisfies the schema.
+
+        Args:
+            edge_req: Edge requirement dict with name, description and
+                operator_options
+
+        Returns:
+            FloatingLabelComboBox: Dropdown populated with the allowed operators
+        """
+        # Add asterisk to indicate required field
+        label = f"{edge_req['description']} operator *"
+
+        dropdown = FloatingLabelComboBox(label)
+        dropdown.setObjectName(f"issueCredentialDialog.operatorCombo.{edge_req['name']}")
+        dropdown.setFixedWidth(400)
+
+        # Add placeholder, then one item per schema-allowed operator
+        dropdown.addItem("Select an operator...")
+        for operator in edge_req['operator_options']:
+            dropdown.addItem(operator, userData=operator)
 
         return dropdown
 
@@ -836,11 +884,18 @@ class IssueCredentialDialog(LocksmithDialog):
                 dropdown = self._create_edge_dropdown(edge_req)
                 self.control_layout.addWidget(dropdown)
 
+                entry = {'dropdown': dropdown, 'edge_req': edge_req}
+
+                # When the schema requires an operator but does not pin it,
+                # surface a selector for the issuer to choose one.
+                if edge_req.get('operator_options'):
+                    self.control_layout.addSpacing(10)
+                    operator_dropdown = self._create_operator_dropdown(edge_req)
+                    self.control_layout.addWidget(operator_dropdown)
+                    entry['operator_dropdown'] = operator_dropdown
+
                 # Store reference with edge name as key
-                self._edge_dropdowns[edge_req['name']] = {
-                    'dropdown': dropdown,
-                    'edge_req': edge_req
-                }
+                self._edge_dropdowns[edge_req['name']] = entry
 
             # Add spacing after edge dropdowns
             self.control_layout.addSpacing(15)
@@ -1006,7 +1061,23 @@ class IssueCredentialDialog(LocksmithDialog):
             if current_index > 0:  # Skip placeholder at index 0
                 cred_said = dropdown.itemData(current_index)
                 if cred_said:
-                    edges[edge_name] = {'cred_said': cred_said, 'schema_said': edge_req['schema_said']}
+                    edge = {'cred_said': cred_said, 'schema_said': edge_req['schema_said']}
+                    # Carry the edge operator through to the doer so the issued
+                    # edge block includes 'o' (see _parse_edge_requirements). A
+                    # schema-pinned operator is used as-is; an unpinned but
+                    # required operator is read from the selector the dialog
+                    # surfaced. Validation blocks an unselected operator, so a
+                    # placeholder selection simply omits 'o' here.
+                    operator = edge_req.get('operator')
+                    if not operator:
+                        operator_dropdown = edge_info.get('operator_dropdown')
+                        if operator_dropdown is not None:
+                            op_index = operator_dropdown.currentIndex()
+                            if op_index > 0:
+                                operator = operator_dropdown.itemData(op_index)
+                    if operator:
+                        edge['operator'] = operator
+                    edges[edge_name] = edge
 
         return edges
 
@@ -1114,6 +1185,21 @@ class IssueCredentialDialog(LocksmithDialog):
                     dropdown.setProperty("error", True)
                     dropdown.style().unpolish(dropdown)
                     dropdown.style().polish(dropdown)
+
+            # An edge whose operator is required but unpinned must have an
+            # operator chosen whenever a credential is selected for it; a
+            # missing 'o' fails schema validation at issuance.
+            for edge_name, edge_info in self._edge_dropdowns.items():
+                operator_dropdown = edge_info.get('operator_dropdown')
+                if operator_dropdown is None:
+                    continue
+                if edge_info['dropdown'].currentIndex() <= 0:
+                    continue
+                if operator_dropdown.currentIndex() <= 0:
+                    failed_fields.append(f"{edge_info['edge_req']['description']} operator")
+                    operator_dropdown.setProperty("error", True)
+                    operator_dropdown.style().unpolish(operator_dropdown)
+                    operator_dropdown.style().polish(operator_dropdown)
 
         if failed_fields:
             field_text = "field" if len(failed_fields) == 1 else "fields"

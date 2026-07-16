@@ -59,7 +59,7 @@ class VaultPage(BasePage):
         main_layout.setSpacing(0)
 
         # Create left navigation menu
-        self.nav_menu = VaultNavMenu(self)
+        self.nav_menu = self._create_nav_menu()
         main_layout.addWidget(self.nav_menu, 0)
 
         # Create stacked widget for sub-pages
@@ -83,6 +83,14 @@ class VaultPage(BasePage):
         self._connect_navigation()
 
         logger.info("VaultPage container initialized")
+
+    def _create_nav_menu(self) -> VaultNavMenu:
+        """Construct the nav menu. Overridable hook (benign default: the
+        stock nav menu, unchanged) so an HOA build that suppresses the
+        built-in wallet pages (see HoaVaultPage._register_core_pages) can
+        also suppress their now-dead nav buttons without altering this
+        class's default behavior."""
+        return VaultNavMenu(self)
 
     def _register_core_pages(self):
         """Register the built-in core vault pages."""
@@ -111,6 +119,34 @@ class VaultPage(BasePage):
         self._pages[key] = widget
         self.content_stack.addWidget(widget)
         logger.debug(f"Registered page '{key}'")
+
+    def unregister_page(self, key: str) -> None:
+        """Remove a previously-registered page. Symmetric with register_page.
+
+        Used by the role-activation strategy to withdraw a gated plugin's
+        surface when its credential gate flips satisfied->unsatisfied. Unknown
+        keys are a no-op (logged), never an error.
+        """
+        widget = self._pages.pop(key, None)
+        if widget is None:
+            logger.debug(f"unregister_page: no page registered for key '{key}'")
+            return
+        self.content_stack.removeWidget(widget)
+        widget.setParent(None)
+        widget.deleteLater()
+        logger.debug(f"Unregistered page '{key}'")
+
+    def add_menu_entry(self, plugin_id: str, entry_button, submenu_items=None) -> None:
+        """Reveal a plugin's nav-menu section. Thin host wrapper over the nav
+        menu's plugin-section registry (Task 2b), symmetric with
+        remove_menu_entry — the role-activation strategy calls these."""
+        self.nav_menu.register_plugin_section(
+            plugin_id, entry_button, submenu_items or [],
+        )
+
+    def remove_menu_entry(self, plugin_id: str) -> None:
+        """Withdraw a plugin's nav-menu section. Symmetric with add_menu_entry."""
+        self.nav_menu.unregister_plugin_section(plugin_id)
 
     def _connect_navigation(self):
         """Connect navigation menu signals to internal sub-page navigation."""

@@ -15,11 +15,14 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.core.apping import LocksmithApplication
+from locksmith.core.bootstrapping import bootstrap_default_environment
+from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
 from locksmith.ui.toolbar import LocksmithToolbar
 from locksmith.ui.toolkit.widgets.toast import NotificationToast
+from locksmith.ui.vault.hoa_page import HoaVaultPage
 from locksmith.ui.vault.page import VaultPage
 from locksmith.ui.vaults.drawer import VaultDrawer
 
@@ -102,7 +105,12 @@ class LocksmithWindow(QMainWindow):
         self.pages = {}
         self.pages[Pages.HOME] = HomePage(self)
         self.pages[Pages.PLUGINS] = PluginsPage(self.app, self)
-        self.pages[Pages.VAULT] = VaultPage(self)
+        # Peel-light: an HOA brand suppresses the built-in wallet pages by
+        # swapping in HoaVaultPage (same constructor, no-op core-page
+        # registration). Default brand -> peel_core_pages=False -> stock
+        # VaultPage, behaviorally unchanged.
+        _VaultPageCls = HoaVaultPage if brand().peel_core_pages else VaultPage
+        self.pages[Pages.VAULT] = _VaultPageCls(self)
 
         # Wire PluginsPage signals
         plugins_page = self.pages[Pages.PLUGINS]
@@ -175,6 +183,19 @@ class LocksmithWindow(QMainWindow):
         # Run app-lifecycle hooks for any AppPlugin instances loaded above.
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
+
+        # First-run bootstrap (HOA brands only): auto-create the brand's
+        # default vault + witnessless default AID so the app boots straight
+        # into an app experience with no manual vault/identifier creation.
+        # Deferred via QTimer.singleShot(0, ...) rather than called inline,
+        # so it runs AFTER plugin discovery + on_app_started above — opening
+        # the vault fires plugin_manager.on_vault_opened, which plugins
+        # expect only once they've been discovered and started. Gated on
+        # brand().default_vault_name so only an HOA brand.toml's
+        # [bootstrap] section opts in; the default Locksmith brand carries
+        # "" and is unaffected.
+        if brand().default_vault_name:
+            QTimer.singleShot(0, self._run_default_bootstrap)
 
         # --- App-update menu + controller wiring (Phase 5) ---
         self._install_help_menu()
@@ -326,6 +347,24 @@ class LocksmithWindow(QMainWindow):
             parent=self,
         )
         dlg.open()
+
+    def _run_default_bootstrap(self) -> None:
+        """Deferred QTimer.singleShot slot (HOA brands only, first run).
+
+        Runs ``bootstrap_default_environment`` and, when it reports it
+        created+opened the brand's default vault this run, navigates
+        straight into it — the same ``navigate_to(Pages.VAULT,
+        vault_name=...)`` call the manual open-vault flow uses (see
+        ``VaultDrawer._on_vault_opened`` in ``ui/vaults/drawer.py``) — so a
+        single-vault HOA drops straight into its (peeled) vault view instead
+        of stalling on the home/vault-chooser screen.
+
+        A False return (not first run / non-HOA brand) is a no-op: no forced
+        navigation, default build behavior unchanged.
+        """
+        created = bootstrap_default_environment(self.app, brand())
+        if created:
+            self.nav_manager.navigate_to(Pages.VAULT, vault_name=brand().default_vault_name)
 
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the

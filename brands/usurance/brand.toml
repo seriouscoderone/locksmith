@@ -60,3 +60,14 @@ full_logo_black   = "FullLogoBlack.svg"
 [publisher]
 anchor        = "publisher_anchor.json"
 deploy_config = "deploy_config.json"
+
+# HOA first-run bootstrap defaults (locksmith-hoa-base scaffold): drives the
+# Task 5/9 auto-created vault + AID on first launch, and the wallet-page peel.
+# Witnessless POC per backlog — real witness defaults land later.
+[bootstrap]
+peel_core_pages    = true
+default_vault_name = "Carrier"
+default_passcode   = ""          # unencrypted for POC; owner may set a default later
+default_aid_alias  = "carrier"
+default_witnesses  = []          # witnessless POC (backlog witness defaults)
+default_toad       = 0

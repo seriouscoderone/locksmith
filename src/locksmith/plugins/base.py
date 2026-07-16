@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from PySide6.QtGui import QKeySequence
     from PySide6.QtWidgets import QWidget
     from locksmith.ui.vault.menu import MenuButton
+    from locksmith.plugins.credential_gate import RequiredCredential
 
 
 class PluginCore(ABC):
@@ -73,6 +74,14 @@ class AppPlugin(PluginCore):
 
 class VaultPlugin(PluginCore):
     """Plugin that hooks into vault lifecycle (the original surface)."""
+
+    required_credential: "RequiredCredential | None" = None
+    """Optional credential gate declaration. When None (the default),
+    the plugin is ungated — every vault can access it, as today. When
+    set to a ``RequiredCredential``, callers should use
+    ``credential_gate.gate_satisfied`` against the holder's verified
+    credentials before granting access to this plugin's surface.
+    """
 
     @abstractmethod
     def on_vault_opened(self, vault: Any) -> None:

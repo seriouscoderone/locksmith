@@ -289,17 +289,25 @@ class VaultNavMenu(QFrame):
     # Plugin menu signal — emits plugin_id when a plugin entry button is clicked
     plugin_section_clicked = Signal(str)
 
-    def __init__(self, parent=None, collapsible: bool = True):
+    def __init__(self, parent=None, collapsible: bool = True, include_core_items: bool = True):
         """
         Initialize the VaultNavMenu.
 
         Args:
             parent: Parent widget
             collapsible: Whether the menu should be collapsible (default: True)
+            include_core_items: Whether to build the built-in wallet nav
+                buttons (identifiers/remotes/groups/credentials/settings) and
+                the credentials submenu (issued/received/schema). Defaults to
+                True (stock Locksmith, unchanged). An HOA build that doesn't
+                register any core pages passes False so no dead nav buttons
+                are shown — plugin-contributed sections are unaffected, since
+                those are added later via register_plugin_section().
         """
         super().__init__(parent)
 
         self.collapsible = collapsible
+        self.include_core_items = include_core_items
         self.is_locked_open = False
         self.is_expanded = False
         self.active_nav_button = None  # Track the currently active navigation button
@@ -313,6 +321,10 @@ class VaultNavMenu(QFrame):
         # Plugin menu state
         self._plugin_menus: dict[str, list[QWidget]] = {}
         self._plugin_nav_buttons: dict[str, list[MenuButton]] = {}
+        # All layout widgets owned by a plugin section (spacer, divider, entry
+        # button, and submenu items) so unregister_plugin_section can remove
+        # them symmetrically — used when a role gate flips off.
+        self._plugin_sections: dict[str, list[QWidget]] = {}
         self._active_plugin_id: str | None = None
         self._was_locked_before_plugin = False
 
@@ -359,10 +371,12 @@ class VaultNavMenu(QFrame):
             self.menu_items.append(self.lock_button_spacer)
 
         # Menu items
-        self._add_menu_items()
+        if self.include_core_items:
+            self._add_menu_items()
 
         # Credentials menu items (hidden initially)
-        self._create_credentials_menu_items()
+        if self.include_core_items:
+            self._create_credentials_menu_items()
 
         # Track where plugin entry buttons should be inserted (before the stretch)
         self._plugin_insert_index = self.layout.count()
@@ -828,8 +842,42 @@ class VaultNavMenu(QFrame):
 
         self._plugin_menus[plugin_id] = submenu_items
         self._plugin_nav_buttons[plugin_id] = nav_buttons
+        # Track every layout widget this section owns, in insertion order, for
+        # symmetric removal in unregister_plugin_section.
+        self._plugin_sections[plugin_id] = [spacer, divider, entry_button, *submenu_items]
 
         logger.info(f"Plugin section registered: {plugin_id} ({len(submenu_items)} submenu items)")
+
+    def unregister_plugin_section(self, plugin_id: str):
+        """Remove a plugin section previously added via register_plugin_section.
+
+        Removes the spacer, divider, entry button, and submenu items from the
+        layout and internal registries, and rewinds the plugin insert index so
+        subsequent registrations land correctly. Symmetric with
+        register_plugin_section; unknown ids are a no-op (logged).
+        """
+        widgets = self._plugin_sections.pop(plugin_id, None)
+        if not widgets:
+            logger.warning(f"unregister_plugin_section: unknown plugin_id '{plugin_id}'")
+            return
+
+        # If this plugin's submenu is currently active, drop back to the vault
+        # menu so we don't leave the menu pointing at removed widgets.
+        if self._active_plugin_id == plugin_id:
+            self._active_plugin_id = None
+
+        for widget in widgets:
+            self.layout.removeWidget(widget)
+            if widget in self.menu_items:
+                self.menu_items.remove(widget)
+            widget.setParent(None)
+            widget.deleteLater()
+            self._plugin_insert_index -= 1
+
+        self._plugin_menus.pop(plugin_id, None)
+        self._plugin_nav_buttons.pop(plugin_id, None)
+
+        logger.info(f"Plugin section unregistered: {plugin_id}")
 
     def _on_plugin_button_clicked(self, plugin_id: str):
         """Handle plugin entry button click - switch to plugin menu."""
