@@ -159,27 +159,37 @@ def test_wired_after_on_app_started_deferred_and_brand_gated():
     banned by this host's test-run rules for anything instancing-shaped).
 
     Verifies:
-      (a) the bootstrap call appears AFTER the on_app_started() call in
-          __init__'s source, so plugin discovery + on_app_started run first;
+      (a) the deferred bootstrap slot is scheduled AFTER the
+          on_app_started() call in __init__'s source, so plugin discovery +
+          on_app_started run first;
       (b) it's scheduled via QTimer.singleShot rather than called inline;
       (c) it's guarded by brand().default_vault_name so only HOA brands
-          opt in and the default Locksmith brand is unaffected.
+          opt in and the default Locksmith brand is unaffected;
+      (d) the slot itself (``_run_default_bootstrap``, factored out so
+          Task 5b's True->navigate wiring is unit-testable — see
+          ``tests/ui/test_window_bootstrap_nav.py``) calls
+          bootstrap_default_environment.
     """
     from locksmith.ui.window import LocksmithWindow
 
     source = inspect.getsource(LocksmithWindow.__init__)
 
     app_started_idx = source.index("on_app_started(")
-    boot_idx = source.index("bootstrap_default_environment(")
+    boot_idx = source.index("_run_default_bootstrap")
     assert boot_idx > app_started_idx, (
-        "bootstrap_default_environment must be wired after on_app_started()"
+        "the deferred bootstrap slot must be wired after on_app_started()"
     )
 
     preceding = source[max(0, boot_idx - 400):boot_idx]
     assert "QTimer.singleShot" in preceding, (
-        "bootstrap_default_environment must be deferred via QTimer.singleShot, "
+        "the bootstrap slot must be deferred via QTimer.singleShot, "
         "not invoked inline in __init__"
     )
     assert "default_vault_name" in preceding, (
-        "bootstrap_default_environment must be guarded by brand().default_vault_name"
+        "the bootstrap slot must be guarded by brand().default_vault_name"
+    )
+
+    slot_source = inspect.getsource(LocksmithWindow._run_default_bootstrap)
+    assert "bootstrap_default_environment(" in slot_source, (
+        "_run_default_bootstrap must call bootstrap_default_environment"
     )

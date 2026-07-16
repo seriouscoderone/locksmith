@@ -195,7 +195,7 @@ class LocksmithWindow(QMainWindow):
         # [bootstrap] section opts in; the default Locksmith brand carries
         # "" and is unaffected.
         if brand().default_vault_name:
-            QTimer.singleShot(0, lambda: bootstrap_default_environment(self.app, brand()))
+            QTimer.singleShot(0, self._run_default_bootstrap)
 
         # --- App-update menu + controller wiring (Phase 5) ---
         self._install_help_menu()
@@ -347,6 +347,24 @@ class LocksmithWindow(QMainWindow):
             parent=self,
         )
         dlg.open()
+
+    def _run_default_bootstrap(self) -> None:
+        """Deferred QTimer.singleShot slot (HOA brands only, first run).
+
+        Runs ``bootstrap_default_environment`` and, when it reports it
+        created+opened the brand's default vault this run, navigates
+        straight into it — the same ``navigate_to(Pages.VAULT,
+        vault_name=...)`` call the manual open-vault flow uses (see
+        ``VaultDrawer._on_vault_opened`` in ``ui/vaults/drawer.py``) — so a
+        single-vault HOA drops straight into its (peeled) vault view instead
+        of stalling on the home/vault-chooser screen.
+
+        A False return (not first run / non-HOA brand) is a no-op: no forced
+        navigation, default build behavior unchanged.
+        """
+        created = bootstrap_default_environment(self.app, brand())
+        if created:
+            self.nav_manager.navigate_to(Pages.VAULT, vault_name=brand().default_vault_name)
 
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the
