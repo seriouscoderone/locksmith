@@ -97,119 +97,358 @@ from locksmith.plugins.manager import PluginManager
 # Canonical ugard schemas (embedded verbatim so the test is self-contained;
 # the $id of each is its SAID and must round-trip through Schemer unchanged).
 # ---------------------------------------------------------------------------
-APP_SCHEMA_SAID = "ENbhxLlFINUDp1EU4mV5RVVL-CS6Ub72zXY89EcM7Ccb"
-LICENSE_SCHEMA_SAID = CARRIER_LICENSE_SCHEMA_SAID  # "ENIhMZ...R9cX42x"
+APP_SCHEMA_SAID = "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
+LICENSE_SCHEMA_SAID = CARRIER_LICENSE_SCHEMA_SAID  # "EOBjUL...YQrnHivI"
 
 APPLICATION_SCHEMA = json.loads(r'''
 {
-  "$id": "ENbhxLlFINUDp1EU4mV5RVVL-CS6Ub72zXY89EcM7Ccb",
+  "$id": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Carrier License Application",
   "description": "A carrier's self-attested application to underwrite named lines of business in a US jurisdiction. Self-issued (issuer = issuee = the carrier) and presented to a state Department of Insurance via IPEX. The granted carrier_license edges back to the exact (immutable, SAID-addressed) version adjudicated.",
   "type": "object",
   "credentialType": "CarrierLicenseApplication",
+  "version": "1.0.0",
   "properties": {
-    "v": {"description": "ACDC version string.", "type": "string"},
-    "d": {"description": "Credential SAID.", "type": "string"},
-    "i": {"description": "Issuer AID (the applicant carrier; equals the issuee since self-issued).", "type": "string"},
-    "ri": {"description": "Issuance/revocation TEL registry identifier (the carrier's own registry; enables re-issuance/supersession).", "type": "string"},
-    "s": {"description": "Schema SAID.", "type": "string"},
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "Credential SAID.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID (the applicant carrier; equals the issuee since self-issued).",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Issuance/revocation TEL registry identifier (the carrier's own registry; enables re-issuance/supersession).",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID.",
+      "type": "string"
+    },
     "a": {
       "oneOf": [
-        {"description": "Attributes block SAID, compact form.", "type": "string"},
+        {
+          "description": "Attributes block SAID, compact form.",
+          "type": "string"
+        },
         {
           "$id": "EInnH9PTNvDqEUA3L4CBPcNV_maoVpyXq3OhWPNrJDXz",
           "description": "Carrier license application attributes.",
           "type": "object",
           "properties": {
-            "d": {"description": "Attributes block SAID.", "type": "string"},
-            "i": {"description": "Issuee AID (the applicant carrier).", "type": "string"},
-            "dt": {"description": "Issuance date-time.", "type": "string", "format": "date-time"},
-            "applicant_legal_name": {"type": "string", "minLength": 1, "description": "Full legal name of the applying carrier entity."},
-            "jurisdiction": {"type": "string", "pattern": "^US-[A-Z]{2}$", "description": "ISO 3166-2 subdivision code the application targets (e.g., 'US-CA')."},
-            "lines_of_business": {"type": "array", "description": "Lines of business the carrier seeks authority to underwrite.", "items": {"type": "string", "enum": ["property", "casualty", "life", "health", "auto", "workers_compensation", "marine", "aviation"]}, "minItems": 1, "uniqueItems": true},
-            "primary_contact": {"type": "object", "description": "Primary contact for the application.", "properties": {"name": {"type": "string", "minLength": 1}, "email": {"type": "string", "format": "email"}}, "additionalProperties": false, "required": ["name", "email"]},
-            "representations": {"type": "object", "description": "Financial representations attested by the applicant.", "properties": {"solvency_reserves_usd": {"type": "number", "minimum": 0, "description": "Attested solvency reserves in USD."}, "solvency_attestation": {"type": "boolean", "description": "Applicant attests reserves are at or above the regulatory minimum."}, "naic_number": {"type": "string", "description": "NAIC company code, if assigned."}, "years_in_operation": {"type": "integer", "minimum": 0, "description": "Years the carrier entity has operated."}}, "additionalProperties": false, "required": ["solvency_reserves_usd", "solvency_attestation"]},
-            "submitted_at": {"type": "string", "format": "date-time", "description": "Carrier-stated submission time. Client-supplied (the command binding has no runtime clock)."}
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "i": {
+              "description": "Issuee AID (the applicant carrier).",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "applicant_legal_name": {
+              "type": "string",
+              "minLength": 1,
+              "description": "Full legal name of the applying carrier entity."
+            },
+            "jurisdiction": {
+              "type": "string",
+              "pattern": "^US-[A-Z]{2}$",
+              "description": "ISO 3166-2 subdivision code the application targets (e.g., 'US-CA')."
+            },
+            "lines_of_business": {
+              "type": "array",
+              "description": "Lines of business the carrier seeks authority to underwrite.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "property",
+                  "casualty",
+                  "life",
+                  "health",
+                  "auto",
+                  "workers_compensation",
+                  "marine",
+                  "aviation"
+                ]
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "primary_contact": {
+              "type": "object",
+              "description": "Primary contact for the application.",
+              "properties": {
+                "name": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "email": {
+                  "type": "string",
+                  "format": "email"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "name",
+                "email"
+              ]
+            },
+            "representations": {
+              "type": "object",
+              "description": "Financial representations attested by the applicant.",
+              "properties": {
+                "solvency_reserves_usd": {
+                  "type": "number",
+                  "minimum": 0,
+                  "description": "Attested solvency reserves in USD."
+                },
+                "solvency_attestation": {
+                  "type": "boolean",
+                  "description": "Applicant attests reserves are at or above the regulatory minimum."
+                },
+                "naic_number": {
+                  "type": "string",
+                  "description": "NAIC company code, if assigned."
+                },
+                "years_in_operation": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "description": "Years the carrier entity has operated."
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "solvency_reserves_usd",
+                "solvency_attestation"
+              ]
+            },
+            "submitted_at": {
+              "type": "string",
+              "format": "date-time",
+              "description": "Carrier-stated submission time. Client-supplied (the command binding has no runtime clock)."
+            }
           },
           "additionalProperties": false,
-          "required": ["d", "i", "dt", "applicant_legal_name", "jurisdiction", "lines_of_business", "primary_contact", "representations", "submitted_at"]
+          "required": [
+            "d",
+            "i",
+            "dt",
+            "applicant_legal_name",
+            "jurisdiction",
+            "lines_of_business",
+            "primary_contact",
+            "representations",
+            "submitted_at"
+          ]
         }
       ]
     }
   },
   "additionalProperties": false,
-  "required": ["v", "d", "i", "ri", "s", "a"]
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a"
+  ]
 }
 ''')
 
 LICENSE_SCHEMA = json.loads(r'''
 {
-  "$id": "ENIhMZdlSsMGOw7qMkE8VHcSS9RdEC1-aBom-R9cX42x",
+  "$id": "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI",
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "Carrier License",
   "description": "License authorizing an entity to bear insurance risk in a jurisdiction. Issued by a state Department of Insurance to a regulated insurance carrier following review and adjudication of a carrier_license_application.",
   "type": "object",
   "credentialType": "CarrierLicense",
+  "version": "1.0.0",
   "properties": {
-    "v": {"description": "ACDC version string.", "type": "string"},
-    "d": {"description": "Credential SAID.", "type": "string"},
-    "i": {"description": "Issuer AID (the granting state Department of Insurance).", "type": "string"},
-    "ri": {"description": "Issuance/revocation TEL registry identifier.", "type": "string"},
-    "s": {"description": "Schema SAID.", "type": "string"},
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "Credential SAID.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID (the granting state Department of Insurance).",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Issuance/revocation TEL registry identifier.",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID.",
+      "type": "string"
+    },
     "a": {
       "oneOf": [
-        {"description": "Attributes block SAID, compact form.", "type": "string"},
+        {
+          "description": "Attributes block SAID, compact form.",
+          "type": "string"
+        },
         {
           "$id": "EAZG2BvdAEZ3iKoHR3XlWDT_vnnUcgELHjjDVP7LsJnB",
           "description": "Carrier license attributes.",
           "type": "object",
           "properties": {
-            "d": {"description": "Attributes block SAID.", "type": "string"},
-            "i": {"description": "Issuee AID (the licensed carrier).", "type": "string"},
-            "dt": {"description": "Issuance date-time.", "type": "string", "format": "date-time"},
-            "license_number": {"type": "string", "description": "Jurisdiction-assigned license identifier. Upper-case alphanumeric with hyphens.", "pattern": "^[A-Z0-9-]+$", "minLength": 3, "maxLength": 32},
-            "jurisdiction": {"type": "string", "description": "ISO 3166-2 subdivision code for the granting jurisdiction (e.g., 'US-CA').", "pattern": "^US-[A-Z]{2}$"},
-            "lines_of_business": {"type": "array", "description": "Authorized lines of business under this license.", "items": {"type": "string", "enum": ["property", "casualty", "life", "health", "auto", "workers_compensation", "marine", "aviation"]}, "minItems": 1, "uniqueItems": true},
-            "effective_date": {"type": "string", "format": "date", "description": "Date the license takes effect."},
-            "expiration_date": {"type": "string", "format": "date", "description": "Date the license expires absent renewal."},
-            "regulatory_body": {"type": "string", "description": "Display name of the issuing regulator (e.g., 'California Department of Insurance')."},
-            "market_conduct_status": {"type": "string", "description": "Current market-conduct standing as assessed by the regulator.", "enum": ["good_standing", "under_review", "restricted"]}
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "i": {
+              "description": "Issuee AID (the licensed carrier).",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "license_number": {
+              "type": "string",
+              "description": "Jurisdiction-assigned license identifier. Upper-case alphanumeric with hyphens.",
+              "pattern": "^[A-Z0-9-]+$",
+              "minLength": 3,
+              "maxLength": 32
+            },
+            "jurisdiction": {
+              "type": "string",
+              "description": "ISO 3166-2 subdivision code for the granting jurisdiction (e.g., 'US-CA').",
+              "pattern": "^US-[A-Z]{2}$"
+            },
+            "lines_of_business": {
+              "type": "array",
+              "description": "Authorized lines of business under this license.",
+              "items": {
+                "type": "string",
+                "enum": [
+                  "property",
+                  "casualty",
+                  "life",
+                  "health",
+                  "auto",
+                  "workers_compensation",
+                  "marine",
+                  "aviation"
+                ]
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "effective_date": {
+              "type": "string",
+              "format": "date",
+              "description": "Date the license takes effect."
+            },
+            "expiration_date": {
+              "type": "string",
+              "format": "date",
+              "description": "Date the license expires absent renewal."
+            },
+            "regulatory_body": {
+              "type": "string",
+              "description": "Display name of the issuing regulator (e.g., 'California Department of Insurance')."
+            },
+            "market_conduct_status": {
+              "type": "string",
+              "description": "Current market-conduct standing as assessed by the regulator.",
+              "enum": [
+                "good_standing",
+                "under_review",
+                "restricted"
+              ]
+            }
           },
           "additionalProperties": false,
-          "required": ["d", "i", "dt", "license_number", "jurisdiction", "lines_of_business", "effective_date", "expiration_date"]
+          "required": [
+            "d",
+            "i",
+            "dt",
+            "license_number",
+            "jurisdiction",
+            "lines_of_business",
+            "effective_date",
+            "expiration_date"
+          ]
         }
       ]
     },
     "e": {
       "oneOf": [
-        {"description": "Edge block SAID, compact form.", "type": "string"},
         {
-          "$id": "EC3cGWy20BUPxr-owG3LTzE09XM4qD1tJUL9Yy9cTgmF",
+          "description": "Edge block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "EEULdGjIbxoLm8Orxj5Hp3oJ9g1Bp0se5rBxjhWjNaMx",
           "description": "Edges chaining this license to the application it adjudicates.",
           "type": "object",
           "properties": {
-            "d": {"description": "Edge block SAID.", "type": "string"},
+            "d": {
+              "description": "Edge block SAID.",
+              "type": "string"
+            },
             "application": {
-              "description": "NI2I reference to the immutable carrier_license_application ACDC adjudicated by this grant. No authority transfer — the regulator's authority is statutory/KEL-anchored; this edge is a signed snapshot pointer.",
+              "description": "NI2I reference to the immutable carrier_license_application ACDC adjudicated by this grant. No authority transfer \u2014 the regulator's authority is statutory/KEL-anchored; this edge is a signed snapshot pointer.",
               "type": "object",
               "properties": {
-                "n": {"description": "SAID of the carrier_license_application node.", "type": "string"},
-                "s": {"description": "Schema SAID of carrier_license_application.", "type": "string", "const": "ENbhxLlFINUDp1EU4mV5RVVL-CS6Ub72zXY89EcM7Ccb"},
-                "o": {"description": "Edge operator: NI2I (not-issuer-to-issuee).", "type": "string", "const": "NI2I"}
+                "n": {
+                  "description": "SAID of the carrier_license_application node.",
+                  "type": "string"
+                },
+                "s": {
+                  "description": "Schema SAID of carrier_license_application.",
+                  "type": "string",
+                  "const": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
+                },
+                "o": {
+                  "description": "Edge operator: NI2I (not-issuer-to-issuee).",
+                  "type": "string",
+                  "const": "NI2I"
+                }
               },
               "additionalProperties": false,
-              "required": ["n", "s", "o"]
+              "required": [
+                "n",
+                "s",
+                "o"
+              ]
             }
           },
           "additionalProperties": false,
-          "required": ["d", "application"]
+          "required": [
+            "d",
+            "application"
+          ]
         }
       ]
     }
   },
   "additionalProperties": false,
-  "required": ["v", "d", "i", "ri", "s", "a", "e"]
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a",
+    "e"
+  ]
 }
 ''')
 

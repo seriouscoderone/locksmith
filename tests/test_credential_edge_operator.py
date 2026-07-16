@@ -30,7 +30,7 @@ from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
 # Arbitrary well-formed SAID used as the edge target schema. It only needs to
 # be an opaque string the license schema pins via ``s`` const; no such schema
 # is registered because JSON-schema validation treats ``n``/``s`` as strings.
-EDGE_TARGET_SCHEMA_SAID = "ENbhxLlFINUDp1EU4mV5RVVL-CS6Ub72zXY89EcM7Ccb"
+EDGE_TARGET_SCHEMA_SAID = "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
 # Any SAID-shaped string works as the edge node reference for schema validation.
 EDGE_NODE_SAID = "EBom-R9cX42xENIhMZdlSsMGOw7qMkE8VHcSS9RdEC1a"
 

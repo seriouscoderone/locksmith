@@ -28,7 +28,7 @@ from keri.vdr import credentialing, verifying
 from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
 
 
-EDGE_TARGET_SCHEMA_SAID = "ENbhxLlFINUDp1EU4mV5RVVL-CS6Ub72zXY89EcM7Ccb"
+EDGE_TARGET_SCHEMA_SAID = "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
 EDGE_NODE_SAID = "EBom-R9cX42xENIhMZdlSsMGOw7qMkE8VHcSS9RdEC1a"
 OPERATOR_OPTIONS = ["I2I", "NI2I", "DI2I"]
 CHOSEN_OPERATOR = "NI2I"

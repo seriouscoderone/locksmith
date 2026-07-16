@@ -32,7 +32,7 @@ from locksmith.ui.vault.menu import MenuButton
 # Verified trust values for the carrier_license gate (see task brief /
 # Global Constraints) — the schema SAID of the carrier_license ACDC and the
 # AID of the trusted DOI (Department of Insurance) issuer.
-CARRIER_LICENSE_SCHEMA_SAID = "ENIhMZdlSsMGOw7qMkE8VHcSS9RdEC1-aBom-R9cX42x"
+CARRIER_LICENSE_SCHEMA_SAID = "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI"
 DOI_ISSUER_AID = "EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34"
 
 

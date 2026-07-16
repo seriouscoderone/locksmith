@@ -5,7 +5,7 @@ from dataclasses import dataclass
 from locksmith.plugins.credential_gate import RequiredCredential, gate_satisfied
 
 REQ = RequiredCredential(
-    schema_said="ENIhMZdlSsMGOw7qMkE8VHcSS9RdEC1-aBom-R9cX42x",
+    schema_said="EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI",
     issuer_aids=["EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34"],
     required_state="active",
 )
