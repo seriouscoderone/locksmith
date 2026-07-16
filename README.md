@@ -42,3 +42,10 @@ python ./src/locksmith/main.py
 
 KERI Foundation plugin documentation lives in
 [`docs/kerifoundation-plugin.rst`](docs/kerifoundation-plugin.rst).
+
+## HOA build mode
+
+Building with `LOCKSMITH_BRAND=usurance` produces the Higher-Order Application base —
+the wallet pages are peeled (brand-gated) and the app boots into a single default
+vault + AID, retaining KERI primitives and the plugin host. The default `locksmith`
+brand is unchanged.
