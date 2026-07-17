@@ -185,7 +185,8 @@ class ServiceaidGrantDoer(doing.DoDoer):
     flow selects authorities from the EGF document, which pins AIDs).
     """
 
-    def __init__(self, app, *, credential_said, recipient, hab_pre, **kwa):
+    def __init__(self, app, *, credential_said, recipient, hab_pre,
+                 message: str = "", **kwa):
         self.app = app
         self.hby = app.vault.hby
         self.rgy = app.vault.rgy
@@ -193,6 +194,7 @@ class ServiceaidGrantDoer(doing.DoDoer):
         self.credential_said = credential_said
         self.recipient = recipient
         self.hab_pre = hab_pre
+        self.message = message
 
         doers = [doing.doify(self.grantDo)]
         super(ServiceaidGrantDoer, self).__init__(doers=doers, **kwa)
@@ -245,6 +247,7 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 credential_said=self.credential_said,
                 recipient=self.recipient,
                 sink=sink,
+                message=self.message,
                 return_raw=True,
             )
 
@@ -393,6 +396,7 @@ def make_grant_doer(app, hab, **kwargs):
             credential_said=kwargs["credential_said"],
             recipient=kwargs["recipient"],
             hab_pre=kwargs.get("hab_pre") or hab.pre,
+            message=kwargs.get("message", ""),
         )
 
     from locksmith.core.ipexing import SendGrantDoer

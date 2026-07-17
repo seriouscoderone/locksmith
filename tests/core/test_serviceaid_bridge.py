@@ -98,7 +98,7 @@ class FakeSerder:
     size = 4  # pretend "rawb" is the framed exn; "ytes" is the attachment
 
 
-def _grant_doer_setup(monkeypatch, *, calls, sources=()):
+def _grant_doer_setup(monkeypatch, *, calls, sources=(), message=""):
     """Shared scaffolding for ServiceaidGrantDoer tests: a MagicMock app with
     a resolvable hab, a cloneCred-able credential, patched framing/poster/
     sendArtifacts recording into `calls`, and the constructed doer.
@@ -154,7 +154,8 @@ def _grant_doer_setup(monkeypatch, *, calls, sources=()):
     # __init__ chain looks up the *module-level* `DoDoer` name again via
     # `super(DoDoer, self)` -- patching the name first would break that.
     doer = ServiceaidGrantDoer(
-        app, credential_said="Ecred", recipient="Erecp", hab_pre="Ehabpre"
+        app, credential_said="Ecred", recipient="Erecp", hab_pre="Ehabpre",
+        message=message,
     )
     doer.extend = lambda doers: calls.append(("extend", doers))
 
@@ -214,6 +215,37 @@ def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(mon
             "channel": "peer",
         },
     )
+
+
+def test_grant_doer_forwards_message_to_frame_grant_for(monkeypatch):
+    """Regression: the legacy `SendGrantDoer` preserved a user-typed IPEX
+    message end-to-end; `ServiceaidGrantDoer` silently dropped it because it
+    never accepted a `message` kwarg and never passed one to
+    `frame_grant_for` (which itself used to hardcode `message=""` -- fixed
+    upstream in keripy's `keri_serviceaid/providers/issue.py`). This pins the
+    bridge-doer half of that fix: whatever `message` the doer is constructed
+    with must reach `frame_grant_for`'s `message` kwarg verbatim.
+    """
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls, message="please review")
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    kw = s.mock_frame.call_args.kwargs
+    assert kw["message"] == "please review"
+
+
+def test_grant_doer_defaults_message_to_empty_string(monkeypatch):
+    """Byte-identical-to-before default: omitting `message` at construction
+    still frames an empty-string message, matching every existing caller
+    that never threaded one."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    kw = s.mock_frame.call_args.kwargs
+    assert kw["message"] == ""
 
 
 def test_grant_doer_parses_framed_grant_into_vault_exchanger_before_delivery(monkeypatch):
@@ -368,3 +400,39 @@ def test_make_grant_doer_routes_ineligible_hab_to_legacy_doer():
 
     d = make_grant_doer(app, hab, credential_said="Ecred", recipient="Erecp")
     assert isinstance(d, SendGrantDoer)
+
+
+def test_make_grant_doer_forwards_message_to_bridge_doer():
+    """Regression: the routing chokepoint must forward a caller's `message`
+    kwarg to the bridge doer (eligible-hab path), not just the legacy doer
+    -- otherwise a user-typed IPEX message silently vanishes the moment a
+    hab happens to be single-sig/unwitnessed."""
+    app = MagicMock()
+    hab = MagicMock()
+    hab.__class__.__name__ = "Hab"
+    hab.kever.wits = []
+    hab.pre = "Eissuer"
+
+    d = make_grant_doer(
+        app, hab, credential_said="Ecred", recipient="Erecp",
+        message="please review",
+    )
+    assert isinstance(d, ServiceaidGrantDoer)
+    assert d.message == "please review"
+
+
+def test_make_grant_doer_forwards_message_to_legacy_doer():
+    from locksmith.core.ipexing import SendGrantDoer
+
+    app = MagicMock()
+    hab = MagicMock()
+    hab.__class__.__name__ = "Hab"
+    hab.kever.wits = ["B" + "W" * 43]
+    hab.pre = "Eissuer"
+
+    d = make_grant_doer(
+        app, hab, credential_said="Ecred", recipient="Erecp",
+        message="please review",
+    )
+    assert isinstance(d, SendGrantDoer)
+    assert d.message == "please review"
