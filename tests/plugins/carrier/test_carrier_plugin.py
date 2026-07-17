@@ -36,7 +36,7 @@ def test_carrier_plugin_declares_the_license_gate():
     p = CarrierPlugin()
     rc = p.required_credential
     assert rc.schema_said == "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI"
-    assert "EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34" in rc.issuer_aids
+    assert "EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34-" in rc.issuer_aids
     assert rc.required_state == "active"
 
 
