@@ -5,6 +5,7 @@ locksmith.ui.window module
 This module contains the main window for the Locksmith application.
 """
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -18,11 +19,15 @@ from locksmith.core.apping import LocksmithApplication
 from locksmith.core.bootstrapping import bootstrap_default_environment
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
+from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
+from locksmith.ui.onboarding.home_page import OnboardingHomePage
+from locksmith.ui.onboarding.request_flow import RequestFlow
 from locksmith.ui.toolbar import LocksmithToolbar
 from locksmith.ui.toolkit.widgets.toast import NotificationToast
 from locksmith.ui.vault.hoa_page import HoaVaultPage
+from locksmith.ui.vault.menu import MenuButton
 from locksmith.ui.vault.page import VaultPage
 from locksmith.ui.vaults.drawer import VaultDrawer
 
@@ -144,6 +149,54 @@ class LocksmithWindow(QMainWindow):
         self.app.plugin_manager.discover_and_initialize_vault_ui(
             vault_page, vault_page.nav_menu,
         )
+
+        # Onboarding "home" persona-picker page (Plan B Task 8): RequestFlow
+        # drives the EGF request-access pipeline end to end (derive ->
+        # validate -> attributes -> authority -> seed -> issue -> grant).
+        # Gated on BOTH brand().onboarding_enabled AND a resolvable EGF
+        # (make_hoa_resolver returns None for any brand with no [egf]
+        # table) -- a non-onboarding or non-HOA brand must never construct
+        # a RequestFlow/OnboardingHomePage at all.
+        self._request_flow: RequestFlow | None = None
+        self._onboarding_home_page: OnboardingHomePage | None = None
+        self._onboarding_wired_vault = None
+        if brand().onboarding_enabled and isinstance(vault_page, HoaVaultPage):
+            hoa_egf = make_hoa_resolver(brand())
+            if hoa_egf is not None:
+                resolver, egf_doc = hoa_egf
+                self._request_flow = RequestFlow(
+                    self.app, resolver, egf_doc, brand().egf_accept_phases,
+                )
+                self._onboarding_home_page = OnboardingHomePage(
+                    egf_doc,
+                    # OnboardingHomePage.__init__ calls refresh() -> this
+                    # provider unconditionally, and that happens HERE, at
+                    # window construction time, before any vault has ever
+                    # been opened (self.app.vault is None) -- guard against
+                    # PluginManager._held_credentials(None) crashing on
+                    # `None.rgy` by returning "nothing held yet" instead.
+                    held_provider=(
+                        lambda: self.app.plugin_manager._held_credentials(self.app.vault)
+                        if self.app.vault is not None else []
+                    ),
+                    on_submit=self._request_flow.submit,
+                    micro_app_resolver=resolver.resolve_micro_app,
+                    accept_phases=brand().egf_accept_phases,
+                    parent=vault_page,
+                )
+                vault_page.register_page("home", self._onboarding_home_page)
+                home_entry_btn = MenuButton(icon=QIcon(), label="Home")
+                home_entry_btn.setObjectName("vaultNavMenu.homeButton")
+                vault_page.add_menu_entry("home", home_entry_btn, [])
+                # add_menu_entry's own click wiring (VaultNavMenu.
+                # register_plugin_section -> _on_plugin_button_clicked ->
+                # plugin_section_clicked -> VaultPage._on_plugin_entry_clicked)
+                # looks plugin_id up in plugin_manager -- "home" is not a
+                # VaultPlugin, so that path is a harmless no-op (logged
+                # warning). The actual navigation is this direct connection,
+                # mirroring how the core nav buttons wire straight to
+                # _show_vault_page in VaultPage._connect_navigation.
+                home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
 
         # Add pages to stack
         for page in self.pages.values():
@@ -515,6 +568,43 @@ class LocksmithWindow(QMainWindow):
             )
             # Connect toast signals when vault is active
             self._connect_toast_signals()
+
+            # Onboarding (Task 8): seed + wire per-vault-instance state.
+            # Runs BEFORE the caller's page.on_show() (see on_page_changed's
+            # ordering), so a freshly-set _current_page_key = "home" below
+            # is what VaultPage.on_show's restore_key falls back to.
+            self._maybe_wire_onboarding_for_vault()
+
+    def _maybe_wire_onboarding_for_vault(self) -> None:
+        """Idempotent per-vault-open onboarding hook (Task 8). Pages.VAULT
+        is shown every time the user navigates back into an ALREADY-open
+        vault (e.g. Plugins -> Vault), not just on the first open, so
+        re-wiring must be guarded on vault IDENTITY rather than on "this
+        handler ran" -- otherwise each revisit would reconnect doer_event
+        again, and a later event would call page.refresh() once per
+        accumulated connection.
+
+        On a genuinely new vault instance (first open, or a different vault
+        than last time): seeds every onboardable persona's schemas/registry
+        (EgfSeeder is idempotent on its own too), connects doer_event ->
+        the onboarding home page's refresh() (any event cheaply recomputes
+        state), and resets the vault page's restore key to "home" so this
+        FRESH vault's first on_show lands on the persona picker/state page
+        rather than "identifiers" (HoaVaultPage registers no core pages at
+        all, so on_show's own "identifiers" fallback would otherwise be a
+        dead no-op for an onboarding HOA build)."""
+        if self._request_flow is None or self.app.vault is None:
+            return
+        if self.app.vault is self._onboarding_wired_vault:
+            return
+        self._onboarding_wired_vault = self.app.vault
+
+        self._request_flow.seed_all_personas()
+        self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
+
+        vault_page = self.pages.get(Pages.VAULT)
+        if vault_page is not None:
+            vault_page._current_page_key = "home"
 
     def _connect_toast_signals(self):
         """Connect to vault signals for toast notifications."""
