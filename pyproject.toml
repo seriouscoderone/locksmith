@@ -57,6 +57,12 @@ dependencies = [
     # DbTopsCursorStore export locksmith imports (core/mailbox_cursor.py) —
     # bump this hash deliberately when adopting newer mailbox-lib changes.
     "keri-serverless-mailbox @ git+https://github.com/usuranceai/keri-serverless-mailbox.git@f98cec69eac7aa600ededca1328e2572241eeef0",
+    # Generative agent-avatar library (the "presence orb"), extracted from this
+    # repo into its own package. Pure-Python core; the widget/audio it uses run
+    # on the PySide6 already pinned above. Pin to a release tag so CI/packaged
+    # builds are reproducible; bump deliberately when adopting a new avatar
+    # version (a new ALGO_VERSION never changes existing agents' avatars).
+    "ai-identicon @ git+https://github.com/seriouscoderone/ai-identicon.git@v0.5.0",
 ]
 
 [project.optional-dependencies]
