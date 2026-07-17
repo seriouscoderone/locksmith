@@ -236,7 +236,16 @@ class SchemaFormBuilder:
             subschema.get("required", []) or [],
             prefix=path,
         )
-        self._register(path, group, "group", subschema)
+        # Container paths are addressable via widget_for() but carry no value
+        # of their own — they must NOT enter the leaf iteration that drives
+        # values()/validate(). (The real carrier application schema lists its
+        # nested objects in the top-level `required`; registering containers
+        # as leaves made values() crash on it.) Required-ness is enforced at
+        # the LEAF level: each nested object's own `required` list is passed
+        # into the recursion above.
+        self._widgets[path] = group
+        self._kind[path] = "group"
+        self._field_schema[path] = subschema
         layout.addRow(group)
 
     def _add_error_row(self, layout: QFormLayout, path: str, reason: str) -> None:
@@ -380,7 +389,10 @@ class SchemaFormBuilder:
                 checked = sum(1 for _v, cb in self._checkbox_items.get(path, []) if cb.isChecked())
                 if required and checked == 0:
                     messages.append(f"{path} is required")
-                elif checked < min_items:
+                elif (required or path in self._touched) and checked < min_items:
+                    # Same required-or-touched gating as the other kinds: an
+                    # optional, untouched group is simply omitted — minItems
+                    # only binds once the array will actually be submitted.
                     messages.append(f"{path} requires at least {min_items} selection(s)")
             elif kind in ("double_spin", "int_spin"):
                 if required and path not in self._touched:
