@@ -34,6 +34,20 @@ from locksmith.ui.vaults.drawer import VaultDrawer
 logger = help.ogler.getLogger(__name__)
 
 
+def _onboarding_held_credentials(app) -> list:
+    """The onboarding home page's ``held_provider`` (Task 8), extracted to
+    module level so the None-guard is directly unit-testable.
+
+    ``OnboardingHomePage.__init__`` calls ``refresh()`` -> this provider
+    unconditionally, and that happens at window construction time — before
+    any vault has ever been opened (``app.vault is None``) — so guard
+    against ``PluginManager._held_credentials(None)`` crashing on
+    ``None.rgy`` by returning "nothing held yet" instead."""
+    if app.vault is None:
+        return []
+    return app.plugin_manager._held_credentials(app.vault)
+
+
 class LocksmithWindow(QMainWindow):
     """
     Main application window.
@@ -169,16 +183,9 @@ class LocksmithWindow(QMainWindow):
                 )
                 self._onboarding_home_page = OnboardingHomePage(
                     egf_doc,
-                    # OnboardingHomePage.__init__ calls refresh() -> this
-                    # provider unconditionally, and that happens HERE, at
-                    # window construction time, before any vault has ever
-                    # been opened (self.app.vault is None) -- guard against
-                    # PluginManager._held_credentials(None) crashing on
-                    # `None.rgy` by returning "nothing held yet" instead.
-                    held_provider=(
-                        lambda: self.app.plugin_manager._held_credentials(self.app.vault)
-                        if self.app.vault is not None else []
-                    ),
+                    # None-guarded: refresh() fires during construction,
+                    # before any vault is open. See _onboarding_held_credentials.
+                    held_provider=lambda: _onboarding_held_credentials(self.app),
                     on_submit=self._request_flow.submit,
                     micro_app_resolver=resolver.resolve_micro_app,
                     accept_phases=brand().egf_accept_phases,

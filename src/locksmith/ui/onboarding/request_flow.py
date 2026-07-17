@@ -45,12 +45,13 @@ machine. Drives ACDC issuance end to end on the serverless serviceaid path
    ``self_issued`` entry).
 8. On THAT issuance's ``credential_issued`` doer_event (matched by
    ``schema_said``), schedule a ``ServiceaidGrantDoer`` chaining the fresh
-   credential's SAID to the selected ``Authority``'s AID. The listener
-   disconnects itself the moment it fires (see
-   ``_schedule_issue_then_grant``'s ``_on_credential_issued`` closure) —
-   one-shot per ``submit()`` call, so a LATER, unrelated issuance for the
-   same schema (e.g. a second application after a rejected first one)
-   can never silently re-trigger THIS grant.
+   credential's SAID to the selected ``Authority``'s AID. The listener is
+   strictly one-shot per ``submit()`` call and retires on THREE paths —
+   matching success, matching ``credential_issuance_failed``, and eviction
+   by a newer ``submit()`` for the same role (latest-submission-wins) —
+   see ``_schedule_issue_then_grant``'s docstring for why all three are
+   required (a failed issuance must not leave a stale listener that a
+   retry's success event would double-fire).
 
 Every ``EgfError`` subclass (``EgfDocumentError``, ``NoAuthorityError``) and
 the guard's plain ``ValueError`` are caught in ``submit()`` and surfaced as
@@ -104,6 +105,13 @@ def _autofill_date_time_fields(payload_schema: dict, payload: dict) -> dict:
     ``format: date-time`` property missing a value filled in with the
     current UTC instant (see the module docstring's "Date-time autofill
     gap" for why this exists). Never mutates the caller's ``payload`` dict.
+
+    Deliberate overlap with the library's ``build_attributes``, which also
+    autofills ``submitted_at`` when required-and-missing: that fill runs
+    AFTER ``validate_payload`` in this pipeline, so it cannot save a
+    validation that requires the field — this pre-validation fill is what
+    does. No conflict: both use a ``key not in payload`` guard, so whichever
+    runs first wins and the other is a no-op.
     """
     properties = (payload_schema or {}).get("properties", {}) or {}
     filled = dict(payload)
@@ -146,6 +154,13 @@ class RequestFlow:
         self.egf_doc = egf_doc
         self.accept_phases = tuple(accept_phases)
         self._seeder = EgfSeeder(app, resolver, egf_doc)
+        # role_id -> the still-pending credential_issued listener from the
+        # most recent submit() for that role. Consulted by
+        # _schedule_issue_then_grant for latest-submission-wins: a NEW
+        # submit() for the same role first disconnects the previous pending
+        # listener, so a stale attempt's authority/hab can never be granted
+        # by a later issuance's success event.
+        self._pending_listeners: dict = {}
 
     # -- default identifier -------------------------------------------------
 
@@ -211,6 +226,15 @@ class RequestFlow:
         except (EgfError, ValueError) as exc:
             signals.emit_doer_event("RequestFlow", "request_failed", {"message": str(exc)})
 
+    def _retire_listener(self, role_id: str, listener) -> None:
+        """Disconnect ``listener`` from the vault's doer_event bus and drop
+        it from the pending-listener registry (only if it is still the
+        CURRENT pending listener for ``role_id`` — a stale one evicted by a
+        later submit() was already popped by latest-submission-wins)."""
+        self.app.vault.signals.doer_event.disconnect(listener)
+        if self._pending_listeners.get(role_id) is listener:
+            del self._pending_listeners[role_id]
+
     def _schedule_issue_then_grant(
         self, plan: RequestPlan, hab, authority, attributes: dict,
     ) -> None:
@@ -220,24 +244,44 @@ class RequestFlow:
         the moment (and only the first time) THIS issuance's
         ``credential_issued`` event lands.
 
-        One-shot mechanism: the listener disconnects itself (``signals.
-        doer_event.disconnect(_on_credential_issued)``) as its first action
-        once it matches — before scheduling the grant doer — so a second,
-        unrelated ``credential_issued`` event for the same schema_said
-        (e.g. a later application, post-rejection) can never reach this
-        closure again and double-grant.
+        Listener lifecycle (three retirement paths, all required):
+
+        - **Matching success** (``credential_issued`` for this schema): the
+          listener retires itself FIRST, then schedules the grant doer — so
+          a second, unrelated ``credential_issued`` for the same schema
+          (e.g. a later application, post-rejection) can never reach this
+          closure again and double-grant.
+        - **Matching failure** (``credential_issuance_failed`` for this
+          schema — the bridge doer's own except-path event, which carries
+          the same ``schema_said`` key): the listener retires itself WITHOUT
+          scheduling anything. Without this, a failed issuance would leave
+          the listener connected forever, and a retry submit()'s single
+          success event would fire BOTH listeners — scheduling two grant
+          doers, one carrying the STALE first attempt's authority/hab.
+        - **Latest-submission-wins** (belt-and-suspenders for any path that
+          produced neither event, e.g. an issue doer that never ran): a NEW
+          submit() for the same role disconnects the previous pending
+          listener before connecting its own.
         """
         signals = self.app.vault.signals
         schema_said = plan.registry_name  # == application_credential.schema_said
+        role_id = plan.role_id
+
+        stale = self._pending_listeners.pop(role_id, None)
+        if stale is not None:
+            signals.doer_event.disconnect(stale)
 
         def _on_credential_issued(doer_name: str, event_type: str, data: dict) -> None:
-            if (
-                doer_name != "IssueCredentialDoer"
-                or event_type != "credential_issued"
-                or data.get("schema_said") != schema_said
-            ):
+            if doer_name != "IssueCredentialDoer" or data.get("schema_said") != schema_said:
                 return
-            signals.doer_event.disconnect(_on_credential_issued)
+            if event_type == "credential_issuance_failed":
+                # THIS submission's issuance failed: retire the listener so
+                # a retry's success can't fire it alongside the retry's own.
+                self._retire_listener(role_id, _on_credential_issued)
+                return
+            if event_type != "credential_issued":
+                return
+            self._retire_listener(role_id, _on_credential_issued)
             grant_doer = ServiceaidGrantDoer(
                 self.app,
                 credential_said=data["said"],
@@ -246,6 +290,7 @@ class RequestFlow:
             )
             self.app.vault.extend([grant_doer])
 
+        self._pending_listeners[role_id] = _on_credential_issued
         signals.doer_event.connect(_on_credential_issued)
 
         issue_doer = ServiceaidIssueDoer(

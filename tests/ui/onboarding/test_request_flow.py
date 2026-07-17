@@ -35,6 +35,7 @@ GRANT_SAID = "E" + "L" * 43        # "lic" credential's schema_said in fixture_e
 APPLICATION_SAID = "E" + "P" * 43  # "app" credential's schema_said == plan.registry_name
 MICRO_APP_SAID = "E" + "M" * 43
 UT_AID = "E" + "U" * 43            # bootstrap-phase "UT DOI" authority's aid
+CA_AID = "E" + "C" * 43            # production-phase "CA DOI" authority's aid
 DEFAULT_HAB_PRE = "E" + "D" * 43
 
 PAYLOAD_SCHEMA = {
@@ -130,6 +131,16 @@ class Env:
             "IssueCredentialDoer", "credential_issued", {"said": said, "schema_said": schema_said},
         )
 
+    def emit_issuance_failed(self, schema_said: str = APPLICATION_SAID) -> None:
+        # Mirrors ServiceaidIssueDoer's real except-path event shape
+        # (serviceaid_bridge.py) -- notably it carries the SAME
+        # "schema_said" key the success event does.
+        self.signals.doer_event.emit(
+            "IssueCredentialDoer", "credential_issuance_failed",
+            {"error": "boom", "schema_said": schema_said,
+             "recipient_pre": DEFAULT_HAB_PRE, "success": False},
+        )
+
 
 @pytest.fixture
 def env(monkeypatch):
@@ -176,6 +187,57 @@ def test_credential_issued_listener_is_one_shot_no_double_grant(env):
     env.emit_issued("Ecred1")
     env.emit_issued("Ecred2")
 
+    assert len(env.granted) == 1
+    assert env.granted[0].kwargs["credential_said"] == "Ecred1"
+
+
+def test_failure_then_retry_grants_exactly_once_with_retry_authority(env):
+    """The listener-leak regression (review fix round 1): a FAILED issuance
+    must retire its listener. Otherwise a retry submit()'s single success
+    event fires BOTH listeners -- two grant doers, one carrying the STALE
+    first attempt's authority. The two submits use two different authority
+    contexts (US-UT bootstrap vs US-CA production) to discriminate which
+    attempt's authority the grant carries."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-UT"})
+    env.emit_issuance_failed()  # first attempt's issuance fails
+
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-CA"})  # retry
+    env.emit_issued("Ecred-retry")
+
+    assert len(env.granted) == 1, "retry's success must schedule exactly ONE grant doer"
+    assert env.granted[0].kwargs["recipient"] == CA_AID  # the RETRY's authority, not UT
+    assert env.granted[0].kwargs["credential_said"] == "Ecred-retry"
+
+
+def test_new_submit_disconnects_stale_pending_listener(env):
+    """Latest-submission-wins: a second submit() for the same role (with
+    neither a success nor a failure event in between) must evict the first
+    submit()'s still-pending listener -- one success event afterward
+    schedules exactly ONE grant doer, carrying the SECOND submit's
+    authority."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-UT"})
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-CA"})
+
+    env.emit_issued("Ecred1")
+
+    assert len(env.granted) == 1
+    assert env.granted[0].kwargs["recipient"] == CA_AID
+
+
+def test_credential_issued_for_grant_schema_does_not_trigger_grant(env):
+    """schema_said discriminator: a correctly-shaped credential_issued event
+    whose schema_said is the GRANT credential's (not the application's) must
+    NOT trigger the grant doer -- and must leave the listener pending, so
+    the real application-schema event still fires it."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+
+    env.emit_issued("Ex", schema_said=GRANT_SAID)
+    assert env.granted == []
+
+    env.emit_issued("Ecred1")  # the application schema -- the real match
     assert len(env.granted) == 1
     assert env.granted[0].kwargs["credential_said"] == "Ecred1"
 
@@ -287,8 +349,28 @@ def test_seed_all_personas_seeds_schema_only_when_no_default_hab_yet(env):
 
 
 # ---------------------------------------------------------------------------
-# Window wiring: source-inspection test (B4 pattern)
+# Window wiring: held_provider None-guard + source-inspection test (B4 pattern)
 # ---------------------------------------------------------------------------
+
+def test_onboarding_held_provider_guards_vault_none():
+    """OnboardingHomePage.__init__ calls refresh() -> held_provider at
+    window-construction time, BEFORE any vault is open (app.vault is None).
+    The provider must return [] then -- not crash on
+    PluginManager._held_credentials(None) -- and delegate to the real
+    projection once a vault IS open."""
+    from locksmith.ui.window import _onboarding_held_credentials
+
+    app = MagicMock()
+    app.vault = None
+    assert _onboarding_held_credentials(app) == []
+    app.plugin_manager._held_credentials.assert_not_called()
+
+    vault = MagicMock(name="vault")
+    app.vault = vault
+    held = [object()]
+    app.plugin_manager._held_credentials.return_value = held
+    assert _onboarding_held_credentials(app) is held
+    app.plugin_manager._held_credentials.assert_called_once_with(vault)
 
 def test_window_registers_onboarding_home_gated_on_enabled_and_resolver():
     """`LocksmithWindow.__init__` must only construct/register the
