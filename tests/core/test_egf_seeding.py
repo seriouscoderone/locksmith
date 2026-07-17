@@ -78,10 +78,14 @@ class SeederEnv:
         self.resolver = FakeResolver()
         self.app = MagicMock(name="app")
         self.schema_store: dict[str, object] = {}
+        self.registry_store: dict[str, object] = {}
         self.scheduled: list = []
 
         self.app.vault.hby.db.schema.get.side_effect = (
             lambda keys: self.schema_store.get(keys[0])
+        )
+        self.app.vault.rgy.registryByName.side_effect = (
+            lambda name: self.registry_store.get(name)
         )
 
         def _fake_load_schema_doer(*args, **kwargs):
@@ -94,18 +98,21 @@ class SeederEnv:
             "locksmith.core.egf_seeding.LoadSchemaDoer", _fake_load_schema_doer
         )
 
-    def run(self, role_id: str) -> list:
+    def run(self, role_id: str, issuer_aid=None) -> list:
         """Run one `seed_for_role` pass and return the doers scheduled during
         it (not the cumulative total across calls). Marks every scheduled
-        SAID as now-present in the fake schema store, mirroring what a real
-        successful `LoadSchemaDoer` run would leave behind — the mechanism
-        that makes a second `run()` call idempotent."""
+        SAID as now-present in the fake schema store — and, for a
+        `create_registry=True` doer, the registry as now-existing — mirroring
+        what a real successful `LoadSchemaDoer` run would leave behind: the
+        mechanism that makes a second `run()` call idempotent."""
         self.scheduled = []
         seeder = EgfSeeder(self.app, self.resolver, self.egf_doc)
-        seeder.seed_for_role(role_id)
+        seeder.seed_for_role(role_id, issuer_aid=issuer_aid)
         for doer in self.scheduled:
             said = json.loads(doer.kwargs["file_content"])["$id"]
             self.schema_store[said] = object()
+            if doer.kwargs["create_registry"]:
+                self.registry_store[said] = object()
         return list(self.scheduled)
 
 
@@ -140,11 +147,44 @@ def test_schedules_via_vault_extend(seeder_env):
 
 
 def test_seed_for_role_passes_issuer_aid_only_for_registry_schema(seeder_env):
-    scheduled = seeder_env.run("carrier")
+    issuer = "E" + "I" * 43
+    scheduled = seeder_env.run("carrier", issuer_aid=issuer)
+    registry_call = next(s for s in scheduled if s.kwargs["create_registry"])
+    assert registry_call.kwargs["issuer_aid"] == issuer  # positive propagation
     for s in scheduled:
         if s.kwargs["create_registry"]:
             continue
         assert s.kwargs["issuer_aid"] is None
+
+
+def test_partial_failure_retry_schedules_registry_despite_pinned_schema(seeder_env):
+    """The Important fix: LoadSchemaDoer pins the schema BEFORE registry
+    creation and swallows registry failures, so 'schema pinned, registry
+    missing' is a reachable partial-failure state. A later seed_for_role
+    call (now WITH an issuer_aid) must still schedule the create_registry
+    doer — schema presence alone must not gate the registry SAID."""
+    issuer = "E" + "I" * 43
+    # Simulate the aftermath of a failed first pass: both schemas pinned,
+    # but no registry was ever created.
+    seeder_env.schema_store[GRANT_SAID] = object()
+    seeder_env.schema_store[APPLICATION_SAID] = object()
+
+    scheduled = seeder_env.run("carrier", issuer_aid=issuer)
+    assert len(scheduled) == 1
+    (doer,) = scheduled
+    assert doer.kwargs["create_registry"] is True
+    assert doer.kwargs["issuer_aid"] == issuer
+    assert json.loads(doer.kwargs["file_content"])["$id"] == APPLICATION_SAID
+
+
+def test_fully_seeded_run_schedules_nothing(seeder_env):
+    """Both gates satisfied — schemas pinned AND registryByName returns a
+    registry — nothing is scheduled."""
+    seeder_env.schema_store[GRANT_SAID] = object()
+    seeder_env.schema_store[APPLICATION_SAID] = object()
+    seeder_env.registry_store[APPLICATION_SAID] = object()  # registry_name == application schema SAID
+
+    assert seeder_env.run("carrier", issuer_aid="E" + "I" * 43) == []
 
 
 def test_make_hoa_resolver_none_for_stock_brand():
