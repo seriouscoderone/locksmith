@@ -71,3 +71,20 @@ default_passcode   = ""          # unencrypted for POC; owner may set a default 
 default_aid_alias  = "carrier"
 default_witnesses  = []          # witnessless POC (backlog witness defaults)
 default_toad       = 0
+
+# Ecosystem Governance Framework this brand pins (bundled verbatim,
+# content-addressed, under brands/usurance/egf/ — see
+# docs/superpowers/specs/... EGF substrate design). document_said is the
+# EGF doc's own SAID (its filename minus .json); pinning it here — not
+# deriving it at runtime — is the whole point of content addressing: any
+# drift between this value and the bundled doc's re-derived SAID is a bug,
+# caught by tests/core/test_usurance_egf_bundle.py.
+[egf]
+source = "local"
+document_said = "ELFmC-RkqKAQphER2y1aBdymZ1AJnwMmlDh_PQwEOns8"
+accept_phases = ["bootstrap", "production"]   # pilot opt-in; library default is production-only
+
+# HOA onboarding flow (workspace setup + credential request) is exposed for
+# this brand's first-run experience.
+[onboarding]
+enabled = true

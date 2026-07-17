@@ -1,0 +1,101 @@
+{
+  "d": "ELFmC-RkqKAQphER2y1aBdymZ1AJnwMmlDh_PQwEOns8",
+  "spec_version": "egf-doc/0.1",
+  "version": "0.1.0",
+  "ecosystem": {
+    "id": "us-insurance-regulation",
+    "display_name": "US P&C Insurance (State-Regulated)",
+    "openness": "closed",
+    "description": "The state-regulated carrier-licensing layer of the Insurance Industry Ecosystem: an insurance carrier self-issues a license-application ACDC to the state Department of Insurance with jurisdiction, which reviews it and issues a carrier_license credential chaining back to the exact adjudicated application. Closed by design \u2014 participation requires an accepted regulator AID and adopted schema SAIDs. Open layers built atop licensed carriers (e.g. contractor networks) are acknowledged as a future seam, not modeled here."
+  },
+  "governance": {
+    "phase": "bootstrap",
+    "transition_plan": "As each state DOI incepts and publishes its AID, its authorities[] entry moves bootstrap\u2192production; verifiers accept both phases during declared migration windows."
+  },
+  "roles": [
+    {
+      "id": "carrier",
+      "display_name": "Insurance Carrier",
+      "kind": "organization",
+      "description": "Licensed risk-bearing entity seeking authority to underwrite named lines of business in a jurisdiction. Self-issues a carrier_license_application ACDC and presents it to the licensing state Department of Insurance; on approval, holds the resulting carrier_license credential.",
+      "onboarding": {
+        "grant_credential_id": "carrier_license",
+        "request_micro_app_said": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+        "request_command_id": "submit_application"
+      }
+    },
+    {
+      "id": "regulator",
+      "display_name": "Insurance Regulator",
+      "kind": "government",
+      "description": "State Department of Insurance. Reviews and adjudicates carrier license applications, issuing the carrier_license credential that authorizes an insurance carrier to bear risk in its jurisdiction."
+    }
+  ],
+  "credentials": [
+    {
+      "id": "carrier_license",
+      "name": "Carrier License",
+      "schema_said": "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI",
+      "issuer_role": "regulator",
+      "holder_role": "carrier",
+      "disclosure_mode": "full",
+      "chained_from": "carrier_license_application",
+      "self_issued": false
+    },
+    {
+      "id": "carrier_license_application",
+      "name": "Carrier License Application",
+      "schema_said": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc",
+      "issuer_role": "carrier",
+      "holder_role": "carrier",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": true
+    }
+  ],
+  "authorities": [
+    {
+      "role_id": "regulator",
+      "display_name": "Utah Department of Insurance",
+      "aid": "EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34-",
+      "phase": "bootstrap",
+      "context": {
+        "jurisdiction": "US-UT"
+      },
+      "credentials": [
+        "carrier_license"
+      ],
+      "endpoints": [],
+      "phase_note": "Operator-controlled stand-in until the Utah DOI incepts its own AID",
+      "expected_transition": null
+    }
+  ],
+  "accepted_schema_saids": [
+    "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI",
+    "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
+  ],
+  "micro_apps": [
+    {
+      "said": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+      "id": "carrier-applies-for-license",
+      "role_id": "carrier"
+    },
+    {
+      "said": "ENqd2iGFI4gFnV7IOhTosN5yMudPfZpe-0uQv1u8zB3D",
+      "id": "regulator-grants-carrier-license",
+      "role_id": "regulator"
+    }
+  ],
+  "context_dimensions": [
+    {
+      "id": "jurisdiction",
+      "applies_to_roles": [
+        "regulator"
+      ],
+      "kind": "enum",
+      "values_ref": "ISO3166-2:US",
+      "prompt": "Which state?",
+      "binds": "issuer_selection"
+    }
+  ]
+}

@@ -1,0 +1,761 @@
+{
+  "aggregates": [
+    {
+      "boundary": {
+        "inception_event_type": "registry_inception",
+        "instance_key": "'license_registry'"
+      },
+      "description": "Local registry of licenses this carrier has applied for, been granted, or had revoked. Folded from outbound applications and inbound grants/revocations.",
+      "fold": {
+        "application_submitted": [
+          {
+            "op": "append",
+            "target": "applications",
+            "value": "{ \"application_said\": event.application_said, \"jurisdiction\": event.jurisdiction, \"lines_of_business\": event.lines_of_business, \"submitted_at\": event.submitted_at, \"status\": \"pending\" }"
+          }
+        ],
+        "license_granted": {
+          "expression": "{ \"applications\": state.applications.map(a, a.jurisdiction == event.jurisdiction && a.status == \"pending\" ? { \"application_said\": a.application_said, \"jurisdiction\": a.jurisdiction, \"lines_of_business\": a.lines_of_business, \"submitted_at\": a.submitted_at, \"status\": \"granted\" } : a), \"active_licenses\": state.active_licenses + [{ \"license_said\": event.license_said, \"jurisdiction\": event.jurisdiction, \"lines_of_business\": event.lines_of_business, \"granted_at\": event.granted_at }], \"revoked_licenses\": state.revoked_licenses }"
+        },
+        "license_revoked": {
+          "expression": "{ \"applications\": state.applications, \"active_licenses\": state.active_licenses.filter(l, l.license_said != event.license_said), \"revoked_licenses\": state.revoked_licenses + state.active_licenses.filter(l, l.license_said == event.license_said).map(l, { \"license_said\": l.license_said, \"jurisdiction\": l.jurisdiction, \"revoked_at\": event.revoked_at }) }"
+        }
+      },
+      "id": "license_registry",
+      "initial_state": {
+        "active_licenses": [],
+        "applications": [],
+        "revoked_licenses": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "no_duplicate_active_license_per_jurisdiction"
+        }
+      ],
+      "log_scope": "private",
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "active_licenses": {
+            "items": {
+              "properties": {
+                "granted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "license_said",
+                "jurisdiction",
+                "lines_of_business",
+                "granted_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "applications": {
+            "items": {
+              "properties": {
+                "application_said": {
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "lines_of_business": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "status": {
+                  "enum": [
+                    "pending",
+                    "granted",
+                    "denied"
+                  ],
+                  "type": "string"
+                },
+                "submitted_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "application_said",
+                "jurisdiction",
+                "lines_of_business",
+                "submitted_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "revoked_licenses": {
+            "items": {
+              "properties": {
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "license_said": {
+                  "type": "string"
+                },
+                "revoked_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "license_said",
+                "jurisdiction",
+                "revoked_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "applications",
+          "active_licenses",
+          "revoked_licenses"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "application_said": "EApp1SAID",
+                "jurisdiction": "US-CA",
+                "lines_of_business": [
+                  "property"
+                ],
+                "submitted_at": "2026-08-01T00:00:00Z"
+              },
+              "type": "application_submitted"
+            },
+            {
+              "payload": {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              },
+              "type": "license_granted"
+            }
+          ],
+          "expected": {
+            "active_licenses": [
+              {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              }
+            ],
+            "applications": [
+              {
+                "application_said": "EApp1SAID",
+                "jurisdiction": "US-CA",
+                "lines_of_business": [
+                  "property"
+                ],
+                "status": "granted",
+                "submitted_at": "2026-08-01T00:00:00Z"
+              }
+            ],
+            "revoked_licenses": []
+          },
+          "name": "application submitted then granted moves it from pending to an active license"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "application_said": "EApp1SAID",
+                "jurisdiction": "US-CA",
+                "lines_of_business": [
+                  "property"
+                ],
+                "submitted_at": "2026-08-01T00:00:00Z"
+              },
+              "type": "application_submitted"
+            },
+            {
+              "payload": {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              },
+              "type": "license_granted"
+            },
+            {
+              "payload": {
+                "license_said": "ELicense1SAID",
+                "revoked_at": "2026-09-01T00:00:00Z"
+              },
+              "type": "license_revoked"
+            }
+          ],
+          "expected": {
+            "active_licenses": [],
+            "applications": [
+              {
+                "application_said": "EApp1SAID",
+                "jurisdiction": "US-CA",
+                "lines_of_business": [
+                  "property"
+                ],
+                "status": "granted",
+                "submitted_at": "2026-08-01T00:00:00Z"
+              }
+            ],
+            "revoked_licenses": [
+              {
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "revoked_at": "2026-09-01T00:00:00Z"
+              }
+            ]
+          },
+          "name": "granting then revoking a license moves it to revoked_licenses"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "counterparty_role": "state-doi",
+      "description": "Apply to a state regulator for a license to underwrite the named lines of business in the named jurisdiction.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": "carrier_license_application",
+            "imported_credential_id": null,
+            "kind": "credential",
+            "schema_said_referenced": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc",
+            "verb": "grant"
+          },
+          "kind": "exchange"
+        },
+        {
+          "exported_credential_id": "carrier_license_application",
+          "kind": "lifecycle_advance",
+          "to_state": "issued"
+        },
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "application_submitted",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"jurisdiction\": command.jurisdiction, \"lines_of_business\": command.lines_of_business, \"submitted_at\": command.submitted_at }"
+        }
+      ],
+      "id": "submit_application",
+      "name": "Submit license application",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "applicant_legal_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "jurisdiction": {
+            "description": "ISO 3166-2 subdivision code, e.g., 'US-CA'.",
+            "type": "string"
+          },
+          "lines_of_business": {
+            "items": {
+              "enum": [
+                "property",
+                "casualty",
+                "life",
+                "health",
+                "auto",
+                "workers_compensation",
+                "marine",
+                "aviation"
+              ],
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "primary_contact": {
+            "properties": {
+              "email": {
+                "format": "email",
+                "type": "string"
+              },
+              "name": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "name",
+              "email"
+            ],
+            "type": "object"
+          },
+          "representations": {
+            "additionalProperties": false,
+            "description": "Financial representations attested by the applicant.",
+            "properties": {
+              "naic_number": {
+                "description": "NAIC company code, if assigned.",
+                "type": "string"
+              },
+              "solvency_attestation": {
+                "description": "Applicant attests reserves are at or above the regulatory minimum.",
+                "type": "boolean"
+              },
+              "solvency_reserves_usd": {
+                "description": "Attested solvency reserves in USD.",
+                "minimum": 0,
+                "type": "number"
+              },
+              "years_in_operation": {
+                "description": "Years the carrier entity has operated.",
+                "minimum": 0,
+                "type": "integer"
+              }
+            },
+            "required": [
+              "solvency_reserves_usd",
+              "solvency_attestation"
+            ],
+            "type": "object"
+          },
+          "submitted_at": {
+            "description": "Carrier-stated date/time of submission. Client-supplied (the Locksmith UI auto-fills the client clock at send time): the command's {command, state} binding has no runtime clock.",
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "jurisdiction",
+          "lines_of_business",
+          "applicant_legal_name",
+          "primary_contact",
+          "representations",
+          "submitted_at"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/submit_application",
+      "state_preconditions": [
+        {
+          "rule_ref": "no_active_license_for_jurisdiction"
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "A carrier's self-attested application to underwrite named lines of business in a jurisdiction. Held and presented to a state DOI via IPEX; the granted carrier_license edges back to the exact version adjudicated.",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [],
+          "holder_role": "carrier",
+          "verifier_roles": [
+            "state-doi"
+          ]
+        },
+        "id": "carrier_license_application",
+        "lifecycle": {
+          "initial": "issued",
+          "states": [
+            "issued",
+            "superseded"
+          ],
+          "transitions": [
+            {
+              "from": "issued",
+              "id": "supersede",
+              "tel_primitive": "update",
+              "to": "superseded",
+              "trigger": "manual"
+            }
+          ]
+        },
+        "name": "Carrier License Application",
+        "rule_refs": [],
+        "schema": {
+          "schema_path": "schemas/carrier_license_application.json",
+          "schema_said": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
+        }
+      }
+    ],
+    "imports": [
+      {
+        "expected_issuer_role": "state-doi",
+        "expected_schema_said": "EOBjUL6H9FQdr_PlXVU_cv_iaXdK5Pg8L3M2YQrnHivI",
+        "id": "carrier_license",
+        "lifecycle_acceptance": [
+          "active"
+        ],
+        "narrative": "Type declaration for the license credential this carrier is applying for. As a startup the carrier has no active instance yet; this entry exists so reactions and workflows can reference the credential type."
+      }
+    ]
+  },
+  "d": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+  "header": {
+    "description": "The carrier's side of license application: a startup insurance carrier submits an application to a state regulator and processes the resulting grant or revocation. Pivotal event: an application has been submitted and adjudicated.",
+    "display_name": "Carrier Applies for License",
+    "expression_language": "CEL/1.0",
+    "id": "carrier-applies-for-license",
+    "version": "1.2"
+  },
+  "projections": [
+    {
+      "description": "Current licenses this carrier holds, suitable for at-a-glance display in the wallet and for compliance reporting.",
+      "display": {
+        "columns": [
+          {
+            "field": "jurisdiction",
+            "header": "Jurisdiction"
+          },
+          {
+            "field": "lines_of_business",
+            "header": "Lines of Business"
+          },
+          {
+            "field": "granted_at",
+            "header": "Granted"
+          }
+        ],
+        "default_sort": {
+          "column": "granted_at",
+          "direction": "desc"
+        },
+        "empty_state": "No active licenses yet. Submit an application to get started.",
+        "view_type": "table"
+      },
+      "fold": {
+        "license_granted": [
+          {
+            "op": "upsert",
+            "set": {
+              "granted_at": "event.granted_at",
+              "jurisdiction": "event.jurisdiction",
+              "license_said": "event.license_said",
+              "lines_of_business": "event.lines_of_business"
+            }
+          }
+        ],
+        "license_revoked": [
+          {
+            "op": "delete"
+          }
+        ]
+      },
+      "id": "my_active_licenses",
+      "name": "My Active Licenses",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "license_said",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "granted_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "jurisdiction": {
+            "type": "string"
+          },
+          "license_said": {
+            "type": "string"
+          },
+          "lines_of_business": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "license_said",
+          "jurisdiction",
+          "lines_of_business",
+          "granted_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "license_granted",
+        "license_revoked"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              },
+              "type": "license_granted"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "ELicense1SAID": {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              }
+            }
+          },
+          "name": "license granted creates a my_active_licenses row"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "granted_at": "2026-08-10T00:00:00Z",
+                "jurisdiction": "US-CA",
+                "license_said": "ELicense1SAID",
+                "lines_of_business": [
+                  "property"
+                ]
+              },
+              "type": "license_granted"
+            },
+            {
+              "payload": {
+                "license_said": "ELicense1SAID"
+              },
+              "type": "license_revoked"
+            }
+          ],
+          "expected": {
+            "rows": {}
+          },
+          "name": "granting then revoking a license leaves no row behind"
+        }
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "description": "When a state regulator grants a license credential to this carrier (IPEX admit of a CarrierLicense), record it in the license registry.",
+      "emissions": [
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_granted",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"license_said\": event.credential.said, \"jurisdiction\": event.credential.attributes.jurisdiction, \"lines_of_business\": event.credential.attributes.lines_of_business, \"granted_at\": event.datetime }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_spurn",
+        "timeout_seconds": 60
+      },
+      "id": "on_license_granted",
+      "trigger": {
+        "imported_credential_id": "carrier_license",
+        "ipex_verb": "grant",
+        "type": "credential_received"
+      }
+    },
+    {
+      "description": "When a state regulator revokes a previously-granted license (TEL revocation event observed for a held license credential), record the revocation in the license registry and move the license out of active_licenses.",
+      "emissions": [
+        {
+          "aggregate_id": "license_registry",
+          "event_type": "license_revoked",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"license_said\": event.credential.said, \"jurisdiction\": event.credential.attributes.jurisdiction, \"revoked_at\": event.datetime }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_license_revoked",
+      "trigger": {
+        "imported_credential_id": "carrier_license",
+        "to_state": "revoked",
+        "type": "lifecycle_event"
+      }
+    }
+  ],
+  "role": {
+    "description": "A regulated insurance company that holds licenses to underwrite specific lines of business within specific jurisdictions. In this micro-app the carrier is a startup applying for its first license.",
+    "display_name": "Insurance Carrier",
+    "id": "carrier",
+    "keri_infrastructure": {
+      "acdc_registry": true,
+      "mailbox": true,
+      "watcher_network": true,
+      "witness_pool": true
+    },
+    "kind": "organization"
+  },
+  "rules": [
+    {
+      "description": "The carrier may not submit a new application for a jurisdiction in which they already hold an active license: checks license_registry for an active license whose jurisdiction matches the proposed application.",
+      "expression": "size(state.active_licenses.filter(l, l.jurisdiction == command.jurisdiction)) == 0",
+      "id": "no_active_license_for_jurisdiction",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "No active license for this jurisdiction",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: a carrier cannot hold multiple simultaneous active licenses for the same jurisdiction. Groups active_licenses by jurisdiction and asserts cardinality <= 1.",
+      "expression": "state.active_licenses.all(l, size(state.active_licenses.filter(o, o.jurisdiction == l.jurisdiction)) == 1)",
+      "id": "no_duplicate_active_license_per_jurisdiction",
+      "language": "CEL/1.0",
+      "title": "At most one active license per jurisdiction",
+      "type": "validation"
+    },
+    {
+      "description": "Whether the granted license credential's terms match what the carrier applied for: jurisdiction matches submitted application and lines_of_business is a subset of submitted lines_of_business.",
+      "expression": "credential.attributes.jurisdiction == workflow.context.application.jurisdiction && credential.attributes.lines_of_business.all(l, l in workflow.context.application.lines_of_business)",
+      "id": "license_terms_acceptable",
+      "language": "CEL/1.0",
+      "purpose": "workflow_branch_condition",
+      "title": "License terms acceptable",
+      "type": "predicate"
+    },
+    {
+      "body": "Upon admission of a license credential, the Carrier agrees to maintain continuous compliance with the licensing terms of the granting jurisdiction. The Carrier shall: (a) maintain actuarially-certified solvency reserves at or above the regulatory minimum; (b) submit annual statutory filings within ninety (90) days of fiscal year end; (c) notify the granting regulator within ten (10) business days of any material adverse change to financial condition, ownership, or operational footprint; and (d) cooperate fully with any examination conducted by the regulator. Failure to maintain compliance is grounds for license suspension or revocation by the granting regulator.",
+      "id": "ongoing_compliance_obligation",
+      "title": "Ongoing Compliance Obligation",
+      "type": "legal_prose"
+    },
+    {
+      "description": "The Ongoing Compliance Obligation prose is articulated by the no_duplicate_active_license_per_jurisdiction validation rule on the carrier side (the regulator side enforces the substantive solvency and filing obligations).",
+      "id": "compliance_articulation",
+      "links": [
+        {
+          "rule_id": "ongoing_compliance_obligation"
+        },
+        {
+          "rule_id": "no_duplicate_active_license_per_jurisdiction"
+        }
+      ],
+      "title": "Compliance articulation",
+      "type": "binding_link"
+    }
+  ],
+  "spec_version": "micro-app-template/0.1",
+  "workflows": [
+    {
+      "counterparty_role": "state-doi",
+      "description": "Carrier's view of the licensing conversation: submit an application, await regulator adjudication, then admit (accept) the resulting license credential or spurn (reject) if terms are not acceptable.",
+      "id": "license_application_carrier_side",
+      "name": "License Application (Carrier Side)",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "submit_application",
+          "id": "step_submit",
+          "name": "Submit application",
+          "next_steps": [
+            "step_await_decision"
+          ]
+        },
+        {
+          "actor": "counterparty",
+          "expected_inbound": [
+            {
+              "imported_credential_id": "carrier_license",
+              "ipex_verb": "grant",
+              "on_match": "next_step:step_evaluate_grant",
+              "trigger_type": "credential_received"
+            },
+            {
+              "on_match": "next_step:step_denied",
+              "route": "/insurance/note/application_denied",
+              "trigger_type": "exn_received"
+            }
+          ],
+          "id": "step_await_decision",
+          "name": "Await regulator decision",
+          "time_bound": {
+            "duration": "P90D",
+            "on_expiry": "step_application_lapsed"
+          }
+        },
+        {
+          "actor": "self",
+          "branches": [
+            {
+              "next_step": "step_admit",
+              "rule_ref": "license_terms_acceptable"
+            }
+          ],
+          "id": "step_evaluate_grant",
+          "name": "Evaluate granted license",
+          "next_steps": [
+            "step_spurn"
+          ]
+        },
+        {
+          "actor": "self",
+          "id": "step_admit",
+          "name": "Admit license credential",
+          "next_steps": [],
+          "reaction_id": "on_license_granted"
+        },
+        {
+          "actor": "self",
+          "id": "step_spurn",
+          "name": "Spurn license credential",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "id": "step_denied",
+          "name": "Application denied",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "id": "step_application_lapsed",
+          "name": "Application lapsed (no response)",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "carrier",
+        "type": "manual"
+      }
+    }
+  ]
+}
