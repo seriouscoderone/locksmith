@@ -184,17 +184,24 @@ class LocksmithWindow(QMainWindow):
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
 
-        # First-run bootstrap (HOA brands only): auto-create the brand's
-        # default vault + witnessless default AID so the app boots straight
-        # into an app experience with no manual vault/identifier creation.
-        # Deferred via QTimer.singleShot(0, ...) rather than called inline,
-        # so it runs AFTER plugin discovery + on_app_started above — opening
-        # the vault fires plugin_manager.on_vault_opened, which plugins
-        # expect only once they've been discovered and started. Gated on
-        # brand().default_vault_name so only an HOA brand.toml's
-        # [bootstrap] section opts in; the default Locksmith brand carries
-        # "" and is unaffected.
-        if brand().default_vault_name:
+        # First-run bootstrap: auto-create a default vault + witnessless
+        # default AID so the app boots straight into an app experience with
+        # no manual vault/identifier creation. Deferred via
+        # QTimer.singleShot(0, ...) rather than called inline, so it runs
+        # AFTER plugin discovery + on_app_started above — opening the vault
+        # fires plugin_manager.on_vault_opened, which plugins expect only
+        # once they've been discovered and started.
+        #
+        # Onboarding-enabled HOA brands (brand().onboarding_enabled) show the
+        # first-run SetupPage instead of bootstrapping silently — the user
+        # picks the workspace name/passcode themselves. Non-onboarding HOA
+        # brands (brand().default_vault_name set, onboarding_enabled False)
+        # keep the exact silent-bootstrap path from before this branch
+        # existed; the default Locksmith brand carries neither and is
+        # unaffected either way.
+        if brand().onboarding_enabled and not self.app.environments():
+            QTimer.singleShot(0, self._show_first_run_setup)
+        elif brand().default_vault_name:
             QTimer.singleShot(0, self._run_default_bootstrap)
 
         # --- App-update menu + controller wiring (Phase 5) ---
@@ -365,6 +372,32 @@ class LocksmithWindow(QMainWindow):
         created = bootstrap_default_environment(self.app, brand())
         if created:
             self.nav_manager.navigate_to(Pages.VAULT, vault_name=brand().default_vault_name)
+
+    def _show_first_run_setup(self) -> None:
+        """Deferred QTimer.singleShot slot (onboarding brands only, first
+        run). Constructs and registers the SetupPage lazily — only when this
+        branch actually fires, so a non-onboarding brand never constructs
+        it — then navigates to it. Its ``setup_submitted`` signal is wired
+        to ``_on_setup_submitted``, which runs the parameterized bootstrap
+        with the user's chosen name/passcode."""
+        from locksmith.ui.onboarding.setup_page import SetupPage
+
+        setup_page = SetupPage(default_name=brand().default_vault_name, parent=self)
+        self.pages[Pages.SETUP] = setup_page
+        self.main_stack.addWidget(setup_page)
+        setup_page.setup_submitted.connect(self._on_setup_submitted)
+        self.nav_manager.navigate_to(Pages.SETUP)
+
+    def _on_setup_submitted(self, name: str, passcode: str) -> None:
+        """SetupPage's ``setup_submitted`` slot: runs the bootstrap with the
+        user-chosen name/passcode overrides and, on success, navigates
+        straight into the opened vault — the same True -> navigate wiring
+        ``_run_default_bootstrap`` uses for the silent path."""
+        created = bootstrap_default_environment(
+            self.app, brand(), vault_name=name, passcode=passcode,
+        )
+        if created:
+            self.nav_manager.navigate_to(Pages.VAULT, vault_name=name)
 
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the

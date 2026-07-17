@@ -18,6 +18,7 @@ class Pages(Enum):
     HOME = "home"
     PLUGINS = "plugins"
     VAULT = "vault"
+    SETUP = "setup"
 
 
 class NavigationManager(QObject):
