@@ -12,6 +12,7 @@ from keri.core import coring
 
 from locksmith.core.credentialing import IssueCredentialDoer
 from locksmith.core.habbing import list_eligible_local_identifiers
+from locksmith.core.serviceaid_bridge import make_issue_doer
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
     LocksmithButton,
@@ -1255,22 +1256,51 @@ class IssueCredentialDialog(LocksmithDialog):
         logger.info(f"Rules block: {rules}")
 
         try:
-            # Create and start IssueCredentialDoer
-            doer = IssueCredentialDoer(
-                app=self.app,
-                schema_said=schema_said,
-                recipient_pre=recipient_pre,
-                attributes=attributes,
-                edges=edges,
-                rules=rules,
-                codes=codes,
-                signal_bridge=self.app.vault.signals if hasattr(self.app.vault, 'signals') else None
-            )
+            # Resolve the issuing hab the same way both the legacy doer and
+            # the serviceaid bridge doer do -- the registry named after
+            # schema_said (the wallet convention: registry_name ==
+            # schema_said). The envelope guard (serviceaid_eligible) needs
+            # this hab to decide single-sig/unwitnessed eligibility.
+            registry = self.app.vault.rgy.registryByName(schema_said)
+            hab = registry.hab if registry is not None else None
+
+            if hab is not None:
+                # Route through the serviceaid bridge chokepoint: eligible
+                # (single-sig, unwitnessed) habs issue via keri_serviceaid;
+                # a GroupHab or witnessed hab falls back to the identical
+                # legacy doer below.
+                doer = make_issue_doer(
+                    self.app,
+                    hab,
+                    schema_said=schema_said,
+                    recipient=recipient_pre,
+                    attributes=attributes,
+                    registry_name=schema_said,
+                    edges=edges,
+                    rules=rules,
+                    codes=codes,
+                )
+            else:
+                # Registry not found for this schema -- fall back to the
+                # legacy doer directly; it owns the not-found error path
+                # (raises + emits credential_issuance_failed from inside
+                # its own do-method) the same way it always has.
+                doer = IssueCredentialDoer(
+                    app=self.app,
+                    schema_said=schema_said,
+                    recipient_pre=recipient_pre,
+                    attributes=attributes,
+                    edges=edges,
+                    rules=rules,
+                    codes=codes,
+                    signal_bridge=self.app.vault.signals if hasattr(self.app.vault, 'signals') else None
+                )
+
             self.app.vault.extend([doer])
 
-            logger.info(f"IssueCredentialDoer started for schema {schema_said}")
+            logger.info(f"{type(doer).__name__} started for schema {schema_said}")
 
         except Exception as e:
-            logger.exception(f"Error creating IssueCredentialDoer: {e}")
+            logger.exception(f"Error creating credential issuance doer: {e}")
             self._set_primary_button_idle()
             self.show_error(f"Failed to start credential issuance: {str(e)}")
