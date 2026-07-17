@@ -238,6 +238,7 @@ class OnboardingHomePage(BasePage):
         self.state: OnboardingState = OnboardingState.PICKER
         self.form: Optional[SchemaFormBuilder] = None
         self._context_widgets: Dict[str, QComboBox] = {}
+        self._context_prompts: Dict[str, str] = {}
         self._shared_dims: List[str] = []
         self._built_form_role_id: Optional[str] = None
         self._persona_cards: List[PersonaCard] = []
@@ -380,8 +381,18 @@ class OnboardingHomePage(BasePage):
 
         template = self._micro_app_resolver(onboarding.request_micro_app_said)
         command = next(
-            c for c in template.get("commands", []) if c["id"] == onboarding.request_command_id
+            (c for c in template.get("commands", []) if c["id"] == onboarding.request_command_id),
+            None,
         )
+        if command is None:
+            # Mirrors the library's EgfDocumentError message style ("no X in
+            # Y") but stays a plain ValueError — the defect is in the
+            # resolved TEMPLATE (or the EGF's pointer into it), not in the
+            # EGF document shape, so EgfDocumentError would mislabel it.
+            raise ValueError(
+                f"no command {onboarding.request_command_id!r} in micro-app template "
+                f"{onboarding.request_micro_app_said!r} (role {role_id!r})"
+            )
         payload_schema = command["payload_schema"]
 
         self._clear_layout(self._form_layout)
@@ -395,6 +406,7 @@ class OnboardingHomePage(BasePage):
 
     def _build_context_controls(self, role: Role, payload_schema: Dict[str, Any]) -> None:
         self._context_widgets = {}
+        self._context_prompts = {}
         self._shared_dims = []
 
         grant = self._egf.credential(role.onboarding.grant_credential_id)
@@ -433,6 +445,7 @@ class OnboardingHomePage(BasePage):
                 combo.addItem(display_text, raw_value)
             combo.setCurrentIndex(-1)
             self._context_widgets[dim.id] = combo
+            self._context_prompts[dim.id] = dim.prompt or dim.id
             context_form.addRow(dim.prompt or dim.id, combo)
 
         if context_group is not None:
@@ -457,12 +470,22 @@ class OnboardingHomePage(BasePage):
     # -- submit ---------------------------------------------------------------
 
     def submit(self) -> None:
-        """Validate the current form and, if clean, call ``on_submit``
-        with the role id, the payload dict, and the context dict (shared
-        dimensions mirrored from the payload; dedicated context combos
-        read via their stored raw ``currentData()``)."""
+        """Validate the current form AND the dedicated context combos;
+        if clean, call ``on_submit`` with the role id, the payload dict,
+        and the context dict (shared dimensions mirrored from the payload;
+        dedicated context combos read via their stored raw
+        ``currentData()``).
+
+        Dedicated combos are outside ``SchemaFormBuilder``'s schema, so
+        ``form.validate()`` knows nothing about them — they are validated
+        here (an unselected combo blocks submission with an inline error
+        named after the dimension's prompt), never passed through as a
+        ``None`` context value."""
         self._clear_form_errors()
         errors = self.form.validate()
+        for dim_id, combo in self._context_widgets.items():
+            if combo.currentIndex() == -1:
+                errors.append(f"{self._context_prompts.get(dim_id, dim_id)} is required")
         if errors:
             self._show_form_errors(errors)
             return

@@ -104,8 +104,12 @@ def test_form_submit_passes_payload_and_context(qtbot):
 def test_submit_blocked_and_no_duplicate_context_widget_when_invalid(qtbot):
     """The shared field is required; submitting without setting it must
     NOT call on_submit, and must render a visible form-error row (house
-    pattern from B5) rather than silently failing."""
-    from PySide6.QtWidgets import QLabel
+    pattern from B5) rather than silently failing. Also asserts the
+    one-control-serves-both invariant structurally: because the
+    "jurisdiction" dimension matches a payload property, NO dedicated
+    context combo may exist — the only QComboBox on the page is the
+    form's own jurisdiction field."""
+    from PySide6.QtWidgets import QComboBox, QLabel
 
     called = []
     page = OnboardingHomePage(
@@ -120,6 +124,99 @@ def test_submit_blocked_and_no_duplicate_context_widget_when_invalid(qtbot):
     page.submit()
     assert not called
     assert page.findChildren(QLabel, "form-error")
+
+    combos = page.findChildren(QComboBox)
+    dedicated = [c for c in combos if c.objectName().startswith("onboarding.context.")]
+    assert dedicated == [], "shared dimension must not render a duplicate context combo"
+    assert len(combos) == 1  # the form's own jurisdiction enum field
+
+
+# Payload schema WITHOUT the jurisdiction property — forces the DEDICATED
+# context-combo path (the dimension has no matching form field to share).
+_PAYLOAD_SCHEMA_NO_DIM = {
+    "type": "object",
+    "properties": {"applicant_legal_name": {"type": "string", "minLength": 1}},
+    "required": ["applicant_legal_name"],
+}
+
+
+def _resolver_no_dim(said):
+    return {"d": said, "commands": [{"id": "submit_application", "payload_schema": _PAYLOAD_SCHEMA_NO_DIM}]}
+
+
+def test_untouched_dedicated_context_combo_blocks_submit(qtbot):
+    """A dedicated (non-shared) context combo starts unselected; submit()
+    must treat it as required — inline form-error with the dimension's
+    prompt, on_submit NOT called (never a context of {"jurisdiction": None})."""
+    from PySide6.QtWidgets import QLabel
+
+    called = []
+    page = OnboardingHomePage(
+        _doc(),
+        held_provider=list,
+        on_submit=lambda *a: called.append(a),
+        micro_app_resolver=_resolver_no_dim,
+        accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+    page.form.set_field("applicant_legal_name", "Acme Mutual")  # form itself is clean
+    page.submit()
+    assert not called
+    errors = page.findChildren(QLabel, "form-error")
+    assert any("Which state?" in e.text() for e in errors)
+
+
+def test_dedicated_context_combo_selection_passes_context_not_payload(qtbot):
+    """Selecting an option in the dedicated combo supplies the context
+    value only — the payload has no such key. Bootstrap-phase authorities'
+    entries carry the " (pilot)" suffix in display text, but the raw
+    context value is unsuffixed."""
+    from PySide6.QtWidgets import QComboBox
+
+    got = {}
+    page = OnboardingHomePage(
+        _doc(),
+        held_provider=list,
+        on_submit=lambda r, p, c: got.update(role=r, payload=p, ctx=c),
+        micro_app_resolver=_resolver_no_dim,
+        accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    combo = next(
+        c
+        for c in page.findChildren(QComboBox)
+        if c.objectName() == "onboarding.context.jurisdiction"
+    )
+    texts = [combo.itemText(i) for i in range(combo.count())]
+    assert "US-UT (pilot)" in texts  # bootstrap-phase authority badged
+    assert "US-CA" in texts  # production-phase authority unbadged
+
+    page.form.set_field("applicant_legal_name", "Acme Mutual")
+    combo.setCurrentIndex(texts.index("US-UT (pilot)"))
+    page.submit()
+    assert got["role"] == "carrier"
+    assert got["ctx"] == {"jurisdiction": "US-UT"}  # raw value, no suffix
+    assert "jurisdiction" not in got["payload"]
+
+
+def test_missing_command_id_raises_descriptive_error(qtbot):
+    """A resolved template lacking the role's request_command_id must fail
+    with a clear, named error (not a bare StopIteration from next())."""
+    import pytest
+
+    page = OnboardingHomePage(
+        _doc(),
+        held_provider=list,
+        on_submit=lambda *a: None,
+        micro_app_resolver=lambda said: {"d": said, "commands": [{"id": "other", "payload_schema": {}}]},
+        accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    with pytest.raises(ValueError, match="submit_application"):
+        page.select_persona("carrier")
 
 
 def test_refresh_recomputes_state_from_held_provider(qtbot):
