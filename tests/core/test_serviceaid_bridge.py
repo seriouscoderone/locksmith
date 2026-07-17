@@ -139,6 +139,16 @@ def _grant_doer_setup(monkeypatch, *, calls, sources=()):
 
     monkeypatch.setattr(bridge.credentialing, "sendArtifacts", fake_send_artifacts)
 
+    class FakeParser:
+        def __init__(self, **kwa):
+            pass
+
+        def parseOne(self, ims=None, exc=None, version=None):
+            calls.append(("parseOne", ims, exc, version))
+
+    monkeypatch.setattr(bridge.parsing, "Parser", FakeParser)
+    monkeypatch.setattr(bridge, "message_version", lambda ims: "V1")
+
     # Construct BEFORE patching doing.DoDoer: ServiceaidGrantDoer's own base
     # class is the real DoDoer, resolved at class-definition time, but its
     # __init__ chain looks up the *module-level* `DoDoer` name again via
@@ -157,7 +167,7 @@ def _grant_doer_setup(monkeypatch, *, calls, sources=()):
     return SimpleNamespace(
         doer=doer, app=app, hby=hby, hab=fake_hab, creder=creder,
         signal_bridge=signal_bridge, mock_frame=mock_frame, posters=posters,
-        rgy=vault.rgy,
+        rgy=vault.rgy, exc=vault.exc,
     )
 
 
@@ -204,6 +214,33 @@ def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(mon
             "channel": "peer",
         },
     )
+
+
+def test_grant_doer_parses_framed_grant_into_vault_exchanger_before_delivery(monkeypatch):
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    # The freshly-framed grant is parsed into the WALLET's exchanger
+    # (app.vault.exc) -- mirrors SendGrantDoer (ipexing.py:376). Without it
+    # the grant never lands in hby.db.exns and the recipient's later
+    # /ipex/admit fails IpexHandler.verify's cloneMessage lookup.
+    parse_calls = [c for c in calls if c[0] == "parseOne"]
+    assert len(parse_calls) == 1
+    _, ims, exc, version = parse_calls[0]
+    assert ims == b"rawbytes"  # the exact raw returned by frame_grant_for
+    assert exc is s.exc  # the vault's exchanger, not a fresh one
+    assert version == "V1"  # message_version(raw) threaded through
+
+    # Parsed locally BEFORE any delivery activity.
+    first_delivery = calls.index(
+        next(
+            c for c in calls
+            if c[0] in ("PeerAwarePoster.__init__", "sendArtifacts", "send", "extend")
+        )
+    )
+    assert calls.index(parse_calls[0]) < first_delivery
 
 
 def test_grant_doer_streams_edge_source_artifacts_before_grant(monkeypatch):

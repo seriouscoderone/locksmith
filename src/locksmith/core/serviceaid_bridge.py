@@ -20,14 +20,16 @@ Four pieces:
   providers only support single-sig, unwitnessed identifiers. `GroupHab`
   (multisig) and witnessed habs fall back to the legacy doers.
 - `ServiceaidIssueDoer`/`ServiceaidGrantDoer` are thin `hio` doers wrapping
-  `issue_credential`/`frame_grant_for`. The grant doer's delivery tail
-  mirrors `locksmith.core.ipexing.SendGrantDoer`'s (ipexing.py ~435-506)
-  verbatim in shape, at full protocol-delivery parity: build a
-  `PeerAwarePoster`, stream the credential artifacts (issuer/issuee KELs
-  via `credentialing.sendArtifacts`) and chain sources, send the framed
-  grant exn, extend self with a `DoDoer` wrapping `.deliver()`'s doers,
-  wait for it to finish, then read `.last_outcome` for the transport
-  channel. Only the exn FRAMING differs -- that comes from
+  `issue_credential`/`frame_grant_for`. The grant doer mirrors
+  `locksmith.core.ipexing.SendGrantDoer`'s framing + delivery tail
+  (ipexing.py ~372-506) verbatim in shape, at full protocol parity: parse
+  the framed grant into the wallet's exchanger (`app.vault.exc`, so the
+  recipient's later /ipex/admit verifies), build a `PeerAwarePoster`,
+  stream the credential artifacts (issuer/issuee KELs via
+  `credentialing.sendArtifacts`) and chain sources, send the framed grant
+  exn, extend self with a `DoDoer` wrapping `.deliver()`'s doers, wait for
+  it to finish, then read `.last_outcome` for the transport channel. Only
+  the exn FRAMING differs -- that comes from
   `frame_grant_for(return_raw=True)` instead of
   `keri.vc.protocoling.ipexGrantExn`.
 - `make_issue_doer`/`make_grant_doer` are the routing chokepoint: eligible
@@ -36,11 +38,12 @@ Four pieces:
 """
 from hio.base import doing
 from keri import help
-from keri.core import serdering
+from keri.core import parsing, serdering
 from keri.vdr import credentialing
 
 from keri_serviceaid.providers import frame_grant_for, issue_credential
 
+from locksmith.core.remoting import message_version
 from locksmith.peer.posting import PeerAwarePoster
 
 logger = help.ogler.getLogger(__name__)
@@ -157,9 +160,14 @@ class ServiceaidGrantDoer(doing.DoDoer):
     ALL delivery (artifact streaming + the grant exn itself) stays
     host-owned per spec Sec 5.1/8.
 
-    Mirrors `SendGrantDoer`'s delivery tail (ipexing.py ~435-506) verbatim
-    in shape, at FULL protocol-delivery parity:
+    Mirrors `SendGrantDoer`'s framing tail + delivery tail (ipexing.py
+    ~372-506) verbatim in shape, at FULL protocol parity:
 
+    - parse the freshly-framed grant into the wallet's own exchanger
+      (`app.vault.exc`, ipexing.py:376) so it lands in `hby.db.exns` --
+      required for the recipient's later /ipex/admit to pass
+      `IpexHandler.verify`'s cloneMessage lookup (the granter-side
+      round-trip);
     - stream credential artifacts (issuer KEL, issuee KEL, delegation
       chains) via `credentialing.sendArtifacts` on the same postman;
     - stream each credential chain source (edge credentials) --
@@ -170,6 +178,11 @@ class ServiceaidGrantDoer(doing.DoDoer):
       `"SendGrantDoer"` vocabulary (incl. `channel` from
       `postman.last_outcome`) the existing grant dialog
       (`ui/vault/credentials/issued/grant.py`) already filters on.
+
+    Deliberately NOT mirrored: `SendGrantDoer`'s alias-resolution block
+    (ipexing.py:317-338, `Organizer.find("alias", ...)` fallback) --
+    recipients here are resolved AID prefixes by contract (the onboarding
+    flow selects authorities from the EGF document, which pins AIDs).
     """
 
     def __init__(self, app, *, credential_said, recipient, hab_pre, **kwa):
@@ -234,6 +247,17 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 sink=sink,
                 return_raw=True,
             )
+
+            # Parse the freshly-framed grant into the WALLET's exchanger --
+            # mirrors SendGrantDoer (ipexing.py:376). frame_grant_for does
+            # NOT persist into the vault's exc; without this the grant never
+            # lands in hby.db.exns, so when the recipient later sends
+            # /ipex/admit, keripy's IpexHandler.verify fails its
+            # cloneMessage lookup on the grant SAID and the Exchanger
+            # silently drops the admit. parseOne gets a bytes() copy so
+            # `raw` stays intact for the serder/attachment split below.
+            parsing.Parser().parseOne(ims=bytes(raw), exc=self.app.vault.exc,
+                                      version=message_version(raw))
 
             # Split the framed message the same way keri_serviceaid's own
             # PostmanDeliverer does: serder + trailing attachment bytes.
