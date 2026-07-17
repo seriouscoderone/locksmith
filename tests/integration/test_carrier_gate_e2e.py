@@ -41,7 +41,7 @@ drive the *same* real ``kvy``/``tvy``/``vry`` verification that admit performs.
 TEST DOI vs PRODUCTION DOI
 --------------------------
 ``CarrierPlugin.required_credential`` hardcodes the real production DOI AID
-(``EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34``). Our in-process DOI has a
+(``EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34-``). Our in-process DOI has a
 different, freshly-incepted AID, so we OVERRIDE the discovered plugin instance's
 ``required_credential`` to trust the TEST DOI's AID. We are proving the gate
 MECHANISM, not the literal production issuer AID (the literal-AID declaration is
