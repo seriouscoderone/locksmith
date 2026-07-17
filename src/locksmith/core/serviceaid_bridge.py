@@ -22,11 +22,14 @@ Four pieces:
 - `ServiceaidIssueDoer`/`ServiceaidGrantDoer` are thin `hio` doers wrapping
   `issue_credential`/`frame_grant_for`. The grant doer's delivery tail
   mirrors `locksmith.core.ipexing.SendGrantDoer`'s (ipexing.py ~435-506)
-  verbatim in shape: build a `PeerAwarePoster`, send the framed message,
-  extend self with a `DoDoer` wrapping `.deliver()`'s doers, wait for it to
-  finish, then read `.last_outcome` for the transport channel. Only the exn
-  FRAMING differs -- that comes from `frame_grant_for(return_raw=True)`
-  instead of `keri.vc.protocoling.ipexGrantExn`.
+  verbatim in shape, at full protocol-delivery parity: build a
+  `PeerAwarePoster`, stream the credential artifacts (issuer/issuee KELs
+  via `credentialing.sendArtifacts`) and chain sources, send the framed
+  grant exn, extend self with a `DoDoer` wrapping `.deliver()`'s doers,
+  wait for it to finish, then read `.last_outcome` for the transport
+  channel. Only the exn FRAMING differs -- that comes from
+  `frame_grant_for(return_raw=True)` instead of
+  `keri.vc.protocoling.ipexGrantExn`.
 - `make_issue_doer`/`make_grant_doer` are the routing chokepoint: eligible
   habs get a bridge doer, everyone else gets the legacy doer with equivalent
   kwargs. No behavior change for ineligible habs.
@@ -34,6 +37,7 @@ Four pieces:
 from hio.base import doing
 from keri import help
 from keri.core import serdering
+from keri.vdr import credentialing
 
 from keri_serviceaid.providers import frame_grant_for, issue_credential
 
@@ -148,15 +152,24 @@ class ServiceaidIssueDoer(doing.Doer):
 class ServiceaidGrantDoer(doing.DoDoer):
     """Frames an IPEX grant for an already-issued credential via
     `keri_serviceaid.providers.frame_grant_for(return_raw=True)`, then
-    delivers the raw framed bytes through Locksmith's existing peer-aware
-    transport (`PeerAwarePoster`) -- delivery stays host-owned per spec
-    Sec 5.1/8; only the exn framing itself comes from the library.
+    delivers it through Locksmith's existing peer-aware transport
+    (`PeerAwarePoster`). Only the exn FRAMING comes from the library --
+    ALL delivery (artifact streaming + the grant exn itself) stays
+    host-owned per spec Sec 5.1/8.
 
     Mirrors `SendGrantDoer`'s delivery tail (ipexing.py ~435-506) verbatim
-    in shape: build the poster, send the framed message, extend self with a
-    `DoDoer` wrapping `.deliver()`'s doers, wait for it to finish, then emit
-    success/failure under the SAME `"SendGrantDoer"` vocabulary the existing
-    grant dialog (`ui/vault/credentials/issued/grant.py`) already filters on.
+    in shape, at FULL protocol-delivery parity:
+
+    - stream credential artifacts (issuer KEL, issuee KEL, delegation
+      chains) via `credentialing.sendArtifacts` on the same postman;
+    - stream each credential chain source (edge credentials) --
+      `sendArtifacts` for the source plus the source serder + attachment;
+    - send the framed grant exn last;
+    - extend self with a `DoDoer` wrapping `.deliver()`'s doers, wait for
+      it to finish, then emit success/failure under the SAME
+      `"SendGrantDoer"` vocabulary (incl. `channel` from
+      `postman.last_outcome`) the existing grant dialog
+      (`ui/vault/credentials/issued/grant.py`) already filters on.
     """
 
     def __init__(self, app, *, credential_said, recipient, hab_pre, **kwa):
@@ -194,6 +207,26 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 )
                 return
 
+            # Validate the credential exists -- mirrors SendGrantDoer's
+            # check, and supplies the creder the artifact streaming below
+            # feeds to sendArtifacts.
+            creder, prefixer, seqner, saider = self.rgy.reger.cloneCred(
+                said=self.credential_said
+            )
+            if creder is None:
+                logger.error(f"Credential not found: {self.credential_said}")
+                sink.on_event(
+                    "SendGrantDoer",
+                    "send_failed",
+                    {
+                        'error': f'Credential {self.credential_said} '
+                                 f'not found in registry',
+                        'success': False,
+                        'credential_said': self.credential_said,
+                    },
+                )
+                return
+
             grant_said, raw = frame_grant_for(
                 self.hby, hab, self.rgy,
                 credential_said=self.credential_said,
@@ -216,6 +249,25 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 baser=self.app.vault.db,
                 topic="credential",
             )
+
+            # Send credential artifacts (issuer KEL, issuee KEL, etc.) --
+            # verbatim shape of SendGrantDoer's block (ipexing.py ~443-450),
+            # on the SAME postman the grant travels on, so the recipient can
+            # verify the grant without pre-resolved key state.
+            credentialing.sendArtifacts(
+                self.hby, self.rgy.reger, postman, creder, self.recipient
+            )
+
+            # Send credential chain sources (edge credentials)
+            sources = self.rgy.reger.sources(self.hby.db, creder)
+            for source, satc in sources:
+                credentialing.sendArtifacts(
+                    self.hby, self.rgy.reger, postman, source, self.recipient
+                )
+                postman.send(serder=source, attachment=satc)
+
+            # Send the framed grant exn last, after everything needed to
+            # verify it.
             postman.send(serder=serder, attachment=attachment)
 
             # Deliver all messages -- verbatim shape of SendGrantDoer's tail.

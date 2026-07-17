@@ -94,30 +94,36 @@ def test_issue_doer_emits_legacy_failure_event_on_exception(mock_issue):
     )
 
 
-def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(monkeypatch):
-    calls = []
+class FakeSerder:
+    size = 4  # pretend "rawb" is the framed exn; "ytes" is the attachment
 
+
+def _grant_doer_setup(monkeypatch, *, calls, sources=()):
+    """Shared scaffolding for ServiceaidGrantDoer tests: a MagicMock app with
+    a resolvable hab, a cloneCred-able credential, patched framing/poster/
+    sendArtifacts recording into `calls`, and the constructed doer.
+    """
     fake_hab = MagicMock()
     hby = MagicMock()
     hby.habs.get.return_value = fake_hab
 
     signal_bridge = MagicMock()
+    creder = MagicMock(name="creder")
     vault = MagicMock(hby=hby, signals=signal_bridge)
+    vault.rgy.reger.cloneCred.return_value = (creder, None, None, None)
+    vault.rgy.reger.sources.return_value = list(sources)
     app = MagicMock(vault=vault)
 
-    monkeypatch.setattr(
-        bridge, "frame_grant_for", lambda *a, **kw: ("Egrant", b"rawbytes")
-    )
-
-    class FakeSerder:
-        size = 4  # pretend "rawb" is the framed exn; "ytes" is the attachment
-
+    mock_frame = MagicMock(return_value=("Egrant", b"rawbytes"))
+    monkeypatch.setattr(bridge, "frame_grant_for", mock_frame)
     monkeypatch.setattr(bridge.serdering, "SerderKERI", lambda raw: FakeSerder())
+
+    posters = []
 
     class FakePoster:
         def __init__(self, **kwa):
             calls.append(("PeerAwarePoster.__init__", kwa))
-            self.sent = []
+            posters.append(self)
             self.last_outcome = SimpleNamespace(value="peer")
 
         def send(self, serder, attachment=None):
@@ -127,6 +133,11 @@ def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(mon
             return []
 
     monkeypatch.setattr(bridge, "PeerAwarePoster", FakePoster)
+
+    def fake_send_artifacts(hby_, reger_, postman_, creder_, recp_):
+        calls.append(("sendArtifacts", hby_, reger_, postman_, creder_, recp_))
+
+    monkeypatch.setattr(bridge.credentialing, "sendArtifacts", fake_send_artifacts)
 
     # Construct BEFORE patching doing.DoDoer: ServiceaidGrantDoer's own base
     # class is the real DoDoer, resolved at class-definition time, but its
@@ -143,13 +154,46 @@ def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(mon
 
     monkeypatch.setattr(bridge.doing, "DoDoer", FakeDoDoer)
 
-    list(doer.grantDo(lambda: 0.0))
+    return SimpleNamespace(
+        doer=doer, app=app, hby=hby, hab=fake_hab, creder=creder,
+        signal_bridge=signal_bridge, mock_frame=mock_frame, posters=posters,
+        rgy=vault.rgy,
+    )
+
+
+def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(monkeypatch):
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    # Framing came from the library with the full kwarg contract.
+    assert s.mock_frame.call_args.args == (s.hby, s.hab, s.rgy)
+    kw = s.mock_frame.call_args.kwargs
+    assert kw["credential_said"] == "Ecred"
+    assert kw["recipient"] == "Erecp"
+    assert kw["return_raw"] is True
+    assert type(kw["sink"]).__name__ == "QtProgressSink"
+
+    # Artifact streaming (issuer KEL/TEL) happened once, on the SAME postman
+    # the grant travels on, with the credential's creder -- BEFORE the exn send.
+    artifact_calls = [c for c in calls if c[0] == "sendArtifacts"]
+    assert len(artifact_calls) == 1
+    _, hby_, reger_, postman_, creder_, recp_ = artifact_calls[0]
+    assert hby_ is s.hby
+    assert reger_ is s.rgy.reger
+    assert postman_ is s.posters[0]
+    assert creder_ is s.creder
+    assert recp_ == "Erecp"
+    assert calls.index(artifact_calls[0]) < calls.index(
+        next(c for c in calls if c[0] == "send")
+    )
 
     send_calls = [c for c in calls if c[0] == "send"]
     assert len(send_calls) == 1
     assert isinstance(send_calls[0][1], FakeSerder)
     assert send_calls[0][2] == b"ytes"  # attachment: raw bytes past serder.size
-    signal_bridge.emit_doer_event.assert_called_once_with(
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
         "SendGrantDoer",
         "send_complete",
         {
@@ -158,6 +202,48 @@ def test_grant_doer_frames_via_library_then_delivers_and_emits_send_complete(mon
             "recipient": "Erecp",
             "grant_said": "Egrant",
             "channel": "peer",
+        },
+    )
+
+
+def test_grant_doer_streams_edge_source_artifacts_before_grant(monkeypatch):
+    calls = []
+    source = MagicMock(name="source")
+    s = _grant_doer_setup(monkeypatch, calls=calls, sources=[(source, b"satc")])
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    # sendArtifacts for the credential itself AND for each chain source,
+    # in that order -- mirrors SendGrantDoer's tail.
+    artifact_calls = [c for c in calls if c[0] == "sendArtifacts"]
+    assert len(artifact_calls) == 2
+    assert artifact_calls[0][4] is s.creder
+    assert artifact_calls[1][4] is source
+
+    # The source serder+attachment go through the postman, before the exn.
+    send_calls = [c for c in calls if c[0] == "send"]
+    assert len(send_calls) == 2
+    assert send_calls[0][1] is source
+    assert send_calls[0][2] == b"satc"
+    assert isinstance(send_calls[1][1], FakeSerder)  # the grant exn last
+
+
+def test_grant_doer_emits_send_failed_when_credential_missing(monkeypatch):
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+    s.rgy.reger.cloneCred.return_value = (None, None, None, None)
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    s.mock_frame.assert_not_called()
+    assert [c for c in calls if c[0] == "sendArtifacts"] == []
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_failed",
+        {
+            "error": "Credential Ecred not found in registry",
+            "success": False,
+            "credential_said": "Ecred",
         },
     )
 
