@@ -23,6 +23,7 @@ from types import SimpleNamespace
 from unittest.mock import MagicMock
 
 import pytest
+from PySide6.QtWidgets import QWidget
 
 from keri_serviceaid.egf.documents import EgfDocument
 from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import fixture_egf
@@ -78,7 +79,11 @@ class Env:
     def __init__(self, monkeypatch):
         self.egf_doc = _egf_doc()
         self.resolver = FakeResolver()
-        self.hab = SimpleNamespace(pre=DEFAULT_HAB_PRE)
+        # `kever.wits = []` (unwitnessed) + the default `SimpleNamespace`
+        # class name (never "GroupHab") makes this hab pass
+        # `serviceaid_eligible` -- see hardening wave item 2's own tests
+        # below for the witnessed/multisig-rejection cases.
+        self.hab = SimpleNamespace(pre=DEFAULT_HAB_PRE, kever=SimpleNamespace(wits=[]))
 
         self.app = MagicMock(name="app")
         self.signals = DoerSignalBridge()
@@ -321,6 +326,46 @@ def test_submit_no_default_hab_emits_request_failed(env):
     assert "default identifier" in env.failures[0][2]["message"]
 
 
+def test_submit_witnessed_hab_emits_request_failed_and_schedules_nothing(env):
+    """Hardening wave item 2 (RequestFlow envelope self-enforcement):
+    today's serverless serviceaid providers only support single-sig,
+    unwitnessed identifiers (`serviceaid_eligible`). A witnessed default
+    hab must fail closed BEFORE any seeding or issuance is scheduled --
+    never reach `EgfSeeder`/`ServiceaidIssueDoer`."""
+    env.hab.kever.wits = ["B" + "W" * 43]  # witnessed
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+
+    assert env.issued == []
+    assert env.seeder_calls == []
+    assert env.extended == []
+    assert len(env.failures) == 1
+    assert env.failures[0][0] == "RequestFlow"
+    assert env.failures[0][1] == "request_failed"
+    assert (
+        env.failures[0][2]["message"]
+        == "this workspace's identifier is outside the serviceaid envelope (witnessed or multisig)"
+    )
+
+
+def test_submit_multisig_hab_emits_request_failed_and_schedules_nothing(env):
+    """Same guard, the multisig (`GroupHab`) branch of `serviceaid_eligible`."""
+    group_hab = MagicMock(name="group_hab")
+    group_hab.__class__.__name__ = "GroupHab"
+    group_hab.pre = DEFAULT_HAB_PRE
+    group_hab.kever.wits = []
+    env.app.vault.hby.habByName.return_value = group_hab
+
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+
+    assert env.issued == []
+    assert env.seeder_calls == []
+    assert env.extended == []
+    assert len(env.failures) == 1
+    assert "serviceaid envelope" in env.failures[0][2]["message"]
+
+
 def test_submit_autofills_missing_date_time_property_before_validating(env):
     """The real insurance EGF's carrier submit_application schema marks
     `submitted_at` (format: date-time) required AND client-supplied, with
@@ -394,17 +439,20 @@ def test_onboarding_held_provider_guards_vault_none():
     app.plugin_manager._held_credentials.assert_called_once_with(vault)
 
 def test_window_registers_onboarding_home_gated_on_enabled_and_resolver():
-    """`LocksmithWindow.__init__` must only construct/register the
+    """`LocksmithWindow._wire_onboarding` must only construct/register the
     onboarding "home" page when BOTH `brand().onboarding_enabled` is true
     AND `make_hoa_resolver(brand())` resolved a non-None (resolver,
     egf_doc) pair -- a non-onboarding or non-HOA brand must never
     construct a RequestFlow/OnboardingHomePage at all. Source-inspection,
     not a live construction, mirrors `tests/core/test_bootstrapping_
     overrides.py`'s precedent (a full `LocksmithWindow` needs a live
-    QApplication + full plugin discovery to construct)."""
+    QApplication + full plugin discovery to construct). `_wire_onboarding`
+    is called unconditionally from `__init__` (see
+    `test_wire_onboarding_registers_error_page_when_egf_broken` below for
+    its behavioral, hardening-wave-item-1 error path)."""
     from locksmith.ui.window import LocksmithWindow
 
-    source = inspect.getsource(LocksmithWindow.__init__)
+    source = inspect.getsource(LocksmithWindow._wire_onboarding)
 
     onboarding_idx = source.index("onboarding_enabled")
     register_idx = source.index('register_page("home"')
@@ -428,3 +476,115 @@ def test_window_registers_onboarding_home_gated_on_enabled_and_resolver():
     # test doesn't have to parse the AST.
     between = source[onboarding_idx:register_idx]
     assert "make_hoa_resolver(" in between
+
+
+class _FakeHoaVaultPage(QWidget):
+    """Real (not mocked) QWidget stand-in for `HoaVaultPage`, monkeypatched
+    in for `_wire_onboarding`'s `isinstance(vault_page, HoaVaultPage)` gate
+    and `register_page`/`add_menu_entry` calls. Must be a REAL `QWidget` --
+    not a `MagicMock(spec=HoaVaultPage)` -- for two independent reasons:
+    (1) `HoaVaultPage`'s metaclass chain (`QABCMeta`, ABC-based) trips
+    `isinstance()` against a spec'd Mock on this Python/mock combination
+    (`AttributeError: type object 'HoaVaultPage' has no attribute
+    '_abc_impl'`); (2) the error path constructs a REAL `OnboardingErrorPage`
+    (a `QWidget`), and PySide6's `QWidget.__init__` strictly type-checks its
+    `parent` argument -- a `MagicMock` is not an accepted `QWidget | None`.
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.registered_pages: dict = {}
+        self.menu_entries: list = []
+
+    def register_page(self, key, widget) -> None:
+        self.registered_pages[key] = widget
+
+    def add_menu_entry(self, plugin_id, entry_button, submenu_items=None) -> None:
+        self.menu_entries.append((plugin_id, entry_button, submenu_items))
+
+
+def test_wire_onboarding_registers_error_page_when_egf_broken(monkeypatch):
+    """Hardening wave item 1 (design spec §4.5): "A persona picker over a
+    broken EGF shows an error state, not an empty list." When
+    `make_hoa_resolver` raises an `EgfError` subclass (a pinned EGF whose
+    bundle is missing/tampered/incomplete -- e.g. `EgfIntegrityError` on a
+    SAID mismatch), `_wire_onboarding` must NOT propagate the exception
+    (which would crash `LocksmithWindow.__init__` and the whole app launch).
+    Instead: neither `RequestFlow` nor `OnboardingHomePage` is constructed,
+    and a minimal `OnboardingErrorPage` is registered as "home" instead."""
+    from keri_serviceaid.egf.errors import EgfIntegrityError
+    from locksmith.ui.onboarding.home_page import OnboardingErrorPage
+    from locksmith.ui.window import LocksmithWindow
+
+    fake_brand = MagicMock()
+    fake_brand.onboarding_enabled = True
+
+    def _raise_integrity_error(_brand):
+        raise EgfIntegrityError("E" + "X" * 43, "E" + "Y" * 43)
+
+    request_flow_cls = MagicMock(name="RequestFlow")
+    onboarding_home_page_cls = MagicMock(name="OnboardingHomePage")
+    monkeypatch.setattr("locksmith.ui.window.brand", lambda: fake_brand)
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_resolver", _raise_integrity_error)
+    monkeypatch.setattr("locksmith.ui.window.RequestFlow", request_flow_cls)
+    monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
+    monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
+
+    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    vault_page = _FakeHoaVaultPage()
+
+    # Must not raise -- this is the crash `LocksmithWindow.__init__` would
+    # otherwise hit before the fix.
+    LocksmithWindow._wire_onboarding(win, vault_page)
+
+    assert win._request_flow is None
+    assert win._onboarding_home_page is None
+    request_flow_cls.assert_not_called()
+    onboarding_home_page_cls.assert_not_called()
+
+    assert list(vault_page.registered_pages.keys()) == ["home"]
+    page = vault_page.registered_pages["home"]
+    assert isinstance(page, OnboardingErrorPage)
+
+    # No nav menu entry for a controller that was never built.
+    assert vault_page.menu_entries == []
+
+
+def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
+    """Control case for the above: when `make_hoa_resolver` resolves
+    cleanly, `_wire_onboarding` must take the normal path -- RequestFlow +
+    OnboardingHomePage constructed, registered as "home", nav entry added --
+    unaffected by the new try/except."""
+    from locksmith.ui.window import LocksmithWindow
+
+    fake_brand = MagicMock()
+    fake_brand.onboarding_enabled = True
+
+    resolver = MagicMock(name="resolver")
+    egf_doc = MagicMock(name="egf_doc")
+    request_flow_instance = MagicMock(name="request_flow_instance")
+    onboarding_home_page_instance = MagicMock(name="onboarding_home_page_instance")
+    request_flow_cls = MagicMock(name="RequestFlow", return_value=request_flow_instance)
+    onboarding_home_page_cls = MagicMock(
+        name="OnboardingHomePage", return_value=onboarding_home_page_instance,
+    )
+
+    monkeypatch.setattr("locksmith.ui.window.brand", lambda: fake_brand)
+    monkeypatch.setattr(
+        "locksmith.ui.window.make_hoa_resolver", lambda _brand: (resolver, egf_doc),
+    )
+    monkeypatch.setattr("locksmith.ui.window.RequestFlow", request_flow_cls)
+    monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
+    monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
+
+    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    vault_page = _FakeHoaVaultPage()
+
+    LocksmithWindow._wire_onboarding(win, vault_page)
+
+    request_flow_cls.assert_called_once()
+    onboarding_home_page_cls.assert_called_once()
+    assert win._request_flow is request_flow_instance
+    assert win._onboarding_home_page is onboarding_home_page_instance
+    assert vault_page.registered_pages == {"home": onboarding_home_page_instance}
+    assert len(vault_page.menu_entries) == 1

@@ -22,7 +22,7 @@ from locksmith.core.configing import LocksmithConfig
 from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
-from locksmith.ui.onboarding.home_page import OnboardingHomePage
+from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
 from locksmith.ui.onboarding.request_flow import RequestFlow
 from locksmith.ui.toolbar import LocksmithToolbar
 from locksmith.ui.toolkit.widgets.toast import NotificationToast
@@ -164,46 +164,16 @@ class LocksmithWindow(QMainWindow):
             vault_page, vault_page.nav_menu,
         )
 
-        # Onboarding "home" persona-picker page (Plan B Task 8): RequestFlow
-        # drives the EGF request-access pipeline end to end (derive ->
-        # validate -> attributes -> authority -> seed -> issue -> grant).
-        # Gated on BOTH brand().onboarding_enabled AND a resolvable EGF
-        # (make_hoa_resolver returns None for any brand with no [egf]
-        # table) -- a non-onboarding or non-HOA brand must never construct
-        # a RequestFlow/OnboardingHomePage at all.
+        # Onboarding "home" persona-picker page (Plan B Task 8 + hardening
+        # wave item 1). Extracted to _wire_onboarding for testability --
+        # constructing a full LocksmithWindow needs a live QApplication +
+        # full plugin discovery, out of scope for a fast/hermetic unit test
+        # (see tests/ui/test_window_bootstrap_nav.py's precedent for
+        # _run_default_bootstrap).
         self._request_flow: RequestFlow | None = None
         self._onboarding_home_page: OnboardingHomePage | None = None
         self._onboarding_wired_vault = None
-        if brand().onboarding_enabled and isinstance(vault_page, HoaVaultPage):
-            hoa_egf = make_hoa_resolver(brand())
-            if hoa_egf is not None:
-                resolver, egf_doc = hoa_egf
-                self._request_flow = RequestFlow(
-                    self.app, resolver, egf_doc, brand().egf_accept_phases,
-                )
-                self._onboarding_home_page = OnboardingHomePage(
-                    egf_doc,
-                    # None-guarded: refresh() fires during construction,
-                    # before any vault is open. See _onboarding_held_credentials.
-                    held_provider=lambda: _onboarding_held_credentials(self.app),
-                    on_submit=self._request_flow.submit,
-                    micro_app_resolver=resolver.resolve_micro_app,
-                    accept_phases=brand().egf_accept_phases,
-                    parent=vault_page,
-                )
-                vault_page.register_page("home", self._onboarding_home_page)
-                home_entry_btn = MenuButton(icon=QIcon(), label="Home")
-                home_entry_btn.setObjectName("vaultNavMenu.homeButton")
-                vault_page.add_menu_entry("home", home_entry_btn, [])
-                # add_menu_entry's own click wiring (VaultNavMenu.
-                # register_plugin_section -> _on_plugin_button_clicked ->
-                # plugin_section_clicked -> VaultPage._on_plugin_entry_clicked)
-                # looks plugin_id up in plugin_manager -- "home" is not a
-                # VaultPlugin, so that path is a harmless no-op (logged
-                # warning). The actual navigation is this direct connection,
-                # mirroring how the core nav buttons wire straight to
-                # _show_vault_page in VaultPage._connect_navigation.
-                home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
+        self._wire_onboarding(vault_page)
 
         # Add pages to stack
         for page in self.pages.values():
@@ -276,6 +246,72 @@ class LocksmithWindow(QMainWindow):
         # --- end app-update wiring ---
 
         logger.info("LocksmithHome initialized")
+
+    def _wire_onboarding(self, vault_page) -> None:
+        """Onboarding "home" persona-picker wiring (Plan B Task 8).
+        RequestFlow drives the EGF request-access pipeline end to end
+        (derive -> validate -> attributes -> authority -> seed -> issue ->
+        grant). Gated on BOTH brand().onboarding_enabled AND a resolvable
+        EGF (make_hoa_resolver returns None for any brand with no [egf]
+        table) -- a non-onboarding or non-HOA brand must never construct a
+        RequestFlow/OnboardingHomePage at all.
+
+        Hardening wave item 1 (design spec §4.5): "A persona picker over a
+        broken EGF shows an error state, not an empty list." A brand that
+        DOES pin an EGF but whose bundle is missing/tampered/incomplete
+        must not crash window construction -- make_hoa_resolver and the
+        onboarding-page construction that follows are wrapped in
+        try/except (EgfError, ValueError); on failure this logs loudly and
+        registers a minimal OnboardingErrorPage as "home" instead, leaving
+        self._request_flow / self._onboarding_home_page at None (so
+        _maybe_wire_onboarding_for_vault stays a no-op for this vault, and
+        the nav menu entry that would route into a controller that was
+        never built is never added).
+        """
+        from keri_serviceaid.egf.errors import EgfError
+
+        if not (brand().onboarding_enabled and isinstance(vault_page, HoaVaultPage)):
+            return
+
+        try:
+            hoa_egf = make_hoa_resolver(brand())
+            if hoa_egf is None:
+                return
+            resolver, egf_doc = hoa_egf
+            self._request_flow = RequestFlow(
+                self.app, resolver, egf_doc, brand().egf_accept_phases,
+            )
+            self._onboarding_home_page = OnboardingHomePage(
+                egf_doc,
+                # None-guarded: refresh() fires during construction,
+                # before any vault is open. See _onboarding_held_credentials.
+                held_provider=lambda: _onboarding_held_credentials(self.app),
+                on_submit=self._request_flow.submit,
+                micro_app_resolver=resolver.resolve_micro_app,
+                accept_phases=brand().egf_accept_phases,
+                parent=vault_page,
+            )
+        except (EgfError, ValueError) as exc:
+            logger.error("onboarding.egf_broken error=%s", exc)
+            self._request_flow = None
+            self._onboarding_home_page = None
+            error_page = OnboardingErrorPage(str(exc), parent=vault_page)
+            vault_page.register_page("home", error_page)
+            return
+
+        vault_page.register_page("home", self._onboarding_home_page)
+        home_entry_btn = MenuButton(icon=QIcon(), label="Home")
+        home_entry_btn.setObjectName("vaultNavMenu.homeButton")
+        vault_page.add_menu_entry("home", home_entry_btn, [])
+        # add_menu_entry's own click wiring (VaultNavMenu.
+        # register_plugin_section -> _on_plugin_button_clicked ->
+        # plugin_section_clicked -> VaultPage._on_plugin_entry_clicked)
+        # looks plugin_id up in plugin_manager -- "home" is not a
+        # VaultPlugin, so that path is a harmless no-op (logged
+        # warning). The actual navigation is this direct connection,
+        # mirroring how the core nav buttons wire straight to
+        # _show_vault_page in VaultPage._connect_navigation.
+        home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
 
     def _install_help_menu(self) -> None:
         """Add a Help menu with the "Check for updates…" entry. Native

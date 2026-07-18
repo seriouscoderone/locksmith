@@ -35,15 +35,22 @@ machine. Drives ACDC issuance end to end on the serverless serviceaid path
    block (payload plus the ``submitted_at`` autofill).
 5. ``select_authority`` — the single ``Authority`` (within
    ``accept_phases``) the resulting grant credential is addressed to.
-6. ``EgfSeeder.seed_for_role`` — idempotent (two-gate; see
+6. Envelope self-enforcement (hardening wave item 2): ``serviceaid_
+   eligible(hab)`` gates the default identifier BEFORE any seeding or
+   issuance is scheduled — today's serverless serviceaid providers only
+   support single-sig, unwitnessed identifiers (see its docstring in
+   ``core/serviceaid_bridge.py``). An ineligible hab (witnessed or
+   multisig) surfaces a ``request_failed`` doer_event and ``submit()``
+   returns, never reaching ``EgfSeeder``/``ServiceaidIssueDoer``.
+7. ``EgfSeeder.seed_for_role`` — idempotent (two-gate; see
    ``egf_seeding.py``): ensures the role's onboarding schemas, and the
    application schema's credential registry, are pinned in the vault
    BEFORE issuance, using the vault's default identifier as registry
    issuer.
-7. Schedule a ``ServiceaidIssueDoer`` — self-issued application credential
+8. Schedule a ``ServiceaidIssueDoer`` — self-issued application credential
    (issuer == holder == the default identifier, per the EGF's
    ``self_issued`` entry).
-8. On THAT issuance's ``credential_issued`` doer_event (matched by
+9. On THAT issuance's ``credential_issued`` doer_event (matched by
    ``schema_said``), schedule a ``ServiceaidGrantDoer`` chaining the fresh
    credential's SAID to the selected ``Authority``'s AID. The listener is
    strictly one-shot per ``submit()`` call and retires on THREE paths —
@@ -57,7 +64,10 @@ Every ``EgfError`` subclass (``EgfDocumentError``, ``NoAuthorityError``) and
 the guard's plain ``ValueError`` are caught in ``submit()`` and surfaced as
 a ``request_failed`` doer_event — never raised into Qt (the page's
 ``submit()`` call site has no try/except of its own around ``on_submit``;
-an escaping exception would crash the click handler).
+an escaping exception would crash the click handler). The envelope
+self-enforcement guard (step 6) is a plain ``if``/``return``, not an
+exception — it uses the same ``request_failed`` event surface for
+consistency but doesn't need the try/except's catch-and-log machinery.
 
 Precondition: ``app.vault`` must already be open (a ``RequestFlow`` is only
 ever constructed — see ``ui/window.py`` — once ``make_hoa_resolver(brand())``
@@ -97,7 +107,11 @@ from keri_serviceaid.egf.onboarding import (
 
 from locksmith.core.branding import brand
 from locksmith.core.egf_seeding import EgfSeeder
-from locksmith.core.serviceaid_bridge import ServiceaidGrantDoer, ServiceaidIssueDoer
+from locksmith.core.serviceaid_bridge import (
+    ServiceaidGrantDoer,
+    ServiceaidIssueDoer,
+    serviceaid_eligible,
+)
 
 
 def _autofill_date_time_fields(payload_schema: dict, payload: dict) -> dict:
@@ -220,6 +234,25 @@ class RequestFlow:
                     "no default identifier found for this vault — cannot "
                     f"issue the application credential for role {role_id!r}"
                 )
+
+            # Envelope self-enforcement (hardening wave item 2): today's
+            # serverless serviceaid providers only support single-sig,
+            # unwitnessed identifiers (see `serviceaid_eligible`'s
+            # docstring). Fail closed here, BEFORE scheduling the issue
+            # doer, rather than letting an ineligible hab reach
+            # `ServiceaidIssueDoer`/`issue_credential` and fail deeper in
+            # the pipeline with a less legible error.
+            if not serviceaid_eligible(hab):
+                signals.emit_doer_event(
+                    "RequestFlow", "request_failed",
+                    {
+                        "message": (
+                            "this workspace's identifier is outside the "
+                            "serviceaid envelope (witnessed or multisig)"
+                        ),
+                    },
+                )
+                return
 
             self._seeder.seed_for_role(role_id, issuer_aid=hab.pre)
             self._schedule_issue_then_grant(plan, hab, authority, attributes)

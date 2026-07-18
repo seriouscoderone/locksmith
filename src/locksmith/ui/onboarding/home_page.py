@@ -192,6 +192,47 @@ class PersonaCard(QFrame):
         super().mousePressEvent(event)
 
 
+class OnboardingErrorPage(QWidget):
+    """Minimal error-state view registered as vault "home" when the
+    onboarding brand's pinned EGF bundle fails to resolve/verify (missing,
+    tampered, or incomplete `document_said` -- see `EgfResolver`/
+    `make_hoa_resolver`). Hardening wave item 1, design spec §4.5: "A
+    persona picker over a broken EGF shows an error state, not an empty
+    list."
+
+    Deliberately NOT a state machine like ``OnboardingHomePage`` -- there is
+    no vault-derived state to react to; the workspace's onboarding surface
+    is simply unusable until an administrator fixes the bundle. Follows
+    ``OnboardingHomePage``'s message-view house style (see
+    ``_build_message_view``) and reuses its ``"form-error"`` objectName
+    convention (``_show_form_errors``) for the message label so tests and
+    stylesheets can find/style it the same way.
+    """
+
+    def __init__(self, detail: str, parent: Optional[QWidget] = None):
+        super().__init__(parent)
+        layout = QVBoxLayout(self)
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.addStretch(1)
+
+        heading = QLabel("This workspace isn't available")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        heading.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
+        layout.addWidget(heading)
+
+        body = QLabel(
+            "This workspace's ecosystem bundle failed verification — "
+            f"{detail}. Contact your administrator."
+        )
+        body.setObjectName("form-error")
+        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        body.setWordWrap(True)
+        body.setStyleSheet(f"font-size: 14px; color: {colors.DANGER};")
+        layout.addWidget(body)
+
+        layout.addStretch(2)
+
+
 class OnboardingHomePage(BasePage):
     """The onboarding home screen: persona picker + role application form,
     driven by ``derive_state``.
