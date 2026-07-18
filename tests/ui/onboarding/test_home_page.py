@@ -362,6 +362,66 @@ def test_pending_state_renders_pending_widget(qtbot):
     assert page._stack.currentWidget() is page._pending_widget
 
 
+def test_pending_view_shows_authority_submitted_credential_and_next_steps(qtbot):
+    """Owner live-demo finding, hoa-onboarding branch: the PENDING page was
+    previously a dead end ("Application pending / awaiting approval", no
+    context). With the default ``accept_phases`` (production only), the
+    fixture EGF's "regulator" authorities narrow to exactly one (CA DOI)
+    -- the WHO row, the truncated application credential SAID, and the
+    next-steps sentence must all reflect that EGF-derived data, not
+    hard-coded copy."""
+    app_said = "E" + "P" * 43
+    held = [Held(app_said, "E" + "S" * 43, "issued", True)]
+    page = OnboardingHomePage(_doc(), held_provider=lambda: held, on_submit=lambda *a: None)
+    qtbot.addWidget(page)
+
+    page.select_persona("carrier")
+    assert page.state is OnboardingState.PENDING
+
+    who_text = page._pending_authority_text.text()
+    assert "Submitted to CA DOI" in who_text
+    assert ("E" + "C" * 43)[:12] in who_text
+    assert page._pending_authority_badge.text() == "PRODUCTION"
+
+    assert f"Application credential: {app_said[:12]}" in page._pending_submitted_text.text()
+
+    next_steps = page._pending_next_steps_label.text()
+    assert "The CA DOI will review your application." in next_steps
+    assert "your License is granted and accepted" in next_steps
+    assert next_steps.endswith("the Carrier workspace unlocks here automatically.")
+
+
+def test_pending_view_omits_authority_when_ambiguous(qtbot):
+    """When the grant credential's issuer_role accepts MORE than one
+    authority (a second regulator sharing the pilot's US-UT context -- see
+    ``_doc_with_duplicate_authority_context``), ``_pending_authority``
+    can't honestly narrow WHO the application went to (the held view
+    carries no jurisdiction attribute to disambiguate -- see
+    ``_build_pending_view``'s docstring, item 1). The WHO row must be
+    cleared (never a stale or wrong authority left over), and the
+    next-steps sentence must fall back to authority-agnostic phrasing
+    while still naming the grant credential and role from the EGF."""
+    doc = _doc_with_duplicate_authority_context()
+    app_said = "E" + "P" * 43
+    held = [Held(app_said, "E" + "S" * 43, "issued", True)]
+    page = OnboardingHomePage(
+        doc, held_provider=lambda: held, on_submit=lambda *a: None,
+        accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+
+    page.select_persona("carrier")
+    assert page.state is OnboardingState.PENDING
+
+    assert page._pending_authority_text.text() == ""
+    assert page._pending_authority_badge.text() == ""
+
+    next_steps = page._pending_next_steps_label.text()
+    assert next_steps.startswith("Your application will be reviewed.")
+    assert "your License is granted and accepted" in next_steps
+    assert next_steps.endswith("the Carrier workspace unlocks here automatically.")
+
+
 def test_select_non_onboarding_role_raises_descriptive_error(qtbot):
     """home_page.py:375 -- ``_build_form_view``'s guard against a role
     that has no ``onboarding`` block. ``derive_state`` accepts ANY

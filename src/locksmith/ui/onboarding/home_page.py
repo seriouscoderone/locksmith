@@ -326,9 +326,7 @@ class OnboardingHomePage(BasePage):
         outer.addWidget(self._stack)
 
         self._picker_widget = self._build_picker_view()
-        self._pending_widget = self._build_message_view(
-            "Application pending", "Your application has been submitted and is awaiting approval."
-        )
+        self._pending_widget = self._build_pending_view()
         self._licensed_widget = self._build_message_view(
             "You're all set", "A valid license was found in your vault."
         )
@@ -395,6 +393,100 @@ class OnboardingHomePage(BasePage):
         body.setWordWrap(True)
         body.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_SECONDARY};")
         layout.addWidget(body)
+
+        layout.addStretch(2)
+        return widget
+
+    def _build_pending_view(self) -> QWidget:
+        """The PENDING view — dedicated (no longer ``_build_message_view``)
+        so it can carry EGF-derived context instead of a static "awaiting
+        approval" dead end (owner live-demo finding, hoa-onboarding
+        branch). Widgets built here are populated per-render by
+        ``_update_pending_view`` (called from ``_render``, since
+        ``select_persona``/``refresh`` may switch to a different role
+        between PENDING renders) with three pieces:
+
+        1. WHO it went to — the accepted authority's display_name +
+           truncated AID + phase badge, formatted the same way as the
+           form's "applying to" header (``_applying_to_text_for``, verb
+           "Submitted to"). Honest-data-path note: the vault's
+           held-credential view (``HeldCredential`` in
+           ``plugins/manager.py`` — schema_said/issuer_aid/state/
+           chain_verified) carries no ACDC attributes, so the jurisdiction
+           actually chosen at submission time can't be read back off it.
+           ``_pending_authority`` therefore falls back to the grant
+           credential's issuer_role's full accepted-authorities list and
+           shows it only when that narrows to exactly one authority (true
+           today — the pilot has a single bootstrap-phase regulator);
+           otherwise this row stays hidden rather than guessing among
+           several.
+        2. WHAT was submitted — the held application credential's
+           ``schema_said`` (truncated), labeled plainly as "Application
+           credential". Same honest-data-path limit as above:
+           ``HeldCredential`` exposes no per-instance credential SAID or
+           submission timestamp, only the type-identifying schema SAID —
+           so that's what's shown, and a timestamp is never rendered (it
+           is simply never available, not conditionally omitted).
+        3. WHAT HAPPENS NEXT — a fixed sentence template
+           (``_pending_next_steps_text``) with the authority's
+           display_name (when resolved), the grant credential's ``name``,
+           and the onboarded role's ``display_name`` interpolated in — no
+           other hard-coded strings.
+        """
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.addStretch(1)
+
+        heading = QLabel("Application pending")
+        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        heading.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
+        layout.addWidget(heading)
+
+        # WHO (item 1): same row styling as the form's "applying to"
+        # header (_build_form_shell) — reused rather than re-invented so
+        # the two authority call-outs read as the same UI element.
+        authority_row = QHBoxLayout()
+        authority_row.setSpacing(8)
+        authority_row.addStretch(1)
+        self._pending_authority_text = QLabel("")
+        self._pending_authority_text.setObjectName("onboarding.pendingAuthorityText")
+        self._pending_authority_text.setStyleSheet(
+            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        self._pending_authority_badge = QLabel("")
+        self._pending_authority_badge.setObjectName("onboarding.pendingAuthorityPhaseBadge")
+        self._pending_authority_badge.setStyleSheet(
+            f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
+            "border-radius: 8px; font-size: 11px; font-weight: 600; padding: 1px 8px;"
+        )
+        authority_row.addWidget(self._pending_authority_text)
+        authority_row.addWidget(self._pending_authority_badge)
+        authority_row.addStretch(1)
+        self._pending_authority_row_widget = QWidget()
+        self._pending_authority_row_widget.setStyleSheet("background: transparent;")
+        self._pending_authority_row_widget.setLayout(authority_row)
+        self._pending_authority_row_widget.setVisible(False)
+        layout.addWidget(self._pending_authority_row_widget)
+
+        # WHAT was submitted (item 2).
+        self._pending_submitted_text = QLabel("")
+        self._pending_submitted_text.setObjectName("onboarding.pendingSubmittedText")
+        self._pending_submitted_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pending_submitted_text.setStyleSheet(
+            f"font-size: 12px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        layout.addWidget(self._pending_submitted_text)
+
+        # WHAT HAPPENS NEXT (item 3).
+        self._pending_next_steps_label = QLabel("")
+        self._pending_next_steps_label.setObjectName("onboarding.pendingNextSteps")
+        self._pending_next_steps_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pending_next_steps_label.setWordWrap(True)
+        self._pending_next_steps_label.setStyleSheet(
+            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        layout.addWidget(self._pending_next_steps_label)
 
         layout.addStretch(2)
         return widget
@@ -500,6 +592,7 @@ class OnboardingHomePage(BasePage):
         if self.state is OnboardingState.PICKER:
             self._stack.setCurrentWidget(self._picker_widget)
         elif self.state is OnboardingState.PENDING:
+            self._update_pending_view(self._role_id)
             self._stack.setCurrentWidget(self._pending_widget)
         elif self.state is OnboardingState.LICENSED:
             self._stack.setCurrentWidget(self._licensed_widget)
@@ -644,15 +737,17 @@ class OnboardingHomePage(BasePage):
         return matches[0] if len(matches) == 1 else None
 
     @staticmethod
-    def _applying_to_text_for(authority) -> "tuple[str, str]":
+    def _applying_to_text_for(authority, *, verb: str = "Applying to") -> "tuple[str, str]":
         """(main_text, phase_badge_text) for a resolved authority — shared
-        by ``_update_applying_to_header`` (renders it) and
-        ``applying_to_summary`` (a test/inspection seam), so the two can
-        never drift apart."""
+        by ``_update_applying_to_header`` (renders it), ``applying_to_summary``
+        (a test/inspection seam), and ``_update_pending_view`` (verb
+        "Submitted to", past-tense phrasing for a WHO-it-went-to callout on
+        an already-submitted application), so all three can never drift
+        apart on the display_name/AID/phase-badge formatting itself."""
         aid = authority.aid
         truncated_aid = aid if len(aid) <= 12 else f"{aid[:12]}…"
         phase_label = "pilot" if authority.phase == "bootstrap" else authority.phase
-        return f"Applying to {authority.display_name}  ·  {truncated_aid}", phase_label.upper()
+        return f"{verb} {authority.display_name}  ·  {truncated_aid}", phase_label.upper()
 
     def _update_applying_to_header(self) -> None:
         """Refresh the form view's "applying to" header from the currently
@@ -681,6 +776,70 @@ class OnboardingHomePage(BasePage):
             return ""
         text, badge = self._applying_to_text_for(authority)
         return f"{text}  {badge}"
+
+    # -- PENDING view (WHO / WHAT / WHAT'S NEXT) ------------------------------
+
+    def _pending_authority(self, grant: Any):
+        """The single ``Authority`` the pending application is best-guessed
+        to have gone to, or ``None`` when that can't be narrowed to exactly
+        one. See ``_build_pending_view``'s docstring item 1 for why this is
+        a fallback (the held-credential view carries no ACDC attributes,
+        so the actual jurisdiction chosen at submission time isn't
+        recoverable) rather than an exact lookup."""
+        authorities = self._egf.authorities(grant.issuer_role, accept_phases=self._accept_phases)
+        return authorities[0] if len(authorities) == 1 else None
+
+    @staticmethod
+    def _pending_next_steps_text(role: Role, grant: Any, authority: Optional[Any]) -> str:
+        """WHAT HAPPENS NEXT copy (item 3) — a fixed sentence template with
+        only EGF-sourced names interpolated in: the authority's
+        display_name (omitted from the sentence when unresolved — see
+        ``_pending_authority``), the grant credential's ``name``, and the
+        onboarded role's ``display_name``."""
+        if authority is not None:
+            reviewer = f"The {authority.display_name} will review your application."
+        else:
+            reviewer = "Your application will be reviewed."
+        return (
+            f"{reviewer} When your {grant.name} is granted and accepted, "
+            f"the {role.display_name} workspace unlocks here automatically."
+        )
+
+    def _update_pending_view(self, role_id: str) -> None:
+        """Populate the PENDING view's three EGF-derived pieces for
+        ``role_id``. Called from ``_render`` on every PENDING render (not
+        cached like ``_build_form_view``) since ``select_persona``/
+        ``refresh`` may switch to a different pending role between
+        renders and the work here is cheap label updates, not a rebuild.
+        Reachable only once ``derive_state`` has already returned PENDING,
+        which guarantees ``role.onboarding`` and ``grant.chained_from``
+        are both set (see ``derive_state``'s PENDING branch) — no extra
+        None-guards needed for either here."""
+        role = self._egf.role(role_id)
+        grant = self._egf.credential(role.onboarding.grant_credential_id)
+        authority = self._pending_authority(grant)
+
+        if authority is not None:
+            text, badge = self._applying_to_text_for(authority, verb="Submitted to")
+            self._pending_authority_text.setText(text)
+            self._pending_authority_badge.setText(badge)
+            self._pending_authority_row_widget.setVisible(True)
+        else:
+            # Cleared, not just hidden -- a stale display_name/AID from a
+            # previously-resolved role must never linger if this render's
+            # role resolves ambiguously (see _pending_authority).
+            self._pending_authority_text.setText("")
+            self._pending_authority_badge.setText("")
+            self._pending_authority_row_widget.setVisible(False)
+
+        application = self._egf.credential(grant.chained_from)
+        said = application.schema_said
+        truncated_said = said if len(said) <= 12 else f"{said[:12]}…"
+        self._pending_submitted_text.setText(f"Application credential: {truncated_said}")
+
+        self._pending_next_steps_label.setText(
+            self._pending_next_steps_text(role, grant, authority)
+        )
 
     @staticmethod
     def _dedup_context_options(authorities, dimension_key: str):
