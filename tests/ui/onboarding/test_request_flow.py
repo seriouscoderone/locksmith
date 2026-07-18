@@ -258,6 +258,27 @@ def test_unrelated_events_before_match_are_ignored(env):
     assert len(env.granted) == 1
 
 
+def test_matching_doer_and_schema_but_unknown_event_type_is_ignored(env):
+    """request_flow.py:283 -- the listener's FINAL early return. Distinct
+    from the two guards already covered: `doer_name` matches
+    "IssueCredentialDoer" AND `schema_said` matches THIS submission's
+    application schema, but `event_type` is neither
+    "credential_issuance_failed" nor "credential_issued" (any other event
+    type the doer might one day emit under the same vocabulary). Must be
+    ignored with the listener left pending, so the real credential_issued
+    event still fires it afterward."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+
+    env.signals.doer_event.emit(
+        "IssueCredentialDoer", "some_other_event", {"schema_said": APPLICATION_SAID},
+    )
+    assert env.granted == []
+
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+
 def test_submit_invalid_payload_emits_request_failed_and_schedules_nothing(env):
     flow = env.flow()
     flow.submit("carrier", {}, dict(VALID_CONTEXT))  # missing applicant_legal_name

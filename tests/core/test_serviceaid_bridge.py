@@ -317,6 +317,43 @@ def test_grant_doer_emits_send_failed_when_credential_missing(monkeypatch):
     )
 
 
+def test_grant_doer_emits_send_failed_on_transport_failure(monkeypatch):
+    """serviceaid_bridge.py:328-339 -- `grantDo`'s OUTER `except Exception`,
+    which is distinct from the two early-return guards (hab missing /
+    credential missing) already covered above. Drive it via a transport
+    failure: the real failure mode this guards against is delivery-layer
+    (PeerAwarePoster), not framing -- so frame_grant_for succeeds and
+    parsing into the vault exchanger succeeds, but constructing the
+    transport itself raises. The doer must fail safe: log, emit the SAME
+    "send_failed" vocabulary the other failure paths use, and return
+    without propagating."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    class FailingPoster:
+        def __init__(self, **kwa):
+            raise ConnectionError("transport unavailable")
+
+    monkeypatch.setattr(bridge, "PeerAwarePoster", FailingPoster)
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    # Framing and the local exchanger-parse both got far enough to run --
+    # only the transport construction failed.
+    s.mock_frame.assert_called_once()
+    assert [c for c in calls if c[0] == "parseOne"]
+
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_failed",
+        {
+            "error": "transport unavailable",
+            "success": False,
+            "credential_said": "Ecred",
+        },
+    )
+
+
 def test_grant_doer_emits_legacy_failure_event_when_hab_missing():
     signal_bridge = MagicMock()
     hby = MagicMock()

@@ -116,3 +116,96 @@ def test_optional_minitems_group_untouched_validates_clean(qtbot):
     assert b.validate() == []  # optional + untouched -> no minItems complaint
     b.set_field("tags", ["a"])  # touched, under minItems
     assert any("tags" in m for m in b.validate())
+
+
+def test_unsupported_top_level_field_type_renders_error_row(qtbot):
+    """form_builder.py:160 -- `_populate`'s catch-all for a field whose
+    schema `type` isn't one of the six recognized kinds. Distinct from
+    ``test_unsupported_construct_fails_visible`` above, which exercises
+    the ARRAY-specific unsupported-construct branch (line 226) -- this
+    hits the outer per-field dispatch's own else clause."""
+    b = SchemaFormBuilder({"type": "object", "properties": {
+        "mystery": {"type": "null"}}})
+    w = b.build(); qtbot.addWidget(w)
+    from PySide6.QtWidgets import QLabel
+    errors = w.findChildren(QLabel, "form-error")
+    assert errors, "unsupported top-level field type must render a visible error row"
+    assert "unsupported schema type" in errors[0].text()
+
+
+def test_string_enum_field_sets_tooltip_from_description(qtbot):
+    """form_builder.py:169 -- the enum (QComboBox) branch of
+    ``_build_string_field`` sets a tooltip from the schema's
+    ``description`` only when one is present."""
+    b = SchemaFormBuilder({"type": "object", "properties": {
+        "status": {"type": "string", "enum": ["a", "b"], "description": "pick one"}}})
+    w = b.build(); qtbot.addWidget(w)
+    combo = b.widget_for("status")
+    assert combo.toolTip() == "pick one"
+
+
+def test_array_checkbox_group_sets_tooltip_from_description(qtbot):
+    """form_builder.py:214 -- the checkbox-group (QGroupBox) branch of
+    ``_build_array_field`` sets a tooltip from the schema's
+    ``description`` only when one is present."""
+    b = SchemaFormBuilder({"type": "object", "properties": {
+        "tags": {"type": "array", "items": {"type": "string", "enum": ["x", "y"]},
+                 "description": "pick tags"}}})
+    w = b.build(); qtbot.addWidget(w)
+    group = b.widget_for("tags")
+    assert group.toolTip() == "pick tags"
+
+
+def test_set_field_unknown_path_raises_key_error(qtbot):
+    """form_builder.py:295 -- ``set_field`` on a path that was never
+    registered (not rendered — e.g. a typo, or a hidden autofill field)
+    must fail loudly rather than silently no-op."""
+    import pytest
+    b, _ = _built(qtbot)
+    with pytest.raises(KeyError, match="no rendered field"):
+        b.set_field("does_not_exist", "x")
+
+
+def test_set_field_non_leaf_group_path_raises_key_error(qtbot):
+    """form_builder.py:311 -- ``set_field`` on a registered but non-leaf
+    (``kind == "group"``) path — a nested object container carries no
+    value of its own, only its own leaves do."""
+    import pytest
+    b, _ = _built(qtbot)
+    with pytest.raises(KeyError, match="cannot set value for non-leaf path"):
+        b.set_field("representations", {"solvency_reserves_usd": 1})
+
+
+def test_extract_value_unhandled_kind_raises_assertion_error(qtbot):
+    """form_builder.py:348 -- `_extract_value`'s internal-invariant guard
+    against a ``_kind`` entry that doesn't match any of the five widget
+    kinds the builder itself ever assigns. Not reachable through the
+    public API (only ``_register``/``_build_object_field`` ever populate
+    ``_kind``, and both only use recognized values), so this simulates the
+    defensive scenario directly: corrupt ``_kind`` after a normal build,
+    the same technique used elsewhere to prove an internal guard actually
+    fires rather than silently passing."""
+    import pytest
+    b, _ = _built(qtbot)
+    b._kind["applicant_legal_name"] = "bogus_kind"
+    with pytest.raises(AssertionError, match="unhandled kind"):
+        b.values()
+
+
+def test_validate_reports_min_length_pattern_and_email_violations(qtbot):
+    """form_builder.py:378,381,383 -- the three ``line_edit`` validation
+    messages (minLength, pattern, email format) are independent ``if``s,
+    not ``elif``s, so a single too-short, pattern-violating value trips
+    both of the first two, and a separately malformed email trips the
+    third."""
+    schema = {"type": "object", "properties": {
+        "code": {"type": "string", "minLength": 5, "pattern": r"^[A-Z]+$"},
+        "email": {"type": "string", "format": "email"}}}
+    b = SchemaFormBuilder(schema)
+    w = b.build(); qtbot.addWidget(w)
+    b.set_field("code", "ab")
+    b.set_field("email", "not-an-email")
+    msgs = b.validate()
+    assert any("at least 5 characters" in m for m in msgs)
+    assert any("does not match the required pattern" in m for m in msgs)
+    assert any("must be a valid email address" in m for m in msgs)
