@@ -47,6 +47,7 @@ class PeerDoer(doing.DoDoer):
         settings: PeerModeSettings,
         exchanger,
         is_destination_exposed: Callable[[str], bool],
+        on_first_contact=None,
         **kwa,
     ):
         self._hby = hby
@@ -65,6 +66,9 @@ class PeerDoer(doing.DoDoer):
                 allowlist=allowlist,
                 exchanger=exchanger,
                 is_destination_exposed=is_destination_exposed,
+                hby=hby,
+                open_inbound=settings.open_inbound,
+                on_first_contact=on_first_contact,
             )
 
             self.server = TCPServer(

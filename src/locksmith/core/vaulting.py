@@ -39,7 +39,7 @@ from locksmith.db.basing import LocksmithBaser, MailboxListener, BrowserPluginSe
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.doer import PeerDoer
 from locksmith.peer.health import PeerHealthMonitorDoer
-from locksmith.peer.records import PeerModeSettings
+from locksmith.peer.records import PeerModeSettings, PeerRecord
 
 logger = help.ogler.getLogger(__name__)
 
@@ -186,6 +186,7 @@ class Vault(doing.DoDoer):
                 settings=peer_settings,
                 exchanger=self.exc,
                 is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+                on_first_contact=self._register_first_contact_peer,
             )
 
         # Background reachability probe for paired peers (always on —
@@ -295,8 +296,22 @@ class Vault(doing.DoDoer):
             settings=settings,
             exchanger=self.exc,
             is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+            on_first_contact=self._register_first_contact_peer,
         )
         self.extend(self.peer_doer.doers)
+
+    def _register_first_contact_peer(self, aid: str, url: str) -> None:
+        """RUN first-update registration for an open-inbound first
+        contact: allowlist entry (reply path) + org contact (so the
+        operator's recipient dropdowns can address the sender)."""
+        from keri.help import helping
+        PeerAllowlist(self.db).add(PeerRecord(
+            aid=aid, label=f"peer-{aid[:12]}", endpoint_url=url,
+            paired_at=helping.nowIso8601()))
+        try:
+            self.org.update(aid, {"alias": f"peer-{aid[:12]}"})
+        except Exception:  # noqa: BLE001 — org is a UI nicety, never fatal
+            logger.exception("first-contact org update failed")
 
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 from typing import Callable
 
-from keri import help
+from keri import help, kering
 
 from locksmith.peer.allowlist import PeerAllowlist
 
@@ -25,10 +25,17 @@ class PeerExchangerShim:
         allowlist: PeerAllowlist,
         exchanger,
         is_destination_exposed: Callable[[str], bool],
+        *,
+        hby=None,
+        open_inbound: bool = False,
+        on_first_contact=None,
     ):
         self._allowlist = allowlist
         self.exchanger = exchanger
         self._is_destination_exposed = is_destination_exposed
+        self._hby = hby
+        self._open_inbound = open_inbound
+        self._on_first_contact = on_first_contact
 
     def processEvent(self, serder, tsgs=None, cigars=None, **kwargs):
         try:
@@ -48,10 +55,11 @@ class PeerExchangerShim:
             return
 
         if not self._allowlist.contains(sender):
-            logger.warning(
-                f"peer.gate.sender_rejected sender={sender} said={serder.said}"
-            )
-            return
+            if not self._first_contact_accepted(sender, serder):
+                logger.warning(
+                    f"peer.gate.sender_rejected sender={sender} said={serder.said}"
+                )
+                return
 
         if not self._is_destination_exposed(recipient):
             logger.warning(
@@ -64,3 +72,22 @@ class PeerExchangerShim:
             f"peer.recv.delivered sender={sender} destination={recipient} said={serder.said}"
         )
         self.exchanger.processEvent(serder, tsgs, cigars, **kwargs)
+
+    def _first_contact_accepted(self, sender: str, serder) -> bool:
+        """Config-gated open-inbound posture (spec Sec 7): accept a
+        first-contact sender iff its KEL verified from the in-band OOBI
+        (present in kevers) AND it published a reachable tcp loc-scheme.
+        RUN first-update: register it so the reply path works."""
+        if not (self._open_inbound and self._hby is not None):
+            return False
+        if sender not in self._hby.kevers:
+            return False
+        loc = self._hby.db.locs.get(keys=(sender, kering.Schemes.tcp))
+        if loc is None or not loc.url:
+            return False
+        if self._on_first_contact is not None:
+            self._on_first_contact(sender, loc.url)
+        logger.info(
+            f"peer.gate.first_contact_registered sender={sender} url={loc.url}"
+        )
+        return True
