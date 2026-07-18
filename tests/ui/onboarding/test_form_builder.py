@@ -192,6 +192,51 @@ def test_extract_value_unhandled_kind_raises_assertion_error(qtbot):
         b.values()
 
 
+def test_replace_field_with_combo_swaps_line_edit_for_narrowed_combo(qtbot):
+    """Design spec §7.4's "one control serves both": a free-text field
+    (jurisdiction, no schema enum) is replaced IN PLACE by a combo offering
+    only the caller-supplied (authority-sourced) options — never a
+    duplicate widget, and the user can no longer type an arbitrary value."""
+    b = SchemaFormBuilder({"type": "object", "properties": {
+        "jurisdiction": {"type": "string"}}, "required": ["jurisdiction"]})
+    w = b.build(); qtbot.addWidget(w)
+    assert isinstance(b.widget_for("jurisdiction"), QLineEdit)
+
+    combo = b.replace_field_with_combo(
+        "jurisdiction", [("US-UT", "US-UT (pilot)"), ("US-CA", "US-CA")],
+    )
+    assert isinstance(combo, QComboBox)
+    assert b.widget_for("jurisdiction") is combo
+    assert not combo.isEditable()
+    assert [combo.itemText(i) for i in range(combo.count())] == ["US-UT (pilot)", "US-CA"]
+    assert combo.currentIndex() == -1  # untouched — no default selection
+
+    # set_field matches by raw itemData, not display text.
+    b.set_field("jurisdiction", "US-UT")
+    assert combo.currentIndex() == 0
+    assert b.values()["jurisdiction"] == "US-UT"
+
+    # validate() never flags this field itself (the caller owns that).
+    combo.setCurrentIndex(-1)
+    assert b.validate() == []
+
+
+def test_replace_field_with_combo_on_unknown_path_raises_key_error(qtbot):
+    import pytest
+    b, _ = _built(qtbot)
+    with pytest.raises(KeyError, match="cannot replace non-field path"):
+        b.replace_field_with_combo("does_not_exist", [])
+
+
+def test_replace_field_with_combo_on_group_path_raises_key_error(qtbot):
+    """A container (`kind == "group"`) path carries no single row widget of
+    its own to replace."""
+    import pytest
+    b, _ = _built(qtbot)
+    with pytest.raises(KeyError, match="cannot replace non-field path"):
+        b.replace_field_with_combo("representations", [])
+
+
 def test_validate_reports_min_length_pattern_and_email_violations(qtbot):
     """form_builder.py:378,381,383 -- the three ``line_edit`` validation
     messages (minLength, pattern, email format) are independent ``if``s,

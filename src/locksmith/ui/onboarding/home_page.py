@@ -306,7 +306,16 @@ class OnboardingHomePage(BasePage):
         self.form: Optional[SchemaFormBuilder] = None
         self._context_widgets: Dict[str, QComboBox] = {}
         self._context_prompts: Dict[str, str] = {}
-        self._shared_dims: List[str] = []
+        # dim_id -> whether the SCHEMA marks this shared dimension's payload
+        # property required (see _build_context_controls) — requiredness for
+        # a shared dim is no longer SchemaFormBuilder's job once its field is
+        # replaced with a context combo (see form_builder.py's
+        # replace_field_with_combo), so this page tracks it instead.
+        self._shared_dims: Dict[str, bool] = {}
+        # The authorities considered for the currently-built form (item 5's
+        # "applying to" header resolves against this same list — the SAME
+        # source the context combo(s) draw their options from).
+        self._context_authorities: List[Any] = []
         self._built_form_role_id: Optional[str] = None
         self._persona_cards: List[PersonaCard] = []
         self._error_labels: List[QLabel] = []
@@ -523,27 +532,42 @@ class OnboardingHomePage(BasePage):
     def _build_context_controls(self, role: Role, payload_schema: Dict[str, Any]) -> None:
         self._context_widgets = {}
         self._context_prompts = {}
-        self._shared_dims = []
+        self._shared_dims = {}
+        self._context_authorities = []
 
         grant = self._egf.credential(role.onboarding.grant_credential_id)
         issuer_role = grant.issuer_role
         dims = self._egf.context_dimensions(issuer_role)
         if not dims:
+            self._update_applying_to_header()
             return
 
         properties = (payload_schema or {}).get("properties", {}) or {}
+        required_props = set((payload_schema or {}).get("required", []) or [])
         authorities = self._egf.authorities(issuer_role, accept_phases=self._accept_phases)
+        self._context_authorities = authorities
 
         context_group = None
         context_form = None
 
         for dim in dims:
+            options = self._dedup_context_options(authorities, dim.id)
+            self._context_prompts[dim.id] = dim.prompt or dim.id
+
             if dim.id in properties:
-                # ONE control serves both — the form's own rendered field
-                # for this property IS the context control. No duplicate
-                # widget is created; submit() mirrors its value into the
-                # context dict.
-                self._shared_dims.append(dim.id)
+                # ONE control serves both, authority-narrowed (spec §7.4):
+                # the form's own rendered field for this property is
+                # REPLACED with a combo whose options are the available
+                # authorities' context values — never a free-text field the
+                # user could type an unmatchable value into. No duplicate
+                # widget is created; submit() mirrors its (raw) value into
+                # the context dict.
+                self._shared_dims[dim.id] = dim.id in required_props
+                combo = self.form.replace_field_with_combo(dim.id, options)
+                combo.setObjectName(f"onboarding.context.{dim.id}")
+                if dim.prompt:
+                    combo.setToolTip(dim.prompt)
+                combo.currentIndexChanged.connect(lambda _i: self._update_applying_to_header())
                 continue
 
             if context_group is None:
@@ -553,7 +577,6 @@ class OnboardingHomePage(BasePage):
                 context_group.setStyleSheet(_GROUP_BOX_QSS)
                 context_form = QFormLayout(context_group)
 
-            options = self._dedup_context_options(authorities, dim.id)
             combo = QComboBox()
             combo.setObjectName(f"onboarding.context.{dim.id}")
             if dim.prompt:
@@ -561,12 +584,86 @@ class OnboardingHomePage(BasePage):
             for raw_value, display_text in options:
                 combo.addItem(display_text, raw_value)
             combo.setCurrentIndex(-1)
+            combo.currentIndexChanged.connect(lambda _i: self._update_applying_to_header())
             self._context_widgets[dim.id] = combo
-            self._context_prompts[dim.id] = dim.prompt or dim.id
             context_form.addRow(dim.prompt or dim.id, combo)
 
         if context_group is not None:
             self._form_layout.addWidget(context_group)
+
+        self._update_applying_to_header()
+
+    # -- "applying to" header (item 5) ---------------------------------------
+
+    def _selected_context(self) -> Dict[str, Any]:
+        """Best-effort CURRENT context selections across both dedicated and
+        shared-dim combos, for whichever dimensions are already selected —
+        used only to preview the "applying to" authority as the user fills
+        the form. ``submit()``'s own validation remains the sole authority
+        on what's actually required."""
+        result: Dict[str, Any] = {}
+        for dim_id, combo in self._context_widgets.items():
+            if combo.currentIndex() != -1:
+                result[dim_id] = combo.currentData()
+        for dim_id in self._shared_dims:
+            combo = self.form.widget_for(dim_id) if self.form is not None else None
+            if combo is not None and combo.currentIndex() != -1:
+                result[dim_id] = combo.currentData()
+        return result
+
+    def _resolve_selected_authority(self):
+        """The single ``Authority`` matching every CURRENTLY-selected
+        context dimension, or ``None`` when nothing is selected yet or the
+        selection doesn't narrow to exactly one authority."""
+        if not self._context_authorities:
+            return None
+        context = self._selected_context()
+        if not context:
+            return None
+        matches = [
+            a for a in self._context_authorities
+            if all(a.context.get(k) == v for k, v in context.items())
+        ]
+        return matches[0] if len(matches) == 1 else None
+
+    @staticmethod
+    def _applying_to_text_for(authority) -> "tuple[str, str]":
+        """(main_text, phase_badge_text) for a resolved authority — shared
+        by ``_update_applying_to_header`` (renders it) and
+        ``applying_to_summary`` (a test/inspection seam), so the two can
+        never drift apart."""
+        aid = authority.aid
+        truncated_aid = aid if len(aid) <= 12 else f"{aid[:12]}…"
+        phase_label = "pilot" if authority.phase == "bootstrap" else authority.phase
+        return f"Applying to {authority.display_name}  ·  {truncated_aid}", phase_label.upper()
+
+    def _update_applying_to_header(self) -> None:
+        """Refresh the form view's "applying to" header from the currently
+        resolvable authority (see ``_resolve_selected_authority``) — wired
+        to fire on every context/shared-dim combo change."""
+        authority = self._resolve_selected_authority()
+        if authority is None:
+            self._applying_to_row_widget.setVisible(False)
+            return
+
+        text, badge = self._applying_to_text_for(authority)
+        self._applying_to_text.setText(text)
+        self._applying_to_phase_badge.setText(badge)
+        self._applying_to_row_widget.setVisible(True)
+
+    def applying_to_summary(self) -> str:
+        """Test/inspection seam: the current "applying to" header's combined
+        text (display name + AID + phase badge), or ``""`` when no context
+        selection currently resolves to exactly one authority. Recomputed
+        independently of the rendered labels (not a `.isVisible()`/`.text()`
+        readback) so it works the same whether or not the page is actually
+        shown on screen — real widget visibility depends on the whole
+        ancestor chain being shown, which off-screen tests never do."""
+        authority = self._resolve_selected_authority()
+        if authority is None:
+            return ""
+        text, badge = self._applying_to_text_for(authority)
+        return f"{text}  {badge}"
 
     @staticmethod
     def _dedup_context_options(authorities, dimension_key: str):
@@ -587,21 +684,29 @@ class OnboardingHomePage(BasePage):
     # -- submit ---------------------------------------------------------------
 
     def submit(self) -> None:
-        """Validate the current form AND the dedicated context combos;
-        if clean, call ``on_submit`` with the role id, the payload dict,
-        and the context dict (shared dimensions mirrored from the payload;
-        dedicated context combos read via their stored raw
-        ``currentData()``).
+        """Validate the current form AND every context combo (dedicated and
+        shared-dim alike); if clean, call ``on_submit`` with the role id,
+        the payload dict, and the context dict (shared dimensions mirrored
+        from the payload; dedicated context combos read via their stored
+        raw ``currentData()``).
 
-        Dedicated combos are outside ``SchemaFormBuilder``'s schema, so
-        ``form.validate()`` knows nothing about them — they are validated
-        here (an unselected combo blocks submission with an inline error
-        named after the dimension's prompt), never passed through as a
-        ``None`` context value."""
+        Both combo flavors are outside ``SchemaFormBuilder.validate()``'s
+        own opinion (a shared dim's field was replaced with a combo via
+        ``replace_field_with_combo``, which the builder deliberately treats
+        as always "valid" — see its docstring) — they are validated HERE
+        instead (an unselected combo blocks submission with an inline error
+        named after the dimension's prompt, e.g. "Which state? is
+        required"), never passed through as a ``None`` context value. A
+        shared dim is only required-gated this way when the ORIGINAL
+        payload schema actually required it (``_shared_dims[dim_id]``) —
+        an optional shared dim left unselected is not an error."""
         self._clear_form_errors()
         errors = self.form.validate()
         for dim_id, combo in self._context_widgets.items():
             if combo.currentIndex() == -1:
+                errors.append(f"{self._context_prompts.get(dim_id, dim_id)} is required")
+        for dim_id, required in self._shared_dims.items():
+            if required and self.form.widget_for(dim_id).currentIndex() == -1:
                 errors.append(f"{self._context_prompts.get(dim_id, dim_id)} is required")
         if errors:
             self._show_form_errors(errors)

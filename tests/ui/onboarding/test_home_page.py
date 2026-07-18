@@ -41,8 +41,13 @@ def _doc():
 
 
 _PAYLOAD_SCHEMA = {
+    # No `enum` — mirrors the REAL carrier application schema's shape
+    # (docs/insurance/egf/.../submit_application's `jurisdiction`: a plain
+    # free-text string), so this fixture actually exercises the
+    # LineEdit-replaced-by-combo path (item 3) rather than the
+    # already-a-combo enum-field path.
     "type": "object",
-    "properties": {"jurisdiction": {"type": "string", "enum": ["US-UT"]}},
+    "properties": {"jurisdiction": {"type": "string"}},
     "required": ["jurisdiction"],
 }
 
@@ -93,6 +98,8 @@ def test_form_submit_passes_payload_and_context(qtbot):
     )
     qtbot.addWidget(page)
     page.select_persona("carrier")
+    # The shared "jurisdiction" field is a narrowed combo (item 3), not a
+    # free-text LineEdit -- set_field still works (matches raw itemData).
     page.form.set_field("jurisdiction", "US-UT")
     page.submit()
     assert got["role"] == "carrier"
@@ -107,10 +114,11 @@ def test_submit_blocked_and_no_duplicate_context_widget_when_invalid(qtbot):
     """The shared field is required; submitting without setting it must
     NOT call on_submit, and must render a visible form-error row (house
     pattern from B5) rather than silently failing. Also asserts the
-    one-control-serves-both invariant structurally: because the
-    "jurisdiction" dimension matches a payload property, NO dedicated
-    context combo may exist — the only QComboBox on the page is the
-    form's own jurisdiction field."""
+    one-control-serves-both invariant (item 3): because the "jurisdiction"
+    dimension matches a payload property, the form's OWN field for it is a
+    combo (never a free-text LineEdit a user could type an arbitrary,
+    unmatchable value into) -- exactly one QComboBox on the page total,
+    never a second, duplicate context-only widget alongside it."""
     from PySide6.QtWidgets import QComboBox, QLabel
 
     called = []
@@ -128,9 +136,12 @@ def test_submit_blocked_and_no_duplicate_context_widget_when_invalid(qtbot):
     assert page.findChildren(QLabel, "form-error")
 
     combos = page.findChildren(QComboBox)
-    dedicated = [c for c in combos if c.objectName().startswith("onboarding.context.")]
-    assert dedicated == [], "shared dimension must not render a duplicate context combo"
-    assert len(combos) == 1  # the form's own jurisdiction enum field
+    assert len(combos) == 1, "shared dimension must render exactly one combo, never a duplicate"
+    combo = combos[0]
+    assert combo.objectName() == "onboarding.context.jurisdiction"
+    assert page.form.widget_for("jurisdiction") is combo, \
+        "the form's own field IS the context control, not a separate one"
+    assert not combo.isEditable(), "typing arbitrary junk into the jurisdiction control must be impossible"
 
 
 # Payload schema WITHOUT the jurisdiction property — forces the DEDICATED
@@ -202,6 +213,80 @@ def test_dedicated_context_combo_selection_passes_context_not_payload(qtbot):
     assert got["role"] == "carrier"
     assert got["ctx"] == {"jurisdiction": "US-UT"}  # raw value, no suffix
     assert "jurisdiction" not in got["payload"]
+
+
+# fixture_egf()'s "UT DOI" authority: bootstrap phase, US-UT.
+UT_AID = "E" + "U" * 44
+
+
+def test_applying_to_header_hidden_before_any_selection(qtbot):
+    """Item 5: the header stays hidden until a context selection resolves
+    to exactly one authority — no premature/blank "Applying to" text."""
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    assert page.applying_to_summary() == ""
+
+
+def test_applying_to_header_updates_on_shared_dim_combo_selection(qtbot):
+    """Item 5: selecting the shared "jurisdiction" combo (item 3) reveals
+    the "applying to" header with the matching authority's display_name,
+    a truncated AID, and the bootstrap-phase "PILOT" badge — sourced from
+    the SAME `egf.authorities(...)` call the combo's own options use."""
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    combo = page.form.widget_for("jurisdiction")
+    combo.setCurrentIndex(combo.findData("US-UT"))
+
+    summary = page.applying_to_summary()
+    assert "UT DOI" in summary
+    assert UT_AID[:12] in summary
+    assert "PILOT" in summary
+
+
+def test_applying_to_header_updates_on_dedicated_combo_selection(qtbot):
+    """Same header, driven by a DEDICATED (non-shared) context combo."""
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver_no_dim, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    from PySide6.QtWidgets import QComboBox
+    combo = next(
+        c for c in page.findChildren(QComboBox)
+        if c.objectName() == "onboarding.context.jurisdiction"
+    )
+    combo.setCurrentIndex(combo.findData("US-CA"))
+
+    summary = page.applying_to_summary()
+    assert "CA DOI" in summary
+    assert "PRODUCTION" in summary
+
+
+def test_applying_to_header_hidden_when_no_context_dimensions(qtbot):
+    """The early-return path in `_build_context_controls` (no context
+    dimensions at all for the issuer role) must still leave the header
+    correctly hidden, not stale from a previous persona's selection."""
+    doc = _doc_without_context_dimensions()
+    page = OnboardingHomePage(
+        doc, held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver_no_dim, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    assert page.applying_to_summary() == ""
 
 
 def test_missing_command_id_raises_descriptive_error(qtbot):
@@ -394,10 +479,12 @@ def test_dedup_context_options_skips_duplicate_authority_value(qtbot):
 # Payload schema with jurisdiction as an OPTIONAL shared dimension (unlike
 # the module-level `_PAYLOAD_SCHEMA`, which requires it) -- forces
 # `values()` to OMIT the field entirely when untouched, so the shared-dim
-# mirror in `submit()` must cope with a payload that simply lacks the key.
+# mirror in `submit()` must cope with a payload that simply lacks the key,
+# AND submit()'s requiredness gating (`_shared_dims[dim_id]`) must NOT
+# block submission just because the combo is unselected.
 _PAYLOAD_SCHEMA_OPTIONAL_DIM = {
     "type": "object",
-    "properties": {"jurisdiction": {"type": "string", "enum": ["US-UT"]}},
+    "properties": {"jurisdiction": {"type": "string"}},
     "required": [],
 }
 

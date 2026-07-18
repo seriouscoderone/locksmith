@@ -339,6 +339,67 @@ class SchemaFormBuilder:
         rendered; the caller auto-fills these (client clock) at submit."""
         return list(self._hidden_fields)
 
+    def replace_field_with_combo(self, path: str, options: List[Tuple[Any, str]]) -> QComboBox:
+        """Replace an already-rendered leaf field's widget IN PLACE with a
+        ``QComboBox`` offering exactly ``options`` (``(raw_value,
+        display_text)`` pairs) as choices.
+
+        This is the seam a caller uses to narrow a payload property's
+        control to an authority-sourced option set (design spec §7.4's "one
+        control serves both": a context dimension that matches a payload
+        property becomes the SAME rendered field, not a duplicate widget)
+        rather than the schema's own (wider, or entirely absent) enum —
+        e.g. a free-text ``jurisdiction`` string becomes a combo of only
+        the states an actual authority is registered for, so the user can
+        never type an arbitrary, unmatchable value into it.
+
+        The field's registered ``kind`` becomes ``"context_combo"``:
+        ``values()``/``set_field()`` treat it like the ordinary enum
+        ``"combo"`` kind, EXCEPT the extracted/set value is the combo's raw
+        ``itemData`` (not its display text, which may carry a caller-added
+        badge like ``" (pilot)"`` the underlying value must never include).
+        ``validate()`` deliberately does NOT enforce requiredness for this
+        kind — a caller that replaces a field this way takes over that
+        field's requiredness messaging itself (the same way it already has
+        to message a wholly separate "dedicated" context combo), keeping
+        this builder ignorant of prompts/authorities/EGF concepts.
+
+        Must be called AFTER ``build()``. ``path`` must already be a
+        rendered ``line_edit`` or ``combo`` leaf field — anything else (a
+        container/group path, a hidden autofill field, or an unknown path)
+        raises ``KeyError``, mirroring ``set_field``'s own guard.
+        """
+        kind = self._kind.get(path)
+        old_widget = self._widgets.get(path)
+        if old_widget is None or kind not in ("line_edit", "combo"):
+            raise KeyError(
+                f"cannot replace non-field path {path!r} with a combo (kind={kind!r})"
+            )
+
+        # Every rendered leaf field's widget lives in a QFormLayout row —
+        # either the root's own (top-level properties) or a nested
+        # QGroupBox's (see _build_object_field) — by construction of
+        # _populate/build, so parentWidget().layout() is always one.
+        layout = old_widget.parentWidget().layout()
+
+        row, _role = layout.getWidgetPosition(old_widget)
+        label_item = layout.itemAt(row, QFormLayout.ItemRole.LabelRole)
+        label_widget = label_item.widget() if label_item is not None else None
+        label_text = label_widget.text() if label_widget is not None else path
+        layout.removeRow(row)  # deletes old_widget (and its label) for us
+
+        combo = QComboBox()
+        combo.setStyleSheet(_field_qss("QComboBox"))
+        for raw_value, display_text in options:
+            combo.addItem(display_text, raw_value)
+        combo.setCurrentIndex(-1)
+        combo.currentIndexChanged.connect(lambda _i, p=path: self._touched.add(p))
+        layout.insertRow(row, label_text, combo)
+
+        self._widgets[path] = combo
+        self._kind[path] = "context_combo"
+        return combo
+
     # -- values / validation ----------------------------------------------
 
     def set_field(self, name: str, value: Any) -> None:
@@ -354,6 +415,9 @@ class SchemaFormBuilder:
             widget.setText(str(value))
         elif kind == "combo":
             idx = widget.findText(str(value))
+            widget.setCurrentIndex(idx)
+        elif kind == "context_combo":
+            idx = widget.findData(value)
             widget.setCurrentIndex(idx)
         elif kind in ("double_spin", "int_spin"):
             widget.setValue(value)
@@ -395,6 +459,8 @@ class SchemaFormBuilder:
             return widget.text()
         if kind == "combo":
             return widget.currentText()
+        if kind == "context_combo":
+            return widget.currentData()
         if kind in ("double_spin", "int_spin"):
             return widget.value()
         if kind == "checkbox":
@@ -440,6 +506,13 @@ class SchemaFormBuilder:
             elif kind == "combo":
                 if required and widget.currentIndex() == -1:
                     messages.append(f"{path} is required")
+            elif kind == "context_combo":
+                # Requiredness for a caller-installed context combo (see
+                # replace_field_with_combo's docstring) is validated and
+                # messaged by the CALLER, not this builder — it deliberately
+                # treats the field as always "valid" from its own narrow,
+                # EGF-ignorant perspective.
+                pass
             elif kind == "checkbox_group":
                 min_items = field_schema.get("minItems", 0)
                 checked = sum(1 for _v, cb in self._checkbox_items.get(path, []) if cb.isChecked())
