@@ -122,12 +122,44 @@ def seeder_env(monkeypatch):
 
 
 def test_seeds_missing_schemas_registry_only_for_application(seeder_env):
-    scheduled = seeder_env.run("carrier")
+    issuer = "E" + "I" * 43
+    scheduled = seeder_env.run("carrier", issuer_aid=issuer)
     assert {(s.kwargs["file_content"] is not None, s.kwargs["create_registry"]) for s in scheduled} \
            == {(True, True), (True, False)}
     # The one create_registry=True call is the application schema.
     registry_call = next(s for s in scheduled if s.kwargs["create_registry"])
     assert json.loads(registry_call.kwargs["file_content"])["$id"] == APPLICATION_SAID
+
+
+def test_seeds_schema_only_when_no_issuer_aid_yet(seeder_env):
+    """The acceptance-demo defect (live log: 'LoadSchemaDoer failed: Issuer
+    AID is required for registry creation'): the very first seeding pass,
+    before the vault's default identifier exists, must degrade to a
+    schema-only seed for the registry-bearing SAID rather than schedule a
+    doer doomed to fail. Both schemas are still pinned (create_registry is
+    False for BOTH, never None-issuer + create_registry=True)."""
+    scheduled = seeder_env.run("carrier")  # issuer_aid defaults to None
+    assert len(scheduled) == 2
+    assert {s.kwargs["create_registry"] for s in scheduled} == {False}
+    assert all(s.kwargs["issuer_aid"] is None for s in scheduled)
+
+
+def test_second_run_with_issuer_aid_retries_registry_after_schema_only_pass(seeder_env):
+    """Two-gate retry, end to end: a first pass with no issuer_aid pins both
+    schemas but creates no registry; a SECOND pass, now with an issuer_aid,
+    must retry ONLY the registry-bearing SAID (the plain schema is already
+    pinned and needs nothing further)."""
+    first = seeder_env.run("carrier")
+    assert len(first) == 2
+    assert all(not s.kwargs["create_registry"] for s in first)
+
+    issuer = "E" + "I" * 43
+    second = seeder_env.run("carrier", issuer_aid=issuer)
+    assert len(second) == 1
+    (doer,) = second
+    assert doer.kwargs["create_registry"] is True
+    assert doer.kwargs["issuer_aid"] == issuer
+    assert json.loads(doer.kwargs["file_content"])["$id"] == APPLICATION_SAID
 
 
 def test_second_run_is_noop(seeder_env):

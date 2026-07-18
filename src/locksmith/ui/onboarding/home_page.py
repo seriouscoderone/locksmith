@@ -479,6 +479,23 @@ class OnboardingHomePage(BasePage):
         self.state = derive_state(held, self._egf, self._role_id)
         self._render()
 
+    def on_doer_event(self, doer_name: str, event_type: str, data: dict) -> None:
+        """Wired (by the window, alongside ``refresh``) to the vault's
+        ``doer_event`` signal bridge — surfaces ``RequestFlow``'s OWN
+        ``request_failed`` emissions (``NoAuthorityError``,
+        ``EgfDocumentError``, the envelope self-enforcement guard, etc. —
+        see ``request_flow.py``'s ``submit()``) as a visible inline banner
+        on the form view (acceptance-demo item 2). Distinct from
+        ``refresh()``: that one re-derives PICKER/FORM/PENDING/LICENSED
+        state from ANY event (cheap, idempotent); this one reacts
+        specifically to ``RequestFlow``'s failure event, which carries a
+        human-readable message ``refresh()`` has no use for. Ignores every
+        other ``(doer_name, event_type)`` combination."""
+        if doer_name != "RequestFlow" or event_type != "request_failed":
+            return
+        self._clear_form_errors()
+        self._show_form_errors([str(data.get("message", ""))])
+
     def _render(self) -> None:
         if self.state is OnboardingState.PICKER:
             self._stack.setCurrentWidget(self._picker_widget)
@@ -747,6 +764,13 @@ class OnboardingHomePage(BasePage):
             )
             self._error_layout.addWidget(label)
             self._error_labels.append(label)
+
+        # Item 2: a freshly-rendered error (validation OR a request_failed
+        # banner) must actually be seen, not just exist below the fold on a
+        # long form — scroll the form's QScrollArea (see _build_form_shell)
+        # so the newest error row is visible.
+        if self._error_labels:
+            self._form_container.ensureWidgetVisible(self._error_labels[-1])
 
     @staticmethod
     def _clear_layout(layout) -> None:

@@ -348,6 +348,25 @@ def test_submit_witnessed_hab_emits_request_failed_and_schedules_nothing(env):
     )
 
 
+def test_submit_failure_logs_a_warning_with_the_message(env, caplog):
+    """Acceptance-demo item 2: every request_failed path must ALSO log a
+    warning (live-log visibility for a failure that would otherwise only
+    ever surface as a Qt signal) -- pins both the invalid-payload path
+    (a plain ValueError) and the envelope-guard path (its own early
+    if/return, not the shared except block) since `_fail` is the single
+    chokepoint for both."""
+    import logging
+
+    caplog.set_level(logging.WARNING, logger="locksmith.ui.onboarding.request_flow")
+    flow = env.flow()
+    flow.submit("carrier", {}, dict(VALID_CONTEXT))  # missing applicant_legal_name
+
+    assert any(
+        "onboarding.request_failed" in record.message and "applicant_legal_name" in record.message
+        for record in caplog.records
+    )
+
+
 def test_submit_multisig_hab_emits_request_failed_and_schedules_nothing(env):
     """Same guard, the multisig (`GroupHab`) branch of `serviceaid_eligible`."""
     group_hab = MagicMock(name="group_hab")

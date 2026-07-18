@@ -16,6 +16,8 @@ nothing in VaultPage is deleted or altered, so upstream Locksmith merges
 stay clean. Selection between VaultPage and HoaVaultPage happens at the call
 site (locksmith.ui.window) based on ``brand().peel_core_pages``.
 """
+from typing import Any
+
 from locksmith.ui.vault.menu import VaultNavMenu
 from locksmith.ui.vault.page import VaultPage
 
@@ -45,3 +47,17 @@ class HoaVaultPage(VaultPage):
     def registered_page_keys(self) -> list[str]:
         """Expose the current page-registry keys (for tests/inspection)."""
         return list(self._pages.keys())
+
+    def get_toolbar_config(self) -> dict[str, Any]:
+        """Same as ``VaultPage.get_toolbar_config()``, except the Plugins
+        and Notifications toolbar icons are hidden — no "plugins" or
+        "notifications" page is ever registered for a peeled HOA build (see
+        ``_register_core_pages`` above), so clicking either is otherwise a
+        dead click (log: "No page registered for key 'plugins'"/
+        "'notifications'"). Brand-gated by construction (only ``HoaVaultPage``
+        is instantiated when ``brand().peel_core_pages`` — see
+        ``locksmith.ui.window``); the stock ``VaultPage`` config is untouched."""
+        config = super().get_toolbar_config()
+        config["show_plugins_button"] = False
+        config["show_notifications_button"] = False
+        return config

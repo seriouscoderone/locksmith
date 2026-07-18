@@ -644,6 +644,10 @@ class LocksmithWindow(QMainWindow):
 
         self._request_flow.seed_all_personas()
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
+        # Acceptance-demo item 2: surface RequestFlow's own request_failed
+        # emissions as a visible inline banner on the form view (distinct
+        # from refresh() above, which reacts to every event generically).
+        self.app.vault.signals.doer_event.connect(self._onboarding_home_page.on_doer_event)
 
         vault_page = self.pages.get(Pages.VAULT)
         if vault_page is not None:

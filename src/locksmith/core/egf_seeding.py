@@ -68,14 +68,18 @@ class EgfSeeder:
 
         `issuer_aid` is the identifier that will issue the application
         credential's registry. It only matters for the one schema whose SAID
-        equals the derived plan's `registry_name` (`create_registry=True`) —
-        `LoadSchemaDoer` only requires it once its doer actually reaches
-        `_create_registry`. A caller without a role identifier yet (e.g. the
-        very first seeding pass, before the user has an AID for this role)
-        may omit it to seed schemas only; the registry step will then fail
-        closed (`LoadSchemaDoer` raises) rather than create one with no
-        issuer, which is preferable to guessing one — and a later call WITH
-        `issuer_aid` retries the registry (gate 2 still sees it missing).
+        equals the derived plan's `registry_name`. A caller without a role
+        identifier yet (e.g. the very first seeding pass, before the user's
+        default AID has been created) may omit it: rather than schedule a
+        `create_registry=True` doer doomed to fail (`LoadSchemaDoer` raises
+        "Issuer AID is required for registry creation" — a confirmed
+        acceptance-demo defect, since `LoadSchemaDoer` pins the schema BEFORE
+        that failure, leaving a scary error logged for an otherwise-benign
+        partial pass), this degrades to a schema-only seed for that one SAID
+        when no issuer is available — gate 2 still sees the registry missing,
+        so a LATER call WITH `issuer_aid` (e.g. `RequestFlow.submit`, which
+        always resolves one or fails closed first) retries the registry step
+        cleanly.
         """
         hby = self.app.vault.hby
         rgy = self.app.vault.rgy
@@ -94,7 +98,15 @@ class EgfSeeder:
                 registry_present = rgy.registryByName(plan.registry_name) is not None
                 if schema_present and registry_present:
                     continue  # fully seeded — idempotent no-op
-                create_registry = not registry_present
+                # Without an issuer_aid, creating the registry is not
+                # possible this pass — degrade to schema-only (see
+                # docstring) rather than schedule a doer doomed to fail.
+                create_registry = registry_present is False and issuer_aid is not None
+                if schema_present and not create_registry:
+                    # Schema already pinned, registry still missing, but we
+                    # have no issuer to attempt creation with this pass —
+                    # nothing left to do until a later call supplies one.
+                    continue
             else:
                 # Gate 1: plain schema — presence is the whole story.
                 if schema_present:

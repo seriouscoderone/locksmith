@@ -95,6 +95,7 @@ from __future__ import annotations
 import datetime
 from typing import Iterable, Optional
 
+from keri import help
 from keri_serviceaid.egf.documents import EgfDocument
 from keri_serviceaid.egf.errors import EgfError
 from keri_serviceaid.egf.onboarding import (
@@ -112,6 +113,8 @@ from locksmith.core.serviceaid_bridge import (
     ServiceaidIssueDoer,
     serviceaid_eligible,
 )
+
+logger = help.ogler.getLogger(__name__)
 
 
 def _autofill_date_time_fields(payload_schema: dict, payload: dict) -> dict:
@@ -243,21 +246,26 @@ class RequestFlow:
             # `ServiceaidIssueDoer`/`issue_credential` and fail deeper in
             # the pipeline with a less legible error.
             if not serviceaid_eligible(hab):
-                signals.emit_doer_event(
-                    "RequestFlow", "request_failed",
-                    {
-                        "message": (
-                            "this workspace's identifier is outside the "
-                            "serviceaid envelope (witnessed or multisig)"
-                        ),
-                    },
+                self._fail(
+                    signals,
+                    "this workspace's identifier is outside the "
+                    "serviceaid envelope (witnessed or multisig)",
                 )
                 return
 
             self._seeder.seed_for_role(role_id, issuer_aid=hab.pre)
             self._schedule_issue_then_grant(plan, hab, authority, attributes)
         except (EgfError, ValueError) as exc:
-            signals.emit_doer_event("RequestFlow", "request_failed", {"message": str(exc)})
+            self._fail(signals, str(exc))
+
+    @staticmethod
+    def _fail(signals, message: str) -> None:
+        """Surface a submit() failure both to the UI (the ``request_failed``
+        doer_event ``OnboardingHomePage`` renders as an inline banner --
+        acceptance-demo item 2) AND to the log — the live-log channel a
+        silent-to-the-user-only event previously left with no trace at all."""
+        logger.warning("onboarding.request_failed %s", message)
+        signals.emit_doer_event("RequestFlow", "request_failed", {"message": message})
 
     def _retire_listener(self, role_id: str, listener) -> None:
         """Disconnect ``listener`` from the vault's doer_event bus and drop

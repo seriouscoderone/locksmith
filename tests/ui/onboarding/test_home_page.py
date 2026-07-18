@@ -544,6 +544,65 @@ def test_second_submit_clears_previous_error_labels(qtbot):
         "stale error labels from the first submit must be removed, not accumulated"
 
 
+def test_on_doer_event_shows_banner_for_request_failed(qtbot):
+    """Acceptance-demo item 2: the window wires `RequestFlow`'s
+    `request_failed` doer_event to this page's `on_doer_event` -- it must
+    render the message as a visible (house "form-error" styling from item
+    1) inline banner on the form view."""
+    from PySide6.QtWidgets import QLabel
+
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    page.on_doer_event(
+        "RequestFlow", "request_failed",
+        {"message": "this workspace's identifier is outside the serviceaid envelope"},
+    )
+
+    errors = page.findChildren(QLabel, "form-error")
+    assert any("outside the serviceaid envelope" in e.text() for e in errors)
+
+
+def test_on_doer_event_replaces_previous_banner_not_accumulates(qtbot):
+    from PySide6.QtWidgets import QLabel
+
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    page.on_doer_event("RequestFlow", "request_failed", {"message": "first failure"})
+    page.on_doer_event("RequestFlow", "request_failed", {"message": "second failure"})
+
+    errors = [e.text() for e in page.findChildren(QLabel, "form-error")]
+    assert errors == ["second failure"]
+
+
+def test_on_doer_event_ignores_unrelated_doer_or_event_type(qtbot):
+    """Only (`RequestFlow`, `request_failed`) triggers the banner -- every
+    other doer_event on the same bus (e.g. `refresh`'s own wiring source)
+    must be a no-op here."""
+    from PySide6.QtWidgets import QLabel
+
+    page = OnboardingHomePage(
+        _doc(), held_provider=list, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.select_persona("carrier")
+
+    page.on_doer_event("SomeOtherDoer", "request_failed", {"message": "irrelevant"})
+    page.on_doer_event("RequestFlow", "some_other_event", {"message": "irrelevant"})
+
+    assert page.findChildren(QLabel, "form-error") == []
+
+
 def _doc_with_second_persona() -> EgfDocument:
     """Variant of the fixture EGF with a SECOND onboardable role ("broker",
     cloned from "carrier"'s onboarding block) -- needed to drive
