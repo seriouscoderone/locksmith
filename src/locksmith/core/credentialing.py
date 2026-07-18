@@ -243,7 +243,15 @@ class LoadSchemaDoer(doing.DoDoer):
         rseal = SealEvent(registry.regk, "0", registry.regd)
         rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
 
-        anc = hab.interact(data=[rseal])
+        # TRANSITIONAL (KERI v2 v1-hold): hab.interact/rotate default their
+        # `version` kwarg to the module-level v2 constant regardless of the
+        # hab's OWN established version, so a v1-inception'd hab was silently
+        # anchoring this registry-inception ixn with a v2-framed event --
+        # poisoning a fresh-vault cross-party presentation. Inherit the hab's
+        # current established version instead (mirrors keri_serviceaid's
+        # ensure_registry fix). Lift as a unit with serviceaid (grep
+        # TRANSITIONAL).
+        anc = hab.interact(data=[rseal], version=hab.kever.serder.pvrsn)
 
         aserder = serdering.SerderKERI(raw=bytes(anc))
         registrar.incept(iserder=registry.vcp, anc=aserder)
@@ -422,11 +430,16 @@ class IssueCredentialDoer(doing.DoDoer):
             rseal = eventing.SealEvent(iserder.pre, iserder.snh, iserder.said)
             rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
 
+            # TRANSITIONAL (KERI v2 v1-hold): pin this TEL-issuance anchor to
+            # the hab's own established version rather than the module's v2
+            # default -- see the matching comment on LoadSchemaDoer's registry
+            # -inception anchor above. Lift as a unit with serviceaid (grep
+            # TRANSITIONAL).
             if registry.estOnly:
-                anc = hab.rotate(data=[rseal])
+                anc = hab.rotate(data=[rseal], version=hab.kever.serder.pvrsn)
 
             else:
-                anc = hab.interact(data=[rseal])
+                anc = hab.interact(data=[rseal], version=hab.kever.serder.pvrsn)
 
             aserder = serdering.SerderKERI(raw=anc)
             credentialer.issue(creder, iserder)
@@ -762,7 +775,11 @@ class Registrar(doing.DoDoer):
 
     @staticmethod
     def multisigIxn(hab, rseal):
-        ixn = hab.interact(data=[rseal])
+        # TRANSITIONAL (KERI v2 v1-hold): pin to the hab's own established
+        # version -- see the matching comment on LoadSchemaDoer's registry
+        # -inception anchor above. Lift as a unit with serviceaid (grep
+        # TRANSITIONAL).
+        ixn = hab.interact(data=[rseal], version=hab.kever.serder.pvrsn)
         serder = serdering.SerderKERI(raw=bytes(ixn))
 
         sn = serder.sn

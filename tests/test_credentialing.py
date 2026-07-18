@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 from keri import kering
+from keri.kering import Vrsn_1_0
 
 from locksmith.core import credentialing
 
@@ -40,8 +41,12 @@ class FakeSchemaStore:
 class FakeHab:
     name = "issuer"
     pre = REGISTRY_SAID
+    kever = SimpleNamespace(serder=SimpleNamespace(pvrsn=Vrsn_1_0))
 
-    def interact(self, data):
+    def interact(self, data, version=None):
+        return b"anchoring-event"
+
+    def rotate(self, data, version=None):
         return b"anchoring-event"
 
 
@@ -201,6 +206,97 @@ def test_load_schema_existing_registry_requires_committed_inception(ctel_said, e
             next(generator)
     else:
         assert _immediate_generator_return(generator) == SCHEMA_SAID
+
+
+def test_create_registry_pins_interact_version_to_hab_pvrsn(monkeypatch):
+    """Task 1 fix: LoadSchemaDoer._create_registry's registry-inception anchor
+    must inherit the hab's OWN established version (hab.kever.serder.pvrsn)
+    rather than keripy's module-level v2 default, or a v1-held hab silently
+    anchors a v2-framed ixn onto its v1 KEL -- poisoning fresh-vault
+    cross-party presentation. A distinguishable sentinel (not the real
+    Vrsn_1_0/Vrsn_2_0 constants) proves the value is actually threaded
+    through, not merely coincidentally equal to a hardcoded default.
+    """
+    sentinel_pvrsn = object()
+
+    class FakeHabWithVersion:
+        name = "issuer"
+        pre = REGISTRY_SAID
+        kever = SimpleNamespace(serder=SimpleNamespace(pvrsn=sentinel_pvrsn))
+
+        def __init__(self):
+            self.interact_calls = []
+
+        def interact(self, data, version=None):
+            self.interact_calls.append({"data": data, "version": version})
+            return b"anchoring-event"
+
+    class FakeCounselorForCreate:
+        def __init__(self, hby):
+            self.hby = hby
+
+    class FakePosterForCreate:
+        def __init__(self, hby):
+            self.hby = hby
+
+    class FakeRegistrarForCreate:
+        def __init__(self, hby, rgy, counselor, auth=None):
+            self.auth = auth or {}
+
+        def incept(self, iserder, anc):
+            pass
+
+        def complete(self, pre, sn=0):
+            return True
+
+    class FakeMadeRegistry:
+        regk = REGISTRY_SAID
+        regd = TEL_SAID
+        vcp = SimpleNamespace(raw=b"vcp")
+
+    class FakeRgyForCreate:
+        def __init__(self):
+            self.reger = SimpleNamespace()
+
+        def registryByName(self, name):
+            return None
+
+        def makeRegistry(self, name, prefix, **kwa):
+            return FakeMadeRegistry()
+
+        def processEscrows(self):
+            pass
+
+    hab = FakeHabWithVersion()
+
+    monkeypatch.setattr(credentialing.grouping, "Counselor", FakeCounselorForCreate)
+    monkeypatch.setattr(credentialing, "Registrar", FakeRegistrarForCreate)
+    monkeypatch.setattr(credentialing.forwarding, "Poster", FakePosterForCreate)
+    monkeypatch.setattr(
+        credentialing.serdering,
+        "SerderKERI",
+        lambda raw: SimpleNamespace(raw=raw),
+    )
+
+    doer = credentialing.LoadSchemaDoer.__new__(credentialing.LoadSchemaDoer)
+    doer.rgy = FakeRgyForCreate()
+    doer.hby = SimpleNamespace(habs={"issuer-aid": hab})
+    doer.issuer_aid = "issuer-aid"
+    doer.auth_codes = None
+    doer.extend = lambda doers: None
+    doer.remove = lambda doers: None
+    doer.tock = 0.0
+
+    generator = doer._create_registry(SCHEMA_SAID, "Schema Title")
+
+    result = _immediate_generator_return(generator)
+
+    assert result == SCHEMA_SAID
+    assert len(hab.interact_calls) == 1
+    assert hab.interact_calls[0]["version"] is sentinel_pvrsn, (
+        "registry-inception anchor must be pinned to the hab's own "
+        "established version, not left at the interact() default"
+    )
 
 
 def test_issue_credential_processes_verifier_escrows_before_completion(monkeypatch):

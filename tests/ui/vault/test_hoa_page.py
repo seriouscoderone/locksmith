@@ -100,6 +100,37 @@ def test_hoa_page_nav_menu_still_shows_plugin_entries(qtbot):
     assert found_names.isdisjoint(_CORE_NAV_BUTTON_NAMES)
 
 
+def test_hoa_page_toolbar_config_hides_plugins_and_notifications(qtbot):
+    """Acceptance-demo fix wave item 6: neither "plugins" nor
+    "notifications" is ever registered for a peeled HOA build (see
+    ``test_hoa_page_registers_no_core_wallet_pages`` above), so their
+    toolbar icons must be hidden rather than dead clicks (live log: "No
+    page registered for key 'plugins'")."""
+    parent = _fake_parent()
+    qtbot.addWidget(parent)
+    page = HoaVaultPage(parent)
+    qtbot.addWidget(page)
+
+    config = page.get_toolbar_config()
+    assert config["show_plugins_button"] is False
+    assert config["show_notifications_button"] is False
+    # Untouched keys still come from the stock VaultPage config.
+    assert config["show_vaults_button"] is True
+    assert config["show_settings_button"] is True
+
+
+def test_default_vault_page_toolbar_config_unaffected(qtbot):
+    """Sanity guard: the stock (non-HOA) VaultPage's toolbar config must
+    stay byte-for-behavior unchanged — no `show_plugins_button` key at all
+    (the toolbar's own default of True applies)."""
+    parent = _fake_parent()
+    qtbot.addWidget(parent)
+    page = VaultPage(parent)
+    qtbot.addWidget(page)
+    config = page.get_toolbar_config()
+    assert "show_plugins_button" not in config
+
+
 def test_default_vault_page_still_has_core_nav_buttons(qtbot):
     """Sanity guard: the DEFAULT (non-HOA) VaultPage must be byte-for-behavior
     unchanged — it still shows every core-page nav button."""

@@ -287,10 +287,22 @@ class LocksmithToolbar(QToolBar):
                 - show_lock_button (bool)
                 - show_notifications_button (bool)
                 - show_settings_button (bool)
+                - show_plugins_button (bool) — defaults True (stock
+                  behavior, unchanged): the Plugins button was previously
+                  always visible with no config hook at all. A peeled HOA
+                  build (``HoaVaultPage``, ``brand().peel_core_pages``)
+                  registers no "plugins" page key, so its
+                  ``get_toolbar_config()`` sets this False — otherwise the
+                  icon is a dead click (log: "No page registered for key
+                  'plugins'").
         """
         # Update vaults button visibility
         if hasattr(self, 'vaults_action'):
             self.vaults_action.setVisible(config.get('show_vaults_button', True))
+
+        # Update plugins button visibility
+        if hasattr(self, 'plugins_action'):
+            self.plugins_action.setVisible(config.get('show_plugins_button', True))
 
         # Update lock button visibility
         if hasattr(self, 'lock_action'):

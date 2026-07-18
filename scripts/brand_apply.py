@@ -8,7 +8,9 @@ Reads brands/<brand>/brand.toml and:
   - writes src/locksmith/release/brand.json (runtime subset);
   - renders packaging/wix/Locksmith.wxs and packaging/dmg/layout.json;
   - injects the brand's publisher_anchor.json + deploy_config.json (if present)
-    into src/locksmith/release/.
+    into src/locksmith/release/;
+  - stages the brand's bundled egf/ dir (if present) into
+    src/locksmith/release/egf/.
 
 Selection: --brand or $LOCKSMITH_BRAND (default 'locksmith'). --check writes
 nothing and just reports what would happen.
@@ -128,6 +130,24 @@ def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
             if not check:
                 shutil.copyfile(brand_dir / src_name, release_dir / dst_name)
 
+    # Stage the brand's bundled EGF docs (content-addressed <SAID>.json files)
+    # as a sibling directory to the generated brand.json, in BOTH the packaged
+    # tree and any LOCKSMITH_BRAND_CONFIG-injected location — mirroring how
+    # publisher_anchor.json/deploy_config.json land next to brand.json above.
+    # locksmith.core.branding.egf_local_dir() resolves `egf/` relative to
+    # wherever brand.json was actually read from, so this is what makes it
+    # findable at runtime. A brand with no brands/<id>/egf/ dir (e.g. the
+    # locksmith reference brand) stages nothing.
+    egf_src = brand_dir / "egf"
+    egf_staged = []
+    if egf_src.is_dir():
+        egf_staged = sorted(p.name for p in egf_src.glob("*.json"))
+        if not check:
+            egf_dst = release_dir / "egf"
+            if egf_dst.exists():
+                shutil.rmtree(egf_dst)
+            shutil.copytree(egf_src, egf_dst)
+
     if not check:
         (release_dir / "brand.json").write_text(
             json.dumps(brandlib.runtime_brand_json(manifest), indent=2) + "\n",
@@ -149,6 +169,7 @@ def apply(brand_id: str, repo_root: Path, *, check: bool = False) -> dict:
         "staged_assets": staged,
         "filled_variants": filled,
         "injected": injected,
+        "egf_staged": egf_staged,
         "check": check,
     }
 

@@ -5,6 +5,7 @@ locksmith.ui.window module
 This module contains the main window for the Locksmith application.
 """
 from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -18,15 +19,33 @@ from locksmith.core.apping import LocksmithApplication
 from locksmith.core.bootstrapping import bootstrap_default_environment
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
+from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
+from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
+from locksmith.ui.onboarding.request_flow import RequestFlow
 from locksmith.ui.toolbar import LocksmithToolbar
 from locksmith.ui.toolkit.widgets.toast import NotificationToast
 from locksmith.ui.vault.hoa_page import HoaVaultPage
+from locksmith.ui.vault.menu import MenuButton
 from locksmith.ui.vault.page import VaultPage
 from locksmith.ui.vaults.drawer import VaultDrawer
 
 logger = help.ogler.getLogger(__name__)
+
+
+def _onboarding_held_credentials(app) -> list:
+    """The onboarding home page's ``held_provider`` (Task 8), extracted to
+    module level so the None-guard is directly unit-testable.
+
+    ``OnboardingHomePage.__init__`` calls ``refresh()`` -> this provider
+    unconditionally, and that happens at window construction time — before
+    any vault has ever been opened (``app.vault is None``) — so guard
+    against ``PluginManager._held_credentials(None)`` crashing on
+    ``None.rgy`` by returning "nothing held yet" instead."""
+    if app.vault is None:
+        return []
+    return app.plugin_manager._held_credentials(app.vault)
 
 
 class LocksmithWindow(QMainWindow):
@@ -145,6 +164,17 @@ class LocksmithWindow(QMainWindow):
             vault_page, vault_page.nav_menu,
         )
 
+        # Onboarding "home" persona-picker page (Plan B Task 8 + hardening
+        # wave item 1). Extracted to _wire_onboarding for testability --
+        # constructing a full LocksmithWindow needs a live QApplication +
+        # full plugin discovery, out of scope for a fast/hermetic unit test
+        # (see tests/ui/test_window_bootstrap_nav.py's precedent for
+        # _run_default_bootstrap).
+        self._request_flow: RequestFlow | None = None
+        self._onboarding_home_page: OnboardingHomePage | None = None
+        self._onboarding_wired_vault = None
+        self._wire_onboarding(vault_page)
+
         # Add pages to stack
         for page in self.pages.values():
             self.main_stack.addWidget(page)
@@ -184,17 +214,24 @@ class LocksmithWindow(QMainWindow):
         # Done last so plugins see a fully-constructed window.
         self.app.plugin_manager.on_app_started(window=self)
 
-        # First-run bootstrap (HOA brands only): auto-create the brand's
-        # default vault + witnessless default AID so the app boots straight
-        # into an app experience with no manual vault/identifier creation.
-        # Deferred via QTimer.singleShot(0, ...) rather than called inline,
-        # so it runs AFTER plugin discovery + on_app_started above — opening
-        # the vault fires plugin_manager.on_vault_opened, which plugins
-        # expect only once they've been discovered and started. Gated on
-        # brand().default_vault_name so only an HOA brand.toml's
-        # [bootstrap] section opts in; the default Locksmith brand carries
-        # "" and is unaffected.
-        if brand().default_vault_name:
+        # First-run bootstrap: auto-create a default vault + witnessless
+        # default AID so the app boots straight into an app experience with
+        # no manual vault/identifier creation. Deferred via
+        # QTimer.singleShot(0, ...) rather than called inline, so it runs
+        # AFTER plugin discovery + on_app_started above — opening the vault
+        # fires plugin_manager.on_vault_opened, which plugins expect only
+        # once they've been discovered and started.
+        #
+        # Onboarding-enabled HOA brands (brand().onboarding_enabled) show the
+        # first-run SetupPage instead of bootstrapping silently — the user
+        # picks the workspace name/passcode themselves. Non-onboarding HOA
+        # brands (brand().default_vault_name set, onboarding_enabled False)
+        # keep the exact silent-bootstrap path from before this branch
+        # existed; the default Locksmith brand carries neither and is
+        # unaffected either way.
+        if brand().onboarding_enabled and not self.app.environments():
+            QTimer.singleShot(0, self._show_first_run_setup)
+        elif brand().default_vault_name:
             QTimer.singleShot(0, self._run_default_bootstrap)
 
         # --- App-update menu + controller wiring (Phase 5) ---
@@ -209,6 +246,72 @@ class LocksmithWindow(QMainWindow):
         # --- end app-update wiring ---
 
         logger.info("LocksmithHome initialized")
+
+    def _wire_onboarding(self, vault_page) -> None:
+        """Onboarding "home" persona-picker wiring (Plan B Task 8).
+        RequestFlow drives the EGF request-access pipeline end to end
+        (derive -> validate -> attributes -> authority -> seed -> issue ->
+        grant). Gated on BOTH brand().onboarding_enabled AND a resolvable
+        EGF (make_hoa_resolver returns None for any brand with no [egf]
+        table) -- a non-onboarding or non-HOA brand must never construct a
+        RequestFlow/OnboardingHomePage at all.
+
+        Hardening wave item 1 (design spec §4.5): "A persona picker over a
+        broken EGF shows an error state, not an empty list." A brand that
+        DOES pin an EGF but whose bundle is missing/tampered/incomplete
+        must not crash window construction -- make_hoa_resolver and the
+        onboarding-page construction that follows are wrapped in
+        try/except (EgfError, ValueError); on failure this logs loudly and
+        registers a minimal OnboardingErrorPage as "home" instead, leaving
+        self._request_flow / self._onboarding_home_page at None (so
+        _maybe_wire_onboarding_for_vault stays a no-op for this vault, and
+        the nav menu entry that would route into a controller that was
+        never built is never added).
+        """
+        from keri_serviceaid.egf.errors import EgfError
+
+        if not (brand().onboarding_enabled and isinstance(vault_page, HoaVaultPage)):
+            return
+
+        try:
+            hoa_egf = make_hoa_resolver(brand())
+            if hoa_egf is None:
+                return
+            resolver, egf_doc = hoa_egf
+            self._request_flow = RequestFlow(
+                self.app, resolver, egf_doc, brand().egf_accept_phases,
+            )
+            self._onboarding_home_page = OnboardingHomePage(
+                egf_doc,
+                # None-guarded: refresh() fires during construction,
+                # before any vault is open. See _onboarding_held_credentials.
+                held_provider=lambda: _onboarding_held_credentials(self.app),
+                on_submit=self._request_flow.submit,
+                micro_app_resolver=resolver.resolve_micro_app,
+                accept_phases=brand().egf_accept_phases,
+                parent=vault_page,
+            )
+        except (EgfError, ValueError) as exc:
+            logger.error("onboarding.egf_broken error=%s", exc)
+            self._request_flow = None
+            self._onboarding_home_page = None
+            error_page = OnboardingErrorPage(str(exc), parent=vault_page)
+            vault_page.register_page("home", error_page)
+            return
+
+        vault_page.register_page("home", self._onboarding_home_page)
+        home_entry_btn = MenuButton(icon=QIcon(), label="Home")
+        home_entry_btn.setObjectName("vaultNavMenu.homeButton")
+        vault_page.add_menu_entry("home", home_entry_btn, [])
+        # add_menu_entry's own click wiring (VaultNavMenu.
+        # register_plugin_section -> _on_plugin_button_clicked ->
+        # plugin_section_clicked -> VaultPage._on_plugin_entry_clicked)
+        # looks plugin_id up in plugin_manager -- "home" is not a
+        # VaultPlugin, so that path is a harmless no-op (logged
+        # warning). The actual navigation is this direct connection,
+        # mirroring how the core nav buttons wire straight to
+        # _show_vault_page in VaultPage._connect_navigation.
+        home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
 
     def _install_help_menu(self) -> None:
         """Add a Help menu with the "Check for updates…" entry. Native
@@ -366,6 +469,32 @@ class LocksmithWindow(QMainWindow):
         if created:
             self.nav_manager.navigate_to(Pages.VAULT, vault_name=brand().default_vault_name)
 
+    def _show_first_run_setup(self) -> None:
+        """Deferred QTimer.singleShot slot (onboarding brands only, first
+        run). Constructs and registers the SetupPage lazily — only when this
+        branch actually fires, so a non-onboarding brand never constructs
+        it — then navigates to it. Its ``setup_submitted`` signal is wired
+        to ``_on_setup_submitted``, which runs the parameterized bootstrap
+        with the user's chosen name/passcode."""
+        from locksmith.ui.onboarding.setup_page import SetupPage
+
+        setup_page = SetupPage(default_name=brand().default_vault_name, parent=self)
+        self.pages[Pages.SETUP] = setup_page
+        self.main_stack.addWidget(setup_page)
+        setup_page.setup_submitted.connect(self._on_setup_submitted)
+        self.nav_manager.navigate_to(Pages.SETUP)
+
+    def _on_setup_submitted(self, name: str, passcode: str) -> None:
+        """SetupPage's ``setup_submitted`` slot: runs the bootstrap with the
+        user-chosen name/passcode overrides and, on success, navigates
+        straight into the opened vault — the same True -> navigate wiring
+        ``_run_default_bootstrap`` uses for the silent path."""
+        created = bootstrap_default_environment(
+            self.app, brand(), vault_name=name, passcode=passcode,
+        )
+        if created:
+            self.nav_manager.navigate_to(Pages.VAULT, vault_name=name)
+
     def open_vault_targeted(self, vault_name: str) -> None:
         """Present the passcode dialog for a specific vault (used by the
         ``--vault`` launch path). The dialog performs the actual claim."""
@@ -482,6 +611,64 @@ class LocksmithWindow(QMainWindow):
             )
             # Connect toast signals when vault is active
             self._connect_toast_signals()
+
+            # Onboarding (Task 8): seed + wire per-vault-instance state.
+            # Runs BEFORE the caller's page.on_show() (see on_page_changed's
+            # ordering), so a freshly-set _current_page_key = "home" below
+            # is what VaultPage.on_show's restore_key falls back to.
+            self._maybe_wire_onboarding_for_vault()
+
+    def _maybe_wire_onboarding_for_vault(self) -> None:
+        """Idempotent per-vault-open onboarding hook (Task 8). Pages.VAULT
+        is shown every time the user navigates back into an ALREADY-open
+        vault (e.g. Plugins -> Vault), not just on the first open, so
+        re-wiring must be guarded on vault IDENTITY rather than on "this
+        handler ran" -- otherwise each revisit would reconnect doer_event
+        again, and a later event would call page.refresh() once per
+        accumulated connection.
+
+        On a genuinely new vault instance (first open, or a different vault
+        than last time): seeds every onboardable persona's schemas/registry
+        (EgfSeeder is idempotent on its own too), connects doer_event ->
+        the onboarding home page's refresh() (any event cheaply recomputes
+        state), and resets the vault page's restore key to "home" so this
+        FRESH vault's first on_show lands on the persona picker/state page
+        rather than "identifiers" (HoaVaultPage registers no core pages at
+        all, so on_show's own "identifiers" fallback would otherwise be a
+        dead no-op for an onboarding HOA build)."""
+        if self._request_flow is None or self.app.vault is None:
+            return
+        if self.app.vault is self._onboarding_wired_vault:
+            return
+        self._onboarding_wired_vault = self.app.vault
+
+        self._request_flow.seed_all_personas()
+        self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
+        # Acceptance-demo item 2: surface RequestFlow's own request_failed
+        # emissions as a visible inline banner on the form view (distinct
+        # from refresh() above, which reacts to every event generically).
+        self.app.vault.signals.doer_event.connect(self._onboarding_home_page.on_doer_event)
+
+        # Live-observation fix: the page's __init__ already calls refresh()
+        # once, but that happens at CONSTRUCTION time -- for a HOA whose
+        # onboarding page is built once and rewired across vault opens, that
+        # first refresh() can run before this vault is warm (held_provider()
+        # still returning [] for an already-pending application), and only
+        # the doer_event connections above trigger any LATER refresh. A
+        # reopened vault with a pending application would then sit on the
+        # PICKER until some unrelated event happened to fire. Deferring one
+        # more refresh() to the next event-loop turn (same
+        # QTimer.singleShot(0, ...) pattern used elsewhere in this file, e.g.
+        # _show_first_run_setup/_run_default_bootstrap above) re-derives
+        # state once the vault is actually open, landing on PENDING/LICENSED
+        # directly when warranted. refresh() is cheap and idempotent, so
+        # this is safe even though the vault-identity guard above already
+        # keeps this method itself from running twice for the same vault.
+        QTimer.singleShot(0, self._onboarding_home_page.refresh)
+
+        vault_page = self.pages.get(Pages.VAULT)
+        if vault_page is not None:
+            vault_page._current_page_key = "home"
 
     def _connect_toast_signals(self):
         """Connect to vault signals for toast notifications."""

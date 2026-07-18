@@ -14,6 +14,7 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.core import ipexing
+from locksmith.core.serviceaid_bridge import make_grant_doer
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
@@ -385,15 +386,37 @@ class GrantCredentialDialog(LocksmithDialog):
         if hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
 
-        # Create and run SendGrantDoer
-        doer = ipexing.SendGrantDoer(
-            app=self.app,
-            hab_pre=self.credential_issuer,
-            credential_said=self.credential_said,
-            recipient_pre=recipient_pre,
-            message=self.message_field.text(),
-            signal_bridge=self.app.vault.signals if hasattr(self.app.vault, 'signals') else None
-        )
+        # Resolve the issuing hab the same way the legacy SendGrantDoer does
+        # internally (hby.habs.get(hab_pre)) -- the envelope guard
+        # (serviceaid_eligible) needs this hab to decide single-sig/
+        # unwitnessed eligibility.
+        hab = self.app.vault.hby.habs.get(self.credential_issuer)
+
+        if hab is not None:
+            # Route through the serviceaid bridge chokepoint: eligible
+            # (single-sig, unwitnessed) habs grant via keri_serviceaid; a
+            # GroupHab or witnessed hab falls back to the identical legacy
+            # doer below.
+            doer = make_grant_doer(
+                self.app,
+                hab,
+                credential_said=self.credential_said,
+                recipient=recipient_pre,
+                hab_pre=self.credential_issuer,
+                message=self.message_field.text(),
+            )
+        else:
+            # Issuer identifier not found -- fall back to the legacy doer
+            # directly; it owns the not-found error path (emits send_failed
+            # from inside its own do-method) the same way it always has.
+            doer = ipexing.SendGrantDoer(
+                app=self.app,
+                hab_pre=self.credential_issuer,
+                credential_said=self.credential_said,
+                recipient_pre=recipient_pre,
+                message=self.message_field.text(),
+                signal_bridge=self.app.vault.signals if hasattr(self.app.vault, 'signals') else None
+            )
 
         # Add doer to vault's event loop
         self.app.vault.extend([doer])

@@ -54,14 +54,31 @@ class Brand:
     default_aid_alias: str = ""
     default_witnesses: list[str] = field(default_factory=list)
     default_toad: int = 0
+    # --- [egf] / [onboarding] sections: which ecosystem-governance-framework
+    # doc a brand pins and whether the HOA onboarding flow is exposed. A
+    # non-onboarding brand simply omits both tables and stays at these inert
+    # defaults (library default accept_phases is production-only; a brand
+    # opts into "bootstrap" explicitly for pilot use). ---
+    egf_source: str = "local"
+    egf_document_said: str = ""
+    egf_accept_phases: tuple[str, ...] = ("production",)
+    onboarding_enabled: bool = False
 
 
 # The reference brand (#1). This is the SINGLE canonical hard-coded brand name.
 _DEFAULT = Brand()
 
+# Directory the active brand's doc (brand.json or the packaged default) was
+# resolved from, recorded by load_brand() — None until load_brand() has run,
+# or when it fell back to the hard-coded _DEFAULT with no file at all. Lets
+# egf_local_dir() find the `egf/` dir bundled alongside that same source.
+_brand_source_dir: Path | None = None
+
 
 def _from_dict(doc: dict) -> Brand:
     bs = doc.get("bootstrap", {}) or {}
+    eg = doc.get("egf", {}) or {}
+    ob = doc.get("onboarding", {}) or {}
     return Brand(
         display_name=doc.get("display_name", _DEFAULT.display_name),
         tagline=doc.get("tagline", _DEFAULT.tagline),
@@ -79,22 +96,30 @@ def _from_dict(doc: dict) -> Brand:
         default_aid_alias=bs.get("default_aid_alias", ""),
         default_witnesses=list(bs.get("default_witnesses", [])),
         default_toad=int(bs.get("default_toad", 0)),
+        egf_source=eg.get("source", _DEFAULT.egf_source),
+        egf_document_said=eg.get("document_said", _DEFAULT.egf_document_said),
+        egf_accept_phases=tuple(eg.get("accept_phases", _DEFAULT.egf_accept_phases)),
+        onboarding_enabled=bool(ob.get("enabled", _DEFAULT.onboarding_enabled)),
     )
 
 
 def load_brand() -> Brand:
     """Resolve the active brand (env-injection first, baked-in default last)."""
+    global _brand_source_dir
     env_path = os.environ.get(BRAND_CONFIG_ENV_VAR)
     if env_path:
         injected = Path(env_path)
         if injected.is_file():
+            _brand_source_dir = injected.resolve().parent
             return _from_dict(json.loads(injected.read_text(encoding="utf-8")))
         raise FileNotFoundError(
             f"{BRAND_CONFIG_ENV_VAR} is set to {env_path!r} but no file exists "
             f"there (brand.json injection misconfigured)"
         )
     if _PACKAGED_BRAND_JSON.is_file():
+        _brand_source_dir = _PACKAGED_BRAND_JSON.resolve().parent
         return _from_dict(json.loads(_PACKAGED_BRAND_JSON.read_text(encoding="utf-8")))
+    _brand_source_dir = None
     return _DEFAULT
 
 
@@ -110,5 +135,23 @@ def app_title(vault_name: str | None) -> str:
     return f"{name} | {vault_name}" if vault_name else name
 
 
+def egf_local_dir() -> Path | None:
+    """The `egf/` dir bundled alongside the resolved brand source, or None.
+
+    Sibling to whichever file load_brand() actually read (the env-injected
+    brand.json's parent dir, or the packaged release/ dir) — so this resolves
+    the same way whether running from a packaged build or with
+    LOCKSMITH_BRAND_CONFIG pointed at a brand's staged brand.json. None when
+    load_brand() hasn't run yet, fell back to the hard-coded default (no file
+    at all), or the source dir simply has no egf/ subdirectory.
+    """
+    if _brand_source_dir is None:
+        return None
+    candidate = _brand_source_dir / "egf"
+    return candidate if candidate.is_dir() else None
+
+
 def _reset_cache_for_tests() -> None:
+    global _brand_source_dir
     brand.cache_clear()
+    _brand_source_dir = None
