@@ -404,7 +404,7 @@ class OnboardingHomePage(BasePage):
         branch). Widgets built here are populated per-render by
         ``_update_pending_view`` (called from ``_render``, since
         ``select_persona``/``refresh`` may switch to a different role
-        between PENDING renders) with three pieces:
+        between PENDING renders) with two pieces:
 
         1. WHO it went to — the accepted authority's display_name +
            truncated AID + phase badge, formatted the same way as the
@@ -420,18 +420,19 @@ class OnboardingHomePage(BasePage):
            today — the pilot has a single bootstrap-phase regulator);
            otherwise this row stays hidden rather than guessing among
            several.
-        2. WHAT was submitted — the held application credential's
-           ``schema_said`` (truncated), labeled plainly as "Application
-           credential". Same honest-data-path limit as above:
-           ``HeldCredential`` exposes no per-instance credential SAID or
-           submission timestamp, only the type-identifying schema SAID —
-           so that's what's shown, and a timestamp is never rendered (it
-           is simply never available, not conditionally omitted).
-        3. WHAT HAPPENS NEXT — a fixed sentence template
+        2. WHAT HAPPENS NEXT — a fixed sentence template
            (``_pending_next_steps_text``) with the authority's
            display_name (when resolved), the grant credential's ``name``,
            and the onboarded role's ``display_name`` interpolated in — no
            other hard-coded strings.
+
+        Deliberately ABSENT: a "what was submitted" identifier row.
+        ``HeldCredential`` exposes no per-instance credential SAID (nor a
+        submission timestamp) — only the type-identifying ``schema_said``,
+        and labeling the schema SAID as the application's instance SAID
+        would be mislabeled identifier data on a trust surface, worse
+        than omission. Revisit when the gate view grows an instance SAID
+        (likely in the #2/lift work).
         """
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -469,16 +470,7 @@ class OnboardingHomePage(BasePage):
         self._pending_authority_row_widget.setVisible(False)
         layout.addWidget(self._pending_authority_row_widget)
 
-        # WHAT was submitted (item 2).
-        self._pending_submitted_text = QLabel("")
-        self._pending_submitted_text.setObjectName("onboarding.pendingSubmittedText")
-        self._pending_submitted_text.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pending_submitted_text.setStyleSheet(
-            f"font-size: 12px; color: {colors.TEXT_SECONDARY}; background: transparent;"
-        )
-        layout.addWidget(self._pending_submitted_text)
-
-        # WHAT HAPPENS NEXT (item 3).
+        # WHAT HAPPENS NEXT (item 2).
         self._pending_next_steps_label = QLabel("")
         self._pending_next_steps_label.setObjectName("onboarding.pendingNextSteps")
         self._pending_next_steps_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -806,15 +798,16 @@ class OnboardingHomePage(BasePage):
         )
 
     def _update_pending_view(self, role_id: str) -> None:
-        """Populate the PENDING view's three EGF-derived pieces for
+        """Populate the PENDING view's two EGF-derived pieces (WHO /
+        WHAT'S NEXT — see ``_build_pending_view``'s docstring, including
+        why there is deliberately no submitted-identifier row) for
         ``role_id``. Called from ``_render`` on every PENDING render (not
         cached like ``_build_form_view``) since ``select_persona``/
         ``refresh`` may switch to a different pending role between
         renders and the work here is cheap label updates, not a rebuild.
         Reachable only once ``derive_state`` has already returned PENDING,
-        which guarantees ``role.onboarding`` and ``grant.chained_from``
-        are both set (see ``derive_state``'s PENDING branch) — no extra
-        None-guards needed for either here."""
+        which guarantees ``role.onboarding`` is set (see ``derive_state``'s
+        PENDING branch) — no extra None-guard needed here."""
         role = self._egf.role(role_id)
         grant = self._egf.credential(role.onboarding.grant_credential_id)
         authority = self._pending_authority(grant)
@@ -831,11 +824,6 @@ class OnboardingHomePage(BasePage):
             self._pending_authority_text.setText("")
             self._pending_authority_badge.setText("")
             self._pending_authority_row_widget.setVisible(False)
-
-        application = self._egf.credential(grant.chained_from)
-        said = application.schema_said
-        truncated_said = said if len(said) <= 12 else f"{said[:12]}…"
-        self._pending_submitted_text.setText(f"Application credential: {truncated_said}")
 
         self._pending_next_steps_label.setText(
             self._pending_next_steps_text(role, grant, authority)

@@ -362,14 +362,17 @@ def test_pending_state_renders_pending_widget(qtbot):
     assert page._stack.currentWidget() is page._pending_widget
 
 
-def test_pending_view_shows_authority_submitted_credential_and_next_steps(qtbot):
+def test_pending_view_shows_authority_and_next_steps(qtbot):
     """Owner live-demo finding, hoa-onboarding branch: the PENDING page was
     previously a dead end ("Application pending / awaiting approval", no
     context). With the default ``accept_phases`` (production only), the
     fixture EGF's "regulator" authorities narrow to exactly one (CA DOI)
-    -- the WHO row, the truncated application credential SAID, and the
-    next-steps sentence must all reflect that EGF-derived data, not
-    hard-coded copy."""
+    -- the WHO row and the next-steps sentence must both reflect that
+    EGF-derived data, not hard-coded copy. (No submitted-identifier row is
+    asserted because none exists BY DESIGN -- the held view has no
+    instance SAID, and showing the schema SAID under an instance label
+    would be mislabeled identifier data on a trust surface; see
+    ``_build_pending_view``'s docstring.)"""
     app_said = "E" + "P" * 43
     held = [Held(app_said, "E" + "S" * 43, "issued", True)]
     page = OnboardingHomePage(_doc(), held_provider=lambda: held, on_submit=lambda *a: None)
@@ -382,8 +385,6 @@ def test_pending_view_shows_authority_submitted_credential_and_next_steps(qtbot)
     assert "Submitted to CA DOI" in who_text
     assert ("E" + "C" * 43)[:12] in who_text
     assert page._pending_authority_badge.text() == "PRODUCTION"
-
-    assert f"Application credential: {app_said[:12]}" in page._pending_submitted_text.text()
 
     next_steps = page._pending_next_steps_label.text()
     assert "The CA DOI will review your application." in next_steps
