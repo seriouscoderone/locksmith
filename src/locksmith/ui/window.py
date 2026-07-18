@@ -649,6 +649,23 @@ class LocksmithWindow(QMainWindow):
         # from refresh() above, which reacts to every event generically).
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.on_doer_event)
 
+        # Live-observation fix: the page's __init__ already calls refresh()
+        # once, but that happens at CONSTRUCTION time -- for a HOA whose
+        # onboarding page is built once and rewired across vault opens, that
+        # first refresh() can run before this vault is warm (held_provider()
+        # still returning [] for an already-pending application), and only
+        # the doer_event connections above trigger any LATER refresh. A
+        # reopened vault with a pending application would then sit on the
+        # PICKER until some unrelated event happened to fire. Deferring one
+        # more refresh() to the next event-loop turn (same
+        # QTimer.singleShot(0, ...) pattern used elsewhere in this file, e.g.
+        # _show_first_run_setup/_run_default_bootstrap above) re-derives
+        # state once the vault is actually open, landing on PENDING/LICENSED
+        # directly when warranted. refresh() is cheap and idempotent, so
+        # this is safe even though the vault-identity guard above already
+        # keeps this method itself from running twice for the same vault.
+        QTimer.singleShot(0, self._onboarding_home_page.refresh)
+
         vault_page = self.pages.get(Pages.VAULT)
         if vault_page is not None:
             vault_page._current_page_key = "home"

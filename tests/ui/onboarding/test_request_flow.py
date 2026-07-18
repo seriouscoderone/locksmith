@@ -607,3 +607,86 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     assert win._onboarding_home_page is onboarding_home_page_instance
     assert vault_page.registered_pages == {"home": onboarding_home_page_instance}
     assert len(vault_page.menu_entries) == 1
+
+
+def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
+    """Live-observation fix: reopening a workspace holding a pending
+    application showed the persona PICKER until the user interacted with
+    it, because `OnboardingHomePage.__init__` derives state from
+    `held_provider()` at CONSTRUCTION time -- potentially before this
+    (possibly freshly-opened) vault is warm -- and, until now, only the
+    `doer_event` connections wired below re-derived state afterward.
+    `_maybe_wire_onboarding_for_vault` must ALSO schedule one deferred
+    `refresh()` via `QTimer.singleShot(0, ...)` (the same pattern
+    `LocksmithWindow.__init__` already uses for `_show_first_run_setup`/
+    `_run_default_bootstrap` -- see `test_onboarding_branch_uses_deferred_
+    setup_page_scheduling` in `tests/core/test_bootstrapping_overrides.py`)
+    so the next event-loop turn re-derives against the now-open vault's
+    real held credentials, landing directly on PENDING/LICENSED instead of
+    requiring an unrelated event to happen first."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append((delay, slot)),
+    )
+
+    request_flow = MagicMock(name="request_flow")
+    onboarding_home_page = MagicMock(name="onboarding_home_page")
+    vault = MagicMock(name="vault")
+
+    win = SimpleNamespace(
+        app=SimpleNamespace(vault=vault),
+        _request_flow=request_flow,
+        _onboarding_home_page=onboarding_home_page,
+        _onboarding_wired_vault=None,
+        pages={},
+    )
+
+    LocksmithWindow._maybe_wire_onboarding_for_vault(win)
+
+    request_flow.seed_all_personas.assert_called_once()
+    vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.refresh)
+    vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.on_doer_event)
+
+    assert scheduled == [(0, onboarding_home_page.refresh)], (
+        "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
+    )
+    assert win._onboarding_wired_vault is vault
+
+
+def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkeypatch):
+    """`Pages.VAULT` is shown every time the user navigates back into an
+    ALREADY-open vault (e.g. Plugins -> Vault), not just on first open --
+    the existing vault-identity guard must keep BOTH the `doer_event`
+    connections and the new deferred-refresh scheduling from accumulating
+    on every revisit (a later event would otherwise call `refresh()` once
+    per accumulated connection/schedule)."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append((delay, slot)),
+    )
+
+    request_flow = MagicMock(name="request_flow")
+    onboarding_home_page = MagicMock(name="onboarding_home_page")
+    vault = MagicMock(name="vault")
+
+    win = SimpleNamespace(
+        app=SimpleNamespace(vault=vault),
+        _request_flow=request_flow,
+        _onboarding_home_page=onboarding_home_page,
+        _onboarding_wired_vault=None,
+        pages={},
+    )
+
+    LocksmithWindow._maybe_wire_onboarding_for_vault(win)
+    LocksmithWindow._maybe_wire_onboarding_for_vault(win)  # revisit, same vault
+
+    assert len(scheduled) == 1, (
+        "revisiting an already-wired vault must not re-schedule refresh()"
+    )
+    request_flow.seed_all_personas.assert_called_once()
