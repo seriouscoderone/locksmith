@@ -248,7 +248,7 @@ class RequestFlow:
             if not serviceaid_eligible(hab):
                 self._fail(
                     signals,
-                    "this workspace's identifier is outside the "
+                    "this secure workspace's identifier is outside the "
                     "serviceaid envelope (witnessed or multisig)",
                 )
                 return

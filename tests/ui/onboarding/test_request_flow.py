@@ -344,7 +344,7 @@ def test_submit_witnessed_hab_emits_request_failed_and_schedules_nothing(env):
     assert env.failures[0][1] == "request_failed"
     assert (
         env.failures[0][2]["message"]
-        == "this workspace's identifier is outside the serviceaid envelope (witnessed or multisig)"
+        == "this secure workspace's identifier is outside the serviceaid envelope (witnessed or multisig)"
     )
 
 

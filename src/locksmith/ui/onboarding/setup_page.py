@@ -71,12 +71,12 @@ class SetupPage(BasePage):
         )
         layout.addWidget(heading)
 
-        name_prompt = QLabel("What should we call this workspace?")
+        name_prompt = QLabel("What should we call this secure workspace?")
         name_prompt.setAlignment(Qt.AlignmentFlag.AlignCenter)
         name_prompt.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_SECONDARY};")
         layout.addWidget(name_prompt)
 
-        self.name = FloatingLabelLineEdit("Workspace name")
+        self.name = FloatingLabelLineEdit("Secure workspace name")
         self.name.setObjectName("setupPage.nameField")
         self.name.setFixedWidth(320)
         if default_name:

@@ -241,13 +241,13 @@ class OnboardingErrorPage(QWidget):
         layout.setContentsMargins(48, 48, 48, 48)
         layout.addStretch(1)
 
-        heading = QLabel("This workspace isn't available")
+        heading = QLabel("This secure workspace isn't available")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
         layout.addWidget(heading)
 
         body = QLabel(
-            "This workspace's ecosystem bundle failed verification — "
+            "This secure workspace's ecosystem bundle failed verification — "
             f"{detail}. Contact your administrator."
         )
         body.setObjectName("form-error")
