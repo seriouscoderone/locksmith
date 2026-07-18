@@ -69,6 +69,54 @@ _INT_CEILING = 2_000_000_000
 _FLOAT_CEILING = 1_000_000_000_000.0
 
 
+# Acceptance-demo fix wave item 1: QSpinBox/QDoubleSpinBox/QComboBox/QGroupBox
+# get NO color from the app-wide stylesheet (`ui/styles.py`'s selector list
+# only covers QLabel/QPushButton/QLineEdit/QListWidget::Item), so — unlike
+# LocksmithLineEdit/LocksmithCheckbox, which carry their own explicit
+# background+text-color QSS — they render with the OS's native (and, under a
+# dark system appearance, dark) palette regardless of this app's own light
+# theme. These per-instance QSS snippets give every field-like widget this
+# builder renders the SAME explicit light-theme colors, so none of them can
+# go dark-on-dark independent of the surrounding page.
+def _field_qss(widget_type: str) -> str:
+    return f"""
+        {widget_type} {{
+            border: 1px solid {colors.BORDER_NEUTRAL};
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-size: 14px;
+            background-color: {colors.BACKGROUND_CONTENT};
+            color: {colors.TEXT_PRIMARY};
+        }}
+        {widget_type} QAbstractItemView {{
+            background-color: {colors.BACKGROUND_CONTENT};
+            color: {colors.TEXT_PRIMARY};
+            selection-background-color: {colors.BACKGROUND_SELECTION};
+        }}
+    """
+
+
+_GROUP_BOX_QSS = f"""
+    QGroupBox {{
+        border: 1px solid {colors.BORDER};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 12px 8px 8px 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {colors.TEXT_PRIMARY};
+        background-color: transparent;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        left: 6px;
+        padding: 0 4px;
+        color: {colors.TEXT_PRIMARY};
+    }}
+"""
+
+
 class SchemaFormBuilder:
     """Builds a Qt form from a JSON-Schema ``payload_schema`` object, and
     extracts values/validation messages back out of it.
@@ -163,6 +211,7 @@ class SchemaFormBuilder:
         enum_values = subschema.get("enum")
         if enum_values:
             combo = QComboBox()
+            combo.setStyleSheet(_field_qss("QComboBox"))
             combo.addItems([str(v) for v in enum_values])
             combo.setCurrentIndex(-1)
             if description:
@@ -182,12 +231,14 @@ class SchemaFormBuilder:
         minimum = subschema.get("minimum")
         if field_type == "number":
             spin = QDoubleSpinBox()
+            spin.setStyleSheet(_field_qss("QDoubleSpinBox"))
             spin.setDecimals(2)
             spin.setMaximum(_FLOAT_CEILING)
             spin.setMinimum(float(minimum) if minimum is not None else -_FLOAT_CEILING)
             kind = "double_spin"
         else:
             spin = QSpinBox()
+            spin.setStyleSheet(_field_qss("QSpinBox"))
             spin.setMaximum(_INT_CEILING)
             spin.setMinimum(int(minimum) if minimum is not None else -_INT_CEILING)
             kind = "int_spin"
@@ -210,6 +261,7 @@ class SchemaFormBuilder:
         enum_values = items_schema.get("enum")
         if items_schema.get("type") == "string" and enum_values:
             group = QGroupBox(label_text)
+            group.setStyleSheet(_GROUP_BOX_QSS)
             if description:
                 group.setToolTip(description)
             group_layout = QFormLayout(group)
@@ -227,6 +279,7 @@ class SchemaFormBuilder:
 
     def _build_object_field(self, layout, path, label_text, subschema, description) -> None:
         group = QGroupBox(label_text)
+        group.setStyleSheet(_GROUP_BOX_QSS)
         if description:
             group.setToolTip(description)
         group_layout = QFormLayout(group)
@@ -256,7 +309,10 @@ class SchemaFormBuilder:
         message = QLabel(f"Cannot render field '{path}': {reason}")
         message.setObjectName("form-error")
         message.setWordWrap(True)
-        message.setStyleSheet(f"color: {colors.DANGER};")
+        message.setStyleSheet(
+            f"color: {colors.DANGER}; background-color: {colors.BACKGROUND_ERROR}; "
+            "border-radius: 6px; padding: 6px 10px;"
+        )
         layout.addRow(message)
 
     @staticmethod

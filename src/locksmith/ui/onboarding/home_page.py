@@ -90,6 +90,32 @@ _KIND_GLYPHS = {
 }
 _DEFAULT_GLYPH = "●"  # bullet, used for any unrecognized `kind`
 
+# Acceptance-demo fix wave item 1: same rationale as form_builder.py's own
+# copy — QGroupBox gets no color from the app-wide stylesheet, so its title
+# renders via the OS's native (dark-under-dark-appearance) palette regardless
+# of this app's own light theme. Duplicated rather than imported (house style
+# favors small per-file CSS constants over a shared style module — see
+# KFOnboardingPage's own `_*_badge_css()` methods).
+_GROUP_BOX_QSS = f"""
+    QGroupBox {{
+        border: 1px solid {colors.BORDER};
+        border-radius: 8px;
+        margin-top: 14px;
+        padding: 12px 8px 8px 8px;
+        font-size: 13px;
+        font-weight: 600;
+        color: {colors.TEXT_PRIMARY};
+        background-color: transparent;
+    }}
+    QGroupBox::title {{
+        subcontrol-origin: margin;
+        subcontrol-position: top left;
+        left: 6px;
+        padding: 0 4px;
+        color: {colors.TEXT_PRIMARY};
+    }}
+"""
+
 
 def _held_matches(held: Iterable[Any], schema_said: str, *, require_active: bool) -> bool:
     """True iff any held-credential view matches ``schema_said`` and is
@@ -311,7 +337,17 @@ class OnboardingHomePage(BasePage):
     def _build_picker_view(self) -> QWidget:
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
+        # Acceptance-demo fix wave item 1: QAbstractScrollArea's viewport
+        # paints from its OWN palette, not the app-wide QSS cascade (see
+        # KFOnboardingPage's identical treatment) — without this, an
+        # unstyled scroll area shows the OS's native (dark, under a dark
+        # system appearance) background regardless of this app's own light
+        # theme, which is exactly what made the "Who are you?" heading
+        # below (styled in TEXT_PRIMARY, meant for a LIGHT background)
+        # unreadable on a black page.
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         inner = QWidget()
+        inner.setStyleSheet("background: transparent;")
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(48, 48, 48, 48)
         layout.setSpacing(16)
@@ -355,10 +391,48 @@ class OnboardingHomePage(BasePage):
         return widget
 
     def _build_form_shell(self):
+        # Acceptance-demo fix wave item 1: same QScrollArea-viewport
+        # background fix as `_build_picker_view` (see its comment) — the
+        # form view is long enough on a real application schema to need
+        # scrolling anyway, which item 2 also relies on (scrolling a
+        # freshly-rendered error/banner into view).
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
+
         container = QWidget()
+        container.setStyleSheet("background: transparent;")
         outer = QVBoxLayout(container)
         outer.setContentsMargins(48, 48, 48, 48)
         outer.setSpacing(16)
+
+        # "Applying to" header (item 5): the currently-selected authority's
+        # display_name/AID/phase, sourced from the same `egf.authorities(...)`
+        # call the context combo(s) use. Populated/updated by
+        # `_update_applying_to_header` (see `_build_context_controls`);
+        # empty and hidden until a context selection resolves to exactly one
+        # authority.
+        applying_to_row = QHBoxLayout()
+        applying_to_row.setSpacing(8)
+        self._applying_to_text = QLabel("")
+        self._applying_to_text.setObjectName("onboarding.applyingToText")
+        self._applying_to_text.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        self._applying_to_phase_badge = QLabel("")
+        self._applying_to_phase_badge.setObjectName("onboarding.applyingToPhaseBadge")
+        self._applying_to_phase_badge.setStyleSheet(
+            f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
+            "border-radius: 8px; font-size: 11px; font-weight: 600; padding: 1px 8px;"
+        )
+        applying_to_row.addWidget(self._applying_to_text)
+        applying_to_row.addWidget(self._applying_to_phase_badge)
+        applying_to_row.addStretch(1)
+        self._applying_to_row_widget = QWidget()
+        self._applying_to_row_widget.setStyleSheet("background: transparent;")
+        self._applying_to_row_widget.setLayout(applying_to_row)
+        self._applying_to_row_widget.setVisible(False)
+        outer.addWidget(self._applying_to_row_widget)
 
         form_layout = QVBoxLayout()
         outer.addLayout(form_layout)
@@ -372,7 +446,8 @@ class OnboardingHomePage(BasePage):
         outer.addWidget(submit_btn)
         outer.addStretch(1)
 
-        return container, form_layout, error_layout
+        scroll.setWidget(container)
+        return scroll, form_layout, error_layout
 
     # -- accessors (test seams) --------------------------------------------
 
@@ -475,6 +550,7 @@ class OnboardingHomePage(BasePage):
                 # Built lazily: skip entirely when every dimension for
                 # this role turns out to be shared with a payload field.
                 context_group = QGroupBox("Issuing authority")
+                context_group.setStyleSheet(_GROUP_BOX_QSS)
                 context_form = QFormLayout(context_group)
 
             options = self._dedup_context_options(authorities, dim.id)
@@ -560,7 +636,10 @@ class OnboardingHomePage(BasePage):
             label = QLabel(message)
             label.setObjectName("form-error")
             label.setWordWrap(True)
-            label.setStyleSheet(f"color: {colors.DANGER};")
+            label.setStyleSheet(
+                f"color: {colors.DANGER}; background-color: {colors.BACKGROUND_ERROR}; "
+                "border-radius: 6px; padding: 8px 12px;"
+            )
             self._error_layout.addWidget(label)
             self._error_labels.append(label)
 
