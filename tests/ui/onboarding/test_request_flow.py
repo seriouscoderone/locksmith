@@ -357,14 +357,25 @@ def test_submit_failure_logs_a_warning_with_the_message(env, caplog):
     chokepoint for both."""
     import logging
 
-    caplog.set_level(logging.WARNING, logger="locksmith.ui.onboarding.request_flow")
-    flow = env.flow()
-    flow.submit("carrier", {}, dict(VALID_CONTEXT))  # missing applicant_legal_name
+    # The module logger comes from keri's ogler, which may attach direct
+    # handlers with propagate=False depending on ogler's global state — in
+    # that mode pytest's caplog (which relies on propagation) sees nothing.
+    # Force propagation for the duration of the test so capture is
+    # deterministic across environments.
+    module_logger = logging.getLogger("locksmith.ui.onboarding.request_flow")
+    old_propagate = module_logger.propagate
+    module_logger.propagate = True
+    try:
+        caplog.set_level(logging.WARNING, logger="locksmith.ui.onboarding.request_flow")
+        flow = env.flow()
+        flow.submit("carrier", {}, dict(VALID_CONTEXT))  # missing applicant_legal_name
 
-    assert any(
-        "onboarding.request_failed" in record.message and "applicant_legal_name" in record.message
-        for record in caplog.records
-    )
+        assert any(
+            "onboarding.request_failed" in record.message and "applicant_legal_name" in record.message
+            for record in caplog.records
+        )
+    finally:
+        module_logger.propagate = old_propagate
 
 
 def test_submit_multisig_hab_emits_request_failed_and_schedules_nothing(env):
