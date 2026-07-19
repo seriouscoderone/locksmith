@@ -7,6 +7,9 @@ This module contains main Locksmith Application class
 from pathlib import Path
 
 from keri import help
+from keri.app.keeping import Keeper
+from keri.app.storing import Mailboxer
+from keri.db.dbing import LMDBer
 
 from locksmith.core import branding
 from locksmith.core.configing import LocksmithConfig
@@ -22,6 +25,14 @@ from locksmith.update.log import record_verification_result
 from locksmith.update.verify import VerificationResult, verify_artifact
 
 logger = help.ogler.getLogger(__name__)
+
+
+# KERI on-disk store directory names, derived from the owning classes so they
+# track upstream renames. Each vault gets a <store>/<base>/<name> dir per store.
+_DB_DIR = Path(LMDBer.TailDirPath).name              # "db"   (KEL/history)
+_KS_DIR = Path(Keeper.TailDirPath).name              # "ks"   (keystore)
+_MBX_DIR = Path(Mailboxer.TailDirPath).name          # "mbx"  (mailbox)
+_RT_DIR = Path(LocksmithBaser.TailDirPath).name      # "rt"   (Locksmith runtime db)
 
 
 # Generous: the artifact (a DMG / installer) is tens of MB. The gate fetches
@@ -205,6 +216,27 @@ def _make_update_verifier_windows(on_verified=None):
                 pass
 
     return _verify
+
+
+def _vault_head_dirs():
+    """KERI roots (…/keri, …/.keri) that currently exist, in keripy order.
+
+    Mirrors keri LMDBer head/tail pairing: the system head uses the ``keri``
+    parent, the home head uses ``.keri``. Single source of truth for both
+    ``environments()`` and ``adopt_legacy_vaults`` so the two never drift.
+    Evaluated per call (not at import) so tests can point it at a tmp dir.
+    """
+    roots = (
+        Path(LMDBer.HeadDirPath) / Path(LocksmithBaser.TailDirPath).parent,
+        Path(LMDBer.AltHeadDirPath) / Path(LocksmithBaser.AltTailDirPath).parent,
+    )
+    return [root for root in roots if root.is_dir()]
+
+
+def _store_dir(root, store_name, base=""):
+    """Path to a KERI store dir under one root: ``root/store_name/base``."""
+    base_path = Path(base) if base else Path()
+    return root / store_name / base_path
 
 
 class LocksmithApplication:
@@ -642,21 +674,18 @@ class LocksmithApplication:
         Uses Locksmith's runtime database as the source of truth so generic KERI
         environments such as witnesses do not appear in the vault drawer.
 
+        Legacy vaults created before the `rt/` repoint are backfilled at launch
+        by `adopt_legacy_vaults`, so this pure read still surfaces them.
+
         Returns:
             list: List of vault names
         """
-        base_path = Path(self.config.base) if self.config.base else Path()
-        candidates = (
-            Path("/usr/local/var") / Path(LocksmithBaser.TailDirPath) / base_path,
-            Path.home() / Path(LocksmithBaser.AltTailDirPath) / base_path,
-        )
-        rt_home = next((path for path in candidates if path.is_dir()), None)
-        if rt_home is None:
-            return []
-
-        return sorted(
-            path.name
-            for path in rt_home.iterdir()
-            if path.is_dir()
-        )
+        base = getattr(self.config, "base", "") or ""
+        for root in _vault_head_dirs():
+            rt_home = _store_dir(root, _RT_DIR, base)
+            if rt_home.is_dir():
+                return sorted(
+                    path.name for path in rt_home.iterdir() if path.is_dir()
+                )
+        return []
         
