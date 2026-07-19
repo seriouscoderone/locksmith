@@ -21,6 +21,7 @@ from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import make_hoa_resolver
+from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
 from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
@@ -173,6 +174,7 @@ class LocksmithWindow(QMainWindow):
         # _run_default_bootstrap).
         self._request_flow: RequestFlow | None = None
         self._onboarding_home_page: OnboardingHomePage | None = None
+        self._hoa_notifications_page: HoaNotificationsPage | None = None
         self._onboarding_wired_vault = None
         self._wire_onboarding(vault_page)
 
@@ -296,6 +298,7 @@ class LocksmithWindow(QMainWindow):
             logger.error("onboarding.egf_broken error=%s", exc)
             self._request_flow = None
             self._onboarding_home_page = None
+            self._hoa_notifications_page = None
             error_page = OnboardingErrorPage(str(exc), parent=vault_page)
             vault_page.register_page("home", error_page)
             return
@@ -313,6 +316,25 @@ class LocksmithWindow(QMainWindow):
         # mirroring how the core nav buttons wire straight to
         # _show_vault_page in VaultPage._connect_navigation.
         home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
+
+        # Notifications (Task 10, HOA #2 live-demo finding): HoaVaultPage
+        # registers none of the stock wallet's core pages (see hoa_page.py),
+        # including "notifications" -- so the toolbar bell is hidden AND the
+        # 5s NotificationToastDoer toast's click-through
+        # (_on_toast_clicked -> vault_page.show_notifications() ->
+        # _show_page("notifications")) had nowhere to land. Registered
+        # exactly like "home" immediately above: a direct MenuButton click
+        # connection, not a VaultPlugin.
+        self._hoa_notifications_page = HoaNotificationsPage(
+            self.app, egf_doc, parent=vault_page,
+        )
+        vault_page.register_page("notifications", self._hoa_notifications_page)
+        notifications_entry_btn = MenuButton(icon=QIcon(), label="Notifications")
+        notifications_entry_btn.setObjectName("vaultNavMenu.notificationsButton")
+        vault_page.add_menu_entry("notifications", notifications_entry_btn, [])
+        notifications_entry_btn.clicked.connect(
+            lambda: vault_page._show_vault_page("notifications")
+        )
 
     def _install_help_menu(self) -> None:
         """Add a Help menu with the "Check for updates…" entry. Native
@@ -654,6 +676,12 @@ class LocksmithWindow(QMainWindow):
         # emissions as a visible inline banner on the form view (distinct
         # from refresh() above, which reacts to every event generically).
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.on_doer_event)
+        # Task 10: the notifications page's data source (the notifier's
+        # note iterator) isn't itself event-driven, so any doer event
+        # (a new inbound note among them) re-reads it, same convention as
+        # the onboarding home page's refresh() above.
+        if self._hoa_notifications_page is not None:
+            self.app.vault.signals.doer_event.connect(self._hoa_notifications_page.refresh)
 
         # Live-observation fix: the page's __init__ already calls refresh()
         # once, but that happens at CONSTRUCTION time -- for a HOA whose
@@ -710,6 +738,15 @@ class LocksmithWindow(QMainWindow):
             datetime = data.get('datetime', '')
             message = data.get('message', 'New notification')
             pending_count = data.get('pending_count', 1)
+            route = data.get('route', '')
+
+            # HOA-aware copy (Task 10): the stock wallet's "New credential
+            # offer received" reads fine standing alone, but a persona-
+            # shaped HOA build wants the toast to point somewhere -- the
+            # notifications page this task adds. Stock (non-onboarding)
+            # brands keep the unmodified message from vaulting.py.
+            if brand().onboarding_enabled and '/ipex/grant' in route:
+                message = "A credential has arrived — review it in Notifications"
 
             self.show_notification_toast(datetime, message, pending_count)
 

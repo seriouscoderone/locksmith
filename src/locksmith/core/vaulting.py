@@ -376,7 +376,7 @@ class NotificationToastDoer(doing.Doer):
                 unread_count = self._count_unread()
 
                 # Format the message
-                message = self._format_notification_message(note)
+                message, route = self._format_notification_message(note)
 
                 # Emit signal for UI to show toast
                 self.vault.signals.emit_doer_event(
@@ -386,7 +386,8 @@ class NotificationToastDoer(doing.Doer):
                         'datetime': note.datetime,
                         'message': message,
                         'pending_count': unread_count,
-                        'rid': rid
+                        'rid': rid,
+                        'route': route,
                     }
                 )
 
@@ -441,7 +442,16 @@ class NotificationToastDoer(doing.Doer):
             note: Notification object
 
         Returns:
-            Formatted message string
+            ``(message, route)`` tuple (Task 10, additive: every branch
+            below now returns its route alongside the existing message
+            text, so ``recur`` can pass the route through the toast event
+            for HOA-aware retargeting/copy without changing the message
+            text itself). For an IPEX note whose exn resolves, ``route`` is
+            the fine-grained inner route (``exn.ked['r']``, e.g.
+            "/ipex/grant") rather than the note's own coarse
+            "/exn/ipex..." wrapper route -- every other branch (and the
+            IPEX branch's own unresolvable-exn fallthrough) returns the
+            note's own route.
         """
         # Check the notification route
         route = note.pad.get('a', {}).get('r', '')
@@ -449,13 +459,13 @@ class NotificationToastDoer(doing.Doer):
         # Check if this is a multisig notification
         if '/multisig' in route:
             if '/multisig/icp' in route:
-                return "New multisig group proposal"
+                return "New multisig group proposal", route
             elif '/multisig/rot' in route:
-                return "Multisig rotation request"
+                return "Multisig rotation request", route
             elif '/multisig/ixn' in route:
-                return "Multisig interaction request"
+                return "Multisig interaction request", route
             else:
-                return "New multisig notification"
+                return "New multisig notification", route
 
         if "/challenge/response" in route:
             signer = note.pad.get('a', {}).get('signer', '')
@@ -465,7 +475,7 @@ class NotificationToastDoer(doing.Doer):
                 signer_name = "Unknown"
             else:
                 signer_name = signer_contact.get('alias', 'Unknown')
-            return f"Challenge response received from {signer_name}"
+            return f"Challenge response received from {signer_name}", route
 
         if "/keystate/update" in route:
             pre = note.pad.get('a', {}).get('pre', '')
@@ -477,7 +487,7 @@ class NotificationToastDoer(doing.Doer):
                 signer_name = "Unknown"
             else:
                 signer_name = signer_contact.get('alias', 'Unknown')
-            return f"Key state update recieved for {signer_name} moving to sequence number {sn} at {dig}"
+            return f"Key state update recieved for {signer_name} moving to sequence number {sn} at {dig}", route
 
         # Check if this is an IPEX notification
         if route.startswith('/exn/ipex'):
@@ -492,15 +502,15 @@ class NotificationToastDoer(doing.Doer):
                     if exn:
                         exn_route = exn.ked.get('r', '')
                         if '/ipex/grant' in exn_route:
-                            return "New credential offer received"
+                            return "New credential offer received", exn_route
                         elif '/ipex/admit' in exn_route:
-                            return "Credential accepted"
+                            return "Credential accepted", exn_route
                         elif '/ipex/spurn' in exn_route:
-                            return "Credential rejected"
+                            return "Credential rejected", exn_route
                         elif '/ipex/apply' in exn_route:
-                            return "New credential application"
+                            return "New credential application", exn_route
                         elif '/ipex/offer' in exn_route:
-                            return "New credential offer"
+                            return "New credential offer", exn_route
                 except Exception as e:
                     logger.warning(f"Error formatting IPEX notification: {e}")
 
@@ -508,8 +518,8 @@ class NotificationToastDoer(doing.Doer):
         if isinstance(note.attrs, dict):
             return note.attrs.get('message',
                                   note.attrs.get('msg',
-                                                 note.attrs.get('d', 'New notification')))
-        return str(note.attrs) if note.attrs else "New notification"
+                                                 note.attrs.get('d', 'New notification'))), route
+        return (str(note.attrs) if note.attrs else "New notification"), route
 
     def exit(self):
         """Called when doer exits."""

@@ -692,7 +692,10 @@ def test_wire_onboarding_registers_error_page_when_egf_broken(monkeypatch):
     monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
     monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
 
-    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    win = SimpleNamespace(
+        app=MagicMock(), _request_flow=None, _onboarding_home_page=None,
+        _hoa_notifications_page=None,
+    )
     vault_page = _FakeHoaVaultPage()
 
     # Must not raise -- this is the crash `LocksmithWindow.__init__` would
@@ -701,6 +704,7 @@ def test_wire_onboarding_registers_error_page_when_egf_broken(monkeypatch):
 
     assert win._request_flow is None
     assert win._onboarding_home_page is None
+    assert win._hoa_notifications_page is None
     request_flow_cls.assert_not_called()
     onboarding_home_page_cls.assert_not_called()
 
@@ -716,7 +720,13 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     """Control case for the above: when `make_hoa_resolver` resolves
     cleanly, `_wire_onboarding` must take the normal path -- RequestFlow +
     OnboardingHomePage constructed, registered as "home", nav entry added --
-    unaffected by the new try/except."""
+    unaffected by the new try/except.
+
+    Task 10: the same success path also constructs a REAL
+    `HoaNotificationsPage` (not mocked -- its `__init__` does no I/O; see
+    its own module docstring) and registers it as "notifications" +
+    a second nav-menu entry, mirroring "home" exactly."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
     from locksmith.ui.window import LocksmithWindow
 
     fake_brand = MagicMock()
@@ -739,7 +749,10 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
     monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
 
-    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    win = SimpleNamespace(
+        app=MagicMock(), _request_flow=None, _onboarding_home_page=None,
+        _hoa_notifications_page=None,
+    )
     vault_page = _FakeHoaVaultPage()
 
     LocksmithWindow._wire_onboarding(win, vault_page)
@@ -748,8 +761,12 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     onboarding_home_page_cls.assert_called_once()
     assert win._request_flow is request_flow_instance
     assert win._onboarding_home_page is onboarding_home_page_instance
-    assert vault_page.registered_pages == {"home": onboarding_home_page_instance}
-    assert len(vault_page.menu_entries) == 1
+    assert isinstance(win._hoa_notifications_page, HoaNotificationsPage)
+    assert vault_page.registered_pages == {
+        "home": onboarding_home_page_instance,
+        "notifications": win._hoa_notifications_page,
+    }
+    assert len(vault_page.menu_entries) == 2
 
 
 def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
@@ -777,12 +794,14 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
+    hoa_notifications_page = MagicMock(name="hoa_notifications_page")
     vault = MagicMock(name="vault")
 
     win = SimpleNamespace(
         app=SimpleNamespace(vault=vault),
         _request_flow=request_flow,
         _onboarding_home_page=onboarding_home_page,
+        _hoa_notifications_page=hoa_notifications_page,
         _onboarding_wired_vault=None,
         pages={},
     )
@@ -792,6 +811,8 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
     request_flow.seed_all_personas.assert_called_once()
     vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.refresh)
     vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.on_doer_event)
+    # Task 10: the notifications page's own refresh() is wired the same way.
+    vault.signals.doer_event.connect.assert_any_call(hoa_notifications_page.refresh)
 
     assert scheduled == [(0, onboarding_home_page.refresh)], (
         "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
@@ -816,12 +837,14 @@ def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkey
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
+    hoa_notifications_page = MagicMock(name="hoa_notifications_page")
     vault = MagicMock(name="vault")
 
     win = SimpleNamespace(
         app=SimpleNamespace(vault=vault),
         _request_flow=request_flow,
         _onboarding_home_page=onboarding_home_page,
+        _hoa_notifications_page=hoa_notifications_page,
         _onboarding_wired_vault=None,
         pages={},
     )
