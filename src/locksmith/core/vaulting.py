@@ -187,6 +187,7 @@ class Vault(doing.DoDoer):
                 exchanger=self.exc,
                 is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
                 on_first_contact=self._register_first_contact_peer,
+                verifier=self.verifier,
             )
 
         # Background reachability probe for paired peers (always on —
@@ -297,6 +298,7 @@ class Vault(doing.DoDoer):
             exchanger=self.exc,
             is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
             on_first_contact=self._register_first_contact_peer,
+            verifier=self.verifier,
         )
         self.extend(self.peer_doer.doers)
 
