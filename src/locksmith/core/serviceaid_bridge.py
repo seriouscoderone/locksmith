@@ -8,14 +8,14 @@ doer/signal machinery, WITHOUT touching Locksmith's peer-aware delivery
 (`locksmith.peer.posting.PeerAwarePoster`), which stays host-owned per the
 framework spec (Sec 5.1/8).
 
-Four pieces:
+Five pieces:
 
 - `QtProgressSink` adapts `keri_serviceaid.progress.ProgressSink` onto
   Locksmith's `DoerSignalBridge`, so serviceaid's progress emissions surface
   as the SAME Qt events (`doer_event(doer_name, event_type, data)`) the
   gate/UI already filter on. `keri_serviceaid`'s emissions deliberately reuse
   Locksmith's existing vocabulary (`"IssueCredentialDoer"`,
-  `"SendGrantDoer"`) for this exact reason.
+  `"SendGrantDoer"`, `"AdmitDoer"`) for this exact reason.
 - `serviceaid_eligible(hab)` is the envelope guard: today's serverless
   providers only support single-sig, unwitnessed identifiers. `GroupHab`
   (multisig) and witnessed habs fall back to the legacy doers.
@@ -32,18 +32,32 @@ Four pieces:
   the exn FRAMING differs -- that comes from
   `frame_grant_for(return_raw=True)` instead of
   `keri.vc.protocoling.ipexGrantExn`.
-- `make_issue_doer`/`make_grant_doer` are the routing chokepoint: eligible
-  habs get a bridge doer, everyone else gets the legacy doer with equivalent
-  kwargs. No behavior change for ineligible habs.
+- `ServiceaidAdmitDoer` wraps `keri_serviceaid.providers.admit_grant`, which
+  already does the local admit (parse the grant's embeds, save the
+  credential, frame + locally land the admit exn) and emits the legacy
+  `("AdmitDoer", "admit_complete")` vocabulary via the sink -- zero new UI
+  wiring. The doer then best-effort delivers the admit exn back to the
+  granter over `PeerAwarePoster`: it reconstructs the admit's raw message +
+  attachment from storage via `exchanging.serializeMessage(said,
+  framed=True)` (NOT `exchanging.cloneMessage`, whose `pathed` return only
+  carries nested embed-signature paths -- empty for a no-embeds admit exn,
+  never the exn's own top-level signature attachment) and resolves the
+  granter AID from the original grant's `.ked["i"]` (`cloneMessage` returns
+  a plain `(serder, pathed)` 2-tuple). Delivery failure is logged, never
+  fatal -- the LOCAL landing (`admit_grant` succeeding) is what gates.
+- `make_issue_doer`/`make_grant_doer`/`make_admit_doer` are the routing
+  chokepoint: eligible habs get a bridge doer, everyone else gets the legacy
+  doer with equivalent kwargs. No behavior change for ineligible habs.
 """
 from types import SimpleNamespace
 
 from hio.base import doing
 from keri import help, kering
 from keri.core import parsing, serdering
+from keri.peer import exchanging
 from keri.vdr import credentialing
 
-from keri_serviceaid.providers import frame_grant_for, issue_credential
+from keri_serviceaid.providers import admit_grant, frame_grant_for, issue_credential
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
@@ -466,6 +480,127 @@ def make_grant_doer(app, hab, **kwargs):
         hab_pre=kwargs.get("hab_pre") or hab.pre,
         credential_said=kwargs["credential_said"],
         recipient_pre=kwargs["recipient"],
+        message=kwargs.get("message", ""),
+        signal_bridge=app.vault.signals,
+    )
+
+
+class ServiceaidAdmitDoer(doing.Doer):
+    """Admits an inbound IPEX grant through keri_serviceaid's single-sig
+    admit_grant (which emits the legacy ("AdmitDoer","admit_complete")
+    vocabulary via the sink -- the gate and onboarding refresh react with
+    zero new wiring), then best-effort delivers the admit exn back to
+    the granter over the peer-aware transport. Delivery failure is
+    logged, never fatal: the LOCAL landing is what gates."""
+
+    def __init__(self, app, *, grant_said: str, hab_pre: str,
+                 message: str = "", **kwa):
+        self.app = app
+        self.grant_said = grant_said
+        self.hab_pre = hab_pre
+        self.message = message
+        super(ServiceaidAdmitDoer, self).__init__(**kwa)
+
+    def do(self, tymth, tock=0.0, **opts):
+        self.wind(tymth)
+        self.tock = tock
+        _ = (yield self.tock)
+        vault = self.app.vault
+        sink = QtProgressSink(vault.signals)
+        hab = vault.hby.habs.get(self.hab_pre)
+        try:
+            admit_said = admit_grant(
+                vault.hby, hab, vault.rgy,
+                grant_said=self.grant_said,
+                exc=vault.exc,
+                message=self.message,
+                sink=sink,
+            )
+        except Exception as e:  # noqa: BLE001
+            logger.exception(f"ServiceaidAdmitDoer failed: {e}")
+            sink.on_event("AdmitDoer", "admit_failed", {
+                "error": str(e), "success": False,
+                "grant_said": self.grant_said})
+            return
+        try:
+            self._deliver_admit_back(hab, admit_said)
+        except Exception:  # noqa: BLE001 -- courtesy ack only
+            logger.exception("admit-back delivery failed (non-fatal)")
+        return
+
+    def _deliver_admit_back(self, hab, admit_said: str) -> None:
+        """Best-effort courtesy delivery of the just-landed admit exn back
+        to the granter.
+
+        `exchanging.cloneMessage` returns a plain `(serder, pathed)`
+        2-tuple (never an object with `.serder`/`.pathed` attributes), and
+        its `pathed` only carries nested "e"-embed signature paths -- empty
+        here, since an admit exn (`protocoling.ipexAdmitExn`) has no `e`
+        embeds at all. It is NOT where the exn's own top-level signature
+        attachment lives, so it cannot supply what `PeerAwarePoster.send`
+        needs to send. `exchanging.serializeMessage(hby, said,
+        framed=True)` is the primitive that reconstructs a sendable raw
+        message (event body + its own signature attachment) from storage
+        by SAID -- `framed=True` skips the extra attachment-group wrapper
+        `serializeMessage` otherwise adds for re-embedding, since this
+        message is sent individually (mirrors `ServiceaidGrantDoer`'s
+        raw-splitting of `frame_grant_for(return_raw=True)`'s output).
+        """
+        vault = self.app.vault
+        grant, _pathed = exchanging.cloneMessage(vault.hby, self.grant_said)
+        if grant is None:
+            raise ValueError(f"grant message {self.grant_said} not found")
+        granter = grant.ked["i"]
+
+        raw = exchanging.serializeMessage(vault.hby, admit_said, framed=True)
+        if not raw:
+            raise ValueError(f"admit message {admit_said} not found")
+        ims = bytearray(raw)
+        admit_serder = serdering.SerderKERI(raw=bytes(ims))
+        del ims[:admit_serder.size]
+        attachment = bytes(ims) if ims else None
+
+        postman = PeerAwarePoster(
+            hby=vault.hby, hab=hab, recp=granter,
+            baser=vault.db, topic="credential")
+        postman.send(serder=admit_serder, attachment=attachment)
+        doer = doing.DoDoer(doers=postman.deliver())
+        self.app.vault.extend([doer])
+
+
+def make_admit_doer(app, hab, **kwargs):
+    """Routing chokepoint for IPEX admit: eligible habs (single-sig,
+    unwitnessed) get the serviceaid bridge doer; everyone else gets the
+    legacy AdmitDoer with equivalent kwargs. The stock wallet's admit
+    UI stays on the legacy path (spec Sec 8.2).
+
+    Accepts the bridge doer's kwarg vocabulary: `grant_said`, `hab_pre`,
+    `message`. `hab_pre` defaults to `hab.pre`, matching `make_grant_doer`.
+
+    The legacy fallback intentionally leaves `AdmitDoer`'s `save_only` at
+    its default (`False`, i.e. full send + multisig-coordination mode) --
+    NOT the `save_only=True` used by accept_grant.py's offline "save for
+    later" button (ipexing.py's other AdmitDoer call site). GroupHab is
+    routed here specifically BECAUSE only the legacy doer can run its
+    multisig coordination + send dance (`admit_grant` raises
+    NotImplementedError for GroupHab); constructing it with
+    `save_only=True` would silently skip exactly that behavior, making the
+    fallback route pointless for the GroupHab case it exists to cover.
+    """
+    if serviceaid_eligible(hab):
+        return ServiceaidAdmitDoer(
+            app,
+            grant_said=kwargs["grant_said"],
+            hab_pre=kwargs.get("hab_pre") or hab.pre,
+            message=kwargs.get("message", ""),
+        )
+
+    from locksmith.core.ipexing import AdmitDoer
+
+    return AdmitDoer(
+        app,
+        hab_pre=kwargs.get("hab_pre") or hab.pre,
+        grant_said=kwargs["grant_said"],
         message=kwargs.get("message", ""),
         signal_bridge=app.vault.signals,
     )
