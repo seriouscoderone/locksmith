@@ -669,9 +669,7 @@ class LocksmithWindow(QMainWindow):
         self._request_flow.seed_all_personas()
         oobi_source = make_hoa_oobi_source()
         if oobi_source is not None:
-            ensure_direct_transport(
-                self.app, self._request_flow.egf_doc, oobi_source,
-                brand().egf_accept_phases)
+            self._bring_up_direct_transport(oobi_source)
         # Task 11: auto-admit the explicitly-requested role's expected
         # grant (owner-approved policy -- the user already consented by
         # applying, so the EXACT grant they're waiting on lands without a
@@ -714,6 +712,38 @@ class LocksmithWindow(QMainWindow):
         vault_page = self.pages.get(Pages.VAULT)
         if vault_page is not None:
             vault_page._current_page_key = "home"
+
+    def _bring_up_direct_transport(self, oobi_source, attempt: int = 0,
+                                   max_attempts: int = 40) -> None:
+        """Bring up direct-mode peer transport, retrying on a bounded timer
+        while the default identifier is still being incepted.
+
+        On a fresh onboarding vault the default AID is created
+        asynchronously (``create_identifier`` schedules an ``InceptDoer``
+        on the vault's Doist and returns before the hab exists), so the
+        first ``ensure_direct_transport`` call at wire time finds no hab and
+        defers (returns False). The per-vault wiring guard means this method
+        is the ONLY caller, so without a retry transport would never come up
+        for the first-run flow and the carrier could not present. Re-attempt
+        every 250 ms (≈10 s budget) until it reports done, cancelling if the
+        open vault changes underneath us (vault switch / close)."""
+        vault = self.app.vault
+        if vault is None or vault is not self._onboarding_wired_vault:
+            return  # vault switched/closed mid-retry — abandon this chain
+        if ensure_direct_transport(
+                self.app, self._request_flow.egf_doc, oobi_source,
+                brand().egf_accept_phases):
+            return  # brought up (or nothing to do)
+        if attempt + 1 >= max_attempts:
+            logger.warning(
+                "direct_transport.bringup_timeout the default identifier "
+                "never appeared; carrier transport is not up")
+            return
+        QTimer.singleShot(
+            250,
+            lambda: self._bring_up_direct_transport(
+                oobi_source, attempt + 1, max_attempts),
+        )
 
     def _connect_toast_signals(self):
         """Connect to vault signals for toast notifications."""

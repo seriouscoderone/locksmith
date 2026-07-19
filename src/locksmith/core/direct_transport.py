@@ -45,10 +45,21 @@ def direct_authorities(egf_doc, accept_phases):
     return out
 
 
-def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> None:
+def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> bool:
+    """Bring up direct-mode peer transport for the onboarding vault.
+
+    Returns True once bring-up has been attempted (listener enabled, AID
+    exposed, authorities paired) OR there was nothing to do; returns False
+    ONLY when it deferred because the default identifier does not exist
+    yet — the first-run case where inception runs asynchronously on the
+    vault's Doist (``create_identifier`` schedules an ``InceptDoer`` and
+    returns before the hab appears). The caller retries on that False so
+    transport comes up the moment the AID lands, rather than never (the
+    per-vault wiring guard otherwise runs this exactly once). Idempotent:
+    already-enabled settings and already-paired authorities are skipped."""
     targets = direct_authorities(egf_doc, accept_phases)
     if not targets:
-        return
+        return True
     vault = app.vault
 
     # (0) default identifier -- resolved FIRST: no listener without an
@@ -62,7 +73,7 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> None:
         hab = next(iter(vault.hby.habs.values()), None)
     if hab is None:
         logger.warning("direct_transport.no_hab vault has no identifiers yet")
-        return
+        return False
 
     # (1) listener
     settings = vault.db.peerSettings.get(keys=("default",))
@@ -102,3 +113,4 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> None:
             aid=auth.aid, label=auth.display_name,
             endpoint_url=loc.url if loc else ""))
         logger.info(f"direct_transport.paired aid={auth.aid}")
+    return True

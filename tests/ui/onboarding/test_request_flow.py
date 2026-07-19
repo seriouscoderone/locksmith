@@ -791,6 +791,11 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
         "locksmith.ui.window.QTimer.singleShot",
         lambda delay, slot: scheduled.append((delay, slot)),
     )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
@@ -817,6 +822,11 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
     assert scheduled == [(0, onboarding_home_page.refresh)], (
         "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
     )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
     assert win._onboarding_wired_vault is vault
 
 
@@ -834,6 +844,11 @@ def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkey
         "locksmith.ui.window.QTimer.singleShot",
         lambda delay, slot: scheduled.append((delay, slot)),
     )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
@@ -856,3 +871,104 @@ def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkey
         "revisiting an already-wired vault must not re-schedule refresh()"
     )
     request_flow.seed_all_personas.assert_called_once()
+
+
+def _transport_win(vault):
+    """A minimal window stand-in for the `_bring_up_direct_transport`
+    retry tests: it only needs `app.vault`, `_onboarding_wired_vault`, and
+    `_request_flow.egf_doc` -- plus the method itself bound onto it, since
+    the retry recursion calls `self._bring_up_direct_transport(...)`."""
+    import types
+    from locksmith.ui.window import LocksmithWindow
+    win = SimpleNamespace(
+        app=SimpleNamespace(vault=vault),
+        _onboarding_wired_vault=vault,
+        _request_flow=SimpleNamespace(egf_doc=MagicMock(name="egf_doc")),
+    )
+    win._bring_up_direct_transport = types.MethodType(
+        LocksmithWindow._bring_up_direct_transport, win)
+    return win
+
+
+def test_bring_up_direct_transport_retries_until_hab_appears(monkeypatch):
+    """First-run inception is async (create_identifier schedules an
+    InceptDoer and returns before the hab exists), so the first
+    ensure_direct_transport finds no hab and returns False. The window must
+    retry on a bounded timer -- otherwise the per-vault wiring guard means
+    transport never comes up for the first-run flow and the carrier can
+    never present (the live-demo bug this fixes)."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append((delay, slot)),
+    )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    # False (deferred, no hab yet) on the first two calls, True on the third.
+    results = iter([False, False, True])
+    calls = []
+    def fake_ensure(app, egf, src, phases):
+        calls.append(1)
+        return next(results)
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport", fake_ensure)
+
+    vault = MagicMock(name="vault")
+    win = _transport_win(vault)
+    src = MagicMock(name="oobi_source")
+
+    win._bring_up_direct_transport(src)                      # attempt 0 -> False
+    assert scheduled and scheduled[-1][0] == 250             # retry queued at 250ms
+    scheduled[-1][1]()                                       # fire attempt 1 -> False
+    scheduled[-1][1]()                                       # fire attempt 2 -> True
+    assert len(calls) == 3                                   # stopped once done
+
+
+def test_bring_up_direct_transport_aborts_on_vault_switch(monkeypatch):
+    """A queued retry must not run ensure_direct_transport against a vault
+    that is no longer the wired/open one (vault switch or close mid-retry)."""
+    from locksmith.ui.window import LocksmithWindow
+
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    called = []
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport",
+                        lambda *a: called.append(1) or True)
+
+    vault = MagicMock(name="vault")
+    win = _transport_win(vault)
+    win.app.vault = MagicMock(name="a_different_vault")      # switched underneath
+    win._bring_up_direct_transport(MagicMock())
+    assert called == []                                     # never touched transport
+
+
+def test_bring_up_direct_transport_stops_at_budget(monkeypatch):
+    """If the hab never appears, the retry chain stops at max_attempts with
+    a warning rather than scheduling forever."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append(slot),
+    )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport",
+                        lambda *a: False)                    # never done
+
+    win = _transport_win(MagicMock(name="vault"))
+    win._bring_up_direct_transport(MagicMock(), attempt=39,
+                                               max_attempts=40)
+    assert scheduled == []                                  # budget spent, no reschedule

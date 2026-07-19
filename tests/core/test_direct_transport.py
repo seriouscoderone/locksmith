@@ -56,7 +56,8 @@ def test_bring_up_full_sequence(_fp, _parse):
     app = _app(settings=None)
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+    assert ensure_direct_transport(
+        app, _egf([ep]), src, ("bootstrap", "production")) is True
 
     pinned = app.vault.db.peerSettings.pin.call_args.kwargs["val"]
     assert pinned.enabled is True and pinned.port == 5622
@@ -109,9 +110,20 @@ def test_no_hab_yet_is_a_noop():
     from locksmith.core.direct_transport import ensure_direct_transport
     app = _app(settings=None, no_hab=True)
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    ensure_direct_transport(app, _egf([ep]), MagicMock(), ("bootstrap", "production"))
+    # Returns False (DEFERRED, not done) so the window wiring knows to retry
+    # once the async InceptDoer creates the default AID.
+    assert ensure_direct_transport(
+        app, _egf([ep]), MagicMock(), ("bootstrap", "production")) is False
     app.vault.db.peerSettings.pin.assert_not_called()
     app.vault.restart_peer_mode.assert_not_called()
+
+
+def test_no_direct_endpoints_returns_done():
+    """Nothing to pair -> True (done), so the caller does not retry."""
+    from locksmith.core.direct_transport import ensure_direct_transport
+    app = _app()
+    assert ensure_direct_transport(
+        app, _egf([]), MagicMock(), ("production",)) is True
 
 
 def test_direct_authorities_against_real_egf_document():
