@@ -64,3 +64,41 @@ def test_non_ipex_notes_render_without_accept(qtbot):
     (row,) = page.rows()
     assert row["route"] == "/keystate/update"
     assert not page.has_accept_action(row)
+
+
+def test_grant_title_resolved_from_egf_credential_catalog(qtbot):
+    """When egf_doc is provided and grant's embedded ACDC schema matches
+    a catalog entry, the title is upgraded from generic to the credential's
+    display name (e.g. 'License' instead of 'New credential offer')."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+    from keri_serviceaid.egf.documents import EgfDocument
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import fixture_egf
+
+    # Load real fixture document
+    _, sad = fixture_egf()
+    egf_doc = EgfDocument.from_sad(sad)
+
+    # Create app with grant note
+    grant_said = "E" + "G" * 43
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", grant_said)])
+
+    # Mock exchanging.cloneMessage to return an exn with License schema
+    license_schema_said = "E" + "L" * 43  # From fixture: License credential schema
+    exn_ked = {
+        "e": {
+            "acdc": {
+                "s": license_schema_said
+            }
+        }
+    }
+    exn_mock = SimpleNamespace(ked=exn_ked)
+
+    with patch("locksmith.ui.hoa.notifications_page.exchanging.cloneMessage") as clone_mock:
+        clone_mock.return_value = (exn_mock, [])
+        page = HoaNotificationsPage(app, egf_doc=egf_doc)
+        qtbot.addWidget(page)
+        page.refresh()
+
+    # The row title should be resolved to "License" from the EGF catalog
+    (row,) = page.rows()
+    assert row["title"] == "License"

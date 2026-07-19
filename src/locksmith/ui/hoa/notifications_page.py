@@ -216,10 +216,8 @@ class HoaNotificationsPage(BasePage):
         schema_said = exn.ked.get("e", {}).get("acdc", {}).get("s")
         if not schema_said:
             return None
-        for cred in getattr(self._egf_doc, "_credentials", ()):
-            if getattr(cred, "schema_said", None) == schema_said:
-                return cred.name
-        return None
+        entry = self._egf_doc.credential_by_schema(schema_said)
+        return entry.name if entry is not None else None
 
     # -- actions --------------------------------------------------------------
 
