@@ -19,6 +19,7 @@ from locksmith.core.apping import LocksmithApplication
 from locksmith.core.bootstrapping import bootstrap_default_environment
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
+from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
@@ -643,6 +644,11 @@ class LocksmithWindow(QMainWindow):
         self._onboarding_wired_vault = self.app.vault
 
         self._request_flow.seed_all_personas()
+        oobi_source = make_hoa_oobi_source(brand())
+        if oobi_source is not None:
+            ensure_direct_transport(
+                self.app, self._request_flow.egf_doc, oobi_source,
+                brand().egf_accept_phases)
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
         # emissions as a visible inline banner on the form view (distinct
