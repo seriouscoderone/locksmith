@@ -59,6 +59,17 @@ machine. Drives ACDC issuance end to end on the serverless serviceaid path
    see ``_schedule_issue_then_grant``'s docstring for why all three are
    required (a failed issuance must not leave a stale listener that a
    retry's success event would double-fire).
+10. Direct-mode reachability check (Task 7): when the selected
+    ``Authority`` carries an ``Endpoint`` with ``mode == "direct"``, a
+    second one-shot listener watches the grant doer's OWN send outcome
+    (``"SendGrantDoer"``, ``"send_complete"``/``"send_failed"``, matched
+    by ``credential_said``). A ``send_failed``, or a ``send_complete``
+    whose ``channel`` isn't ``"peer"`` (i.e. it fell back to mailbox
+    delivery instead of reaching the authority's application directly),
+    surfaces a ``request_failed`` doer_event — a direct-mode authority's
+    whole point is that the application is expected to be live and
+    peer-reachable, so a mailbox fallback here is a user-visible failure,
+    not silent success.
 
 Every ``EgfError`` subclass (``EgfDocumentError``, ``NoAuthorityError``) and
 the guard's plain ``ValueError`` are caught in ``submit()`` and surfaced as
@@ -330,6 +341,27 @@ class RequestFlow:
                 hab_pre=hab.pre,
             )
             self.app.vault.extend([grant_doer])
+
+            if any(ep.mode == "direct" for ep in authority.endpoints):
+                # Direct-mode authority: the grant is only meaningful if it
+                # actually reached the authority's application over peer
+                # transport. A non-"peer" outcome (mailbox fallback, or an
+                # outright send failure) means the issuer's application
+                # wasn't reachable -- surface that to the user instead of
+                # silently leaving the request in mailbox limbo.
+                def _on_send_outcome(dn: str, et: str, d: dict) -> None:
+                    if dn != "SendGrantDoer" or d.get("credential_said") != data["said"]:
+                        return
+                    if et not in ("send_complete", "send_failed"):
+                        return
+                    signals.doer_event.disconnect(_on_send_outcome)
+                    if et == "send_failed" or d.get("channel") != "peer":
+                        RequestFlow._fail(
+                            signals,
+                            "the issuer's application isn't reachable — is it running?",
+                        )
+
+                signals.doer_event.connect(_on_send_outcome)
 
         self._pending_listeners[role_id] = _on_credential_issued
         signals.doer_event.connect(_on_credential_issued)

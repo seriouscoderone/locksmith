@@ -36,14 +36,17 @@ Four pieces:
   habs get a bridge doer, everyone else gets the legacy doer with equivalent
   kwargs. No behavior change for ineligible habs.
 """
+from types import SimpleNamespace
+
 from hio.base import doing
-from keri import help
+from keri import help, kering
 from keri.core import parsing, serdering
 from keri.vdr import credentialing
 
 from keri_serviceaid.providers import frame_grant_for, issue_credential
 
 from locksmith.core.remoting import message_version
+from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
 from locksmith.peer.posting import PeerAwarePoster
 
 logger = help.ogler.getLogger(__name__)
@@ -77,6 +80,51 @@ def serviceaid_eligible(hab) -> bool:
     real `GroupHab` instance or import.
     """
     return hab.__class__.__name__ != "GroupHab" and not hab.kever.wits
+
+
+def is_aid_peer_exposed(hab) -> bool:
+    """One-hab adapter over `locksmith.peer.exposure.is_aid_peer_exposed`'s
+    real `(hby, pre)` signature (peer/exposure.py:32-48): that function
+    takes the Habery to guard db-open state and re-resolve the hab from a
+    prefix, but a `Hab` keeps no back-reference to its owning `Habery`
+    (keripy's `habbing.BaseHab.__init__` only injects
+    `db`/`ks`/`cf`/`mgr`/`rtr`/`rvy`/`kvy`/`psr` -- never the Habery
+    itself), and `_inband_oobi_msgs` only ever has the hab in hand.
+    `hab.db` IS the exact same `Baser` instance the Habery injects into
+    every `Hab` it makes (`Habery.makeHab` passes `self.db` straight
+    through unchanged), so a minimal hby-shaped stand-in exposing just
+    `.db` and `.habs` -- the only two attributes the real function reads
+    -- lets this delegate to the SAME check using only the hab already in
+    hand, rather than reimplementing its db-open/end-record logic here.
+    """
+    hby_view = SimpleNamespace(db=hab.db, habs={hab.pre: hab})
+    return _is_aid_peer_exposed_by_pre(hby_view, hab.pre)
+
+
+def _inband_oobi_msgs(hab, settings):
+    """Reply-as-OOBI for the sender itself (spec Sec 6): the two signed
+    rpys (/loc/scheme by the EID, /end/role/add by the CID) that let a
+    first-contact recipient verify AND reach back. The sender's KEL is
+    already streamed by sendArtifacts -- only the OKEA rpys are needed.
+    Empty unless the peer listener is on and this AID opted into peer
+    exposure (stock wallets without peer mode are unchanged)."""
+    if settings is None or not settings.enabled:
+        return []
+    if not is_aid_peer_exposed(hab):
+        return []
+    url = f"tcp://{settings.advertised_host or '127.0.0.1'}:{settings.port}"
+    out = []
+    for msg in (
+        hab.reply(route="/loc/scheme",
+                  data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=url)),
+        hab.reply(route="/end/role/add",
+                  data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre)),
+    ):
+        ims = bytearray(msg)
+        serder = serdering.SerderKERI(raw=bytes(ims))
+        del ims[:serder.size]
+        out.append((serder, bytes(ims) if ims else None))
+    return out
 
 
 class ServiceaidIssueDoer(doing.Doer):
@@ -170,6 +218,11 @@ class ServiceaidGrantDoer(doing.DoDoer):
       round-trip);
     - stream credential artifacts (issuer KEL, issuee KEL, delegation
       chains) via `credentialing.sendArtifacts` on the same postman;
+    - queue the in-band OOBI (`_inband_oobi_msgs`, Task 7, spec Sec 6):
+      two signed rpys (`/loc/scheme` by the EID, `/end/role/add` by the
+      CID) that let a first-contact recipient reach back, gated on the
+      vault's peer-mode settings and this AID's peer exposure -- empty
+      (no-op) for stock wallets without peer mode enabled;
     - stream each credential chain source (edge credentials) --
       `sendArtifacts` for the source plus the source serder + attachment;
     - send the framed grant exn last;
@@ -284,6 +337,13 @@ class ServiceaidGrantDoer(doing.DoDoer):
             credentialing.sendArtifacts(
                 self.hby, self.rgy.reger, postman, creder, self.recipient
             )
+
+            # In-band OOBI (spec Sec 6): after the KEL artifacts, before
+            # the grant -- so a first-contact recipient's parser lands
+            # key state, then reachability, then the exn.
+            settings = self.app.vault.db.peerSettings.get(keys=("default",))
+            for oserder, oatc in _inband_oobi_msgs(hab, settings):
+                postman.send(serder=oserder, attachment=oatc)
 
             # Send credential chain sources (edge credentials)
             sources = self.rgy.reger.sources(self.hby.db, creder)

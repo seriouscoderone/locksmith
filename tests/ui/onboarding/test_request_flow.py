@@ -430,6 +430,100 @@ def test_submit_autofills_missing_date_time_property_before_validating(env):
     assert attrs.get("submitted_at")  # non-empty ISO string, autofilled
 
 
+def test_direct_authority_mailbox_outcome_fails(env):
+    """authority has a direct endpoint; simulate send_complete with
+    channel='mailbox' -> a ('RequestFlow','request_failed') event whose
+    message mentions 'reachable'."""
+    flow = env.flow()
+    # VALID_CONTEXT (jurisdiction=US-UT) selects the UT DOI authority, whose
+    # fixture_egf() entry carries a direct endpoint.
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert len(env.failures) == 1
+    assert env.failures[0][0] == "RequestFlow"
+    assert env.failures[0][1] == "request_failed"
+    assert "reachable" in env.failures[0][2]["message"]
+
+
+def test_direct_authority_peer_outcome_is_clean(env):
+    """channel='peer' -> no request_failed emitted."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "peer", "success": True},
+    )
+
+    assert env.failures == []
+
+
+def test_nondirect_authority_keeps_fallback_semantics(env):
+    """authority with no direct endpoint: channel='mailbox' -> no failure."""
+    flow = env.flow()
+    # jurisdiction=US-CA selects the CA DOI authority, whose fixture_egf()
+    # entry carries NO endpoints -- no outcome listener should be wired.
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-CA"})
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert env.failures == []
+
+
+def test_direct_authority_send_failed_outcome_fails(env):
+    """send_failed for the direct authority's credential -> request_failed,
+    same as a non-peer channel -- the other half of the listener's outcome
+    guard ('send_failed' or channel != 'peer')."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_failed",
+        {"credential_said": "Ecred1", "error": "boom", "success": False},
+    )
+
+    assert len(env.failures) == 1
+    assert "reachable" in env.failures[0][2]["message"]
+
+
+def test_direct_authority_outcome_listener_is_one_shot(env):
+    """The outcome listener must disconnect itself after firing once -- a
+    second send_complete/send_failed for the same credential must not
+    surface a second request_failed (mirrors the credential_issued listener's
+    one-shot discipline elsewhere in this file)."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert len(env.failures) == 1
+
+
 def test_seed_all_personas_seeds_every_onboardable_role_with_default_hab(env):
     flow = env.flow()
     flow.seed_all_personas()

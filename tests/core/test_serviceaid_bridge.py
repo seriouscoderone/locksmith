@@ -112,6 +112,12 @@ def _grant_doer_setup(monkeypatch, *, calls, sources=(), message=""):
     vault = MagicMock(hby=hby, signals=signal_bridge)
     vault.rgy.reger.cloneCred.return_value = (creder, None, None, None)
     vault.rgy.reger.sources.return_value = list(sources)
+    # No peer-mode settings configured -- a MagicMock's auto-attributes are
+    # truthy by default, which would otherwise make `_inband_oobi_msgs`
+    # silently "activate" (settings.enabled Mock is truthy) and queue two
+    # extra sends nobody in these tests asked for. Explicit None matches
+    # the real stock-wallet default (no peer mode) these tests model.
+    vault.db.peerSettings.get.return_value = None
     app = MagicMock(vault=vault)
 
     mock_frame = MagicMock(return_value=("Egrant", b"rawbytes"))
@@ -295,6 +301,45 @@ def test_grant_doer_streams_edge_source_artifacts_before_grant(monkeypatch):
     assert send_calls[0][1] is source
     assert send_calls[0][2] == b"satc"
     assert isinstance(send_calls[1][1], FakeSerder)  # the grant exn last
+
+
+def test_grant_doer_queues_inband_oobi_between_artifacts_and_chain_sources(monkeypatch):
+    """Task 7 wiring: when peer mode is enabled and the hab is peer-exposed,
+    `grantDo` queues the two in-band OOBI rpys on the SAME postman, AFTER
+    the credential's `sendArtifacts` call and BEFORE the chain-source loop
+    -- see `_inband_oobi_msgs`'s module docstring for why that ordering
+    matters (key state, then reachability, then the exn)."""
+    from locksmith.peer.records import PeerModeSettings
+
+    calls = []
+    source = MagicMock(name="source")
+    s = _grant_doer_setup(monkeypatch, calls=calls, sources=[(source, b"satc")])
+    s.app.vault.db.peerSettings.get.return_value = PeerModeSettings(
+        enabled=True, port=5622, advertised_host="127.0.0.1",
+    )
+    monkeypatch.setattr(bridge, "is_aid_peer_exposed", lambda hab: True)
+    # Exactly FakeSerder.size (4) bytes each -- no attachment tail, matching
+    # the "attachment=None" case below.
+    s.hab.reply.side_effect = [b"loca", b"role"]
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    kinds = [c[0] for c in calls if c[0] in ("sendArtifacts", "send")]
+    # sendArtifacts(credential) -> 2 in-band OOBI sends -> sendArtifacts
+    # (chain source) -> chain-source send -> grant exn send.
+    assert kinds == [
+        "sendArtifacts", "send", "send", "sendArtifacts", "send", "send",
+    ]
+    send_calls = [c for c in calls if c[0] == "send"]
+    assert len(send_calls) == 4
+    # The first two sends are the in-band OOBI rpys (FakeSerder stand-ins,
+    # attachment=None since the fake raw bytes have no trailing tail past
+    # FakeSerder.size=4).
+    assert isinstance(send_calls[0][1], FakeSerder)
+    assert isinstance(send_calls[1][1], FakeSerder)
+    # Then the chain source, then the grant exn last.
+    assert send_calls[2][1] is source
+    assert isinstance(send_calls[3][1], FakeSerder)
 
 
 def test_grant_doer_emits_send_failed_when_credential_missing(monkeypatch):
