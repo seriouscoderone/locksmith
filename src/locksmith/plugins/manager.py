@@ -33,6 +33,7 @@ from types import SimpleNamespace
 from typing import Any, TYPE_CHECKING
 
 from keri import help
+from PySide6.QtCore import QTimer
 
 from locksmith.core.branding import brand
 from locksmith.plugins import storage
@@ -92,6 +93,7 @@ class HeldCredential:
     issuer_aid: str
     state: str            # active | revoked | unknown (from the TEL Tever vcState)
     chain_verified: bool  # True iff present in the reger `saved` (fully-verified) index
+    said: str             # the ACDC's own SAID — per-instance identity for UI detail views; the gate predicate does not read it
 
 
 class PluginManager:
@@ -435,6 +437,7 @@ class PluginManager:
             issuer_aid=creder.issuer,
             state=state,
             chain_verified=chain_verified,
+            said=said,
         )
 
     @staticmethod
@@ -484,6 +487,7 @@ class PluginManager:
         gates live (no restart)."""
         if doer_name == "AdmitDoer" and event_type == "admit_complete" and data.get("success"):
             self._on_credential_changed()
+            self._repoll_after_admit(data.get("credential_said", ""))
 
     def _on_credential_changed(self) -> None:
         """Re-evaluate role gates against the currently-open vault.
@@ -492,6 +496,41 @@ class PluginManager:
         been opened)."""
         if getattr(self, "_current_vault", None) is not None:
             self.reevaluate_role_gates(self._current_vault)
+
+    def _repoll_after_admit(self, credential_said: str,
+                            attempts: int = 10, interval_ms: int = 500) -> None:
+        """Bounded re-poll for the full-chain-lands-late window (spec
+        Sec 9.1): AdmitDoer awaits only the TOP-LEVEL ACDC in
+        reger.saved, but the gate's chain_verified needs the whole
+        chain. Re-evaluate on a timer until the matching gate flips or
+        the budget is spent; a final miss logs loudly (vault reopen
+        remains the recovery)."""
+        if not credential_said or self._current_vault is None:
+            return
+        creder = self._current_vault.rgy.reger.creds.get(keys=(credential_said,))
+        if creder is None:
+            return
+        pending = [p for p in self._gated_plugins()
+                   if p.required_credential.schema_said == creder.schema
+                   and p.plugin_id not in self._active_roles]
+        if not pending:
+            return
+
+        remaining = {"n": attempts}
+
+        def _tick() -> None:
+            self.reevaluate_role_gates(self._current_vault)
+            still = [p for p in pending if p.plugin_id not in self._active_roles]
+            remaining["n"] -= 1
+            if not still:
+                return
+            if remaining["n"] <= 0:
+                logger.warning(
+                    f"gate.repoll_exhausted credential={credential_said}")
+                return
+            QTimer.singleShot(interval_ms, _tick)
+
+        _tick()
 
     def prepare_vault_deletion(self, vault: Any) -> None:
         for pid, plugin in self._plugins.items():
