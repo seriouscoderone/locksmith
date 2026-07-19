@@ -535,4 +535,9 @@ def test_return_grant_auto_admits_carrier_to_licensed_surface(
     assert grant_rows, "notifications page must show the grant arrival"
     # Title upgraded to the EGF catalog credential name (best-effort resolve).
     assert grant_rows[0]["title"] == "Carrier License"
-    assert HoaNotificationsPage.has_accept_action(grant_rows[0])
+    # Finding 5 (final-review wave): the grant was auto-admitted, which
+    # marks the note read -- an already-admitted row must no longer offer
+    # Accept (a second admit for a grant that already landed must not be
+    # schedulable).
+    assert grant_rows[0]["read"] is True
+    assert not HoaNotificationsPage.has_accept_action(grant_rows[0])

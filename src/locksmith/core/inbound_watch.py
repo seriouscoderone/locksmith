@@ -128,7 +128,8 @@ class InboundGrantWatchDoer(doing.Doer):
         if match is None:
             return
 
-        self._admit(rid, said, schema_said)
+        recipient = ked.get("a", {}).get("i", "") or ""
+        self._admit(rid, said, schema_said, recipient)
 
     def _match_expected_role(self, sender: str, schema_said: str):
         """Returns the matching ``Role`` iff some onboardable role R is
@@ -153,9 +154,17 @@ class InboundGrantWatchDoer(doing.Doer):
             return role
         return None
 
-    def _admit(self, rid: str, said: str, schema_said: str) -> None:
+    def _admit(self, rid: str, said: str, schema_said: str, recipient: str = "") -> None:
         vault = self.app.vault
-        hab = next(iter(vault.hby.habs.values()), None)
+        # Prefer the grant's own recipient hab (the exn's `a.i` attribute --
+        # the same field `PeerExchangerShim.processEvent` reads as the
+        # message's destination) when it resolves in this Habery; a
+        # multi-hab wallet could otherwise admit under the wrong
+        # identifier. Falls back to the previous first-hab behavior when
+        # the recipient doesn't resolve.
+        hab = vault.hby.habs.get(recipient) if recipient else None
+        if hab is None:
+            hab = next(iter(vault.hby.habs.values()), None)
         if hab is None:
             logger.error(
                 "InboundGrantWatchDoer: no hab available to admit grant_said=%s", said)

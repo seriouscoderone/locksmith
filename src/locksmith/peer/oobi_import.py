@@ -26,7 +26,7 @@ def parse_oobi_cesr(hby, cesr: bytes) -> str:
     except Exception as e:  # noqa: BLE001
         raise PeerBlobError(
             "parse_failed",
-            f"Couldn't parse the OOBI stream: {e}.")
+            f"Couldn't parse the blob: {e}. The token may be corrupted.")
 
     for pre in hby.kevers.keys():
         if pre in pre_kevers:
@@ -38,5 +38,6 @@ def parse_oobi_cesr(hby, cesr: bytes) -> str:
 
     raise PeerBlobError(
         "no_peer_role",
-        "The stream parsed but no new AID published a peer-role tcp "
-        "endpoint.")
+        "The blob parsed but no AID inside it published a peer-role tcp "
+        "endpoint. The peer may not have 'Expose over peer mode' enabled "
+        "on any identifier.")

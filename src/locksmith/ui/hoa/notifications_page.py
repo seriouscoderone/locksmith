@@ -182,9 +182,14 @@ class HoaNotificationsPage(BasePage):
 
     @staticmethod
     def has_accept_action(row: Dict[str, Any]) -> bool:
-        """True iff this row is an inbound IPEX grant — the one route
-        offered an actionable Accept button."""
-        return "/ipex/grant" in row.get("route", "")
+        """True iff this row is an unread inbound IPEX grant. Route-only
+        would still offer Accept on an already-admitted row -- e.g. one
+        auto-admitted by ``InboundGrantWatchDoer`` and marked read -- which
+        could schedule a second admit for a grant that already landed.
+        Requiring ``not row["read"]`` closes that window: once a row is
+        marked read (auto-admit, or a prior manual Accept), the action is
+        gone."""
+        return "/ipex/grant" in row.get("route", "") and not row.get("read", False)
 
     # -- title resolution -----------------------------------------------------
 
@@ -225,12 +230,42 @@ class HoaNotificationsPage(BasePage):
         """Accept action for a `/exn/ipex/grant` row: schedule the admit
         (Task 8's ``make_admit_doer`` envelope chokepoint — eligible habs
         get the serverless serviceaid bridge, everyone else the legacy
-        doer) on the vault's doer runner, then mark the note read."""
-        hab = next(iter(self.app.vault.hby.habs.values()))
+        doer) on the vault's doer runner, then mark the note read.
+
+        Admits with the grant's OWN recipient hab when it resolves in this
+        Habery (``_resolve_admit_hab``), rather than unconditionally the
+        first hab -- a multi-hab wallet could otherwise schedule the admit
+        under the wrong identifier."""
+        hby = self.app.vault.hby
+        hab = self._resolve_admit_hab(hby, row["said"])
         doer = make_admit_doer(self.app, hab, grant_said=row["said"])
         self.app.vault.extend([doer])
         self.app.vault.notifier.mar(row["rid"])
         self.refresh()
+
+    @staticmethod
+    def _resolve_admit_hab(hby, said: str):
+        """The hab that should admit grant ``said``: the grant exn's own
+        recipient -- its ``a.i`` attribute, the same field
+        ``PeerExchangerShim.processEvent`` reads as the message's
+        destination -- when that AID resolves in ``hby.habs``, else the
+        first hab (the previous, unconditional behavior). Any failure
+        resolving the grant (unparseable exn, missing from storage) falls
+        back the same way -- this is a best-effort refinement, never a
+        harder requirement than the admit itself."""
+        try:
+            exn, _pathed = exchanging.cloneMessage(hby, said)
+            recipient = exn.ked.get("a", {}).get("i", "") if exn is not None else ""
+        except Exception:
+            logger.exception(
+                "HoaNotificationsPage: grant-recipient resolution failed for said=%s",
+                said,
+            )
+            recipient = ""
+        hab = hby.habs.get(recipient) if recipient else None
+        if hab is not None:
+            return hab
+        return next(iter(hby.habs.values()))
 
     # -- rendering --------------------------------------------------------------
 

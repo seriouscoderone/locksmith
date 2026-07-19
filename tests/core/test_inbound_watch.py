@@ -111,6 +111,42 @@ def test_not_pending_never_auto_admits():
     mk.assert_not_called()
 
 
+def test_admits_with_grants_recipient_hab_when_multiple_habs_present():
+    """Finding 6 (final-review wave): `_admit` must resolve the admitting
+    hab from the grant's own recipient (the exn's `a.i` attribute), not
+    unconditionally the first hab in `hby.habs` -- a multi-hab wallet could
+    otherwise schedule the admit under the wrong identifier."""
+    doc = _doc()
+    role = doc.personas()[0]
+    grant_cred = doc.credential(role.onboarding.grant_credential_id)
+    app_cred = doc.credential(grant_cred.chained_from)
+    authority = doc.authorities(grant_cred.issuer_role,
+                                accept_phases=("bootstrap", "production"))[0]
+    held = [Held(app_cred.schema_said, "E" + "C" * 43, "issued", True)]  # PENDING
+    app, watcher = _env(doc, held, [_note("r1", "E" + "G" * 43)])
+
+    # A second hab, distinct from the first -- the grant's `a.i` recipient.
+    second_hab = MagicMock()
+    second_hab.pre = "E" + "D" * 43
+    second_hab.__class__.__name__ = "Hab"
+    second_hab.kever.wits = []
+    app.vault.hby.habs[second_hab.pre] = second_hab
+
+    grant_serder = MagicMock()
+    grant_serder.ked = {
+        "i": authority.aid, "r": "/ipex/grant",
+        "e": {"acdc": {"s": grant_cred.schema_said, "i": authority.aid}},
+        "a": {"i": second_hab.pre},
+    }
+
+    with patch("locksmith.core.inbound_watch.make_admit_doer") as mk, \
+         patch("locksmith.core.inbound_watch.exchanging") as exc:
+        exc.cloneMessage.return_value = (grant_serder, {})
+        watcher.scan_once()
+
+    assert mk.call_args.args[1] is second_hab
+
+
 def test_malformed_exn_skipped_not_fatal():
     doc = _doc()
     app, watcher = _env(doc, [], [_note("r1", "E" + "G" * 43)])

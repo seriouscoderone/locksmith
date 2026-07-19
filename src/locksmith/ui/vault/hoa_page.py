@@ -50,13 +50,19 @@ class HoaVaultPage(VaultPage):
 
     def get_toolbar_config(self) -> dict[str, Any]:
         """Same as ``VaultPage.get_toolbar_config()``, except the Plugins
-        and Notifications toolbar icons are hidden — no "plugins" or
-        "notifications" page is ever registered for a peeled HOA build (see
-        ``_register_core_pages`` above), so clicking either is otherwise a
-        dead click (log: "No page registered for key 'plugins'"/
-        "'notifications'"). Brand-gated by construction (only ``HoaVaultPage``
-        is instantiated when ``brand().peel_core_pages`` — see
-        ``locksmith.ui.window``); the stock ``VaultPage`` config is untouched."""
+        and Notifications toolbar icons are hidden. No "plugins" page is
+        ever registered for a peeled HOA build (see ``_register_core_pages``
+        above), so clicking that icon would otherwise be a dead click (log:
+        "No page registered for key 'plugins'"). The stock "notifications"
+        page is likewise never registered here — but for an onboarding-
+        enabled brand, the window wiring separately registers an HOA-native
+        "notifications" page (``locksmith.ui.hoa.notifications_page.
+        HoaNotificationsPage``) under that same key, reached via the nav
+        menu / toast click rather than this toolbar bell, which stays
+        hidden regardless. Brand-gated by construction (only
+        ``HoaVaultPage`` is instantiated when ``brand().peel_core_pages`` —
+        see ``locksmith.ui.window``); the stock ``VaultPage`` config is
+        untouched."""
         config = super().get_toolbar_config()
         config["show_plugins_button"] = False
         config["show_notifications_button"] = False

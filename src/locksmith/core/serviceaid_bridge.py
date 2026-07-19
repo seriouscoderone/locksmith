@@ -115,6 +115,22 @@ def is_aid_peer_exposed(hab) -> bool:
     return _is_aid_peer_exposed_by_pre(hby_view, hab.pre)
 
 
+def _split_message(raw: bytes) -> tuple:
+    """Split a framed KERI message into its serder and trailing attachment
+    bytes (or ``None`` when there is no attachment tail).
+
+    Shared by every call site that reconstructs a sendable
+    ``(serder, attachment)`` pair from a raw byte stream --
+    ``_inband_oobi_msgs``, ``ServiceaidGrantDoer.grantDo``, and
+    ``ServiceaidAdmitDoer._deliver_admit_back`` -- so the split logic
+    lives in exactly one place.
+    """
+    ims = bytearray(raw)
+    serder = serdering.SerderKERI(raw=bytes(ims))
+    del ims[:serder.size]
+    return serder, (bytes(ims) if ims else None)
+
+
 def _inband_oobi_msgs(hab, settings):
     """Reply-as-OOBI for the sender itself (spec Sec 6): the two signed
     rpys (/loc/scheme by the EID, /end/role/add by the CID) that let a
@@ -134,10 +150,7 @@ def _inband_oobi_msgs(hab, settings):
         hab.reply(route="/end/role/add",
                   data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre)),
     ):
-        ims = bytearray(msg)
-        serder = serdering.SerderKERI(raw=bytes(ims))
-        del ims[:serder.size]
-        out.append((serder, bytes(ims) if ims else None))
+        out.append(_split_message(msg))
     return out
 
 
@@ -331,10 +344,7 @@ class ServiceaidGrantDoer(doing.DoDoer):
 
             # Split the framed message the same way keri_serviceaid's own
             # PostmanDeliverer does: serder + trailing attachment bytes.
-            ims = bytearray(raw)
-            serder = serdering.SerderKERI(raw=bytes(ims))
-            del ims[:serder.size]
-            attachment = bytes(ims) if ims else None
+            serder, attachment = _split_message(raw)
 
             postman = PeerAwarePoster(
                 hby=self.hby,
@@ -556,10 +566,7 @@ class ServiceaidAdmitDoer(doing.Doer):
         raw = exchanging.serializeMessage(vault.hby, admit_said, framed=True)
         if not raw:
             raise ValueError(f"admit message {admit_said} not found")
-        ims = bytearray(raw)
-        admit_serder = serdering.SerderKERI(raw=bytes(ims))
-        del ims[:admit_serder.size]
-        attachment = bytes(ims) if ims else None
+        admit_serder, attachment = _split_message(raw)
 
         postman = PeerAwarePoster(
             hby=vault.hby, hab=hab, recp=granter,

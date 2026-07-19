@@ -303,15 +303,28 @@ class Vault(doing.DoDoer):
     def _register_first_contact_peer(self, aid: str, url: str) -> None:
         """RUN first-update registration for an open-inbound first
         contact: allowlist entry (reply path) + org contact (so the
-        operator's recipient dropdowns can address the sender)."""
+        operator's recipient dropdowns can address the sender).
+
+        This is invoked synchronously from
+        `PeerExchangerShim.processEvent` (the inbound parser hot path,
+        via `on_first_contact`) -- a DB-write failure here (allowlist
+        or org) must never propagate up into the parser and take it
+        down. The whole body runs under one guard: on failure, log and
+        emit a UI-visible event; the exn is effectively rejected (never
+        landed in the allowlist), which is safe since the sender can
+        just retry."""
         from keri.help import helping
-        PeerAllowlist(self.db).add(PeerRecord(
-            aid=aid, label=f"peer-{aid[:12]}", endpoint_url=url,
-            paired_at=helping.nowIso8601()))
         try:
+            PeerAllowlist(self.db).add(PeerRecord(
+                aid=aid, label=f"peer-{aid[:12]}", endpoint_url=url,
+                paired_at=helping.nowIso8601()))
             self.org.update(aid, {"alias": f"peer-{aid[:12]}"})
-        except Exception:  # noqa: BLE001 — org is a UI nicety, never fatal
-            logger.exception("first-contact org update failed")
+        except Exception as e:  # noqa: BLE001 — never let a first-contact
+            # registration failure propagate into the inbound parser.
+            logger.exception("first-contact registration failed")
+            self.signals.emit_doer_event(
+                "PeerFirstContact", "registration_failed",
+                {"aid": aid, "error": str(e)})
 
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:

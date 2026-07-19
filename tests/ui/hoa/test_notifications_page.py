@@ -66,6 +66,63 @@ def test_non_ipex_notes_render_without_accept(qtbot):
     assert not page.has_accept_action(row)
 
 
+def test_read_grant_row_has_no_accept_action(qtbot):
+    """Finding 5 (final-review wave): has_accept_action was route-only, so
+    an auto-admitted (marked-read) grant row still offered Accept -- a
+    second admit could be scheduled for a grant that already landed.
+    Requiring `not row["read"]` closes that window."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", "E" + "G" * 43, read=True)])
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    page.refresh()
+    (row,) = page.rows()
+    assert row["read"] is True
+    assert not page.has_accept_action(row)
+
+
+def test_unread_grant_row_has_accept_action(qtbot):
+    """Companion to the above: an unread grant row still offers Accept."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", "E" + "G" * 43, read=False)])
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    page.refresh()
+    (row,) = page.rows()
+    assert row["read"] is False
+    assert page.has_accept_action(row)
+
+
+def test_accept_admits_with_grants_recipient_hab_not_first_hab(qtbot):
+    """Finding 6 (final-review wave): _accept must resolve the admitting
+    hab from the grant's own recipient (its exn's `a.i` attribute), not
+    unconditionally the first hab in `hby.habs` -- a multi-hab wallet
+    could otherwise schedule the admit under the wrong identifier."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+
+    said = "E" + "G" * 43
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", said)])
+
+    first_hab = next(iter(app.vault.hby.habs.values()))
+    second_hab = MagicMock()
+    second_hab.pre = "E" + "D" * 43
+    app.vault.hby.habs[second_hab.pre] = second_hab
+
+    exn = SimpleNamespace(ked={"a": {"i": second_hab.pre}})
+
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    page.refresh()
+
+    with patch("locksmith.ui.hoa.notifications_page.exchanging.cloneMessage") as clone_mock, \
+            patch("locksmith.ui.hoa.notifications_page.make_admit_doer") as mk:
+        clone_mock.return_value = (exn, {})
+        page._accept(page.rows()[0])
+
+    assert mk.call_args.args[1] is second_hab
+    assert mk.call_args.args[1] is not first_hab
+
+
 def test_grant_title_resolved_from_egf_credential_catalog(qtbot):
     """When egf_doc is provided and grant's embedded ACDC schema matches
     a catalog entry, the title is upgraded from generic to the credential's
