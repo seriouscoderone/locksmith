@@ -81,7 +81,7 @@ default_toad       = 0
 # caught by tests/core/test_usurance_egf_bundle.py.
 [egf]
 source = "local"
-document_said = "ELFmC-RkqKAQphER2y1aBdymZ1AJnwMmlDh_PQwEOns8"
+document_said = "ECf6PHHpOWWZ3ifPemqpJ6Dx0wE4HA50ucqtGhNNMUsV"
 accept_phases = ["bootstrap", "production"]   # pilot opt-in; library default is production-only
 
 # HOA onboarding flow (workspace setup + credential request) is exposed for

@@ -1,7 +1,7 @@
 {
-  "d": "ELFmC-RkqKAQphER2y1aBdymZ1AJnwMmlDh_PQwEOns8",
+  "d": "ECf6PHHpOWWZ3ifPemqpJ6Dx0wE4HA50ucqtGhNNMUsV",
   "spec_version": "egf-doc/0.1",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "ecosystem": {
     "id": "us-insurance-regulation",
     "display_name": "US P&C Insurance (State-Regulated)",
@@ -65,7 +65,13 @@
       "credentials": [
         "carrier_license"
       ],
-      "endpoints": [],
+      "endpoints": [
+        {
+          "mode": "direct",
+          "scheme": "tcp",
+          "oobi_ref": "EOtKW1M3PReijqHMu92uX5FG0fCPwIfH7plPQSifb34-"
+        }
+      ],
       "phase_note": "Operator-controlled stand-in until the Utah DOI incepts its own AID",
       "expected_transition": null
     }
