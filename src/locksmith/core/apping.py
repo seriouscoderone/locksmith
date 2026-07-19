@@ -239,6 +239,41 @@ def _store_dir(root, store_name, base=""):
     return root / store_name / base_path
 
 
+def _legacy_vault_names_in_root(root, base=""):
+    """Names under one KERI root matching db ∩ ks ∩ mbx − rt (the vaults
+    created + opened at least once by a wallet-like app, not yet adopted)."""
+    db_home = _store_dir(root, _DB_DIR, base)
+    if not db_home.is_dir():
+        return set()
+    names = set()
+    for entry in db_home.iterdir():
+        name = entry.name
+        if not entry.is_dir():
+            continue
+        if not (_store_dir(root, _KS_DIR, base) / name).is_dir():
+            continue
+        if not (_store_dir(root, _MBX_DIR, base) / name).is_dir():
+            continue
+        if (_store_dir(root, _RT_DIR, base) / name).is_dir():
+            continue  # already adopted
+        names.add(name)
+    return names
+
+
+def find_legacy_vaults(base="", heads=None):
+    """Sorted names of un-adopted legacy vaults across KERI roots.
+
+    Pure query — no writes, no Qt, no ``self``. Host-agnostic so a future
+    Universal CLI can reuse the same predicate. ``heads`` overrides the
+    head-dir seam for testing.
+    """
+    roots = heads if heads is not None else _vault_head_dirs()
+    found = set()
+    for root in roots:
+        found |= _legacy_vault_names_in_root(root, base)
+    return sorted(found)
+
+
 class LocksmithApplication:
     """
     Main application class for Locksmith.

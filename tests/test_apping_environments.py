@@ -74,3 +74,37 @@ def test_vault_head_dirs_neither_exists(tmp_path, monkeypatch):
     _patch_head_roots(monkeypatch, tmp_path)
 
     assert apping._vault_head_dirs() == []
+
+
+def test_find_detects_legacy_vault(tmp_path):
+    # db + ks + mbx, no rt -> legacy vault.
+    for store in ("db", "ks", "mbx"):
+        _mk(tmp_path, store, "Utah State")
+    assert apping.find_legacy_vaults(heads=[tmp_path]) == ["Utah State"]
+
+
+def test_find_ignores_kli_junk(tmp_path):
+    # db + ks only (no mbx) -> kli/test debris, never a vault.
+    for store in ("db", "ks"):
+        _mk(tmp_path, store, "anchoring-1774913659009")
+    assert apping.find_legacy_vaults(heads=[tmp_path]) == []
+
+
+def test_find_ignores_mailbox_only_orphan(tmp_path):
+    _mk(tmp_path, "mbx", "stray")
+    assert apping.find_legacy_vaults(heads=[tmp_path]) == []
+
+
+def test_find_skips_already_adopted(tmp_path):
+    for store in ("db", "ks", "mbx", "rt"):
+        _mk(tmp_path, store, "Carrier")
+    assert apping.find_legacy_vaults(heads=[tmp_path]) == []
+
+
+def test_find_honors_base(tmp_path):
+    for store in ("db", "ks", "mbx"):
+        _mk(tmp_path, store, "Scoped", base="myorg")
+    # A bare-root vault must NOT match when base is set.
+    for store in ("db", "ks", "mbx"):
+        _mk(tmp_path, store, "Bare")
+    assert apping.find_legacy_vaults(base="myorg", heads=[tmp_path]) == ["Scoped"]
