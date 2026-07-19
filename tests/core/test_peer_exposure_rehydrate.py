@@ -44,3 +44,24 @@ def test_fresh_habery_seeds_empty():
     with habbing.openHby(name="exp2", temp=True) as hby:
         hby.makeHab(name="doi2", transferable=True)
         assert set(peer_exposure.exposed_pres(hby)) == set()   # nothing published
+
+
+def test_vault_init_seeds_exposed_aids_from_exposed_pres():
+    """Pin the actual regression site: Vault.__init__ must SEED
+    `_peer_exposed_aids` from `exposure.exposed_pres` — the two tests above
+    only prove `exposed_pres` works (an unchanged helper), so without this a
+    revert of the seeding line (`set()` again) would leave them green.
+    Constructing a full Vault is heavy and Qt/doer-laden; follow the
+    codebase's `tests/peer/test_vault_wiring.py` idiom and pin the wiring by
+    source inspection instead."""
+    import inspect
+    from locksmith.core import vaulting
+
+    src = inspect.getsource(vaulting.Vault.__init__)
+    assert "_peer_exposed_aids" in src
+    # the set must be seeded FROM the persisted-end-record source, not `set()`
+    assert "exposed_pres" in src
+    assert "set(peer_exposure.exposed_pres" in src, (
+        "Vault.__init__ must rehydrate _peer_exposed_aids from "
+        "peer_exposure.exposed_pres(self.hby), not initialize it empty"
+    )

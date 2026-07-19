@@ -822,11 +822,6 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
     assert scheduled == [(0, onboarding_home_page.refresh)], (
         "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
     )
-    # Transport branch is orthogonal to this test's refresh-scheduling
-    # assertions; neutralize it so a prior test's cached usurance
-    # brand() (make_hoa_oobi_source non-None) can't invoke
-    # _bring_up_direct_transport on this bare SimpleNamespace.
-    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
     assert win._onboarding_wired_vault is vault
 
 
