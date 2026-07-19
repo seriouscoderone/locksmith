@@ -524,6 +524,44 @@ def test_direct_authority_outcome_listener_is_one_shot(env):
     assert len(env.failures) == 1
 
 
+def test_resubmission_evicts_stale_outcome_listener(env):
+    """Finding 1 fix (listener-leak regression, review round 2): the
+    direct-mode `_on_send_outcome` listener wired per submission must be
+    evicted by a same-role resubmission before the previous grant's outcome
+    arrives -- mirroring `_pending_listeners`' latest-submission-wins
+    discipline via the parallel `_pending_outcome_listeners` registry.
+    Without the fix, the FIRST submission's outcome listener stays connected
+    and fires a stale `request_failed` for a credential the user already
+    abandoned by resubmitting."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred-first")  # wires outcome listener #1
+    assert len(env.granted) == 1
+
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # evicts #1
+    env.emit_issued("Ecred-second")  # wires outcome listener #2
+    assert len(env.granted) == 2
+
+    # The FIRST credential's outcome must be a no-op now -- listener #1 was
+    # evicted by the resubmission, before its grant's outcome ever arrived.
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred-first", "channel": "mailbox", "success": True},
+    )
+    assert env.failures == [], (
+        "a stale outcome listener from an evicted submission must not fire "
+        "request_failed for the abandoned attempt's credential"
+    )
+
+    # The SECOND (current) submission's outcome must still be live.
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred-second", "channel": "mailbox", "success": True},
+    )
+    assert len(env.failures) == 1
+    assert "reachable" in env.failures[0][2]["message"]
+
+
 def test_seed_all_personas_seeds_every_onboardable_role_with_default_hab(env):
     flow = env.flow()
     flow.seed_all_personas()
