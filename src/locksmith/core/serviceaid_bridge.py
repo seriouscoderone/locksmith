@@ -355,7 +355,8 @@ class ServiceaidGrantDoer(doing.DoDoer):
             # In-band OOBI (spec Sec 6): after the KEL artifacts, before
             # the grant -- so a first-contact recipient's parser lands
             # key state, then reachability, then the exn.
-            settings = self.app.vault.db.peerSettings.get(keys=("default",))
+            db = getattr(self.app.vault, "db", None)
+            settings = db.peerSettings.get(keys=("default",)) if db is not None else None
             for oserder, oatc in _inband_oobi_msgs(hab, settings):
                 postman.send(serder=oserder, attachment=oatc)
 

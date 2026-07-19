@@ -518,3 +518,36 @@ def test_make_grant_doer_forwards_message_to_legacy_doer():
     )
     assert isinstance(d, SendGrantDoer)
     assert d.message == "please review"
+
+
+def test_grant_doer_tolerates_vault_without_db(monkeypatch):
+    """Regression: when the vault has no db (e.g., test harnesses with
+    stubbed transport), `grantDo` must not fail trying to read peer settings.
+    The in-band OOBI block degrades gracefully: it reads `db.peerSettings`
+    only if `db` exists, passes `None` to `_inband_oobi_msgs` (which short-
+    circuits and returns [] for `None` settings), and the grant completes
+    successfully with `send_complete`."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+    # Simulate a stubbed vault with no db (test harness case)
+    s.app.vault.db = None
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    # In-band OOBI sends must NOT be queued (no db means no settings)
+    send_calls = [c for c in calls if c[0] == "send"]
+    assert len(send_calls) == 1  # only the grant exn, no OOBI rpys
+    assert isinstance(send_calls[0][1], FakeSerder)
+
+    # Grant must complete successfully despite missing db
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_complete",
+        {
+            "success": True,
+            "credential_said": "Ecred",
+            "recipient": "Erecp",
+            "grant_said": "Egrant",
+            "channel": "peer",
+        },
+    )
