@@ -40,6 +40,7 @@ from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.doer import PeerDoer
 from locksmith.peer.health import PeerHealthMonitorDoer
 from locksmith.peer.records import PeerModeSettings, PeerRecord
+from locksmith.peer import exposure as peer_exposure
 
 logger = help.ogler.getLogger(__name__)
 
@@ -173,11 +174,18 @@ class Vault(doing.DoDoer):
                                            self.pluginSettings.locksmith_alias,
                                            self.pluginSettings.plugin_identifier)
 
-        # Peer-mode listener (vault-wide). The destination allowlist
-        # (`_peer_exposed_aids`) is populated by the per-AID `Peer` role
-        # toggle in the identifier UI.
+        # Peer-mode listener (vault-wide). `_peer_exposed_aids` is the
+        # inbound destination gate (shim gate 2). It is REHYDRATED on every
+        # vault-open from the persisted peer-role end records (the source of
+        # truth `exposure.exposed_pres` reads), then kept live by the per-AID
+        # toggle and the HOA direct-transport bring-up. Seeding from the DB is
+        # essential: without it, an AID exposed in a prior session loses its
+        # exposure across an app restart and the shim silently drops every
+        # inbound exn addressed to it (`peer.gate.destination_not_exposed`) —
+        # so credential presentations over peer transport break after a
+        # restart even though the toolbar still reads "exposed".
         self.peer_doer: PeerDoer | None = None
-        self._peer_exposed_aids: set[str] = set()
+        self._peer_exposed_aids: set[str] = set(peer_exposure.exposed_pres(self.hby))
         peer_settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
         if peer_settings.enabled:
             self.peer_doer = PeerDoer(
