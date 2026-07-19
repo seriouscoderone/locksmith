@@ -245,16 +245,19 @@ def _legacy_vault_names_in_root(root, base=""):
     db_home = _store_dir(root, _DB_DIR, base)
     if not db_home.is_dir():
         return set()
+    ks_home = _store_dir(root, _KS_DIR, base)
+    mbx_home = _store_dir(root, _MBX_DIR, base)
+    rt_home = _store_dir(root, _RT_DIR, base)
     names = set()
     for entry in db_home.iterdir():
         name = entry.name
         if not entry.is_dir():
             continue
-        if not (_store_dir(root, _KS_DIR, base) / name).is_dir():
+        if not (ks_home / name).is_dir():
             continue
-        if not (_store_dir(root, _MBX_DIR, base) / name).is_dir():
+        if not (mbx_home / name).is_dir():
             continue
-        if (_store_dir(root, _RT_DIR, base) / name).is_dir():
+        if (rt_home / name).is_dir():
             continue  # already adopted
         names.add(name)
     return names
@@ -276,12 +279,23 @@ def find_legacy_vaults(base="", heads=None):
 
 def adopt_legacy_vaults(base="", heads=None):
     """Backfill the missing rt/<base>/<name> dir for each legacy vault so it
-    reappears in the drawer. Idempotent; adopts within each vault's own root;
-    per-name failures are logged and skipped. Returns the adopted names.
+    reappears in the drawer. Idempotent; adopts within each vault's own root.
+    Deliberately iterates ``_legacy_vault_names_in_root(root, base)`` PER ROOT
+    (not the unioned ``find_legacy_vaults``, which loses root provenance) so
+    each ``rt/<base>/<name>`` dir is created under the vault's OWN root —
+    this per-root iteration is load-bearing for own-root correctness, so a
+    future refactor must not collapse it to the unioned helper. Returns the
+    adopted names.
 
     Host-agnostic (no Qt, no ``self``). The LMDB files inside rt/ are created
     later by the normal vault-open path — this only creates the directory,
     exactly like the manual `mkdir ~/.keri/rt/<name>` workaround.
+
+    Only the per-name ``rt_dir.mkdir`` is wrapped: an ``OSError`` there is
+    logged and that name is skipped. A filesystem error during the per-root
+    scan (``_legacy_vault_names_in_root`` / ``iterdir``) is not caught here
+    and can still propagate; the caller (``LocksmithApplication.__init__``)
+    wraps the whole call so launch is never blocked.
     """
     roots = heads if heads is not None else _vault_head_dirs()
     adopted = []
