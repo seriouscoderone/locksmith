@@ -644,7 +644,7 @@ class LocksmithWindow(QMainWindow):
         self._onboarding_wired_vault = self.app.vault
 
         self._request_flow.seed_all_personas()
-        oobi_source = make_hoa_oobi_source(brand())
+        oobi_source = make_hoa_oobi_source()
         if oobi_source is not None:
             ensure_direct_transport(
                 self.app, self._request_flow.egf_doc, oobi_source,

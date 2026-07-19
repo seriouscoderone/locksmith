@@ -16,6 +16,7 @@ from keri import help, kering
 from keri_serviceaid.egf.errors import EgfError
 from keri_serviceaid.egf.oobi_source import LocalDirOobiSource
 
+from locksmith.core.branding import brand, egf_local_dir
 from locksmith.core.instancing import find_free_port
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.cesr_blob import PeerBlobError
@@ -26,23 +27,21 @@ from locksmith.peer.records import PeerModeSettings, PeerRecord
 logger = help.ogler.getLogger(__name__)
 
 
-def make_hoa_oobi_source(brand):
-    from locksmith.core.branding import egf_local_dir
+def make_hoa_oobi_source():
     root = egf_local_dir()
     return LocalDirOobiSource(root) if root is not None else None
 
 
 def direct_authorities(egf_doc, accept_phases):
     out, seen = [], set()
-    for role in egf_doc.roles:
-        for auth in egf_doc.authorities(role.id, accept_phases=accept_phases):
-            if auth.aid in seen:
-                continue
-            for ep in auth.endpoints:
-                if ep.mode == "direct":
-                    seen.add(auth.aid)
-                    out.append((auth, ep))
-                    break
+    for auth in egf_doc.all_authorities(accept_phases=accept_phases):
+        if auth.aid in seen:
+            continue
+        for ep in auth.endpoints:
+            if ep.mode == "direct":
+                seen.add(auth.aid)
+                out.append((auth, ep))
+                break
     return out
 
 
@@ -51,6 +50,19 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> None:
     if not targets:
         return
     vault = app.vault
+
+    # (0) default identifier -- resolved FIRST: no listener without an
+    # identity to expose. Mirrors RequestFlow._default_hab's convention
+    # (brand().default_aid_alias), falling back to "whatever hab exists"
+    # for reference-brand/dev builds that haven't set an alias, then to
+    # "no identifiers yet" -- never raise out of vault open.
+    alias = brand().default_aid_alias
+    hab = vault.hby.habByName(alias) if alias else None
+    if hab is None:
+        hab = next(iter(vault.hby.habs.values()), None)
+    if hab is None:
+        logger.warning("direct_transport.no_hab vault has no identifiers yet")
+        return
 
     # (1) listener
     settings = vault.db.peerSettings.get(keys=("default",))
@@ -65,7 +77,6 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> None:
     vault.restart_peer_mode()
 
     # (2) expose + publish the default AID's peer role
-    hab = next(iter(vault.hby.habs.values()))
     if hab.pre not in vault._peer_exposed_aids:
         vault._peer_exposed_aids.add(hab.pre)
         url = f"tcp://{settings.advertised_host or '127.0.0.1'}:{settings.port}"
