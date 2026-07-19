@@ -274,6 +274,35 @@ def find_legacy_vaults(base="", heads=None):
     return sorted(found)
 
 
+def adopt_legacy_vaults(base="", heads=None):
+    """Backfill the missing rt/<base>/<name> dir for each legacy vault so it
+    reappears in the drawer. Idempotent; adopts within each vault's own root;
+    per-name failures are logged and skipped. Returns the adopted names.
+
+    Host-agnostic (no Qt, no ``self``). The LMDB files inside rt/ are created
+    later by the normal vault-open path — this only creates the directory,
+    exactly like the manual `mkdir ~/.keri/rt/<name>` workaround.
+    """
+    roots = heads if heads is not None else _vault_head_dirs()
+    adopted = []
+    for root in roots:
+        for name in sorted(_legacy_vault_names_in_root(root, base)):
+            rt_dir = _store_dir(root, _RT_DIR, base) / name
+            try:
+                rt_dir.mkdir(parents=True, exist_ok=True)
+            except OSError as exc:
+                logger.warning("adopt_legacy_vaults: failed to adopt %r: %s",
+                               name, exc)
+                continue
+            adopted.append(name)
+            logger.info("adopt_legacy_vaults: adopted legacy vault %r -> %s",
+                        name, rt_dir)
+    if adopted:
+        logger.info("adopt_legacy_vaults: adopted %d legacy vault(s): %s",
+                    len(adopted), adopted)
+    return adopted
+
+
 class LocksmithApplication:
     """
     Main application class for Locksmith.
@@ -292,6 +321,14 @@ class LocksmithApplication:
         if config is None:
             config = LocksmithConfig.get_instance()
         self.config = config
+
+        # Adopt vaults created before the rt/ repoint (dormant since) so they
+        # reappear in the drawer. Runs before the onboarding gate, drawer, and
+        # HOA bootstrap all read environments(). Never allowed to block launch.
+        try:
+            adopt_legacy_vaults(base=getattr(self.config, "base", "") or "")
+        except Exception:  # noqa: BLE001 - launch must survive any fs anomaly
+            logger.exception("adopt_legacy_vaults failed; continuing launch")
 
         # Cross-instance coordination (single-instance-per-vault). The
         # window sets `coordinator.raise_window` once it exists so an

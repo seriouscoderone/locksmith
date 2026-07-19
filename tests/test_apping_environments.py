@@ -108,3 +108,42 @@ def test_find_honors_base(tmp_path):
     for store in ("db", "ks", "mbx"):
         _mk(tmp_path, store, "Bare")
     assert apping.find_legacy_vaults(base="myorg", heads=[tmp_path]) == ["Scoped"]
+
+
+def test_adopt_creates_rt_and_environments_lists_it(tmp_path, monkeypatch):
+    for store in ("db", "ks", "mbx"):
+        _mk(tmp_path, store, "Utah State")
+
+    adopted = apping.adopt_legacy_vaults(heads=[tmp_path])
+    assert adopted == ["Utah State"]
+    assert (tmp_path / "rt" / "Utah State").is_dir()
+
+    # Now the pure read surfaces it.
+    monkeypatch.setattr(apping, "_vault_head_dirs", lambda: [tmp_path])
+    stub = SimpleNamespace(config=SimpleNamespace(base=""))
+    assert apping.LocksmithApplication.environments(stub) == ["Utah State"]
+
+
+def test_adopt_is_idempotent(tmp_path):
+    for store in ("db", "ks", "mbx"):
+        _mk(tmp_path, store, "Carrier")
+
+    assert apping.adopt_legacy_vaults(heads=[tmp_path]) == ["Carrier"]
+    # Second run: nothing left to adopt.
+    assert apping.adopt_legacy_vaults(heads=[tmp_path]) == []
+
+
+def test_adopt_adopts_under_the_vaults_own_root(tmp_path):
+    # Vault data lives under root_b; root_a exists but is empty. rt/ must be
+    # created under root_b, not root_a.
+    root_a = tmp_path / "a"
+    root_b = tmp_path / "b"
+    root_a.mkdir()
+    for store in ("db", "ks", "mbx"):
+        _mk(root_b, store, "Homeowner")
+
+    adopted = apping.adopt_legacy_vaults(heads=[root_a, root_b])
+
+    assert adopted == ["Homeowner"]
+    assert (root_b / "rt" / "Homeowner").is_dir()
+    assert not (root_a / "rt" / "Homeowner").exists()
