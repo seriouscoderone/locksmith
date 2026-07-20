@@ -327,7 +327,9 @@ class LocksmithWindow(QMainWindow):
         # exactly like "home" immediately above: a direct MenuButton click
         # connection, not a VaultPlugin.
         self._hoa_notifications_page = HoaNotificationsPage(
-            self.app, egf_doc, parent=vault_page,
+            self.app, egf_doc,
+            held_provider=lambda: _onboarding_held_credentials(self.app),
+            parent=vault_page,
         )
         vault_page.register_page("notifications", self._hoa_notifications_page)
         notifications_entry_btn = MenuButton(icon=QIcon(), label="Notifications")
@@ -793,6 +795,14 @@ class LocksmithWindow(QMainWindow):
                 message = "A credential has arrived — review it in Notifications"
 
             self.show_notification_toast(datetime, message, pending_count)
+        elif doer_name == "RoleGate" and event_type == "role_revoked":
+            # HOA-aware revocation toast. The durable, role-specific copy
+            # lives in the REVOKED home surface + the Notifications card;
+            # this ephemeral toast is generic. Stock (non-onboarding)
+            # brands don't surface role gates, so no toast.
+            if brand().onboarding_enabled:
+                self.show_notification_toast(
+                    "", "Your workspace access was revoked — review it in Notifications", 1)
 
     def resizeEvent(self, event):
         """
