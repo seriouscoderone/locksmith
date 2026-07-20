@@ -577,6 +577,20 @@ class PluginManager:
             except Exception:
                 logger.exception("plugin.on_vault_closed_failed plugin_id=%s", pid)
 
+        # Symmetric teardown of what on_vault_opened set up: disconnect the
+        # doer_event slot and forget the current vault, so a re-open-same-vault
+        # pattern can't accumulate connections or leave the manager evaluating
+        # gates against a stale vault. Idempotent — a never-connected slot or a
+        # vault that was never current must not raise.
+        signals = getattr(vault, "signals", None)
+        if signals is not None:
+            try:
+                signals.doer_event.disconnect(self._on_doer_event)
+            except (TypeError, RuntimeError):
+                pass  # slot was never connected (or already gone)
+        if getattr(self, "_current_vault", None) is vault:
+            self._current_vault = None
+
     def is_setup_complete(self, plugin_id: str, vault: Any) -> bool:
         plugin = self._plugins.get(plugin_id)
         if plugin and isinstance(plugin, AccountProviderPlugin):
