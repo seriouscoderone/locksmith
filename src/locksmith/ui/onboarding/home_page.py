@@ -159,9 +159,25 @@ def _held_revoked(held: Iterable[Any], schema_said: str) -> bool:
     return False
 
 
-def derive_state(held: list, egf: EgfDocument, role_id: Optional[str]) -> OnboardingState:
+def derive_state(
+    held: list,
+    egf: EgfDocument,
+    role_id: Optional[str],
+    *,
+    suppress_revoked: bool = False,
+) -> OnboardingState:
     """Pure state derivation — no Qt, no I/O. See module docstring for the
-    full precedence rationale (LICENSED > REVOKED > PENDING > FORM > PICKER)."""
+    full precedence rationale (LICENSED > REVOKED > PENDING > FORM > PICKER).
+
+    ``suppress_revoked`` (default False, so every other caller/test is
+    unaffected): when True, skips the REVOKED branch entirely — falls
+    through to PENDING/FORM/PICKER as if no revoked gating credential were
+    held. This exists because a TEL ``rev`` does NOT remove the credential
+    from the holder's store, so a revoked license stays held (and would
+    otherwise re-derive REVOKED) forever after. It's the escape hatch an
+    explicit user re-application uses (``OnboardingHomePage._reapply``) to
+    get past the otherwise-sticky REVOKED state. LICENSED is still checked
+    first regardless — an active grant elsewhere always wins, flag or not."""
     # LICENSED: checked against EVERY onboardable role's grant credential,
     # regardless of role_id — a returning, already-licensed holder should
     # be recognized even before picking a persona card.
@@ -174,11 +190,13 @@ def derive_state(held: list, egf: EgfDocument, role_id: Optional[str]) -> Onboar
     # checked role-agnostically (like LICENSED) and BEFORE the PENDING/PICKER
     # fall-through — so a returning holder whose license was revoked sees the
     # revocation treatment rather than silently dropping to PENDING (they still
-    # hold their own self-issued application) or PICKER.
-    for persona in egf.personas():
-        grant = egf.credential(persona.onboarding.grant_credential_id)
-        if _held_revoked(held, grant.schema_said):
-            return OnboardingState.REVOKED
+    # hold their own self-issued application) or PICKER. Skipped entirely when
+    # suppress_revoked is set (see param docs above).
+    if not suppress_revoked:
+        for persona in egf.personas():
+            grant = egf.credential(persona.onboarding.grant_credential_id)
+            if _held_revoked(held, grant.schema_said):
+                return OnboardingState.REVOKED
 
     if role_id is not None:
         role = egf.role(role_id)
@@ -335,6 +353,12 @@ class OnboardingHomePage(BasePage):
         self._accept_phases = tuple(accept_phases)
 
         self._role_id: Optional[str] = None
+        # Set (and cleared) around an explicit re-apply -- see _reapply() and
+        # refresh(). Suppresses derive_state's otherwise-sticky REVOKED branch
+        # for exactly the refresh() the re-apply triggers, since a TEL rev
+        # doesn't remove the credential from the holder's store (it stays
+        # held forever after).
+        self._reapplying = False
         self.state: OnboardingState = OnboardingState.PICKER
         self.form: Optional[SchemaFormBuilder] = None
         self._context_widgets: Dict[str, QComboBox] = {}
@@ -513,9 +537,21 @@ class OnboardingHomePage(BasePage):
         self._revoked_detail.setText(" ".join(parts))
 
     def _reapply(self) -> None:
-        """Re-apply affordance: clear the chosen role and re-derive. With the
-        gating credential gone (or the holder starting over), this lands on the
-        persona picker; the normal apply flow proceeds from there."""
+        """Re-apply affordance: clear the chosen role and re-derive. A TEL
+        ``rev`` does NOT remove the credential from the holder's store, so
+        the revoked license is still held at this point -- derive_state's
+        REVOKED branch is checked role-agnostically and would otherwise keep
+        re-deriving REVOKED forever (the "Apply again" button would be a
+        dead end). Setting ``self._reapplying`` BEFORE clearing the role and
+        refreshing tells ``refresh()`` to pass ``suppress_revoked=True`` for
+        this one derivation, which skips past the sticky REVOKED state and
+        lands on the persona picker instead, so the user can re-enter the
+        application flow (the DOI can re-issue against the still-held
+        application). A re-issued license arrives via Notifications and,
+        once admitted, ``refresh()`` re-derives LICENSED and clears the
+        flag there. The durable revocation notice remains visible in the
+        Notifications surface regardless."""
+        self._reapplying = True
         self._role_id = None
         self.refresh()
 
@@ -715,9 +751,19 @@ class OnboardingHomePage(BasePage):
     def refresh(self) -> None:
         """Recompute state from ``held_provider()`` and re-render.
         Callers (B8) connect this to ``doer_event`` so a newly-issued or
-        revoked credential is reflected without reconstructing the page."""
+        revoked credential is reflected without reconstructing the page.
+
+        Passes ``self._reapplying`` through to ``derive_state`` as
+        ``suppress_revoked`` -- set by ``_reapply()`` immediately before
+        calling this, so THIS refresh escapes the otherwise-sticky REVOKED
+        state. Cleared the moment a fresh LICENSED is derived (a re-issued
+        license landed and was admitted) -- the escape hatch is no longer
+        needed once the holder is licensed again, and every subsequent
+        refresh() should go back to the normal (non-suppressing) precedence."""
         held = self._held_provider()
-        self.state = derive_state(held, self._egf, self._role_id)
+        self.state = derive_state(held, self._egf, self._role_id, suppress_revoked=self._reapplying)
+        if self.state is OnboardingState.LICENSED:
+            self._reapplying = False   # re-licensed — the escape hatch is no longer needed
         self._render()
 
     def on_doer_event(self, doer_name: str, event_type: str, data: dict) -> None:

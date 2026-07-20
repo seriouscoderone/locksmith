@@ -772,21 +772,53 @@ def test_revoked_state_renders_revoked_view(qtbot):
 
 
 def test_revoked_reapply_resets_to_picker(qtbot):
-    """The re-apply affordance clears the chosen role and re-derives —
-    with the held snapshot now empty (the holder starting over), that
-    lands back on the persona picker."""
+    """The re-apply affordance must actually escape the REVOKED page. A TEL
+    ``rev`` does NOT remove the credential from the holder's store, so the
+    revoked license stays in ``_held_credentials`` forever after — the held
+    snapshot never actually goes back to empty on its own. Without the
+    ``suppress_revoked`` escape hatch, ``derive_state`` would keep re-deriving
+    REVOKED (it's checked role-agnostically, before FORM/PICKER) and the
+    "Apply again" button would be a dead end. ``_reapply()`` sets
+    ``self._reapplying`` before clearing the role and refreshing, so this one
+    ``refresh()`` suppresses the REVOKED branch and lands on PICKER despite
+    the revoked credential still being held."""
     lic = "E" + "L" * 43
-    state = {"held": [Held(lic, "E" + "U" * 43, "revoked", True)]}
+    revoked = Held(lic, "E" + "U" * 43, "revoked", True)
+    held = [revoked]
     page = OnboardingHomePage(
-        _doc(), held_provider=lambda: state["held"], on_submit=lambda *a: None,
+        _doc(), held_provider=lambda: list(held), on_submit=lambda *a: None,
         micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
     )
     qtbot.addWidget(page)
     page.refresh()
-    assert page.state is OnboardingState.REVOKED
+    assert page.state is OnboardingState.REVOKED  # sticky before re-apply
 
-    state["held"] = []
     page._reapply()
 
     assert page._role_id is None
-    assert page.state is OnboardingState.PICKER
+    assert page.state is OnboardingState.PICKER  # escaped, despite the revoked cred still held
+
+
+def test_derive_state_suppress_revoked_escapes_to_picker():
+    """Focused coverage of the ``suppress_revoked`` escape hatch itself
+    (independent of the page/``_reapply`` plumbing): with a revoked gating
+    credential held, ``suppress_revoked=False`` (the default) is sticky
+    REVOKED, ``suppress_revoked=True`` skips that branch entirely and falls
+    through to PICKER (no role_id chosen)."""
+    d = _doc()
+    lic = "E" + "L" * 43
+    held = [Held(lic, "E" + "U" * 43, "revoked", True)]
+
+    assert derive_state(held, d, None) is OnboardingState.REVOKED
+    assert derive_state(held, d, None, suppress_revoked=True) is OnboardingState.PICKER
+
+
+def test_derive_state_suppress_revoked_still_yields_licensed_when_active():
+    """``suppress_revoked`` only skips the REVOKED branch — LICENSED is
+    checked first regardless, so an ACTIVE license held alongside must still
+    win LICENSED even with the flag set."""
+    d = _doc()
+    lic = "E" + "L" * 43
+    held = [Held(lic, "E" + "U" * 43, "active", True)]
+
+    assert derive_state(held, d, None, suppress_revoked=True) is OnboardingState.LICENSED

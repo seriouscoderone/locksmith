@@ -590,10 +590,15 @@ class PluginManager:
                 logger.exception("plugin.on_vault_closed_failed plugin_id=%s", pid)
 
         # Symmetric teardown of what on_vault_opened set up: disconnect the
-        # doer_event slot and forget the current vault, so a re-open-same-vault
-        # pattern can't accumulate connections or leave the manager evaluating
-        # gates against a stale vault. Idempotent — a never-connected slot or a
-        # vault that was never current must not raise.
+        # MANAGER's own doer_event slot (_on_doer_event) and forget the
+        # current vault, so a re-open-same-vault pattern can't accumulate
+        # connections on THIS slot or leave the manager evaluating gates
+        # against a stale vault. Scope note: this says nothing about the
+        # window's own per-vault-open connections (refresh/on_doer_event/
+        # notifications refresh wired in _maybe_wire_onboarding_for_vault) —
+        # those are a separate teardown concern, not handled here. Idempotent
+        # — a never-connected slot or a vault that was never current must not
+        # raise.
         signals = getattr(vault, "signals", None)
         if signals is not None:
             try:
