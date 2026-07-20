@@ -798,7 +798,8 @@ class AdmitDoer(doing.DoDoer):
                             'grant_said': self.grant_said,
                             'admit_said': admin_said,
                             'admit_message': bytes(msg),
-                            'save_only': True
+                            'save_only': True,
+                            'credential_said': credential_said,
                         }
                     )
                 return
@@ -915,7 +916,8 @@ class AdmitDoer(doing.DoDoer):
                             'success': True,
                             'grant_said': self.grant_said,
                             'admit_said': admin_said,
-                            'grantor': recp
+                            'grantor': recp,
+                            'credential_said': credential_said,
                         }
                     )
             else:
@@ -929,7 +931,8 @@ class AdmitDoer(doing.DoDoer):
                             'success': True,
                             'grant_said': self.grant_said,
                             'admit_said': admin_said,
-                            'note': 'Multisig coordination complete, lead will send'
+                            'note': 'Multisig coordination complete, lead will send',
+                            'credential_said': credential_said,
                         }
                     )
 

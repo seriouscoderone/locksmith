@@ -522,10 +522,16 @@ class PluginManager:
         reger.saved, but the gate's chain_verified needs the whole
         chain. Re-evaluate on a timer until the matching gate flips or
         the budget is spent; a final miss logs loudly (vault reopen
-        remains the recovery)."""
+        remains the recovery).
+
+        Vault-pinned: the vault is captured at scheduling time; a tick aborts
+        if ``self._current_vault`` is no longer that vault, so a user
+        switching vaults mid-window never triggers cross-vault gate
+        bookkeeping."""
         if not credential_said or self._current_vault is None:
             return
-        creder = self._current_vault.rgy.reger.creds.get(keys=(credential_said,))
+        vault = self._current_vault
+        creder = vault.rgy.reger.creds.get(keys=(credential_said,))
         if creder is None:
             return
         pending = [p for p in self._gated_plugins()
@@ -537,7 +543,9 @@ class PluginManager:
         remaining = {"n": attempts}
 
         def _tick() -> None:
-            self.reevaluate_role_gates(self._current_vault)
+            if self._current_vault is not vault:
+                return  # vault switched/closed mid-window — abandon this chain
+            self.reevaluate_role_gates(vault)
             still = [p for p in pending if p.plugin_id not in self._active_roles]
             remaining["n"] -= 1
             if not still:

@@ -54,3 +54,19 @@ def test_repoll_exhausts_boundedly():
         qt.singleShot.side_effect = lambda ms, cb: cb()
         mgr._repoll_after_admit("Ecred")
     assert len(calls) == 10
+
+
+def test_repoll_aborts_when_vault_switches_mid_window():
+    mgr = _mgr_with_gated_plugin()
+    creder = MagicMock(); creder.schema = "E" + "L" * 43
+    vault_a = mgr._current_vault
+    vault_a.rgy.reger.creds.get.return_value = creder
+    ticks = []
+    def fake_reeval(v):
+        ticks.append(v)
+        mgr._current_vault = MagicMock()   # simulate a vault switch on the first tick
+    mgr.reevaluate_role_gates = fake_reeval
+    with patch("locksmith.plugins.manager.QTimer") as qt:
+        qt.singleShot.side_effect = lambda ms, cb: cb()   # drive synchronously
+        mgr._repoll_after_admit("ECRED", attempts=5, interval_ms=1)
+    assert ticks == [vault_a], "re-poll must run against the pinned vault, then abort when it changes"
