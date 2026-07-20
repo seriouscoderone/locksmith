@@ -85,15 +85,16 @@ from unittest.mock import patch
 
 from hio.base import doing
 from keri import kering
-from keri.app import notifying, signaling
-from keri.core import eventing, parsing, routing
+from keri.app import grouping, notifying, signaling
+from keri.core import eventing, parsing, routing, serdering
+from keri.help import helping
 from keri.kering import Vrsn_1_0
 from keri.peer import exchanging
 from keri.vc import protocoling
 from keri.vdr import eventing as teventing
 
 import locksmith.core.serviceaid_bridge as serviceaid_bridge
-from locksmith.core.credentialing import outputKEL, outputTEL
+from locksmith.core.credentialing import Registrar, outputKEL, outputTEL
 from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.core.inbound_watch import InboundGrantWatchDoer
 from locksmith.core.serviceaid_bridge import ServiceaidGrantDoer
@@ -592,10 +593,32 @@ def test_revoked_license_deactivates_surface_and_shows_revoked(
     assert "carrier" in mgr._active_roles
     assert derive_state(real_held(vault_view), egf_doc, None) is OnboardingState.LICENSED
 
-    # ---- DOI revokes the license (local TEL rev) ---------------------------
-    from keri_serviceaid.providers import revoke_credential
-    revoke_credential(hby_d, hab_d, rgy_d,
-                      credential_said=license_said, registry_name="doi-licenses")
+    # ---- DOI revokes the license (local TEL rev, pure KERI) -----------------
+    # No keri_serviceaid here -- this mirrors RevokeCredentialDoer's own
+    # sequence (locksmith/core/credentialing.py): registry.revoke() fires the
+    # TEL `rev` event, the resulting seal is anchored into the issuer hab's
+    # KEL via interact() (this registry is estOnly=False, noBackers=True --
+    # see `_ensure_registry` -- so interact(), not rotate()), then
+    # Registrar.revoke() registers the anchor (registry.anchorMsg()) that
+    # Tevery's escrow needs to resolve the rev event's MissingAnchorError --
+    # without it the TEL event stays escrowed forever, however many times
+    # processEscrows() runs (confirmed by running this test: a first attempt
+    # that skipped the Registrar left the TEL parked at `iss`).
+    registry = rgy_d.regs[creder_l.regid]
+    rserder = registry.revoke(said=license_said, dt=helping.nowIso8601())
+    rseal = eventing.SealEvent(rserder.pre, rserder.snh, rserder.said)
+    rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
+    anc = hab_d.interact(data=[rseal], version=hab_d.kever.serder.pvrsn)
+    aserder = serdering.SerderKERI(raw=anc)
+
+    counselor = grouping.Counselor(hby=hby_d)
+    registrar = Registrar(hby=hby_d, rgy=rgy_d, counselor=counselor)
+    registrar.revoke(creder=creder_l, rserder=rserder, anc=aserder)
+
+    for _ in range(10):
+        rgy_d.processEscrows()
+        registrar.processEscrows()
+    assert rgy_d.reger.tevers[creder_l.regid].vcState(license_said).et in ("rev", "brv")
 
     # ---- deliver the raw TEL rev + KEL anchor into the carrier parser -----
     # (same parser seam part-2 uses for the return-grant stream; outputKEL/

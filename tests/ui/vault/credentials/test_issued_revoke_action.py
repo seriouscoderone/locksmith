@@ -2,9 +2,9 @@
 """Tests for the issued-credentials list's "Revoke" row action.
 
 The DOI stock wallet's issued-credentials list is the DOI-side trigger for
-the live demo's revocation flow. `_on_row_action` previously only logged for
-`action == "Revoke"`; this pins that it now resolves the credential + issuer
-hab and schedules `make_revoke_doer`'s doer onto `vault.extend`.
+the live demo's revocation flow. `_on_row_action` resolves the credential +
+issuer hab and schedules the KERI-native `RevokeCredentialDoer` onto
+`vault.extend`.
 
 `IssuedCredentialsListPage.__init__` requires a real parent widget with a
 `.app` and constructs live Qt table widgets, so — mirroring the
@@ -42,7 +42,7 @@ def test_revoke_action_schedules_revoke_doer():
     page, vault = _page()
     sentinel = object()
     with patch(
-        "locksmith.ui.vault.credentials.issued.list.make_revoke_doer",
+        "locksmith.ui.vault.credentials.issued.list.RevokeCredentialDoer",
         return_value=sentinel,
     ) as mk:
         page._on_row_action(
@@ -58,7 +58,7 @@ def test_revoke_action_logs_and_returns_when_credential_not_found():
     page, vault = _page()
     vault.rgy.reger.cloneCred.return_value = (None, None, None, None)
     with patch(
-        "locksmith.ui.vault.credentials.issued.list.make_revoke_doer"
+        "locksmith.ui.vault.credentials.issued.list.RevokeCredentialDoer"
     ) as mk:
         page._on_row_action(
             {"SAID": "EMISSING", "Schema": "carrier_license", "Issuer": "EISSUER"},
@@ -72,25 +72,11 @@ def test_revoke_action_logs_and_returns_when_issuer_hab_not_open():
     page, vault = _page()
     vault.hby.habs.clear()  # issuer hab not open in this wallet
     with patch(
-        "locksmith.ui.vault.credentials.issued.list.make_revoke_doer"
+        "locksmith.ui.vault.credentials.issued.list.RevokeCredentialDoer"
     ) as mk:
         page._on_row_action(
             {"SAID": "ELICENSE", "Schema": "carrier_license", "Issuer": "EISSUER"},
             "Revoke",
         )
     mk.assert_not_called()
-    vault.extend.assert_not_called()
-
-
-def test_revoke_action_warns_on_not_implemented_group_hab():
-    page, vault = _page()
-    with patch(
-        "locksmith.ui.vault.credentials.issued.list.make_revoke_doer",
-        side_effect=NotImplementedError("GroupHab/witnessed revoke not supported"),
-    ) as mk:
-        page._on_row_action(
-            {"SAID": "ELICENSE", "Schema": "carrier_license", "Issuer": "EISSUER"},
-            "Revoke",
-        )
-    mk.assert_called_once()
     vault.extend.assert_not_called()

@@ -1,7 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""Tests for `ServiceaidRevokeDoer`/`make_revoke_doer` (HOA #3 credential
-revocation): revoking an already-issued credential locally
-(`keri_serviceaid.providers.revoke_credential`) and streaming the updated
+"""Tests for the KERI-native `RevokeCredentialDoer` (HOA #3 credential
+revocation, de-leaked from `keri_serviceaid`): revoking an already-issued
+credential locally via Locksmith's own `Registrar` + keripy-core
+`registry.revoke`/`credentialing.sendArtifacts`, then streaming the updated
 TEL + issuer KEL to the holder over Locksmith's existing peer-aware
 transport as a RAW TEL update -- NOT an IPEX exn.
 
@@ -16,13 +17,12 @@ no admit-side plumbing at all. The "granting-style vault" (`extend`/
 `DoerSignalBridge` (real Qt signal), driven by a real virtual-time `Doist`.
 """
 from types import SimpleNamespace
-from unittest.mock import MagicMock
 
 import pytest
 from hio.base import doing
 
-import locksmith.core.serviceaid_bridge as sb
-from locksmith.core.serviceaid_bridge import ServiceaidRevokeDoer, make_revoke_doer
+import locksmith.core.credentialing as credentialing_mod
+from locksmith.core.credentialing import RevokeCredentialDoer
 from locksmith.core.signals import DoerSignalBridge
 
 from tests.integration.test_carrier_gate_e2e import (  # noqa: F401 (haberies)
@@ -52,7 +52,7 @@ class CapturePoster:
 class RevokeVault(doing.DoDoer):
     """The DOI's vault while it REVOKES: the real scheduling seam
     (`extend`), a real Qt signal bridge, and the `hby`/`rgy`/`db` surface
-    `ServiceaidRevokeDoer` reads off `app.vault` -- mirrors
+    `RevokeCredentialDoer` reads off `app.vault` -- mirrors
     `test_exchange_roundtrip_e2e.py`'s `GrantingVault`."""
 
     def __init__(self, hby, rgy):
@@ -86,12 +86,12 @@ def revoke_env(qapp, haberies):
     into the DOI's stores (needed for `Credentialer.create`'s recipient-known
     check); the DOI then issues the `carrier_license` (with its NI2I
     `application` edge) to the carrier. Only the DOI side is needed --
-    `ServiceaidRevokeDoer` runs on the issuer, which always retains what it
+    `RevokeCredentialDoer` runs on the issuer, which always retains what it
     issued regardless of holder admit state.
     """
-    hby_c, hab_c, rgy_c = _make_party("t2_revoke_carrier", b"t2_revoke_carrier01")
+    hby_c, hab_c, rgy_c = _make_party("t3_revoke_carrier", b"t3_revoke_carrier01")
     haberies.append(hby_c)
-    hby_d, hab_d, rgy_d = _make_party("t2_revoke_doi", b"t2_revoke_doi_012345")
+    hby_d, hab_d, rgy_d = _make_party("t3_revoke_doi", b"t3_revoke_doi_012345")
     haberies.append(hby_d)
 
     app_said = _issue(
@@ -117,21 +117,23 @@ def revoke_env(qapp, haberies):
 
 def test_revoke_doer_streams_rev_tel_over_poster(monkeypatch, revoke_env):
     # revoke_env: an issued-and-still-active license held by the DOI hby, with
-    # a granting-style vault harness (extend/signals/hby/rgy/db). Mirror
-    # test_serviceaid_bridge.py's GrantingVault-shaped fixture; recipient = the
-    # carrier AID the license was issued to.
+    # a granting-style vault harness (extend/signals/hby/rgy/db). Recipient =
+    # the carrier AID the license was issued to.
     app, hby_d, hab_d, rgy_d, license_said, carrier_pre = revoke_env
     CapturePoster.instances.clear()
-    monkeypatch.setattr(sb, "PeerAwarePoster", CapturePoster)
+    monkeypatch.setattr(credentialing_mod, "PeerAwarePoster", CapturePoster)
     events = []
     app.vault.signals.doer_event.connect(lambda n, t, d: events.append((n, t, d)))
 
-    doer = make_revoke_doer(app, hab_d, credential_said=license_said)
-    assert isinstance(doer, ServiceaidRevokeDoer)
+    doer = RevokeCredentialDoer(app, credential_said=license_said)
     _drive(app.vault, doer)
 
-    done = next((d for n, t, d in events if t == "credential_revoked"), None)
-    assert done is not None and done["success"] is True
+    done = next((d for n, t, d in events
+                if n == "RevokeCredentialDoer" and t == "credential_revoked"), None)
+    failed = next((d for n, t, d in events
+                  if n == "RevokeCredentialDoer" and t == "revoke_failed"), None)
+    assert done is not None, f"revoke did not complete; revoke_failed={failed}"
+    assert done["success"] is True
     assert done["credential_said"] == license_said
     assert done["recipient"] == carrier_pre
     # The credential's TEL was revoked locally.
@@ -142,10 +144,3 @@ def test_revoke_doer_streams_rev_tel_over_poster(monkeypatch, revoke_env):
     poster = CapturePoster.instances[-1]
     ilks = [s.ked.get("t") for s, _ in poster.sent if getattr(s, "ked", None)]
     assert "rev" in ilks or "brv" in ilks
-
-
-def test_make_revoke_doer_rejects_ineligible_hab():
-    app = SimpleNamespace(vault=SimpleNamespace())
-    group = MagicMock(); group.__class__.__name__ = "GroupHab"
-    with pytest.raises(NotImplementedError):
-        make_revoke_doer(app, group, credential_said="EAAA")

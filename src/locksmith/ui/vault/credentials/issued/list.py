@@ -11,7 +11,7 @@ from keri import help
 from keri.app import organizing
 from keri.help import helping
 
-from locksmith.core.serviceaid_bridge import make_revoke_doer
+from locksmith.core.credentialing import RevokeCredentialDoer
 from locksmith.ui.toolkit.tables import PaginatedTableWidget
 from locksmith.ui.vault.shared.base_list_page import BaseListPage
 from locksmith.ui.vault.credentials.issued.delete import DeleteIssuedCredentialDialog
@@ -201,11 +201,8 @@ class IssuedCredentialsListPage(BaseListPage):
                 if hab is None:
                     logger.error(f"Cannot revoke — issuer hab {creder.issuer} not open")
                     return
-                doer = make_revoke_doer(self.app, hab, credential_said=credential_said)
+                doer = RevokeCredentialDoer(self.app, credential_said=credential_said)
                 self.app.vault.extend([doer])
-            except NotImplementedError as e:
-                # GroupHab/witnessed issuer — no serviceaid revoke path yet.
-                logger.warning(f"Revoke not supported for this identifier: {e}")
             except Exception as e:
                 logger.exception(f"Error scheduling revoke: {e}")
         elif action == "Delete":

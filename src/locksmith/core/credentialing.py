@@ -16,6 +16,8 @@ from keri.help import helping
 from keri.kering import Kinds, Vrsn_1_0
 from keri.vdr import credentialing, verifying
 
+from locksmith.peer.posting import PeerAwarePoster
+
 logger = help.ogler.getLogger(__name__)
 
 
@@ -505,6 +507,164 @@ class IssueCredentialDoer(doing.DoDoer):
             # Clean up if we created any doers
             try:
                 self.remove([counselor, registrar, postman])
+            except:
+                pass
+
+            return
+
+
+class RevokeCredentialDoer(doing.DoDoer):
+    """Doer for asynchronous credential revocation.
+
+    KERI-native credential revocation + delivery -- pure KERI, no
+    `keri_serviceaid` involved. Fires the TEL `rev` event via the wallet's
+    own `Registrar` (the same Locksmith-local class `IssueCredentialDoer`
+    uses for issuance), anchors it into the issuer hab's KEL, drives local
+    completion, then streams the updated TEL + issuer KEL to the holder
+    over `PeerAwarePoster` (`credentialing.sendArtifacts`) as a raw TEL
+    update -- no `/ipex/*` exn is framed, so the holder gets no spurious
+    "credential offer" note; the gate reacts to the observed TEL state
+    instead (see PluginManager.recheck_gates / reevaluate_role_gates).
+
+    Recipient is resolved from the credential itself (`creder.attrib["i"]`)
+    -- the issuer already knows who holds what it issued; callers pass only
+    the credential SAID.
+    """
+
+    def __init__(self, app, *, credential_said, message="", signal_bridge=None):
+        """
+        Initialize the RevokeCredentialDoer.
+
+        Args:
+            app: Application instance
+            credential_said: SAID of the credential to revoke
+            message: optional courtesy message (kept for call-site symmetry
+                with the issue/grant doers; the raw TEL-update delivery
+                path does not frame anything with it)
+            signal_bridge: DoerSignalBridge instance for emitting Qt signals
+                (defaults to app.vault.signals)
+        """
+        self.app = app
+        self.hby = app.vault.hby
+        self.rgy = app.vault.rgy
+        self.credential_said = credential_said
+        self.message = message
+        self.signal_bridge = signal_bridge or app.vault.signals
+
+        if not credential_said:
+            raise ValueError("Credential SAID is required")
+
+        doers = [doing.doify(self.revoke_do)]
+        super(RevokeCredentialDoer, self).__init__(doers=doers)
+
+    def revoke_do(self, tymth, tock=0.0, **opts):
+        """
+        Generator method for credential revocation.
+
+        Args:
+            tymth: Time function
+            tock: Tick interval
+        """
+        self.wind(tymth)
+        self.tock = tock
+        _ = (yield self.tock)
+
+        counselor = grouping.Counselor(hby=self.hby)
+        registrar = Registrar(hby=self.hby, rgy=self.rgy, counselor=counselor)
+        self.extend([counselor, registrar])
+
+        try:
+            creder = self.rgy.reger.cloneCred(said=self.credential_said)[0]
+            if creder is None:
+                raise Exception(f"Credential {self.credential_said} not found")
+
+            recipient = creder.attrib.get("i") if creder.attrib else None
+            if not recipient:
+                raise Exception("Credential has no holder (attrib 'i') to notify")
+
+            registry = self.rgy.regs[creder.regid]
+            hab = registry.hab
+
+            dt = helping.nowIso8601()
+            rserder = registry.revoke(said=self.credential_said, dt=dt)
+
+            rseal = eventing.SealEvent(rserder.pre, rserder.snh, rserder.said)
+            rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
+
+            # TRANSITIONAL (KERI v2 v1-hold): pin this TEL-revocation anchor
+            # to the hab's own established version -- see the matching
+            # comment on IssueCredentialDoer's issuance anchor above. Lift
+            # as a unit with serviceaid (grep TRANSITIONAL).
+            if registry.estOnly:
+                anc = hab.rotate(data=[rseal], version=hab.kever.serder.pvrsn)
+            else:
+                anc = hab.interact(data=[rseal], version=hab.kever.serder.pvrsn)
+
+            aserder = serdering.SerderKERI(raw=anc)
+            registrar.revoke(creder=creder, rserder=rserder, anc=aserder)
+
+            # Drive local completion. registry.revoke() already applied the
+            # rev TEL event synchronously, so for a witnessless/no-backer
+            # registry vcState flips on the very first check; the bounded
+            # loop only matters for a witnessed/backer registry that needs
+            # receipting cycles (registrar.escrowDo, extended above, ticks
+            # those in the background as the Doist recurs).
+            tever = self.rgy.reger.tevers[creder.regid]
+            count = 0
+            while tever.vcState(self.credential_said).et not in ("rev", "brv") and count < 200:
+                self.rgy.processEscrows()
+                count += 1
+                yield self.tock
+
+            # Re-read the creder AFTER revoke so sendArtifacts streams the
+            # updated TEL (now carrying the rev event) rather than the
+            # pre-revoke snapshot.
+            creder = self.rgy.reger.cloneCred(said=self.credential_said)[0]
+
+            postman = PeerAwarePoster(hby=self.hby, hab=hab, recp=recipient,
+                                      baser=self.app.vault.db, topic="credential")
+            credentialing.sendArtifacts(self.hby, self.rgy.reger, postman, creder, recipient)
+
+            doer = doing.DoDoer(doers=postman.deliver())
+            self.extend([doer])
+            while not doer.done:
+                yield self.tock
+
+            channel = postman.last_outcome.value if getattr(postman, "last_outcome", None) else "mailbox"
+
+            logger.info(f"Credential revoked successfully: {self.credential_said}")
+
+            if self.signal_bridge:
+                self.signal_bridge.emit_doer_event(
+                    doer_name="RevokeCredentialDoer",
+                    event_type="credential_revoked",
+                    data={
+                        'success': True,
+                        'credential_said': self.credential_said,
+                        'recipient': recipient,
+                        'channel': channel,
+                    }
+                )
+
+            self.remove([counselor, registrar])
+            return
+
+        except Exception as e:
+            logger.exception(f"RevokeCredentialDoer failed: {e}")
+
+            if self.signal_bridge:
+                self.signal_bridge.emit_doer_event(
+                    doer_name="RevokeCredentialDoer",
+                    event_type="revoke_failed",
+                    data={
+                        'error': str(e),
+                        'success': False,
+                        'credential_said': self.credential_said
+                    }
+                )
+
+            try:
+                self.remove([counselor, registrar])
             except:
                 pass
 
