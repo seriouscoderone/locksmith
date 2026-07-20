@@ -94,6 +94,7 @@ class HeldCredential:
     state: str            # active | revoked | unknown (from the TEL Tever vcState)
     chain_verified: bool  # True iff present in the reger `saved` (fully-verified) index
     said: str             # the ACDC's own SAID — per-instance identity for UI detail views; the gate predicate does not read it
+    revoked_at: str = ""  # iso8601 of the latest TEL event when state=="revoked" (from vcState.dt); "" otherwise
 
 
 class PluginManager:
@@ -421,6 +422,7 @@ class PluginManager:
         creder = reger.creds.get(keys=(said,))
         chain_verified = reger.saved.get(keys=(said,)) is not None
         state = "unknown"
+        revoked_at = ""
         try:
             status = reger.tevers[creder.regid].vcState(said)
             et = getattr(status, "et", None)
@@ -428,6 +430,7 @@ class PluginManager:
                 state = "active"
             elif et in ("rev", "brv"):
                 state = "revoked"
+                revoked_at = getattr(status, "dt", "") or ""
         except Exception:  # noqa: BLE001 — missing/partial TEL => state unknown
             logger.warning(
                 "role_gate.vcstate_unavailable said=%s (state=unknown)", said,
@@ -438,6 +441,7 @@ class PluginManager:
             state=state,
             chain_verified=chain_verified,
             said=said,
+            revoked_at=revoked_at,
         )
 
     @staticmethod
