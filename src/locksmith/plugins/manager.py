@@ -507,6 +507,14 @@ class PluginManager:
         if getattr(self, "_current_vault", None) is not None:
             self.reevaluate_role_gates(self._current_vault)
 
+    def recheck_gates(self) -> None:
+        """Re-evaluate role gates against the currently-open vault, reading
+        live TEL state. The channel-blind live floor: a revocation delivered by
+        ANY channel (peer push, mailbox, manual) is caught on the next call,
+        since _held_credentials re-reads vcState each time. No-op if no vault."""
+        if getattr(self, "_current_vault", None) is not None:
+            self.reevaluate_role_gates(self._current_vault)
+
     def _repoll_after_admit(self, credential_said: str,
                             attempts: int = 10, interval_ms: int = 500) -> None:
         """Bounded re-poll for the full-chain-lands-late window (spec

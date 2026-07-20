@@ -21,7 +21,7 @@ from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import make_hoa_resolver
-from locksmith.core.inbound_watch import InboundGrantWatchDoer
+from locksmith.core.inbound_watch import GateRecheckDoer, InboundGrantWatchDoer
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
@@ -676,10 +676,13 @@ class LocksmithWindow(QMainWindow):
         # prompt). Anything else stays unread for HoaNotificationsPage's
         # Accept button (Task 10). One watcher per vault-open, same
         # per-vault-instance lifetime as the rest of this block.
-        self.app.vault.extend([InboundGrantWatchDoer(
-            self.app, self._request_flow.egf_doc, brand().egf_accept_phases,
-            held_provider=lambda: _onboarding_held_credentials(self.app),
-        )])
+        self.app.vault.extend([
+            InboundGrantWatchDoer(
+                self.app, self._request_flow.egf_doc, brand().egf_accept_phases,
+                held_provider=lambda: _onboarding_held_credentials(self.app),
+            ),
+            GateRecheckDoer(self.app),
+        ])
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
         # emissions as a visible inline banner on the form view (distinct
