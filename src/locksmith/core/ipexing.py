@@ -4,6 +4,8 @@ locksmith.core.ipexing module
 
 Dialog for granting (sending or saving) issued credentials.
 """
+import time
+
 from hio.base import doing
 from keri import help
 from keri.app import organizing, signing, grouping, forwarding, habbing, agenting
@@ -42,6 +44,35 @@ def _embed_serder(label, ked):
     if label == "acdc":
         return serdering.SerderACDC(sad=ked)
     return serdering.SerderKERI(sad=ked)
+
+
+def _wait_for(predicate, *, timeout, tock=0.0, clock=None):
+    """Cooperatively wait for ``predicate()`` to become truthy, bounded by a
+    wall-clock ``timeout``.
+
+    Yields ``tock`` back to the doist between checks (so the doer stays
+    cooperative) and returns ``True`` once ``predicate()`` is truthy, or
+    ``False`` if ``timeout`` seconds elapse first.
+
+    The timeout is measured against ``clock`` (wall-clock ``time.monotonic`` by
+    default) rather than by accumulating ``tock``. These waits run inside doers
+    entered via ``doing.doify``, which forwards the doify default ``tock == 0.0``
+    (see ``DoDoer.enter`` -> ``doer(tock=doer.tock)``); a ``timer += tock``
+    accumulator therefore never advances and the guard is unreachable, so a real
+    save/coordination failure hangs forever instead of failing cleanly. ``clock``
+    is injectable so the timeout is deterministically testable.
+
+    Callers that must fail on timeout branch on the return value; callers that
+    merely wait "up to" the timeout (then proceed either way) ignore it.
+    """
+    if clock is None:  # resolved at call time so it stays monkeypatchable
+        clock = time.monotonic
+    start = clock()
+    while not predicate():
+        if clock() - start > timeout:
+            return False
+        yield tock
+    return True
 
 
 class Granter:
@@ -407,25 +438,25 @@ class SendGrantDoer(doing.DoDoer):
                     doer = doing.DoDoer(doers=postman.deliver())
                     self.extend([doer])
 
-                # Wait for multisig completion
-                timeout = 30.0  # 30 second timeout
-                timer = 0.0
-                while not self.exc.complete(said=exn.said):
-                    yield self.tock
-                    timer += self.tock
-                    if timer > timeout:
-                        logger.error("Multisig coordination timeout")
-                        if self.signal_bridge:
-                            self.signal_bridge.emit_doer_event(
-                                doer_name="SendGrantDoer",
-                                event_type="send_failed",
-                                data={
-                                    'error': 'Multisig coordination timeout',
-                                    'success': False,
-                                    'credential_said': self.credential_said
-                                }
-                            )
-                        return
+                # Wait for multisig completion. Wall-clock timeout via _wait_for:
+                # this doer runs under doify with tock == 0.0, so the old
+                # `timer += self.tock` guard never advanced and was unreachable.
+                completed = yield from _wait_for(
+                    lambda: self.exc.complete(said=exn.said),
+                    timeout=30.0, tock=self.tock)
+                if not completed:
+                    logger.error("Multisig coordination timeout")
+                    if self.signal_bridge:
+                        self.signal_bridge.emit_doer_event(
+                            doer_name="SendGrantDoer",
+                            event_type="send_failed",
+                            data={
+                                'error': 'Multisig coordination timeout',
+                                'success': False,
+                                'credential_said': self.credential_said
+                            }
+                        )
+                    return
 
                 logger.info("Multisig coordination complete")
 
@@ -678,15 +709,13 @@ class AdmitDoer(doing.DoDoer):
             #     self.witq.telquery(src=hab.pre, wits=hab.kevers[issr].wits,
             #                       ri=acdc["ri"], i=acdc["d"])
             #
-            # Wait a moment for queries to process
-            timeout = 5.0  # 5 second timeout for witness queries
-            timer = 0.0
-            while timer < timeout:
-                yield self.tock
-                timer += self.tock
-                # Check if we have the issuer's KEL
-                if issr in self.hby.kevers:
-                    break
+            # Wait (up to a wall-clock timeout) for the issuer's KEL to arrive,
+            # then proceed either way. Bounded via _wait_for because this doer
+            # runs under doify with tock == 0.0: the old `while timer < timeout`
+            # with `timer += self.tock` never advanced, so absent the KEL it
+            # spun for the whole run instead of giving up after ~5s.
+            yield from _wait_for(
+                lambda: issr in self.hby.kevers, timeout=5.0, tock=self.tock)
 
             # Signal progress: parsing credential
             if self.signal_bridge:
@@ -717,26 +746,27 @@ class AdmitDoer(doing.DoDoer):
             # Get credential SAID
             credential_said = acdc.get("d", "")
 
-            # Wait for credential to be saved
+            # Wait for credential to be saved. Wall-clock timeout via _wait_for:
+            # this doer runs under doify with tock == 0.0, so the old
+            # `timer += self.tock` guard never fired and a real save failure
+            # hung forever instead of emitting admit_failed (2026-07-18 demo).
             logger.info(f"Waiting for credential {credential_said} to be saved...")
-            timeout = 10.0  # 10 second timeout
-            timer = 0.0
-            while not self.rgy.reger.saved.get(keys=credential_said):
-                yield self.tock
-                timer += self.tock
-                if timer > timeout:
-                    logger.error("Timeout waiting for credential to be saved")
-                    if self.signal_bridge:
-                        self.signal_bridge.emit_doer_event(
-                            doer_name="AdmitDoer",
-                            event_type="admit_failed",
-                            data={
-                                'error': 'Timeout processing credential',
-                                'success': False,
-                                'grant_said': self.grant_said
-                            }
-                        )
-                    return
+            saved = yield from _wait_for(
+                lambda: self.rgy.reger.saved.get(keys=credential_said),
+                timeout=10.0, tock=self.tock)
+            if not saved:
+                logger.error("Timeout waiting for credential to be saved")
+                if self.signal_bridge:
+                    self.signal_bridge.emit_doer_event(
+                        doer_name="AdmitDoer",
+                        event_type="admit_failed",
+                        data={
+                            'error': 'Timeout processing credential',
+                            'success': False,
+                            'grant_said': self.grant_said
+                        }
+                    )
+                return
 
             logger.info(f"Credential {credential_said} saved successfully")
 
@@ -818,25 +848,24 @@ class AdmitDoer(doing.DoDoer):
                     doer = doing.DoDoer(doers=postman.deliver())
                     self.extend([doer])
 
-                # Wait for multisig completion
-                timeout = 30.0  # 30 second timeout
-                timer = 0.0
-                while not self.exc.complete(said=exn.said):
-                    yield self.tock
-                    timer += self.tock
-                    if timer > timeout:
-                        logger.error("Multisig coordination timeout")
-                        if self.signal_bridge:
-                            self.signal_bridge.emit_doer_event(
-                                doer_name="AdmitDoer",
-                                event_type="admit_failed",
-                                data={
-                                    'error': 'Multisig coordination timeout',
-                                    'success': False,
-                                    'grant_said': self.grant_said
-                                }
-                            )
-                        return
+                # Wait for multisig completion. Wall-clock timeout via _wait_for
+                # (doify tock == 0.0 makes a `timer += self.tock` guard unreachable).
+                completed = yield from _wait_for(
+                    lambda: self.exc.complete(said=exn.said),
+                    timeout=30.0, tock=self.tock)
+                if not completed:
+                    logger.error("Multisig coordination timeout")
+                    if self.signal_bridge:
+                        self.signal_bridge.emit_doer_event(
+                            doer_name="AdmitDoer",
+                            event_type="admit_failed",
+                            data={
+                                'error': 'Multisig coordination timeout',
+                                'success': False,
+                                'grant_said': self.grant_said
+                            }
+                        )
+                    return
 
                 logger.info("Multisig coordination complete")
 
