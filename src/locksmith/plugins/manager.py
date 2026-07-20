@@ -426,6 +426,18 @@ class PluginManager:
     @staticmethod
     def _held_credential_view(reger: Any, said: str) -> HeldCredential:
         creder = reger.creds.get(keys=(said,))
+        # ACCEPTED LIMITATION (spec 2026-07-19 §8, edge-revocation bound):
+        # chain_verified is SAVE-TIME (reger.saved membership, pinned once by
+        # Verifier.saveCredential after the whole chain verified). Revoking a
+        # chained EDGE TARGET later (e.g. the carrier's own self-issued
+        # application that a license's NI2I edge points at) does NOT flip this
+        # back to False, so it does not, on its own, deactivate the gate. This
+        # is accepted: the edge target is self-issued (self-inflicted/unusual);
+        # the realistic revocation (the DOI revokes the license itself) IS
+        # observed live via the TEL rev on the license's own registry. Full-
+        # chain live re-verification is deferred to the watcher era. Pinned by
+        # tests/integration/test_carrier_gate_e2e.py::
+        # test_revoking_application_edge_target_leaves_gate_satisfied.
         chain_verified = reger.saved.get(keys=(said,)) is not None
         state = "unknown"
         revoked_at = ""
