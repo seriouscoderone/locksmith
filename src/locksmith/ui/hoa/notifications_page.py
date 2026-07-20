@@ -84,6 +84,16 @@ class HoaNotificationsPage(BasePage):
             credential catalog. Best-effort: any failure to resolve (no
             ``egf_doc``, unreadable exn, no matching schema) falls back to
             the generic per-route copy — never raises, never drops the row.
+        held_provider: Optional zero-arg callable returning the current
+            iterable of held-credential views (``HeldCredential``-shaped:
+            ``schema_said``, ``state``, ``chain_verified``, ``said``, ...).
+            When provided alongside ``egf_doc``, a durable "access revoked"
+            row is synthesized on every ``refresh()`` for each held gating
+            credential whose schema matches a persona's onboarding grant
+            credential and whose state is ``"revoked"`` — a raw TEL ``rev``
+            produces no notifier note of its own, so this is the only way
+            such a row is ever surfaced. Best-effort: any failure yields no
+            synthesized rows rather than dropping the whole log.
         parent: Parent widget (the ``VaultPage``/``HoaVaultPage``).
     """
 
@@ -91,11 +101,13 @@ class HoaNotificationsPage(BasePage):
         self,
         app: Any,
         egf_doc: Optional[Any] = None,
+        held_provider: Optional[Any] = None,
         parent: Optional[QWidget] = None,
     ):
         super().__init__(parent)
         self.app = app
         self._egf_doc = egf_doc
+        self._held_provider = held_provider
         self._rows: List[Dict[str, Any]] = []
 
         outer = QVBoxLayout(self)
@@ -168,10 +180,51 @@ class HoaNotificationsPage(BasePage):
                 "read": bool(getattr(note, "read", False)),
             })
 
+        rows.extend(self._revoked_rows())
+
         # Most-recent-first, mirroring the stock NotificationsListPage's own
         # "loaded oldest-to-newest via getTopItemIter, then reverse()" convention.
         rows.reverse()
         return rows
+
+    def _revoked_rows(self) -> List[Dict[str, Any]]:
+        """Synthesize a durable 'access revoked' row per held-and-revoked
+        gating credential. Derived from live held TEL state (not a notifier
+        note — a raw TEL `rev` produces none), so it is re-derived on every
+        refresh and needs no synthetic-note storage. Best-effort: any
+        failure yields no rows rather than dropping the whole notifications
+        list. ``has_accept_action`` already returns False for non-`/ipex/
+        grant` routes, so a "revoked" row never offers Accept."""
+        if self._egf_doc is None or self._held_provider is None:
+            return []
+        try:
+            held = self._held_provider()
+            grant_schemas: Dict[str, Any] = {}
+            for persona in self._egf_doc.personas():
+                grant = self._egf_doc.credential(persona.onboarding.grant_credential_id)
+                grant_schemas[grant.schema_said] = grant
+
+            out: List[Dict[str, Any]] = []
+            for h in held:
+                grant = grant_schemas.get(getattr(h, "schema_said", None))
+                if grant is None:
+                    continue
+                if not getattr(h, "chain_verified", False):
+                    continue
+                if getattr(h, "state", None) != "revoked":
+                    continue
+                said = getattr(h, "said", "")
+                out.append({
+                    "rid": f"revoked:{said}",
+                    "route": "revoked",
+                    "said": said,
+                    "title": f"{grant.name} access revoked",
+                    "read": True,
+                })
+            return out
+        except Exception:
+            logger.exception("HoaNotificationsPage: revoked-row synthesis failed")
+            return []
 
     def rows(self) -> List[Dict[str, Any]]:
         """The rows built by the most recent ``refresh()``."""
