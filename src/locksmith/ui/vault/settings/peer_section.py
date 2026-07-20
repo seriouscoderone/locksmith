@@ -4,7 +4,7 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
     QListWidgetItem, QSpinBox, QVBoxLayout,
 )
 from keri import help
@@ -113,6 +113,22 @@ class PeerSettingsSection(QFrame):
         self.enabled_toggle.setObjectName("peerSettingsSection.enabledToggle")
         row1.addWidget(self.enabled_toggle)
         card_layout.addLayout(row1)
+
+        # Row 1b: Open-inbound (first-contact) toggle — config-gated,
+        # default OFF. Lets an unpaired sender's first message through
+        # gate 1 when its KEL is verifiable and it published a reachable
+        # tcp loc, registering it as a peer for the reply path.
+        row1b = QHBoxLayout()
+        row1b.setSpacing(12)
+        self.open_inbound_cb = QCheckBox(
+            "Accept introductions from verified first-contact senders"
+        )
+        self.open_inbound_cb.setObjectName(
+            "peerSettingsSection.openInboundCheckbox"
+        )
+        row1b.addWidget(self.open_inbound_cb)
+        row1b.addStretch()
+        card_layout.addLayout(row1b)
 
         # Row 2: Port + Bind
         row2 = QHBoxLayout()
@@ -266,6 +282,7 @@ class PeerSettingsSection(QFrame):
             self.bind_combo.setCurrentIndex(idx)
         if rec.advertised_host:
             self.advertised_combo.setCurrentText(rec.advertised_host)
+        self.open_inbound_cb.setChecked(rec.open_inbound)
         self._sync_status_from_doer()
 
     def _on_apply(self) -> None:
@@ -274,6 +291,7 @@ class PeerSettingsSection(QFrame):
             port=self.port_spin.value(),
             bind_host=self.bind_combo.currentData() or "0.0.0.0",
             advertised_host=self.advertised_combo.currentText().strip(),
+            open_inbound=self.open_inbound_cb.isChecked(),
         )
         self._vault.db.peerSettings.pin(keys=("default",), val=rec)
         logger.info(

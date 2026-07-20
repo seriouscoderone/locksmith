@@ -21,6 +21,7 @@ class PeerModeSettings:
     port: int = 5621
     bind_host: str = "0.0.0.0"
     advertised_host: str = ""
+    open_inbound: bool = False
 
 
 @dataclass

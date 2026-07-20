@@ -17,11 +17,28 @@ def test_every_file_resaids_to_its_filename():
         assert doc[label] == p.stem and _resaid(doc, label) == p.stem, p.name
 
 
+def _egf() -> dict:
+    return next(json.loads(p.read_text()) for p in BUNDLE.glob("E*.json")
+                if json.loads(p.read_text()).get("spec_version") == "egf-doc/0.1")
+
+
 def test_egf_references_resolve_in_bundle_and_brand_pin_matches():
-    egf = next(json.loads(p.read_text()) for p in BUNDLE.glob("E*.json")
-               if json.loads(p.read_text()).get("spec_version") == "egf-doc/0.1")
+    egf = _egf()
     refs = {c["schema_said"] for c in egf["credentials"]} | {m["said"] for m in egf["micro_apps"]}
     on_disk = {p.stem for p in BUNDLE.glob("E*.json")}
     assert refs <= on_disk, refs - on_disk
     toml = tomllib.loads(pathlib.Path("brands/usurance/brand.toml").read_text())
     assert toml["egf"]["document_said"] == egf["d"]
+
+
+def test_direct_endpoints_have_bundled_oobi_artifacts():
+    egf = _egf()
+    checked = 0
+    for a in egf["authorities"]:
+        for ep in a.get("endpoints", []):
+            if ep.get("mode") == "direct":
+                aid = ep.get("oobi_ref") or a["aid"]
+                artifact = BUNDLE / "oobis" / f"{aid}.cesr"
+                assert artifact.is_file() and artifact.stat().st_size > 0, aid
+                checked += 1
+    assert checked, "expected at least one direct-mode endpoint in the bundle"

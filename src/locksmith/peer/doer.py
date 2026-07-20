@@ -47,12 +47,15 @@ class PeerDoer(doing.DoDoer):
         settings: PeerModeSettings,
         exchanger,
         is_destination_exposed: Callable[[str], bool],
+        on_first_contact=None,
+        verifier=None,
         **kwa,
     ):
         self._hby = hby
         self._baser = baser
         self._settings = settings
         self._exchanger = exchanger
+        self._verifier = verifier
         self.server = None
         self.directant = None
         self.shim = None
@@ -65,6 +68,9 @@ class PeerDoer(doing.DoDoer):
                 allowlist=allowlist,
                 exchanger=exchanger,
                 is_destination_exposed=is_destination_exposed,
+                hby=hby,
+                open_inbound=settings.open_inbound,
+                on_first_contact=on_first_contact,
             )
 
             self.server = TCPServer(
@@ -75,11 +81,18 @@ class PeerDoer(doing.DoDoer):
 
             # Reuse the turret Directant (same module Locksmith already
             # ships) but pass our shim instead of the per-plugin one.
+            # The verifier is REQUIRED for credential presentation over peer
+            # transport: without it the Reactant builds Parser(tvy=None), and
+            # keripy drops every streamed registry TEL event (vcp/iss) with
+            # "No tevery to process so dropped msg" -- so a presented ACDC's
+            # registry never verifies and the recipient can never admit it.
+            # (KELs still land via the always-present kvy.)
             cues = decking.Deck()
             first_hab = next(iter(getattr(hby, "habs", {}).values()), None)
             self.directant = turret_directing.Directant(
                 hab=first_hab,
                 server=self.server,
+                verifier=self._verifier,
                 exchanger=self.shim,
                 cues=cues,
             )

@@ -425,14 +425,22 @@ class OnboardingHomePage(BasePage):
            display_name (when resolved), the grant credential's ``name``,
            and the onboarded role's ``display_name`` interpolated in — no
            other hard-coded strings.
-
-        Deliberately ABSENT: a "what was submitted" identifier row.
-        ``HeldCredential`` exposes no per-instance credential SAID (nor a
-        submission timestamp) — only the type-identifying ``schema_said``,
-        and labeling the schema SAID as the application's instance SAID
-        would be mislabeled identifier data on a trust surface, worse
-        than omission. Revisit when the gate view grows an instance SAID
-        (likely in the #2/lift work).
+        3. A NOTIFICATION HINT (Task 10, HOA #2 live-demo finding) — a
+           fixed line pointing at the new persistent Notifications surface
+           (``locksmith.ui.hoa.notifications_page.HoaNotificationsPage``),
+           so the PENDING view doesn't read as a dead end with no
+           indication anything will ever happen.
+        4. AN APPLICATION ID ROW — the held application credential's own
+           SAID (Task 9 grew ``HeldCredential.said`` for exactly this).
+           Previously deliberately absent (see history: ``HeldCredential``
+           used to expose no per-instance identifier, only the type-
+           identifying ``schema_said``, and labeling that as the
+           application's instance SAID would have been mislabeled
+           identifier data on a trust surface). Resolved via
+           ``_pending_application_said`` against the CURRENT
+           ``held_provider()`` snapshot; hidden (not shown blank) when it
+           can't be resolved — e.g. no matching held view, or (back-compat)
+           a held-credential view that predates Task 9's ``said`` field.
         """
         widget = QWidget()
         layout = QVBoxLayout(widget)
@@ -479,6 +487,33 @@ class OnboardingHomePage(BasePage):
             f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;"
         )
         layout.addWidget(self._pending_next_steps_label)
+
+        # NOTIFICATION HINT (item 3) — fixed copy, always shown while
+        # PENDING; a separate label from the next-steps sentence above so
+        # neither ever bleeds into the other's exact text.
+        self._pending_notification_hint_label = QLabel(
+            "You'll be notified here the moment your license arrives."
+        )
+        self._pending_notification_hint_label.setObjectName("onboarding.pendingNotificationHint")
+        self._pending_notification_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pending_notification_hint_label.setWordWrap(True)
+        self._pending_notification_hint_label.setStyleSheet(
+            f"font-size: 13px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        layout.addWidget(self._pending_notification_hint_label)
+
+        # APPLICATION ID ROW (item 4) — populated/shown only when
+        # _pending_application_said resolves one; hidden (not blank) when
+        # it can't (see _update_pending_view).
+        self._pending_application_said_label = QLabel("")
+        self._pending_application_said_label.setObjectName("onboarding.pendingApplicationSaid")
+        self._pending_application_said_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._pending_application_said_label.setWordWrap(True)
+        self._pending_application_said_label.setStyleSheet(
+            f"font-size: 12px; color: {colors.TEXT_SECONDARY}; background: transparent;"
+        )
+        self._pending_application_said_label.setVisible(False)
+        layout.addWidget(self._pending_application_said_label)
 
         layout.addStretch(2)
         return widget
@@ -797,17 +832,44 @@ class OnboardingHomePage(BasePage):
             f"the {role.display_name} workspace unlocks here automatically."
         )
 
+    def _pending_application_said(self, grant: Any) -> Optional[str]:
+        """The held application credential's own SAID (Task 9's
+        ``HeldCredential.said``), sourced from the CURRENT
+        ``held_provider()`` snapshot, or ``None`` when it can't be
+        resolved. Mirrors ``_held_matches``'s own filter (matching
+        ``schema_said``, chain-verified, not revoked) rather than reusing
+        it directly, since that helper returns a bool and this needs the
+        matching view itself. Returns ``None`` (never raises) when: the
+        grant has no ``chained_from`` application credential (shouldn't
+        happen once ``derive_state`` has already returned PENDING, but
+        defensive regardless); no held view matches; or a matching view
+        predates Task 9 and carries no ``said`` attribute at all
+        (``getattr`` default, not a hard requirement — back-compat for
+        any caller still using the older gate-shaped view)."""
+        if grant.chained_from is None:
+            return None
+        application = self._egf.credential(grant.chained_from)
+        for h in self._held_provider():
+            if h.schema_said != application.schema_said or not h.chain_verified:
+                continue
+            if h.state == "revoked":
+                continue
+            said = getattr(h, "said", None)
+            if said:
+                return said
+        return None
+
     def _update_pending_view(self, role_id: str) -> None:
-        """Populate the PENDING view's two EGF-derived pieces (WHO /
-        WHAT'S NEXT — see ``_build_pending_view``'s docstring, including
-        why there is deliberately no submitted-identifier row) for
-        ``role_id``. Called from ``_render`` on every PENDING render (not
-        cached like ``_build_form_view``) since ``select_persona``/
-        ``refresh`` may switch to a different pending role between
-        renders and the work here is cheap label updates, not a rebuild.
-        Reachable only once ``derive_state`` has already returned PENDING,
-        which guarantees ``role.onboarding`` is set (see ``derive_state``'s
-        PENDING branch) — no extra None-guard needed here."""
+        """Populate the PENDING view's EGF-derived pieces (WHO / WHAT'S
+        NEXT / the notification hint / the application ID row — see
+        ``_build_pending_view``'s docstring) for ``role_id``. Called from
+        ``_render`` on every PENDING render (not cached like
+        ``_build_form_view``) since ``select_persona``/``refresh`` may
+        switch to a different pending role between renders and the work
+        here is cheap label updates, not a rebuild. Reachable only once
+        ``derive_state`` has already returned PENDING, which guarantees
+        ``role.onboarding`` is set (see ``derive_state``'s PENDING
+        branch) — no extra None-guard needed here."""
         role = self._egf.role(role_id)
         grant = self._egf.credential(role.onboarding.grant_credential_id)
         authority = self._pending_authority(grant)
@@ -828,6 +890,16 @@ class OnboardingHomePage(BasePage):
         self._pending_next_steps_label.setText(
             self._pending_next_steps_text(role, grant, authority)
         )
+
+        application_said = self._pending_application_said(grant)
+        if application_said:
+            self._pending_application_said_label.setText(f"Application ID: {application_said}")
+            self._pending_application_said_label.setVisible(True)
+        else:
+            # Cleared, not just hidden -- same stale-leftover rationale as
+            # the WHO row above.
+            self._pending_application_said_label.setText("")
+            self._pending_application_said_label.setVisible(False)
 
     @staticmethod
     def _dedup_context_options(authorities, dimension_key: str):

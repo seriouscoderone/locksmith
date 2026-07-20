@@ -59,6 +59,26 @@ machine. Drives ACDC issuance end to end on the serverless serviceaid path
    see ``_schedule_issue_then_grant``'s docstring for why all three are
    required (a failed issuance must not leave a stale listener that a
    retry's success event would double-fire).
+10. Direct-mode reachability check (Task 7): when the selected
+    ``Authority`` carries an ``Endpoint`` with ``mode == "direct"``, a
+    second one-shot listener watches the grant doer's OWN send outcome
+    (``"SendGrantDoer"``, ``"send_complete"``/``"send_failed"``, matched
+    by ``credential_said``). A ``send_failed``, or a ``send_complete``
+    whose ``channel`` isn't ``"peer"`` (i.e. it fell back to mailbox
+    delivery instead of reaching the authority's application directly),
+    surfaces a ``request_failed`` doer_event — a direct-mode authority's
+    whole point is that the application is expected to be live and
+    peer-reachable, so a mailbox fallback here is a user-visible failure,
+    not silent success. This listener has its OWN retirement discipline,
+    tracked in ``self._pending_outcome_listeners`` (parallel to
+    ``self._pending_listeners`` above): it self-disconnects on a matching
+    terminal event, AND a newer ``submit()`` for the same role evicts a
+    still-pending outcome listener from an earlier submission (belt and
+    suspenders: evicted both at the top of ``_schedule_issue_then_grant``,
+    before anything is scheduled, and again right before a fresh outcome
+    listener is registered) — without this a same-role resubmission before
+    the previous grant's outcome arrived would leave a stale listener that
+    could fire ``request_failed`` for an abandoned attempt's credential.
 
 Every ``EgfError`` subclass (``EgfDocumentError``, ``NoAuthorityError``) and
 the guard's plain ``ValueError`` are caught in ``submit()`` and surfaced as
@@ -93,7 +113,7 @@ caller of ``RequestFlow.submit``.
 from __future__ import annotations
 
 import datetime
-from typing import Iterable, Optional
+from typing import Callable, Iterable, Optional
 
 from keri import help
 from keri_serviceaid.egf.documents import EgfDocument
@@ -178,6 +198,15 @@ class RequestFlow:
         # listener, so a stale attempt's authority/hab can never be granted
         # by a later issuance's success event.
         self._pending_listeners: dict = {}
+        # role_id -> the still-pending direct-mode send-outcome listener
+        # (`_on_send_outcome`, wired once a grant doer is scheduled) from the
+        # most recent submit() for that role. Mirrors `_pending_listeners`'
+        # retirement discipline: a NEW submit() for the same role evicts the
+        # previous submission's outcome listener too (see
+        # `_schedule_issue_then_grant`'s eviction block), so a resubmission
+        # before the earlier grant's outcome arrives can never fire a stale
+        # `request_failed` for an abandoned attempt's credential.
+        self._pending_outcome_listeners: dict[str, Callable] = {}
 
     # -- default identifier -------------------------------------------------
 
@@ -276,6 +305,17 @@ class RequestFlow:
         if self._pending_listeners.get(role_id) is listener:
             del self._pending_listeners[role_id]
 
+    def _retire_outcome_listener(self, role_id: str, listener) -> None:
+        """Disconnect ``listener`` from the vault's doer_event bus and drop
+        it from the pending-outcome-listener registry (only if it is still
+        the CURRENT pending outcome listener for ``role_id`` -- a stale one
+        evicted by a later submit() was already popped by
+        latest-submission-wins). Mirrors ``_retire_listener``'s shape for
+        the ``_on_send_outcome`` listener's own retirement discipline."""
+        self.app.vault.signals.doer_event.disconnect(listener)
+        if self._pending_outcome_listeners.get(role_id) is listener:
+            del self._pending_outcome_listeners[role_id]
+
     def _schedule_issue_then_grant(
         self, plan: RequestPlan, hab, authority, attributes: dict,
     ) -> None:
@@ -312,6 +352,16 @@ class RequestFlow:
         if stale is not None:
             signals.doer_event.disconnect(stale)
 
+        # Mirror the eviction above for the direct-mode outcome listener
+        # (Finding 1 fix): a new submit() for the same role must evict the
+        # previous submission's `_on_send_outcome` too -- even when that
+        # previous submission already got as far as scheduling its grant
+        # doer and wiring an outcome listener, since this new submit() means
+        # any outcome for the PREVIOUS credential is now stale.
+        stale_outcome = self._pending_outcome_listeners.pop(role_id, None)
+        if stale_outcome is not None:
+            signals.doer_event.disconnect(stale_outcome)
+
         def _on_credential_issued(doer_name: str, event_type: str, data: dict) -> None:
             if doer_name != "IssueCredentialDoer" or data.get("schema_said") != schema_said:
                 return
@@ -330,6 +380,36 @@ class RequestFlow:
                 hab_pre=hab.pre,
             )
             self.app.vault.extend([grant_doer])
+
+            if any(ep.mode == "direct" for ep in authority.endpoints):
+                # Direct-mode authority: the grant is only meaningful if it
+                # actually reached the authority's application over peer
+                # transport. A non-"peer" outcome (mailbox fallback, or an
+                # outright send failure) means the issuer's application
+                # wasn't reachable -- surface that to the user instead of
+                # silently leaving the request in mailbox limbo.
+                def _on_send_outcome(dn: str, et: str, d: dict) -> None:
+                    if dn != "SendGrantDoer" or d.get("credential_said") != data["said"]:
+                        return
+                    if et not in ("send_complete", "send_failed"):
+                        return
+                    self._retire_outcome_listener(role_id, _on_send_outcome)
+                    if et == "send_failed" or d.get("channel") != "peer":
+                        RequestFlow._fail(
+                            signals,
+                            "the issuer's application isn't reachable — is it running?",
+                        )
+
+                # Defensive mirror of the stale-eviction block above (belt
+                # and suspenders): pop+disconnect any leftover entry for
+                # role_id before registering this submission's listener, so
+                # the registry never holds two listeners for the same role
+                # regardless of call ordering.
+                stale_outcome = self._pending_outcome_listeners.pop(role_id, None)
+                if stale_outcome is not None:
+                    signals.doer_event.disconnect(stale_outcome)
+                self._pending_outcome_listeners[role_id] = _on_send_outcome
+                signals.doer_event.connect(_on_send_outcome)
 
         self._pending_listeners[role_id] = _on_credential_issued
         signals.doer_event.connect(_on_credential_issued)

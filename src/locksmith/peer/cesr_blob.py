@@ -18,11 +18,7 @@ from __future__ import annotations
 
 import base64
 
-from keri import Vrsn_1_0, help, kering
-from keri.core import eventing, parsing, routing
-
-logger = help.ogler.getLogger(__name__)
-
+from keri import kering
 
 BLOB_PREFIX = "locksmith-peer-oobi:v1:"
 
@@ -71,12 +67,6 @@ def import_peer_blob(hby, blob: str) -> str:
             f"entire token.",
         )
 
-    # Build a Revery + Kevery wired to this Habery's db so parsed
-    # events land in hby.kevers and the role auths land in hby.db.locs.
-    db = hby.db
-    rvy = routing.Revery(db=db)
-    kvy = eventing.Kevery(db=db, lax=True, local=False, rvy=rvy)
-    kvy.registerReplyRoutes(router=rvy.rtr)
     # Pin version=Vrsn_1_0. Under the KERI-v2 v1-hold every Locksmith AID is v1,
     # so a peer's hab.replyToOobi blob is a v1 stream — parse it v1. (A mismatched
     # parser silently drops the endpoint rpys, so the AID imports with no tcp loc,
@@ -85,37 +75,8 @@ def import_peer_blob(hby, blob: str) -> str:
     # embedded /end/role + /loc/scheme rpys don't route into db.ends/db.locs on a
     # combined-stream import. That lifts with the v1-hold (grep TRANSITIONAL);
     # until then peer mode is v1-to-v1.
-    parser = parsing.Parser(kvy=kvy, rvy=rvy, version=Vrsn_1_0)
-
-    # Snapshot kevers BEFORE parse: walking hby.kevers after parse hits
-    # local AIDs that already have a peer-role tcp endpoint (the
-    # importer's own exposed AIDs) and returns one of those instead of
-    # the freshly-imported remote AID. Diff to find truly new AIDs.
-    pre_kevers = set(hby.kevers.keys())
-
-    try:
-        parser.parse(ims=bytearray(cesr), kvy=kvy, rvy=rvy)
-    except Exception as e:  # noqa: BLE001
-        raise PeerBlobError(
-            "parse_failed",
-            f"Couldn't parse the blob: {e}. The token may be corrupted.",
-        )
-
-    new_pres = [pre for pre in hby.kevers.keys() if pre not in pre_kevers]
-    for pre in new_pres:
-        loc = hby.db.locs.get(keys=(pre, kering.Schemes.tcp))
-        if loc is not None and loc.url:
-            logger.info(
-                f"peer.blob.imported aid={pre} endpoint={loc.url}"
-            )
-            return pre
-
-    raise PeerBlobError(
-        "no_peer_role",
-        "The blob parsed but no AID inside it published a peer-role "
-        "tcp endpoint. The peer may not have 'Expose over peer mode' "
-        "enabled on any identifier.",
-    )
+    from locksmith.peer.oobi_import import parse_oobi_cesr
+    return parse_oobi_cesr(hby, cesr)
 
 
 class PeerBlobError(Exception):

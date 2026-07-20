@@ -39,7 +39,8 @@ from locksmith.db.basing import LocksmithBaser, MailboxListener, BrowserPluginSe
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.doer import PeerDoer
 from locksmith.peer.health import PeerHealthMonitorDoer
-from locksmith.peer.records import PeerModeSettings
+from locksmith.peer.records import PeerModeSettings, PeerRecord
+from locksmith.peer import exposure as peer_exposure
 
 logger = help.ogler.getLogger(__name__)
 
@@ -173,11 +174,18 @@ class Vault(doing.DoDoer):
                                            self.pluginSettings.locksmith_alias,
                                            self.pluginSettings.plugin_identifier)
 
-        # Peer-mode listener (vault-wide). The destination allowlist
-        # (`_peer_exposed_aids`) is populated by the per-AID `Peer` role
-        # toggle in the identifier UI.
+        # Peer-mode listener (vault-wide). `_peer_exposed_aids` is the
+        # inbound destination gate (shim gate 2). It is REHYDRATED on every
+        # vault-open from the persisted peer-role end records (the source of
+        # truth `exposure.exposed_pres` reads), then kept live by the per-AID
+        # toggle and the HOA direct-transport bring-up. Seeding from the DB is
+        # essential: without it, an AID exposed in a prior session loses its
+        # exposure across an app restart and the shim silently drops every
+        # inbound exn addressed to it (`peer.gate.destination_not_exposed`) —
+        # so credential presentations over peer transport break after a
+        # restart even though the toolbar still reads "exposed".
         self.peer_doer: PeerDoer | None = None
-        self._peer_exposed_aids: set[str] = set()
+        self._peer_exposed_aids: set[str] = set(peer_exposure.exposed_pres(self.hby))
         peer_settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
         if peer_settings.enabled:
             self.peer_doer = PeerDoer(
@@ -186,6 +194,8 @@ class Vault(doing.DoDoer):
                 settings=peer_settings,
                 exchanger=self.exc,
                 is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+                on_first_contact=self._register_first_contact_peer,
+                verifier=self.verifier,
             )
 
         # Background reachability probe for paired peers (always on —
@@ -295,8 +305,36 @@ class Vault(doing.DoDoer):
             settings=settings,
             exchanger=self.exc,
             is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
+            on_first_contact=self._register_first_contact_peer,
+            verifier=self.verifier,
         )
         self.extend(self.peer_doer.doers)
+
+    def _register_first_contact_peer(self, aid: str, url: str) -> None:
+        """RUN first-update registration for an open-inbound first
+        contact: allowlist entry (reply path) + org contact (so the
+        operator's recipient dropdowns can address the sender).
+
+        This is invoked synchronously from
+        `PeerExchangerShim.processEvent` (the inbound parser hot path,
+        via `on_first_contact`) -- a DB-write failure here (allowlist
+        or org) must never propagate up into the parser and take it
+        down. The whole body runs under one guard: on failure, log and
+        emit a UI-visible event; the exn is effectively rejected (never
+        landed in the allowlist), which is safe since the sender can
+        just retry."""
+        from keri.help import helping
+        try:
+            PeerAllowlist(self.db).add(PeerRecord(
+                aid=aid, label=f"peer-{aid[:12]}", endpoint_url=url,
+                paired_at=helping.nowIso8601()))
+            self.org.update(aid, {"alias": f"peer-{aid[:12]}"})
+        except Exception as e:  # noqa: BLE001 — never let a first-contact
+            # registration failure propagate into the inbound parser.
+            logger.exception("first-contact registration failed")
+            self.signals.emit_doer_event(
+                "PeerFirstContact", "registration_failed",
+                {"aid": aid, "error": str(e)})
 
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:
@@ -361,7 +399,7 @@ class NotificationToastDoer(doing.Doer):
                 unread_count = self._count_unread()
 
                 # Format the message
-                message = self._format_notification_message(note)
+                message, route = self._format_notification_message(note)
 
                 # Emit signal for UI to show toast
                 self.vault.signals.emit_doer_event(
@@ -371,7 +409,8 @@ class NotificationToastDoer(doing.Doer):
                         'datetime': note.datetime,
                         'message': message,
                         'pending_count': unread_count,
-                        'rid': rid
+                        'rid': rid,
+                        'route': route,
                     }
                 )
 
@@ -426,7 +465,16 @@ class NotificationToastDoer(doing.Doer):
             note: Notification object
 
         Returns:
-            Formatted message string
+            ``(message, route)`` tuple (Task 10, additive: every branch
+            below now returns its route alongside the existing message
+            text, so ``recur`` can pass the route through the toast event
+            for HOA-aware retargeting/copy without changing the message
+            text itself). For an IPEX note whose exn resolves, ``route`` is
+            the fine-grained inner route (``exn.ked['r']``, e.g.
+            "/ipex/grant") rather than the note's own coarse
+            "/exn/ipex..." wrapper route -- every other branch (and the
+            IPEX branch's own unresolvable-exn fallthrough) returns the
+            note's own route.
         """
         # Check the notification route
         route = note.pad.get('a', {}).get('r', '')
@@ -434,13 +482,13 @@ class NotificationToastDoer(doing.Doer):
         # Check if this is a multisig notification
         if '/multisig' in route:
             if '/multisig/icp' in route:
-                return "New multisig group proposal"
+                return "New multisig group proposal", route
             elif '/multisig/rot' in route:
-                return "Multisig rotation request"
+                return "Multisig rotation request", route
             elif '/multisig/ixn' in route:
-                return "Multisig interaction request"
+                return "Multisig interaction request", route
             else:
-                return "New multisig notification"
+                return "New multisig notification", route
 
         if "/challenge/response" in route:
             signer = note.pad.get('a', {}).get('signer', '')
@@ -450,7 +498,7 @@ class NotificationToastDoer(doing.Doer):
                 signer_name = "Unknown"
             else:
                 signer_name = signer_contact.get('alias', 'Unknown')
-            return f"Challenge response received from {signer_name}"
+            return f"Challenge response received from {signer_name}", route
 
         if "/keystate/update" in route:
             pre = note.pad.get('a', {}).get('pre', '')
@@ -462,7 +510,7 @@ class NotificationToastDoer(doing.Doer):
                 signer_name = "Unknown"
             else:
                 signer_name = signer_contact.get('alias', 'Unknown')
-            return f"Key state update recieved for {signer_name} moving to sequence number {sn} at {dig}"
+            return f"Key state update recieved for {signer_name} moving to sequence number {sn} at {dig}", route
 
         # Check if this is an IPEX notification
         if route.startswith('/exn/ipex'):
@@ -477,15 +525,15 @@ class NotificationToastDoer(doing.Doer):
                     if exn:
                         exn_route = exn.ked.get('r', '')
                         if '/ipex/grant' in exn_route:
-                            return "New credential offer received"
+                            return "New credential offer received", exn_route
                         elif '/ipex/admit' in exn_route:
-                            return "Credential accepted"
+                            return "Credential accepted", exn_route
                         elif '/ipex/spurn' in exn_route:
-                            return "Credential rejected"
+                            return "Credential rejected", exn_route
                         elif '/ipex/apply' in exn_route:
-                            return "New credential application"
+                            return "New credential application", exn_route
                         elif '/ipex/offer' in exn_route:
-                            return "New credential offer"
+                            return "New credential offer", exn_route
                 except Exception as e:
                     logger.warning(f"Error formatting IPEX notification: {e}")
 
@@ -493,8 +541,8 @@ class NotificationToastDoer(doing.Doer):
         if isinstance(note.attrs, dict):
             return note.attrs.get('message',
                                   note.attrs.get('msg',
-                                                 note.attrs.get('d', 'New notification')))
-        return str(note.attrs) if note.attrs else "New notification"
+                                                 note.attrs.get('d', 'New notification'))), route
+        return (str(note.attrs) if note.attrs else "New notification"), route
 
     def exit(self):
         """Called when doer exits."""

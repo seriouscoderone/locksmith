@@ -19,7 +19,10 @@ from locksmith.core.apping import LocksmithApplication
 from locksmith.core.bootstrapping import bootstrap_default_environment
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
+from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import make_hoa_resolver
+from locksmith.core.inbound_watch import InboundGrantWatchDoer
+from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
 from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
@@ -172,6 +175,7 @@ class LocksmithWindow(QMainWindow):
         # _run_default_bootstrap).
         self._request_flow: RequestFlow | None = None
         self._onboarding_home_page: OnboardingHomePage | None = None
+        self._hoa_notifications_page: HoaNotificationsPage | None = None
         self._onboarding_wired_vault = None
         self._wire_onboarding(vault_page)
 
@@ -295,6 +299,7 @@ class LocksmithWindow(QMainWindow):
             logger.error("onboarding.egf_broken error=%s", exc)
             self._request_flow = None
             self._onboarding_home_page = None
+            self._hoa_notifications_page = None
             error_page = OnboardingErrorPage(str(exc), parent=vault_page)
             vault_page.register_page("home", error_page)
             return
@@ -312,6 +317,25 @@ class LocksmithWindow(QMainWindow):
         # mirroring how the core nav buttons wire straight to
         # _show_vault_page in VaultPage._connect_navigation.
         home_entry_btn.clicked.connect(lambda: vault_page._show_vault_page("home"))
+
+        # Notifications (Task 10, HOA #2 live-demo finding): HoaVaultPage
+        # registers none of the stock wallet's core pages (see hoa_page.py),
+        # including "notifications" -- so the toolbar bell is hidden AND the
+        # 5s NotificationToastDoer toast's click-through
+        # (_on_toast_clicked -> vault_page.show_notifications() ->
+        # _show_page("notifications")) had nowhere to land. Registered
+        # exactly like "home" immediately above: a direct MenuButton click
+        # connection, not a VaultPlugin.
+        self._hoa_notifications_page = HoaNotificationsPage(
+            self.app, egf_doc, parent=vault_page,
+        )
+        vault_page.register_page("notifications", self._hoa_notifications_page)
+        notifications_entry_btn = MenuButton(icon=QIcon(), label="Notifications")
+        notifications_entry_btn.setObjectName("vaultNavMenu.notificationsButton")
+        vault_page.add_menu_entry("notifications", notifications_entry_btn, [])
+        notifications_entry_btn.clicked.connect(
+            lambda: vault_page._show_vault_page("notifications")
+        )
 
     def _install_help_menu(self) -> None:
         """Add a Help menu with the "Check for updates…" entry. Native
@@ -643,11 +667,30 @@ class LocksmithWindow(QMainWindow):
         self._onboarding_wired_vault = self.app.vault
 
         self._request_flow.seed_all_personas()
+        oobi_source = make_hoa_oobi_source()
+        if oobi_source is not None:
+            self._bring_up_direct_transport(oobi_source)
+        # Task 11: auto-admit the explicitly-requested role's expected
+        # grant (owner-approved policy -- the user already consented by
+        # applying, so the EXACT grant they're waiting on lands without a
+        # prompt). Anything else stays unread for HoaNotificationsPage's
+        # Accept button (Task 10). One watcher per vault-open, same
+        # per-vault-instance lifetime as the rest of this block.
+        self.app.vault.extend([InboundGrantWatchDoer(
+            self.app, self._request_flow.egf_doc, brand().egf_accept_phases,
+            held_provider=lambda: _onboarding_held_credentials(self.app),
+        )])
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
         # emissions as a visible inline banner on the form view (distinct
         # from refresh() above, which reacts to every event generically).
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.on_doer_event)
+        # Task 10: the notifications page's data source (the notifier's
+        # note iterator) isn't itself event-driven, so any doer event
+        # (a new inbound note among them) re-reads it, same convention as
+        # the onboarding home page's refresh() above.
+        if self._hoa_notifications_page is not None:
+            self.app.vault.signals.doer_event.connect(self._hoa_notifications_page.refresh)
 
         # Live-observation fix: the page's __init__ already calls refresh()
         # once, but that happens at CONSTRUCTION time -- for a HOA whose
@@ -669,6 +712,38 @@ class LocksmithWindow(QMainWindow):
         vault_page = self.pages.get(Pages.VAULT)
         if vault_page is not None:
             vault_page._current_page_key = "home"
+
+    def _bring_up_direct_transport(self, oobi_source, attempt: int = 0,
+                                   max_attempts: int = 40) -> None:
+        """Bring up direct-mode peer transport, retrying on a bounded timer
+        while the default identifier is still being incepted.
+
+        On a fresh onboarding vault the default AID is created
+        asynchronously (``create_identifier`` schedules an ``InceptDoer``
+        on the vault's Doist and returns before the hab exists), so the
+        first ``ensure_direct_transport`` call at wire time finds no hab and
+        defers (returns False). The per-vault wiring guard means this method
+        is the ONLY caller, so without a retry transport would never come up
+        for the first-run flow and the carrier could not present. Re-attempt
+        every 250 ms (≈10 s budget) until it reports done, cancelling if the
+        open vault changes underneath us (vault switch / close)."""
+        vault = self.app.vault
+        if vault is None or vault is not self._onboarding_wired_vault:
+            return  # vault switched/closed mid-retry — abandon this chain
+        if ensure_direct_transport(
+                self.app, self._request_flow.egf_doc, oobi_source,
+                brand().egf_accept_phases):
+            return  # brought up (or nothing to do)
+        if attempt + 1 >= max_attempts:
+            logger.warning(
+                "direct_transport.bringup_timeout the default identifier "
+                "never appeared; carrier transport is not up")
+            return
+        QTimer.singleShot(
+            250,
+            lambda: self._bring_up_direct_transport(
+                oobi_source, attempt + 1, max_attempts),
+        )
 
     def _connect_toast_signals(self):
         """Connect to vault signals for toast notifications."""
@@ -704,6 +779,15 @@ class LocksmithWindow(QMainWindow):
             datetime = data.get('datetime', '')
             message = data.get('message', 'New notification')
             pending_count = data.get('pending_count', 1)
+            route = data.get('route', '')
+
+            # HOA-aware copy (Task 10): the stock wallet's "New credential
+            # offer received" reads fine standing alone, but a persona-
+            # shaped HOA build wants the toast to point somewhere -- the
+            # notifications page this task adds. Stock (non-onboarding)
+            # brands keep the unmodified message from vaulting.py.
+            if brand().onboarding_enabled and '/ipex/grant' in route:
+                message = "A credential has arrived — review it in Notifications"
 
             self.show_notification_toast(datetime, message, pending_count)
 

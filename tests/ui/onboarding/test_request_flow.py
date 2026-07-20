@@ -430,6 +430,138 @@ def test_submit_autofills_missing_date_time_property_before_validating(env):
     assert attrs.get("submitted_at")  # non-empty ISO string, autofilled
 
 
+def test_direct_authority_mailbox_outcome_fails(env):
+    """authority has a direct endpoint; simulate send_complete with
+    channel='mailbox' -> a ('RequestFlow','request_failed') event whose
+    message mentions 'reachable'."""
+    flow = env.flow()
+    # VALID_CONTEXT (jurisdiction=US-UT) selects the UT DOI authority, whose
+    # fixture_egf() entry carries a direct endpoint.
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert len(env.failures) == 1
+    assert env.failures[0][0] == "RequestFlow"
+    assert env.failures[0][1] == "request_failed"
+    assert "reachable" in env.failures[0][2]["message"]
+
+
+def test_direct_authority_peer_outcome_is_clean(env):
+    """channel='peer' -> no request_failed emitted."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "peer", "success": True},
+    )
+
+    assert env.failures == []
+
+
+def test_nondirect_authority_keeps_fallback_semantics(env):
+    """authority with no direct endpoint: channel='mailbox' -> no failure."""
+    flow = env.flow()
+    # jurisdiction=US-CA selects the CA DOI authority, whose fixture_egf()
+    # entry carries NO endpoints -- no outcome listener should be wired.
+    flow.submit("carrier", dict(VALID_PAYLOAD), {"jurisdiction": "US-CA"})
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert env.failures == []
+
+
+def test_direct_authority_send_failed_outcome_fails(env):
+    """send_failed for the direct authority's credential -> request_failed,
+    same as a non-peer channel -- the other half of the listener's outcome
+    guard ('send_failed' or channel != 'peer')."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_failed",
+        {"credential_said": "Ecred1", "error": "boom", "success": False},
+    )
+
+    assert len(env.failures) == 1
+    assert "reachable" in env.failures[0][2]["message"]
+
+
+def test_direct_authority_outcome_listener_is_one_shot(env):
+    """The outcome listener must disconnect itself after firing once -- a
+    second send_complete/send_failed for the same credential must not
+    surface a second request_failed (mirrors the credential_issued listener's
+    one-shot discipline elsewhere in this file)."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred1")
+    assert len(env.granted) == 1
+
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred1", "channel": "mailbox", "success": True},
+    )
+
+    assert len(env.failures) == 1
+
+
+def test_resubmission_evicts_stale_outcome_listener(env):
+    """Finding 1 fix (listener-leak regression, review round 2): the
+    direct-mode `_on_send_outcome` listener wired per submission must be
+    evicted by a same-role resubmission before the previous grant's outcome
+    arrives -- mirroring `_pending_listeners`' latest-submission-wins
+    discipline via the parallel `_pending_outcome_listeners` registry.
+    Without the fix, the FIRST submission's outcome listener stays connected
+    and fires a stale `request_failed` for a credential the user already
+    abandoned by resubmitting."""
+    flow = env.flow()
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # UT DOI, direct endpoint
+    env.emit_issued("Ecred-first")  # wires outcome listener #1
+    assert len(env.granted) == 1
+
+    flow.submit("carrier", dict(VALID_PAYLOAD), dict(VALID_CONTEXT))  # evicts #1
+    env.emit_issued("Ecred-second")  # wires outcome listener #2
+    assert len(env.granted) == 2
+
+    # The FIRST credential's outcome must be a no-op now -- listener #1 was
+    # evicted by the resubmission, before its grant's outcome ever arrived.
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred-first", "channel": "mailbox", "success": True},
+    )
+    assert env.failures == [], (
+        "a stale outcome listener from an evicted submission must not fire "
+        "request_failed for the abandoned attempt's credential"
+    )
+
+    # The SECOND (current) submission's outcome must still be live.
+    env.signals.doer_event.emit(
+        "SendGrantDoer", "send_complete",
+        {"credential_said": "Ecred-second", "channel": "mailbox", "success": True},
+    )
+    assert len(env.failures) == 1
+    assert "reachable" in env.failures[0][2]["message"]
+
+
 def test_seed_all_personas_seeds_every_onboardable_role_with_default_hab(env):
     flow = env.flow()
     flow.seed_all_personas()
@@ -560,7 +692,10 @@ def test_wire_onboarding_registers_error_page_when_egf_broken(monkeypatch):
     monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
     monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
 
-    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    win = SimpleNamespace(
+        app=MagicMock(), _request_flow=None, _onboarding_home_page=None,
+        _hoa_notifications_page=None,
+    )
     vault_page = _FakeHoaVaultPage()
 
     # Must not raise -- this is the crash `LocksmithWindow.__init__` would
@@ -569,6 +704,7 @@ def test_wire_onboarding_registers_error_page_when_egf_broken(monkeypatch):
 
     assert win._request_flow is None
     assert win._onboarding_home_page is None
+    assert win._hoa_notifications_page is None
     request_flow_cls.assert_not_called()
     onboarding_home_page_cls.assert_not_called()
 
@@ -584,7 +720,13 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     """Control case for the above: when `make_hoa_resolver` resolves
     cleanly, `_wire_onboarding` must take the normal path -- RequestFlow +
     OnboardingHomePage constructed, registered as "home", nav entry added --
-    unaffected by the new try/except."""
+    unaffected by the new try/except.
+
+    Task 10: the same success path also constructs a REAL
+    `HoaNotificationsPage` (not mocked -- its `__init__` does no I/O; see
+    its own module docstring) and registers it as "notifications" +
+    a second nav-menu entry, mirroring "home" exactly."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
     from locksmith.ui.window import LocksmithWindow
 
     fake_brand = MagicMock()
@@ -607,7 +749,10 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     monkeypatch.setattr("locksmith.ui.window.OnboardingHomePage", onboarding_home_page_cls)
     monkeypatch.setattr("locksmith.ui.window.HoaVaultPage", _FakeHoaVaultPage)
 
-    win = SimpleNamespace(app=MagicMock(), _request_flow=None, _onboarding_home_page=None)
+    win = SimpleNamespace(
+        app=MagicMock(), _request_flow=None, _onboarding_home_page=None,
+        _hoa_notifications_page=None,
+    )
     vault_page = _FakeHoaVaultPage()
 
     LocksmithWindow._wire_onboarding(win, vault_page)
@@ -616,8 +761,12 @@ def test_wire_onboarding_still_registers_home_page_on_success(monkeypatch):
     onboarding_home_page_cls.assert_called_once()
     assert win._request_flow is request_flow_instance
     assert win._onboarding_home_page is onboarding_home_page_instance
-    assert vault_page.registered_pages == {"home": onboarding_home_page_instance}
-    assert len(vault_page.menu_entries) == 1
+    assert isinstance(win._hoa_notifications_page, HoaNotificationsPage)
+    assert vault_page.registered_pages == {
+        "home": onboarding_home_page_instance,
+        "notifications": win._hoa_notifications_page,
+    }
+    assert len(vault_page.menu_entries) == 2
 
 
 def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
@@ -642,15 +791,22 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
         "locksmith.ui.window.QTimer.singleShot",
         lambda delay, slot: scheduled.append((delay, slot)),
     )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
+    hoa_notifications_page = MagicMock(name="hoa_notifications_page")
     vault = MagicMock(name="vault")
 
     win = SimpleNamespace(
         app=SimpleNamespace(vault=vault),
         _request_flow=request_flow,
         _onboarding_home_page=onboarding_home_page,
+        _hoa_notifications_page=hoa_notifications_page,
         _onboarding_wired_vault=None,
         pages={},
     )
@@ -660,6 +816,8 @@ def test_maybe_wire_onboarding_schedules_deferred_refresh(monkeypatch):
     request_flow.seed_all_personas.assert_called_once()
     vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.refresh)
     vault.signals.doer_event.connect.assert_any_call(onboarding_home_page.on_doer_event)
+    # Task 10: the notifications page's own refresh() is wired the same way.
+    vault.signals.doer_event.connect.assert_any_call(hoa_notifications_page.refresh)
 
     assert scheduled == [(0, onboarding_home_page.refresh)], (
         "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
@@ -681,15 +839,22 @@ def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkey
         "locksmith.ui.window.QTimer.singleShot",
         lambda delay, slot: scheduled.append((delay, slot)),
     )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
 
     request_flow = MagicMock(name="request_flow")
     onboarding_home_page = MagicMock(name="onboarding_home_page")
+    hoa_notifications_page = MagicMock(name="hoa_notifications_page")
     vault = MagicMock(name="vault")
 
     win = SimpleNamespace(
         app=SimpleNamespace(vault=vault),
         _request_flow=request_flow,
         _onboarding_home_page=onboarding_home_page,
+        _hoa_notifications_page=hoa_notifications_page,
         _onboarding_wired_vault=None,
         pages={},
     )
@@ -701,3 +866,104 @@ def test_maybe_wire_onboarding_is_idempotent_per_vault_no_double_schedule(monkey
         "revisiting an already-wired vault must not re-schedule refresh()"
     )
     request_flow.seed_all_personas.assert_called_once()
+
+
+def _transport_win(vault):
+    """A minimal window stand-in for the `_bring_up_direct_transport`
+    retry tests: it only needs `app.vault`, `_onboarding_wired_vault`, and
+    `_request_flow.egf_doc` -- plus the method itself bound onto it, since
+    the retry recursion calls `self._bring_up_direct_transport(...)`."""
+    import types
+    from locksmith.ui.window import LocksmithWindow
+    win = SimpleNamespace(
+        app=SimpleNamespace(vault=vault),
+        _onboarding_wired_vault=vault,
+        _request_flow=SimpleNamespace(egf_doc=MagicMock(name="egf_doc")),
+    )
+    win._bring_up_direct_transport = types.MethodType(
+        LocksmithWindow._bring_up_direct_transport, win)
+    return win
+
+
+def test_bring_up_direct_transport_retries_until_hab_appears(monkeypatch):
+    """First-run inception is async (create_identifier schedules an
+    InceptDoer and returns before the hab exists), so the first
+    ensure_direct_transport finds no hab and returns False. The window must
+    retry on a bounded timer -- otherwise the per-vault wiring guard means
+    transport never comes up for the first-run flow and the carrier can
+    never present (the live-demo bug this fixes)."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append((delay, slot)),
+    )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    # False (deferred, no hab yet) on the first two calls, True on the third.
+    results = iter([False, False, True])
+    calls = []
+    def fake_ensure(app, egf, src, phases):
+        calls.append(1)
+        return next(results)
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport", fake_ensure)
+
+    vault = MagicMock(name="vault")
+    win = _transport_win(vault)
+    src = MagicMock(name="oobi_source")
+
+    win._bring_up_direct_transport(src)                      # attempt 0 -> False
+    assert scheduled and scheduled[-1][0] == 250             # retry queued at 250ms
+    scheduled[-1][1]()                                       # fire attempt 1 -> False
+    scheduled[-1][1]()                                       # fire attempt 2 -> True
+    assert len(calls) == 3                                   # stopped once done
+
+
+def test_bring_up_direct_transport_aborts_on_vault_switch(monkeypatch):
+    """A queued retry must not run ensure_direct_transport against a vault
+    that is no longer the wired/open one (vault switch or close mid-retry)."""
+    from locksmith.ui.window import LocksmithWindow
+
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    called = []
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport",
+                        lambda *a: called.append(1) or True)
+
+    vault = MagicMock(name="vault")
+    win = _transport_win(vault)
+    win.app.vault = MagicMock(name="a_different_vault")      # switched underneath
+    win._bring_up_direct_transport(MagicMock())
+    assert called == []                                     # never touched transport
+
+
+def test_bring_up_direct_transport_stops_at_budget(monkeypatch):
+    """If the hab never appears, the retry chain stops at max_attempts with
+    a warning rather than scheduling forever."""
+    from locksmith.ui.window import LocksmithWindow
+
+    scheduled = []
+    monkeypatch.setattr(
+        "locksmith.ui.window.QTimer.singleShot",
+        lambda delay, slot: scheduled.append(slot),
+    )
+    # Transport branch is orthogonal to this test's refresh-scheduling
+    # assertions; neutralize it so a prior test's cached usurance
+    # brand() (make_hoa_oobi_source non-None) can't invoke
+    # _bring_up_direct_transport on this bare SimpleNamespace.
+    monkeypatch.setattr("locksmith.ui.window.make_hoa_oobi_source", lambda: None)
+    monkeypatch.setattr("locksmith.ui.window.brand",
+                        lambda: SimpleNamespace(egf_accept_phases=("bootstrap",)))
+    monkeypatch.setattr("locksmith.ui.window.ensure_direct_transport",
+                        lambda *a: False)                    # never done
+
+    win = _transport_win(MagicMock(name="vault"))
+    win._bring_up_direct_transport(MagicMock(), attempt=39,
+                                               max_attempts=40)
+    assert scheduled == []                                  # budget spent, no reschedule
