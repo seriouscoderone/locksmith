@@ -363,11 +363,13 @@ class OnboardingHomePage(BasePage):
         self._licensed_widget = self._build_message_view(
             "You're all set", "A valid license was found in your vault."
         )
+        self._revoked_widget = self._build_revoked_view()
         self._form_container, self._form_layout, self._error_layout = self._build_form_shell()
 
         self._stack.addWidget(self._picker_widget)
         self._stack.addWidget(self._pending_widget)
         self._stack.addWidget(self._licensed_widget)
+        self._stack.addWidget(self._revoked_widget)
         self._stack.addWidget(self._form_container)
 
         self.refresh()
@@ -429,6 +431,93 @@ class OnboardingHomePage(BasePage):
 
         layout.addStretch(2)
         return widget
+
+    def _build_revoked_view(self) -> QWidget:
+        """The REVOKED view — "your access was revoked", issuer + revocation
+        time, and a re-apply affordance back into the persona flow. Widgets are
+        populated per-render by ``_update_revoked_view`` (the revoked role /
+        issuer / time are read from EGF + the current held snapshot)."""
+        widget = QWidget()
+        layout = QVBoxLayout(widget)
+        layout.setContentsMargins(48, 48, 48, 48)
+        layout.addStretch(1)
+
+        self._revoked_heading = QLabel("Your access was revoked")
+        self._revoked_heading.setObjectName("onboarding.revokedHeading")
+        self._revoked_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._revoked_heading.setStyleSheet(
+            f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
+        layout.addWidget(self._revoked_heading)
+
+        self._revoked_detail = QLabel("")
+        self._revoked_detail.setObjectName("onboarding.revokedDetail")
+        self._revoked_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._revoked_detail.setWordWrap(True)
+        self._revoked_detail.setStyleSheet(
+            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;")
+        layout.addWidget(self._revoked_detail)
+
+        reapply_btn = LocksmithButton("Apply again")
+        reapply_btn.setObjectName("onboarding.reapplyButton")
+        reapply_btn.clicked.connect(self._reapply)
+        row = QHBoxLayout()
+        row.addStretch(1)
+        row.addWidget(reapply_btn)
+        row.addStretch(1)
+        layout.addLayout(row)
+
+        layout.addStretch(2)
+        return widget
+
+    def _revoked_role(self):
+        """The onboardable ``Role`` whose grant credential is currently held-
+        and-revoked, or ``None``. Mirrors ``derive_state``'s REVOKED scan so
+        the two never disagree on WHICH role was revoked."""
+        held = self._held_provider()
+        for persona in self._egf.personas():
+            grant = self._egf.credential(persona.onboarding.grant_credential_id)
+            if _held_revoked(held, grant.schema_said):
+                return persona
+        return None
+
+    def _revoked_at_for(self, grant) -> str:
+        for h in self._held_provider():
+            if (h.schema_said == grant.schema_said and h.chain_verified
+                    and h.state == "revoked"):
+                return getattr(h, "revoked_at", "") or ""
+        return ""
+
+    def _update_revoked_view(self) -> None:
+        role = self._revoked_role()
+        if role is None:
+            # Shouldn't happen once derive_state returned REVOKED, but stay
+            # defensive: generic copy rather than a crash.
+            self._revoked_heading.setText("Your access was revoked")
+            self._revoked_detail.setText("")
+            return
+        grant = self._egf.credential(role.onboarding.grant_credential_id)
+        self._revoked_heading.setText(f"Your {role.display_name} access was revoked")
+
+        authorities = self._egf.authorities(
+            grant.issuer_role, accept_phases=self._accept_phases)
+        issuer = authorities[0] if len(authorities) == 1 else None
+        revoked_at = self._revoked_at_for(grant)
+        parts = []
+        if issuer is not None:
+            parts.append(f"{grant.name} issued by {issuer.display_name} was revoked.")
+        else:
+            parts.append(f"Your {grant.name} was revoked.")
+        if revoked_at:
+            parts.append(f"Revoked {revoked_at}.")
+        parts.append("You can apply again below.")
+        self._revoked_detail.setText(" ".join(parts))
+
+    def _reapply(self) -> None:
+        """Re-apply affordance: clear the chosen role and re-derive. With the
+        gating credential gone (or the holder starting over), this lands on the
+        persona picker; the normal apply flow proceeds from there."""
+        self._role_id = None
+        self.refresh()
 
     def _build_pending_view(self) -> QWidget:
         """The PENDING view — dedicated (no longer ``_build_message_view``)
@@ -656,6 +745,9 @@ class OnboardingHomePage(BasePage):
             self._stack.setCurrentWidget(self._pending_widget)
         elif self.state is OnboardingState.LICENSED:
             self._stack.setCurrentWidget(self._licensed_widget)
+        elif self.state is OnboardingState.REVOKED:
+            self._update_revoked_view()
+            self._stack.setCurrentWidget(self._revoked_widget)
         elif self.state is OnboardingState.FORM:
             if self._built_form_role_id != self._role_id:
                 self._build_form_view(self._role_id)

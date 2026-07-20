@@ -37,6 +37,7 @@ class Held:
     issuer_aid: str
     state: str
     chain_verified: bool
+    revoked_at: str = ""
 
 
 def _doc():
@@ -746,3 +747,46 @@ def test_get_toolbar_config_hides_vault_and_lock_controls(qtbot):
         "show_lock_button": False,
         "show_settings_button": True,
     }
+
+
+def test_revoked_state_renders_revoked_view(qtbot):
+    """The REVOKED home surface (Task 6): a held, chain-verified,
+    revoked license drives the page into ``OnboardingState.REVOKED`` and
+    switches the stack to ``_revoked_widget``, with copy naming the
+    revocation ("revoked" in the heading) and the revocation time (from
+    the held view's ``revoked_at``) surfaced in the detail text."""
+    lic = "E" + "L" * 43
+    held = [Held(lic, "E" + "U" * 43, "revoked", True,
+                 revoked_at="2026-07-19T12:00:00.000000+00:00")]
+    page = OnboardingHomePage(
+        _doc(), held_provider=lambda: held, on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.refresh()
+
+    assert page.state is OnboardingState.REVOKED
+    assert page._stack.currentWidget() is page._revoked_widget
+    assert "revoked" in page._revoked_heading.text().lower()
+    assert "2026-07-19" in page._revoked_detail.text()
+
+
+def test_revoked_reapply_resets_to_picker(qtbot):
+    """The re-apply affordance clears the chosen role and re-derives —
+    with the held snapshot now empty (the holder starting over), that
+    lands back on the persona picker."""
+    lic = "E" + "L" * 43
+    state = {"held": [Held(lic, "E" + "U" * 43, "revoked", True)]}
+    page = OnboardingHomePage(
+        _doc(), held_provider=lambda: state["held"], on_submit=lambda *a: None,
+        micro_app_resolver=_resolver, accept_phases=("bootstrap", "production"),
+    )
+    qtbot.addWidget(page)
+    page.refresh()
+    assert page.state is OnboardingState.REVOKED
+
+    state["held"] = []
+    page._reapply()
+
+    assert page._role_id is None
+    assert page.state is OnboardingState.PICKER
