@@ -16,8 +16,8 @@ applying to.
 **State derivation is pure** (``derive_state``, no Qt): it reads the
 vault's held-credential views (the credential gate's ``HeldCredential``
 shape — see ``plugins/manager.py``'s ``_held_credentials``) against the
-EGF document to decide which of PICKER/FORM/PENDING/LICENSED to show.
-Precedence is LICENSED > PENDING > FORM > PICKER:
+EGF document to decide which of PICKER/FORM/PENDING/LICENSED/REVOKED to
+show. Precedence is LICENSED > REVOKED > PENDING > FORM > PICKER:
 
 - LICENSED — a held, chain-verified, ``state == "active"`` credential
   whose schema matches ANY onboardable role's grant credential
@@ -26,11 +26,21 @@ Precedence is LICENSED > PENDING > FORM > PICKER:
   licensed holder should land here even before picking a persona card).
   A REVOKED grant does not count — it simply fails this check and falls
   through to the next precedence level.
+- REVOKED — a held, chain-verified credential whose schema matches ANY
+  onboardable role's grant credential and whose ``state`` is exactly
+  ``"revoked"``. Checked role-agnostically, same as LICENSED, and
+  independent of the chosen ``role_id`` — a returning holder whose
+  license was revoked sees the revocation treatment even before picking
+  a persona card, and even if their own (now superseded) application
+  credential is still held (REVOKED wins over PENDING). An ACTIVE grant
+  elsewhere still wins LICENSED first (checked one precedence level
+  above), and a credential that was never chain-verified (still escrowed)
+  does NOT count as a revocation — it falls through same as before.
 - PENDING — the chosen role's application credential (the credential the
   grant chains FROM: ``credential(grant.chained_from)``) is held and
   chain-verified (and not itself revoked). Requires a chosen ``role_id``
   (there is no single, role-agnostic "application" credential to check).
-- FORM — a ``role_id`` has been chosen and neither of the above applied.
+- FORM — a ``role_id`` has been chosen and none of the above applied.
 - PICKER — nothing chosen yet (the default landing state).
 
 Context binding mechanism (spec §7.4, "one control serves both"): each
@@ -75,12 +85,13 @@ from enum import Enum
 
 
 class OnboardingState(Enum):
-    """The onboarding home page's four possible views."""
+    """The onboarding home page's five possible views."""
 
     PICKER = "picker"
     FORM = "form"
     PENDING = "pending"
     LICENSED = "licensed"
+    REVOKED = "revoked"
 
 
 _KIND_GLYPHS = {
@@ -136,9 +147,21 @@ def _held_matches(held: Iterable[Any], schema_said: str, *, require_active: bool
     return False
 
 
+def _held_revoked(held: Iterable[Any], schema_said: str) -> bool:
+    """True iff a chain-verified held credential of ``schema_said`` is in the
+    revoked TEL state. Requires chain_verified (same as ``_held_matches``): a
+    revoked credential stays in ``reger.saved``, so a genuinely-granted-then-
+    revoked license still reads chain_verified=True — only an escrowed, never-
+    verified credential fails this, which must NOT read as a revocation."""
+    for h in held:
+        if h.schema_said == schema_said and h.chain_verified and h.state == "revoked":
+            return True
+    return False
+
+
 def derive_state(held: list, egf: EgfDocument, role_id: Optional[str]) -> OnboardingState:
     """Pure state derivation — no Qt, no I/O. See module docstring for the
-    full precedence rationale (LICENSED > PENDING > FORM > PICKER)."""
+    full precedence rationale (LICENSED > REVOKED > PENDING > FORM > PICKER)."""
     # LICENSED: checked against EVERY onboardable role's grant credential,
     # regardless of role_id — a returning, already-licensed holder should
     # be recognized even before picking a persona card.
@@ -146,6 +169,16 @@ def derive_state(held: list, egf: EgfDocument, role_id: Optional[str]) -> Onboar
         grant = egf.credential(persona.onboarding.grant_credential_id)
         if _held_matches(held, grant.schema_said, require_active=True):
             return OnboardingState.LICENSED
+
+    # REVOKED: a held, chain-verified gating credential in the revoked state,
+    # checked role-agnostically (like LICENSED) and BEFORE the PENDING/PICKER
+    # fall-through — so a returning holder whose license was revoked sees the
+    # revocation treatment rather than silently dropping to PENDING (they still
+    # hold their own self-issued application) or PICKER.
+    for persona in egf.personas():
+        grant = egf.credential(persona.onboarding.grant_credential_id)
+        if _held_revoked(held, grant.schema_said):
+            return OnboardingState.REVOKED
 
     if role_id is not None:
         role = egf.role(role_id)

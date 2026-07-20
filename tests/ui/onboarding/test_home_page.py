@@ -5,10 +5,14 @@ derived state machine (Task 6).
 ``derive_state`` is pure (no Qt): it reads held-credential views (the
 gate's ``HeldCredential`` shape — schema_said/issuer_aid/state/
 chain_verified) plus the typed ``EgfDocument`` to decide which of
-PICKER/FORM/PENDING/LICENSED to show. Precedence is LICENSED > PENDING >
-FORM > PICKER — a revoked license does NOT count as LICENSED, but falls
-through to whatever the held application credential + chosen role_id
-would otherwise derive.
+PICKER/FORM/PENDING/LICENSED/REVOKED to show. Precedence is LICENSED >
+REVOKED > PENDING > FORM > PICKER — a revoked license does NOT count as
+LICENSED (an ACTIVE grant elsewhere still wins), but a held,
+chain-verified gating credential in the ``revoked`` state now derives
+REVOKED directly, role-agnostically, ahead of PENDING/FORM/PICKER — a
+returning holder whose license was revoked sees the revocation
+treatment even while their own (now superseded) application credential
+is still held.
 
 Widget tests exercise persona-card rendering (onboardable roles only,
 i.e. roles with an ``onboarding`` block) and the submit path, including
@@ -63,22 +67,46 @@ def test_state_matrix():
     assert derive_state([], d, "carrier") is OnboardingState.FORM
     assert derive_state([Held(app, "E" + "S" * 43, "issued", True)], d, "carrier") is OnboardingState.PENDING
     assert derive_state([Held(lic, "E" + "U" * 43, "active", True)], d, None) is OnboardingState.LICENSED
-    assert derive_state([Held(lic, "E" + "U" * 43, "revoked", True)], d, None) is OnboardingState.PICKER
+    assert derive_state([Held(lic, "E" + "U" * 43, "revoked", True)], d, None) is OnboardingState.REVOKED
 
 
-def test_revoked_license_falls_through_to_pending_precedence():
-    """Precedence is LICENSED > PENDING > FORM > PICKER. A revoked license
-    never counts as LICENSED, but if the held application credential is
-    ALSO still present (chain-verified) for the chosen role, PENDING wins
-    over FORM/PICKER — the revocation doesn't erase the in-flight
-    application, it just disqualifies the (now-revoked) grant itself."""
+def test_revoked_license_derives_revoked_over_pending():
+    """Precedence is LICENSED > REVOKED > PENDING > FORM > PICKER. A revoked
+    license never counts as LICENSED, but it now supersedes PENDING too:
+    even though the held application credential is ALSO still present
+    (chain-verified) for the chosen role, REVOKED wins — a revoked gating
+    credential must surface the revocation treatment rather than letting
+    the still-held (but now moot) in-flight application read as PENDING."""
     d = _doc()
     lic, app = "E" + "L" * 43, "E" + "P" * 43
     held = [
         Held(lic, "E" + "U" * 43, "revoked", True),
         Held(app, "E" + "S" * 43, "issued", True),
     ]
-    assert derive_state(held, d, "carrier") is OnboardingState.PENDING
+    assert derive_state(held, d, "carrier") is OnboardingState.REVOKED
+
+
+def test_active_grant_beats_revoked():
+    """A different, ACTIVE instance of the same gating credential must
+    still win LICENSED even when a revoked instance also lingers in the
+    held set — precedence checks LICENSED before REVOKED."""
+    d = _doc()
+    lic = "E" + "L" * 43
+    held = [
+        Held(lic, "E" + "U" * 43, "revoked", True),
+        Held(lic, "E" + "U" * 43, "active", True),
+    ]
+    assert derive_state(held, d, None) is OnboardingState.LICENSED
+
+
+def test_revoked_requires_chain_verified():
+    """A never-verified (escrowed) credential in a revoked state is not a
+    real revocation of a granted license — chain_verified=False must not
+    trip REVOKED; it falls through to PICKER (no role_id chosen)."""
+    d = _doc()
+    lic = "E" + "L" * 43
+    held = [Held(lic, "E" + "U" * 43, "revoked", False)]
+    assert derive_state(held, d, None) is OnboardingState.PICKER
 
 
 def test_picker_renders_only_onboardable_roles(qtbot):
