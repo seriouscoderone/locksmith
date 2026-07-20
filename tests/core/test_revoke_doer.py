@@ -63,12 +63,12 @@ class RevokeVault(doing.DoDoer):
         super().__init__(doers=[], always=True)
 
 
-def _drive(vault, doer):
+def _drive(vault, doer, rounds=300):
     doist = doing.Doist(real=False, tock=0.03125)
     deeds = doist.enter(doers=[vault])
     try:
         vault.extend([doer])
-        for _ in range(300):
+        for _ in range(rounds):
             if doer.done:
                 break
             doist.recur(deeds=deeds)
@@ -144,3 +144,46 @@ def test_revoke_doer_streams_rev_tel_over_poster(monkeypatch, revoke_env):
     poster = CapturePoster.instances[-1]
     ilks = [s.ked.get("t") for s, _ in poster.sent if getattr(s, "ked", None)]
     assert "rev" in ilks or "brv" in ilks
+
+
+def test_revoke_doer_fails_on_completion_loop_timeout(monkeypatch, revoke_env):
+    """If the TEL never actually flips to rev/brv within the completion
+    loop's bound (e.g. a witnessed/backer registry whose receipts never
+    converge), the doer must NOT fall through to a false `credential_revoked`
+    success -- it must raise and land in the `except` block's `revoke_failed`
+    emit instead.
+
+    Simulated by monkeypatching the credential's cached `Tever.vcState` (the
+    exact same object `RevokeCredentialDoer.revoke_do` reads via
+    `self.rgy.reger.tevers[creder.regid]` -- keripy's `rbdict` read-through
+    cache returns this identical instance on every subsequent lookup) so it
+    always reports `et="iss"`, i.e. the TEL never converges no matter how
+    many times the loop polls it.
+    """
+    app, hby_d, hab_d, rgy_d, license_said, carrier_pre = revoke_env
+    CapturePoster.instances.clear()
+    monkeypatch.setattr(credentialing_mod, "PeerAwarePoster", CapturePoster)
+
+    regid = rgy_d.reger.cloneCred(said=license_said)[0].regid
+    tever = rgy_d.reger.tevers[regid]
+    monkeypatch.setattr(tever, "vcState",
+                        lambda said: SimpleNamespace(et="iss"))
+
+    events = []
+    app.vault.signals.doer_event.connect(lambda n, t, d: events.append((n, t, d)))
+
+    doer = RevokeCredentialDoer(app, credential_said=license_said)
+    # The completion loop must actually exhaust its 200-iteration bound
+    # (each iteration = one yield of the doer's generator), so drive with
+    # generous headroom beyond the happy-path's default round count.
+    _drive(app.vault, doer, rounds=2000)
+
+    done = next((d for n, t, d in events
+                if n == "RevokeCredentialDoer" and t == "credential_revoked"), None)
+    failed = next((d for n, t, d in events
+                  if n == "RevokeCredentialDoer" and t == "revoke_failed"), None)
+    assert done is None, f"false credential_revoked success fired despite non-flipping TEL: {done}"
+    assert failed is not None, "expected revoke_failed to fire on completion-loop timeout"
+    assert failed["success"] is False
+    assert failed["credential_said"] == license_said
+    assert "did not complete" in failed["error"] or "timeout" in failed["error"].lower()

@@ -616,6 +616,10 @@ class RevokeCredentialDoer(doing.DoDoer):
                 count += 1
                 yield self.tock
 
+            if tever.vcState(self.credential_said).et not in ("rev", "brv"):
+                raise Exception(
+                    f"revoke did not complete within timeout for {self.credential_said}")
+
             # Re-read the creder AFTER revoke so sendArtifacts streams the
             # updated TEL (now carrying the rev event) rather than the
             # pre-revoke snapshot.
