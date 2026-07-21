@@ -176,3 +176,33 @@ class InboundGrantWatchDoer(doing.Doer):
         vault.signals.emit_doer_event(
             "InboundWatch", "auto_admitted",
             {"grant_said": said, "schema_said": schema_said})
+
+
+class GateRecheckDoer(doing.Doer):
+    """Periodically re-evaluates the credential gates against live TEL state --
+    the live floor for revocation. A raw TEL `rev` over peer fires no
+    doer_event (unlike an inbound grant exn, which lands a note
+    InboundGrantWatchDoer polls), so nothing else would deactivate the surface
+    until the next vault open. Polls PluginManager.recheck_gates on the same
+    cadence and for the same reason InboundGrantWatchDoer polls the notifier
+    ('no push-on-arrival hook'). Cheap: an in-memory vcState read per gated
+    plugin. Never raises -- a bad pass is logged and the next tick proceeds."""
+
+    def __init__(self, app, tock: float = 2.0, **kwa):
+        self.app = app
+        super(GateRecheckDoer, self).__init__(tock=tock, **kwa)
+
+    def recheck_once(self) -> None:
+        try:
+            pm = getattr(self.app, "plugin_manager", None)
+            if pm is not None:
+                pm.recheck_gates()
+        except Exception:
+            logger.exception("GateRecheckDoer: recheck pass failed")
+
+    def do(self, tymth, tock=0.0, **opts):
+        self.wind(tymth)
+        self.tock = tock
+        while True:
+            yield self.tock
+            self.recheck_once()

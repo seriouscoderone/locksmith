@@ -170,3 +170,55 @@ def test_live_admit_end_to_end_via_signal_connect():
     connected_slot("AdmitDoer", "admit_complete", {"success": True})
 
     mgr.reevaluate_role_gates.assert_called_once_with(vault)
+
+
+# --------------------------------------------------------------------------
+# Task 7: role_revoked emit on the REAL reevaluate_role_gates deactivate
+# transition. _bare_manager() above mocks reevaluate_role_gates itself, so
+# it can't reach the deactivate branch -- this harness mirrors
+# test_gate_repoll.py's _mgr_with_gated_plugin() but leaves the real method
+# in place and adds the collaborators it touches (_surface_host,
+# _activation_strategy).
+# --------------------------------------------------------------------------
+
+def _mgr_gated(schema_said="E" + "L" * 43):
+    mgr = m.PluginManager.__new__(m.PluginManager)
+    plugin = MagicMock()
+    plugin.plugin_id = "carrier"
+    plugin.required_credential.schema_said = schema_said
+    mgr._plugins = {"carrier": plugin}
+    mgr._gated_plugins = lambda: [plugin]
+    mgr._surface_host = None
+    mgr._activation_strategy = MagicMock()   # activate/deactivate are no-op mocks
+    mgr._active_roles = set()
+    return mgr
+
+
+def test_deactivation_emits_role_revoked():
+    mgr = _mgr_gated()
+    mgr._active_roles = {"carrier"}          # currently active
+    mgr._held_credentials = lambda v: []     # gate now UNSATISFIED
+    emitted = []
+    vault = MagicMock()
+    vault.signals.emit_doer_event.side_effect = lambda *a: emitted.append(a)
+
+    m.PluginManager.reevaluate_role_gates(mgr, vault)   # REAL method
+
+    assert "carrier" not in mgr._active_roles
+    assert any(a[0] == "RoleGate" and a[1] == "role_revoked" for a in emitted)
+    payload = next(a[2] for a in emitted if a[1] == "role_revoked")
+    assert payload["plugin_id"] == "carrier"
+    assert payload["schema_said"] == "E" + "L" * 43
+
+
+def test_steady_unsatisfied_does_not_emit():
+    mgr = _mgr_gated()
+    mgr._active_roles = set()                 # never active
+    mgr._held_credentials = lambda v: []
+    emitted = []
+    vault = MagicMock()
+    vault.signals.emit_doer_event.side_effect = lambda *a: emitted.append(a)
+
+    m.PluginManager.reevaluate_role_gates(mgr, vault)
+
+    assert not emitted

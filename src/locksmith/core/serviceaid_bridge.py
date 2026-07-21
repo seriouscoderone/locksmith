@@ -57,7 +57,9 @@ from keri.core import parsing, serdering
 from keri.peer import exchanging
 from keri.vdr import credentialing
 
-from keri_serviceaid.providers import admit_grant, frame_grant_for, issue_credential
+from keri_serviceaid.providers import (
+    admit_grant, frame_grant_for, issue_credential,
+)
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre

@@ -11,6 +11,7 @@ from keri import help
 from keri.app import organizing
 from keri.help import helping
 
+from locksmith.core.credentialing import RevokeCredentialDoer
 from locksmith.ui.toolkit.tables import PaginatedTableWidget
 from locksmith.ui.vault.shared.base_list_page import BaseListPage
 from locksmith.ui.vault.credentials.issued.delete import DeleteIssuedCredentialDialog
@@ -191,6 +192,19 @@ class IssuedCredentialsListPage(BaseListPage):
                 logger.exception(f"Error opening grant dialog: {e}")
         elif action == "Revoke":
             logger.info(f"Revoke issued credential: {credential_schema}")
+            try:
+                creder = self.app.vault.rgy.reger.cloneCred(said=credential_said)[0]
+                if creder is None:
+                    logger.error(f"Cannot revoke — credential {credential_said} not found")
+                    return
+                hab = self.app.vault.hby.habs.get(creder.issuer)
+                if hab is None:
+                    logger.error(f"Cannot revoke — issuer hab {creder.issuer} not open")
+                    return
+                doer = RevokeCredentialDoer(self.app, credential_said=credential_said)
+                self.app.vault.extend([doer])
+            except Exception as e:
+                logger.exception(f"Error scheduling revoke: {e}")
         elif action == "Delete":
             # Open delete confirmation dialog
             dialog = DeleteIssuedCredentialDialog(

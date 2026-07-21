@@ -94,6 +94,7 @@ class HeldCredential:
     state: str            # active | revoked | unknown (from the TEL Tever vcState)
     chain_verified: bool  # True iff present in the reger `saved` (fully-verified) index
     said: str             # the ACDC's own SAID — per-instance identity for UI detail views; the gate predicate does not read it
+    revoked_at: str = ""  # iso8601 of the latest TEL event when state=="revoked" (from vcState.dt); "" otherwise
 
 
 class PluginManager:
@@ -366,6 +367,12 @@ class PluginManager:
             elif active and not satisfied:
                 self._activation_strategy.deactivate(plugin, host)
                 self._active_roles.discard(plugin.plugin_id)
+                signals = getattr(vault, "signals", None)
+                if signals is not None:
+                    signals.emit_doer_event(
+                        "RoleGate", "role_revoked",
+                        {"plugin_id": plugin.plugin_id, "schema_said": req.schema_said},
+                    )
 
     def on_role_credential_activated(self, plugin: Any, credential: Any) -> None:
         """Named seam fired once when a role credential activates a plugin.
@@ -419,8 +426,21 @@ class PluginManager:
     @staticmethod
     def _held_credential_view(reger: Any, said: str) -> HeldCredential:
         creder = reger.creds.get(keys=(said,))
+        # ACCEPTED LIMITATION (spec 2026-07-19 §8, edge-revocation bound):
+        # chain_verified is SAVE-TIME (reger.saved membership, pinned once by
+        # Verifier.saveCredential after the whole chain verified). Revoking a
+        # chained EDGE TARGET later (e.g. the carrier's own self-issued
+        # application that a license's NI2I edge points at) does NOT flip this
+        # back to False, so it does not, on its own, deactivate the gate. This
+        # is accepted: the edge target is self-issued (self-inflicted/unusual);
+        # the realistic revocation (the DOI revokes the license itself) IS
+        # observed live via the TEL rev on the license's own registry. Full-
+        # chain live re-verification is deferred to the watcher era. Pinned by
+        # tests/integration/test_carrier_gate_e2e.py::
+        # test_revoking_application_edge_target_leaves_gate_satisfied.
         chain_verified = reger.saved.get(keys=(said,)) is not None
         state = "unknown"
+        revoked_at = ""
         try:
             status = reger.tevers[creder.regid].vcState(said)
             et = getattr(status, "et", None)
@@ -428,6 +448,7 @@ class PluginManager:
                 state = "active"
             elif et in ("rev", "brv"):
                 state = "revoked"
+                revoked_at = getattr(status, "dt", "") or ""
         except Exception:  # noqa: BLE001 — missing/partial TEL => state unknown
             logger.warning(
                 "role_gate.vcstate_unavailable said=%s (state=unknown)", said,
@@ -438,6 +459,7 @@ class PluginManager:
             state=state,
             chain_verified=chain_verified,
             said=said,
+            revoked_at=revoked_at,
         )
 
     @staticmethod
@@ -497,6 +519,14 @@ class PluginManager:
         if getattr(self, "_current_vault", None) is not None:
             self.reevaluate_role_gates(self._current_vault)
 
+    def recheck_gates(self) -> None:
+        """Re-evaluate role gates against the currently-open vault, reading
+        live TEL state. The channel-blind live floor: a revocation delivered by
+        ANY channel (peer push, mailbox, manual) is caught on the next call,
+        since _held_credentials re-reads vcState each time. No-op if no vault."""
+        if getattr(self, "_current_vault", None) is not None:
+            self.reevaluate_role_gates(self._current_vault)
+
     def _repoll_after_admit(self, credential_said: str,
                             attempts: int = 10, interval_ms: int = 500) -> None:
         """Bounded re-poll for the full-chain-lands-late window (spec
@@ -504,10 +534,16 @@ class PluginManager:
         reger.saved, but the gate's chain_verified needs the whole
         chain. Re-evaluate on a timer until the matching gate flips or
         the budget is spent; a final miss logs loudly (vault reopen
-        remains the recovery)."""
+        remains the recovery).
+
+        Vault-pinned: the vault is captured at scheduling time; a tick aborts
+        if ``self._current_vault`` is no longer that vault, so a user
+        switching vaults mid-window never triggers cross-vault gate
+        bookkeeping."""
         if not credential_said or self._current_vault is None:
             return
-        creder = self._current_vault.rgy.reger.creds.get(keys=(credential_said,))
+        vault = self._current_vault
+        creder = vault.rgy.reger.creds.get(keys=(credential_said,))
         if creder is None:
             return
         pending = [p for p in self._gated_plugins()
@@ -519,7 +555,9 @@ class PluginManager:
         remaining = {"n": attempts}
 
         def _tick() -> None:
-            self.reevaluate_role_gates(self._current_vault)
+            if self._current_vault is not vault:
+                return  # vault switched/closed mid-window — abandon this chain
+            self.reevaluate_role_gates(vault)
             still = [p for p in pending if p.plugin_id not in self._active_roles]
             remaining["n"] -= 1
             if not still:
@@ -550,6 +588,25 @@ class PluginManager:
                 plugin.on_vault_closed(vault, clear=clear)
             except Exception:
                 logger.exception("plugin.on_vault_closed_failed plugin_id=%s", pid)
+
+        # Symmetric teardown of what on_vault_opened set up: disconnect the
+        # MANAGER's own doer_event slot (_on_doer_event) and forget the
+        # current vault, so a re-open-same-vault pattern can't accumulate
+        # connections on THIS slot or leave the manager evaluating gates
+        # against a stale vault. Scope note: this says nothing about the
+        # window's own per-vault-open connections (refresh/on_doer_event/
+        # notifications refresh wired in _maybe_wire_onboarding_for_vault) —
+        # those are a separate teardown concern, not handled here. Idempotent
+        # — a never-connected slot or a vault that was never current must not
+        # raise.
+        signals = getattr(vault, "signals", None)
+        if signals is not None:
+            try:
+                signals.doer_event.disconnect(self._on_doer_event)
+            except (TypeError, RuntimeError):
+                pass  # slot was never connected (or already gone)
+        if getattr(self, "_current_vault", None) is vault:
+            self._current_vault = None
 
     def is_setup_complete(self, plugin_id: str, vault: Any) -> bool:
         plugin = self._plugins.get(plugin_id)

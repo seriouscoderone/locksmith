@@ -85,15 +85,16 @@ from unittest.mock import patch
 
 from hio.base import doing
 from keri import kering
-from keri.app import notifying, signaling
-from keri.core import eventing, parsing, routing
+from keri.app import grouping, notifying, signaling
+from keri.core import eventing, parsing, routing, serdering
+from keri.help import helping
 from keri.kering import Vrsn_1_0
 from keri.peer import exchanging
 from keri.vc import protocoling
 from keri.vdr import eventing as teventing
 
 import locksmith.core.serviceaid_bridge as serviceaid_bridge
-from locksmith.core.credentialing import outputKEL, outputTEL
+from locksmith.core.credentialing import Registrar, outputKEL, outputTEL
 from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.core.inbound_watch import InboundGrantWatchDoer
 from locksmith.core.serviceaid_bridge import ServiceaidGrantDoer
@@ -389,8 +390,17 @@ def test_first_contact_registers_unknown_carrier_and_delivers_grant(
 # PART 2 — return grant → auto-admit → LICENSED (+ re-poll + notifications).
 # ---------------------------------------------------------------------------
 
-def test_return_grant_auto_admits_carrier_to_licensed_surface(
-        monkeypatch, tmp_path, request, qapp, haberies):
+def _reach_licensed(monkeypatch, tmp_path, request, qapp, haberies) -> dict:
+    """Shared "reach LICENSED" setup + admit flow (part 2's original body).
+
+    Builds both parties, the REAL bundled EGF (test variant), the carrier's
+    self-issued application, the DOI's edged ``carrier_license``, the
+    carrier's ADMIT vault + manager, and drives the full return-grant ->
+    auto-admit -> gate-open -> LICENSED sequence (including the re-poll
+    exercise). Extracted so the LICENSED -> REVOKED test (part 3) can start
+    from the exact same end-state as part 2's own acceptance without
+    duplicating ~140 lines of harness wiring. Returns every handle either
+    caller needs."""
     # ---- parties (v1-pinned) ---------------------------------------------
     hby_c, hab_c, rgy_c = _make_party("t12p2_carrier", b"t12p2_carrier_01234")
     haberies.append(hby_c)
@@ -528,6 +538,21 @@ def test_return_grant_auto_admits_carrier_to_licensed_surface(
     held_final = real_held(vault_view)
     assert derive_state(held_final, egf_doc, None) is OnboardingState.LICENSED
 
+    return dict(
+        mgr=mgr, app=app, vault=vault, vault_view=vault_view, egf_doc=egf_doc,
+        hby_c=hby_c, hab_c=hab_c, rgy_c=rgy_c,
+        hby_d=hby_d, hab_d=hab_d, rgy_d=rgy_d,
+        license_said=license_said, creder_l=creder_l, real_held=real_held,
+        carrier=carrier,
+    )
+
+
+def test_return_grant_auto_admits_carrier_to_licensed_surface(
+        monkeypatch, tmp_path, request, qapp, haberies):
+    handles = _reach_licensed(monkeypatch, tmp_path, request, qapp, haberies)
+    app = handles["app"]
+    egf_doc = handles["egf_doc"]
+
     # ---- the notifications page shows the arrival entry -------------------
     page = HoaNotificationsPage(app, egf_doc)
     page.refresh()
@@ -541,3 +566,91 @@ def test_return_grant_auto_admits_carrier_to_licensed_surface(
     # schedulable).
     assert grant_rows[0]["read"] is True
     assert not HoaNotificationsPage.has_accept_action(grant_rows[0])
+
+
+# ---------------------------------------------------------------------------
+# PART 3 — DOI revokes the license -> gate deactivates -> REVOKED.
+# ---------------------------------------------------------------------------
+
+def test_revoked_license_deactivates_surface_and_shows_revoked(
+        monkeypatch, tmp_path, request, qapp, haberies):
+    # ---- reach LICENSED via the shared part-2 flow -------------------------
+    handles = _reach_licensed(monkeypatch, tmp_path, request, qapp, haberies)
+    mgr = handles["mgr"]
+    app = handles["app"]
+    vault = handles["vault"]
+    vault_view = handles["vault_view"]
+    egf_doc = handles["egf_doc"]
+    hby_c = handles["hby_c"]
+    hby_d = handles["hby_d"]
+    hab_d = handles["hab_d"]
+    rgy_c = handles["rgy_c"]
+    rgy_d = handles["rgy_d"]
+    license_said = handles["license_said"]
+    creder_l = handles["creder_l"]
+    real_held = handles["real_held"]
+
+    assert "carrier" in mgr._active_roles
+    assert derive_state(real_held(vault_view), egf_doc, None) is OnboardingState.LICENSED
+
+    # ---- DOI revokes the license (local TEL rev, pure KERI) -----------------
+    # No keri_serviceaid here -- this mirrors RevokeCredentialDoer's own
+    # sequence (locksmith/core/credentialing.py): registry.revoke() fires the
+    # TEL `rev` event, the resulting seal is anchored into the issuer hab's
+    # KEL via interact() (this registry is estOnly=False, noBackers=True --
+    # see `_ensure_registry` -- so interact(), not rotate()), then
+    # Registrar.revoke() registers the anchor (registry.anchorMsg()) that
+    # Tevery's escrow needs to resolve the rev event's MissingAnchorError --
+    # without it the TEL event stays escrowed forever, however many times
+    # processEscrows() runs (confirmed by running this test: a first attempt
+    # that skipped the Registrar left the TEL parked at `iss`).
+    registry = rgy_d.regs[creder_l.regid]
+    rserder = registry.revoke(said=license_said, dt=helping.nowIso8601())
+    rseal = eventing.SealEvent(rserder.pre, rserder.snh, rserder.said)
+    rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
+    anc = hab_d.interact(data=[rseal], version=hab_d.kever.serder.pvrsn)
+    aserder = serdering.SerderKERI(raw=anc)
+
+    counselor = grouping.Counselor(hby=hby_d)
+    registrar = Registrar(hby=hby_d, rgy=rgy_d, counselor=counselor)
+    registrar.revoke(creder=creder_l, rserder=rserder, anc=aserder)
+
+    for _ in range(10):
+        rgy_d.processEscrows()
+        registrar.processEscrows()
+    assert rgy_d.reger.tevers[creder_l.regid].vcState(license_said).et in ("rev", "brv")
+
+    # ---- deliver the raw TEL rev + KEL anchor into the carrier parser -----
+    # (same parser seam part-2 uses for the return-grant stream; outputKEL/
+    # outputTEL are already imported at the top of this module)
+    rev_stream = bytearray()
+    rev_stream.extend(outputKEL(hby_d, hab_d.pre))
+    rev_stream.extend(outputTEL(rgy_d, license_said))
+    rr_rvy = routing.Revery(db=hby_c.db)
+    rr_kvy = eventing.Kevery(db=hby_c.db, lax=True, local=False, rvy=rr_rvy)
+    rr_kvy.registerReplyRoutes(router=rr_rvy.rtr)
+    rr_tvy = teventing.Tevery(db=hby_c.db, reger=rgy_c.reger, local=False, rvy=rr_rvy)
+    rr_tvy.registerReplyRoutes(router=rr_rvy.rtr)
+    parsing.Parser(framed=True, kvy=rr_kvy, tvy=rr_tvy, exc=vault.exc, rvy=rr_rvy,
+                   version=Vrsn_1_0).parse(ims=bytearray(rev_stream))
+    for _ in range(40):
+        rr_kvy.processEscrows()
+        rr_tvy.processEscrows()
+
+    # carrier's TEL now reports the license revoked.
+    tever = rgy_c.reger.tevers[creder_l.regid]
+    assert tever.vcState(license_said).et in ("rev", "brv")
+
+    # ---- live floor: recheck_gates deactivates the surface -----------------
+    mgr._held_credentials = real_held        # undo part-2's re-poll patch
+    assert mgr._current_vault is vault_view   # confirm still set (part-2 set it)
+    mgr.recheck_gates()
+    assert "carrier" not in mgr._active_roles
+
+    # ---- onboarding derives REVOKED; notifications synthesize the card ----
+    held_after = real_held(vault_view)
+    assert derive_state(held_after, egf_doc, None) is OnboardingState.REVOKED
+    page = HoaNotificationsPage(app, egf_doc, held_provider=lambda: real_held(vault_view))
+    page.refresh()
+    assert [r for r in page.rows() if r["route"] == "revoked"], \
+        "notifications must show the revocation entry"

@@ -230,3 +230,52 @@ def test_grant_title_resolved_from_egf_credential_catalog(qtbot):
     # The row title should be resolved to "License" from the EGF catalog
     (row,) = page.rows()
     assert row["title"] == "License"
+
+
+def test_notifications_synthesizes_revoked_row(qtbot):
+    """A held gating credential that has been revoked (chain-verified,
+    state == "revoked") synthesizes a durable 'access revoked' row, even
+    though a raw TEL `rev` produces no notifier note of its own."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+    from keri_serviceaid.egf.documents import EgfDocument
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import fixture_egf
+
+    _, sad = fixture_egf()
+    egf_doc = EgfDocument.from_sad(sad)
+
+    revoked = SimpleNamespace(
+        schema_said="E" + "L" * 43,
+        issuer_aid="E" + "U" * 43,
+        state="revoked",
+        chain_verified=True,
+        said="ELIC",
+        revoked_at="2026-07-19T12:00:00.000000+00:00",
+    )
+
+    app = _app_with_notes([])
+    page = HoaNotificationsPage(app, egf_doc=egf_doc, held_provider=lambda: [revoked])
+    qtbot.addWidget(page)
+    page.refresh()
+
+    rev_rows = [r for r in page.rows() if r["route"] == "revoked"]
+    assert rev_rows, "a revoked gating credential must synthesize a card"
+    assert "revoked" in rev_rows[0]["title"].lower()
+    assert rev_rows[0]["said"] == "ELIC"
+    assert not HoaNotificationsPage.has_accept_action(rev_rows[0])
+
+
+def test_notifications_no_revoked_row_when_none_held(qtbot):
+    """No held credentials -> no synthesized revoked rows."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+    from keri_serviceaid.egf.documents import EgfDocument
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import fixture_egf
+
+    _, sad = fixture_egf()
+    egf_doc = EgfDocument.from_sad(sad)
+
+    app = _app_with_notes([])
+    page = HoaNotificationsPage(app, egf_doc=egf_doc, held_provider=lambda: [])
+    qtbot.addWidget(page)
+    page.refresh()
+
+    assert not [r for r in page.rows() if r["route"] == "revoked"]

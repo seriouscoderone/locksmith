@@ -21,7 +21,7 @@ from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import make_hoa_resolver
-from locksmith.core.inbound_watch import InboundGrantWatchDoer
+from locksmith.core.inbound_watch import GateRecheckDoer, InboundGrantWatchDoer
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.home import HomePage
 from locksmith.ui.navigation import NavigationManager, Pages
@@ -327,7 +327,9 @@ class LocksmithWindow(QMainWindow):
         # exactly like "home" immediately above: a direct MenuButton click
         # connection, not a VaultPlugin.
         self._hoa_notifications_page = HoaNotificationsPage(
-            self.app, egf_doc, parent=vault_page,
+            self.app, egf_doc,
+            held_provider=lambda: _onboarding_held_credentials(self.app),
+            parent=vault_page,
         )
         vault_page.register_page("notifications", self._hoa_notifications_page)
         notifications_entry_btn = MenuButton(icon=QIcon(), label="Notifications")
@@ -676,10 +678,13 @@ class LocksmithWindow(QMainWindow):
         # prompt). Anything else stays unread for HoaNotificationsPage's
         # Accept button (Task 10). One watcher per vault-open, same
         # per-vault-instance lifetime as the rest of this block.
-        self.app.vault.extend([InboundGrantWatchDoer(
-            self.app, self._request_flow.egf_doc, brand().egf_accept_phases,
-            held_provider=lambda: _onboarding_held_credentials(self.app),
-        )])
+        self.app.vault.extend([
+            InboundGrantWatchDoer(
+                self.app, self._request_flow.egf_doc, brand().egf_accept_phases,
+                held_provider=lambda: _onboarding_held_credentials(self.app),
+            ),
+            GateRecheckDoer(self.app),
+        ])
         self.app.vault.signals.doer_event.connect(self._onboarding_home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
         # emissions as a visible inline banner on the form view (distinct
@@ -790,6 +795,14 @@ class LocksmithWindow(QMainWindow):
                 message = "A credential has arrived — review it in Notifications"
 
             self.show_notification_toast(datetime, message, pending_count)
+        elif doer_name == "RoleGate" and event_type == "role_revoked":
+            # HOA-aware revocation toast. The durable, role-specific copy
+            # lives in the REVOKED home surface + the Notifications card;
+            # this ephemeral toast is generic. Stock (non-onboarding)
+            # brands don't surface role gates, so no toast.
+            if brand().onboarding_enabled:
+                self.show_notification_toast(
+                    "", "Your workspace access was revoked — review it in Notifications", 1)
 
     def resizeEvent(self, event):
         """
