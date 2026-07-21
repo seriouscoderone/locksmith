@@ -31,13 +31,10 @@ def build_selectable_message_box(
     """
     box = QMessageBox(parent)
     box.setIcon(icon)
-    # NOTE: QMessageBox.setWindowTitle() is a documented no-op on macOS (Qt
-    # follows the platform HIG, which omits alert titles), so the title is
-    # applied via the underlying Qt property instead. This does not change
-    # what is visible on macOS (the native alert never showed a title there
-    # either) — it only keeps ``windowTitle()`` introspectable everywhere,
-    # matching behavior on Linux/Windows where the plain setter already works.
-    box.setProperty("windowTitle", title)
+    # NOTE: QMessageBox may not surface the window title on all platforms
+    # (e.g. macOS, per the platform HIG), but setWindowTitle() is still the
+    # correct cross-platform call — it displays on Windows/Linux.
+    box.setWindowTitle(title)
     box.setText(message)
     box.setTextInteractionFlags(Qt.TextInteractionFlag.TextSelectableByMouse)
     return box
