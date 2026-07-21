@@ -80,6 +80,7 @@ from locksmith.ui import colors
 from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
 from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
 
 from enum import Enum
 
@@ -306,6 +307,19 @@ class OnboardingErrorPage(QWidget):
         body.setWordWrap(True)
         body.setStyleSheet(f"font-size: 14px; color: {colors.DANGER};")
         layout.addWidget(body)
+
+        # One-click copy of the full error (heading + cryptic detail).
+        copy_row = QHBoxLayout()
+        copy_row.addStretch()
+        self.copy_button = LocksmithCopyButton(
+            copy_content=f"{heading.text()}\n\n{body.text()}",
+            tooltip="Copy error message",
+            icon_size=18,
+            icon_color=colors.DANGER,
+        )
+        copy_row.addWidget(self.copy_button)
+        copy_row.addStretch()
+        layout.addLayout(copy_row)
 
         layout.addStretch(2)
 
