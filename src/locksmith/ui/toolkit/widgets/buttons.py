@@ -4,7 +4,7 @@ locksmith.ui.toolkit.widgets.buttons module
 
 This module contains reusable custom button widget components.
 """
-from PySide6.QtCore import Qt, QSize, Signal, QPoint
+from PySide6.QtCore import Qt, QSize, Signal, QPoint, QTimer
 from PySide6.QtGui import QIcon, QColor, QPixmap, QPainter, QCursor
 from PySide6.QtWidgets import QToolButton, QVBoxLayout, QPushButton, QRadioButton, QCheckBox, QApplication, QHBoxLayout, \
     QLabel, QFrame, QGraphicsOpacityEffect, QWidget
@@ -522,25 +522,31 @@ class LocksmithCopyButton(LocksmithIconButton):
     """
     A copy button that copies content to the clipboard when clicked.
 
-    This button automatically uses the copy icon and handles clipboard operations.
-    Inherits the Locksmith styling from LocksmithIconButton.
+    On copy it briefly swaps its icon to a green checkmark as confirmation,
+    then reverts, and emits ``copied``. Inherits Locksmith styling from
+    LocksmithIconButton.
     """
 
-    def __init__(self, copy_content: str = "", tooltip: str = "Copy to clipboard",
-                 icon_size: int = 36, parent=None, border=False):
-        """
-        Initialize the LocksmithCopyButton.
+    copied = Signal()
 
-        Args:
-            copy_content: The text content to copy to clipboard when clicked.
-            tooltip: Optional tooltip text (default: "Copy to clipboard").
-            icon_size: Size of the icon in pixels (default: 36).
-            parent: Optional parent widget.
-            border: Whether to show a border around the button (default: False).
+    _COPY_ICON = ":/assets/material-icons/content_copy.svg"
+    _CHECK_ICON = ":/assets/material-icons/check.svg"
+    _FEEDBACK_MS = 1200
+
+    def __init__(self, copy_content: str = "", tooltip: str = "Copy to clipboard",
+                 icon_size: int = 36, parent=None, border=False, icon_color=None):
         """
-        # Initialize with the copy icon
+        Args:
+            copy_content: Text copied to clipboard on click.
+            tooltip: Tooltip text (default: "Copy to clipboard").
+            icon_size: Icon size in pixels (default: 36).
+            parent: Optional parent widget.
+            border: Whether to show a border (default: False).
+            icon_color: Optional base tint for the copy icon (``None`` = raw
+                icon). The checkmark feedback always reverts back to this base.
+        """
         super().__init__(
-            icon_path=":/assets/material-icons/content_copy.svg",
+            icon_path=self._COPY_ICON,
             tooltip=tooltip,
             icon_size=icon_size,
             parent=parent,
@@ -548,32 +554,44 @@ class LocksmithCopyButton(LocksmithIconButton):
         )
 
         self._copy_content = copy_content
+        self._base_color = icon_color
+        if icon_color:
+            self.set_icon_color(icon_color)
 
-        # Connect click signal to copy action
+        self._feedback_timer = QTimer(self)
+        self._feedback_timer.setSingleShot(True)
+        self._feedback_timer.timeout.connect(self._revert_icon)
+
         self.clicked.connect(self._copy_to_clipboard)
 
     def _copy_to_clipboard(self):
-        """Copy the content to the system clipboard."""
-        if self._copy_content:
-            clipboard = QApplication.clipboard()
-            clipboard.setText(self._copy_content)
+        """Copy the content to the clipboard and flash the checkmark."""
+        if not self._copy_content:
+            return
+        QApplication.clipboard().setText(self._copy_content)
+        self._show_copied_feedback()
+        self.copied.emit()
+
+    def _show_copied_feedback(self):
+        """Swap to a green checkmark for ``_FEEDBACK_MS`` then revert."""
+        self.icon_path = self._CHECK_ICON
+        self.set_icon_color(colors.SUCCESS)
+        self._feedback_timer.start(self._FEEDBACK_MS)
+
+    def _revert_icon(self):
+        """Restore the base copy icon (tinted if a base color was set)."""
+        self.icon_path = self._COPY_ICON
+        if self._base_color:
+            self.set_icon_color(self._base_color)
+        else:
+            self._setup_icon()
 
     def set_copy_content(self, content: str):
-        """
-        Update the content that will be copied to clipboard.
-
-        Args:
-            content: The new text content to copy.
-        """
+        """Update the text that will be copied to clipboard."""
         self._copy_content = content
 
     def get_copy_content(self) -> str:
-        """
-        Get the current copy content.
-
-        Returns:
-            The text content that will be copied to clipboard.
-        """
+        """Return the current copy content."""
         return self._copy_content
 
 

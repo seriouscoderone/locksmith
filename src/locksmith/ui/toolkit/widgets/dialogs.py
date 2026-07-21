@@ -6,7 +6,7 @@ This module contains reusable custom dialog widget components.
 """
 from typing import cast
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QSize
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QSize, QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGraphicsOpacityEffect, QWidget,
@@ -16,6 +16,7 @@ from keri import help
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
 
 logger = help.ogler.getLogger(__name__)
 
@@ -291,12 +292,35 @@ class LocksmithDialog(QDialog):
         self.error_label.setStyleSheet(f"color: {colors.DANGER}; font-size: 13px;")
         banner_layout.addWidget(self.error_label, 1)
 
+        # Hover-revealed copy affordance (subtle; occupies a fixed slot so
+        # the wrapped message never reflows when it fades in).
+        self.error_copy_button = LocksmithCopyButton(
+            tooltip="Copy error message",
+            icon_size=18,
+            icon_color=colors.DANGER,
+        )
+        self._error_copy_opacity = QGraphicsOpacityEffect(self.error_copy_button)
+        self._error_copy_opacity.setOpacity(0.0)
+        self.error_copy_button.setGraphicsEffect(self._error_copy_opacity)
+        banner_layout.addWidget(self.error_copy_button)
+
+        self.error_banner.installEventFilter(self)
+
         main_layout.addWidget(self.error_banner)
 
         # Animation for smooth expand/collapse
         self.error_animation = QPropertyAnimation(self.error_banner, b"maximumHeight")
         self.error_animation.setDuration(200)
         self.error_animation.setEasingCurve(QEasingCurve.Type.OutCubic)
+
+    def eventFilter(self, obj, event):
+        """Fade the error-banner copy button in on hover, out on leave."""
+        if obj is getattr(self, "error_banner", None):
+            if event.type() == QEvent.Type.Enter:
+                self._error_copy_opacity.setOpacity(1.0)
+            elif event.type() == QEvent.Type.Leave:
+                self._error_copy_opacity.setOpacity(0.0)
+        return super().eventFilter(obj, event)
 
     def _build_warning_banner(self, main_layout: QVBoxLayout):
         """Build collapsible warning banner (amber). Use when an op
@@ -566,6 +590,7 @@ class LocksmithDialog(QDialog):
             self._base_height = self.height()
 
         self.error_label.setText(message)
+        self.error_copy_button.set_copy_content(message)
 
         # Calculate the natural height the banner needs
         # Temporarily remove height constraint to measure

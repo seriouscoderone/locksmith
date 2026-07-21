@@ -373,8 +373,8 @@ class PluginsContent(QWidget):
         try:
             installer.upgrade(plugin_id)
         except InstallError as e:
-            from PySide6.QtWidgets import QMessageBox
-            QMessageBox.warning(self, "Upgrade failed", str(e))
+            from locksmith.ui.toolkit.widgets.message_box import build_selectable_message_box
+            build_selectable_message_box(self, "Upgrade failed", str(e)).exec()
             return
         # Surface the global restart banner.
         window = self.window()

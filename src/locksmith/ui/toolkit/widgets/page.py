@@ -4,14 +4,16 @@ locksmith.ui.toolkit.widgets.page module
 
 This module contains reusable page widgets.
 """
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, QSize, QEvent
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QFrame,
+    QGraphicsOpacityEffect
 )
 from keri import help
 
 from locksmith.ui import colors
+from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
 
 logger = help.ogler.getLogger(__name__)
 
@@ -139,6 +141,19 @@ class LocksmithFormPage(QWidget):
         # Close button for banner (optional, but good UX)
         # For now, we'll rely on programmatic clearing or new validations
 
+        # Hover-revealed copy affordance (fixed slot; no reflow on fade-in).
+        self.error_copy_button = LocksmithCopyButton(
+            tooltip="Copy error message",
+            icon_size=18,
+            icon_color=colors.DANGER,
+        )
+        self._error_copy_opacity = QGraphicsOpacityEffect(self.error_copy_button)
+        self._error_copy_opacity.setOpacity(0.0)
+        self.error_copy_button.setGraphicsEffect(self._error_copy_opacity)
+        banner_layout.addWidget(self.error_copy_button)
+
+        self.error_banner.installEventFilter(self)
+
         self.main_layout.addWidget(self.error_banner)
 
         # Animation
@@ -202,6 +217,15 @@ class LocksmithFormPage(QWidget):
 
         self.main_layout.addWidget(self.scroll_area)
 
+    def eventFilter(self, obj, event):
+        """Fade the error-banner copy button in on hover, out on leave."""
+        if obj is getattr(self, "error_banner", None):
+            if event.type() == QEvent.Type.Enter:
+                self._error_copy_opacity.setOpacity(1.0)
+            elif event.type() == QEvent.Type.Leave:
+                self._error_copy_opacity.setOpacity(0.0)
+        return super().eventFilter(obj, event)
+
     def show_error(self, message: str):
         """
         Show error banner with message.
@@ -212,6 +236,7 @@ class LocksmithFormPage(QWidget):
         self.clear_success()
 
         self.error_label.setText(message)
+        self.error_copy_button.set_copy_content(message)
 
         # Measure required height
         self.error_banner.setMaximumHeight(16777215)
