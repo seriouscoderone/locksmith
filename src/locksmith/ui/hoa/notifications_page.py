@@ -154,6 +154,7 @@ class HoaNotificationsPage(BasePage):
             logger.exception("HoaNotificationsPage: failed reading notifier notes")
             return []
 
+        hby = getattr(getattr(self.app, "vault", None), "hby", None)
         rows: List[Dict[str, Any]] = []
         for (_dt, rid), note in items:
             pad = getattr(note, "pad", None) or {}
@@ -166,6 +167,7 @@ class HoaNotificationsPage(BasePage):
                 "said": said,
                 "title": self._resolve_title(route, said),
                 "read": bool(getattr(note, "read", False)),
+                "inbound": self._is_inbound_grant(hby, route, said),
             })
 
         # Most-recent-first, mirroring the stock NotificationsListPage's own
@@ -182,14 +184,62 @@ class HoaNotificationsPage(BasePage):
 
     @staticmethod
     def has_accept_action(row: Dict[str, Any]) -> bool:
-        """True iff this row is an unread inbound IPEX grant. Route-only
-        would still offer Accept on an already-admitted row -- e.g. one
-        auto-admitted by ``InboundGrantWatchDoer`` and marked read -- which
-        could schedule a second admit for a grant that already landed.
-        Requiring ``not row["read"]`` closes that window: once a row is
-        marked read (auto-admit, or a prior manual Accept), the action is
-        gone."""
-        return "/ipex/grant" in row.get("route", "") and not row.get("read", False)
+        """True iff this row is an unread, INBOUND IPEX grant addressed to a
+        local hab.
+
+        Route-only would still offer Accept on an already-admitted row --
+        e.g. one auto-admitted by ``InboundGrantWatchDoer`` and marked read
+        -- which could schedule a second admit for a grant that already
+        landed. Requiring ``not row["read"]`` closes that window: once a row
+        is marked read (auto-admit, or a prior manual Accept), the action is
+        gone.
+
+        Route-only would ALSO offer Accept on the wallet's OWN outbound,
+        self-issued grant: a grant this wallet sent is parsed into the local
+        exchanger exactly like one it received, so it surfaces here as if it
+        were an inbound offer -- but accepting your own grant is meaningless
+        (HOA #3 two-app demo, 2026-07-20: the carrier's "Carrier License
+        Application" row wrongly showed Accept). The ``inbound`` flag,
+        resolved at row-build time from the grant exn's recipient/sender
+        (``_is_inbound_grant``), closes that window. It defaults to True so
+        a row built without it -- or a grant whose exn couldn't be resolved
+        -- falls back to the prior route+read behavior."""
+        return (
+            "/ipex/grant" in row.get("route", "")
+            and not row.get("read", False)
+            and row.get("inbound", True)
+        )
+
+    @staticmethod
+    def _is_inbound_grant(hby, route: str, said: str) -> bool:
+        """Whether grant ``said`` is an INBOUND offer this wallet may Accept:
+        a LOCAL hab is the grant exn's recipient (its ``a.i`` attribute, the
+        same field ``_resolve_admit_hab`` and ``PeerExchangerShim`` read as
+        the destination) and NO local hab is its sender (``i``). A grant this
+        wallet SENT -- e.g. a carrier self-issuing and presenting its own
+        ``carrier_license_application`` -- has a local sender and is not an
+        offer to act on.
+
+        Best-effort, matching ``_resolve_admit_hab``: any failure to resolve
+        the exn (no ``hby``, no ``said``, unparseable/absent exn) falls back
+        to ``True`` -- the prior route-only behavior -- never raising, never
+        dropping the row. Non-grant routes short-circuit to ``True`` (the
+        flag is only ever consulted for grant rows)."""
+        if hby is None or not said or "/ipex/grant" not in (route or ""):
+            return True
+        try:
+            exn, _pathed = exchanging.cloneMessage(hby, said)
+            if exn is None:
+                return True
+            recipient = exn.ked.get("a", {}).get("i", "")
+            sender = exn.ked.get("i", "")
+        except Exception:
+            logger.exception(
+                "HoaNotificationsPage: grant-direction resolution failed for said=%s",
+                said,
+            )
+            return True
+        return recipient in hby.habs and sender not in hby.habs
 
     # -- title resolution -----------------------------------------------------
 

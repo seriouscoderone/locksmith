@@ -123,6 +123,77 @@ def test_accept_admits_with_grants_recipient_hab_not_first_hab(qtbot):
     assert mk.call_args.args[1] is not first_hab
 
 
+def test_inbound_grant_to_local_hab_shows_accept(qtbot):
+    """A genuine INBOUND grant -- its exn recipient (`a.i`) is a LOCAL hab
+    and its sender (`i`) is remote -- still offers Accept."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+
+    said = "E" + "G" * 43
+    local_pre = "E" + "C" * 43   # matches the hab _app_with_notes installs
+    remote_pre = "E" + "R" * 43
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", said)])
+    exn = SimpleNamespace(ked={"i": remote_pre, "a": {"i": local_pre}})
+
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    with patch("locksmith.ui.hoa.notifications_page.exchanging.cloneMessage") as clone:
+        clone.return_value = (exn, {})
+        page.refresh()
+
+    (row,) = page.rows()
+    assert page.has_accept_action(row)
+
+
+def test_self_sent_grant_suppresses_accept(qtbot):
+    """The wallet's OWN outbound self-issued grant (exn sender `i` is a
+    LOCAL hab) is parsed into the local exchanger just like an inbound one,
+    but accepting your own grant is meaningless -- Accept must be suppressed.
+    (HOA #3 two-app demo, 2026-07-20: the carrier's 'Carrier License
+    Application' row wrongly showed an Accept button.)"""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+
+    said = "E" + "G" * 43
+    local_pre = "E" + "C" * 43   # matches the hab _app_with_notes installs
+    remote_pre = "E" + "R" * 43
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", said)])
+    # Carrier (local) sent the grant to a remote applicant.
+    exn = SimpleNamespace(ked={"i": local_pre, "a": {"i": remote_pre}})
+
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    with patch("locksmith.ui.hoa.notifications_page.exchanging.cloneMessage") as clone:
+        clone.return_value = (exn, {})
+        page.refresh()
+
+    (row,) = page.rows()
+    assert not page.has_accept_action(row)
+
+
+def test_self_sent_grant_to_own_hab_suppresses_accept(qtbot):
+    """Even when BOTH sender and recipient are local habs, a grant this
+    wallet authored is not an inbound offer -- the sender-is-local clause
+    suppresses Accept. A recipient-only check would wrongly show it, so this
+    pins that clause specifically."""
+    from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
+
+    said = "E" + "G" * 43
+    local_pre = "E" + "C" * 43   # matches the hab _app_with_notes installs
+    second_pre = "E" + "D" * 43
+    app = _app_with_notes([_note("r1", "/exn/ipex/grant", said)])
+    second = MagicMock(); second.pre = second_pre
+    app.vault.hby.habs[second_pre] = second
+    exn = SimpleNamespace(ked={"i": local_pre, "a": {"i": second_pre}})
+
+    page = HoaNotificationsPage(app)
+    qtbot.addWidget(page)
+    with patch("locksmith.ui.hoa.notifications_page.exchanging.cloneMessage") as clone:
+        clone.return_value = (exn, {})
+        page.refresh()
+
+    (row,) = page.rows()
+    assert not page.has_accept_action(row)
+
+
 def test_grant_title_resolved_from_egf_credential_catalog(qtbot):
     """When egf_doc is provided and grant's embedded ACDC schema matches
     a catalog entry, the title is upgraded from generic to the credential's
