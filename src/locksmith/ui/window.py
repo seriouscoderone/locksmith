@@ -1129,8 +1129,8 @@ class LocksmithWindow(QMainWindow):
         self._refresh_all_plugin_views(restart_required=True)
 
     def _show_error(self, title: str, message: str) -> None:
-        from PySide6.QtWidgets import QMessageBox
-        QMessageBox.warning(self, title, message)
+        from locksmith.ui.toolkit.widgets.message_box import build_selectable_message_box
+        build_selectable_message_box(self, title, message).exec()
 
     # ------------------- Window lifecycle ----------------------------
 
