@@ -926,11 +926,15 @@ class LocksmithWindow(QMainWindow):
             message: The notification message text
             pending_notifications: Number of pending notifications
         """
-        # Close existing toast if any
+        # Close existing toast if any.
+        # close_toast() emits `closed` synchronously, which re-enters
+        # _on_toast_closed; clear self.current_toast first so that handler is a
+        # no-op and we clean up via the local reference (avoids a None deref).
         if self.current_toast:
-            self.current_toast.close_toast()
-            self.current_toast.deleteLater()
+            existing_toast = self.current_toast
             self.current_toast = None
+            existing_toast.close_toast()
+            existing_toast.deleteLater()
 
         # Create new toast
         self.current_toast = NotificationToast(datetime, message, pending_notifications, self)
