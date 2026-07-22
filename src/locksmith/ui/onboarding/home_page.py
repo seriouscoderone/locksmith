@@ -385,10 +385,29 @@ class OnboardingHomePage(BasePage):
     # -- construction: static views ---------------------------------------
 
     def _build_overview_shell(self):
-        """The roles-overview scroll area shell: a heading + an (initially
-        empty) horizontal row of ``RoleCard`` widgets, rebuilt on every
-        ``refresh()`` by ``_rebuild_overview``. Returns ``(scroll_widget,
-        cards_layout)`` so the caller can clear/repopulate the row."""
+        """The roles-overview scroll area shell: an (initially hidden) error
+        banner, a heading, and an (initially empty) horizontal row of
+        ``RoleCard`` widgets, rebuilt on every ``refresh()`` by
+        ``_rebuild_overview``. Returns ``(scroll_widget, cards_layout)`` so
+        the caller can clear/repopulate the row.
+
+        The banner (``self._overview_error_label``) is this view's own
+        equivalent of the FORM view's ``_error_layout``/``_show_form_errors``
+        — review fix (apply-mode failures are invisible): apply-mode
+        requests never leave the overview (``_role_id`` stays ``None``, see
+        ``_on_card_request``), so the form's error layout is never the
+        widget on screen to show an ``apply_failed`` message. Same DANGER/
+        ``BACKGROUND_ERROR`` inline styling as the form's ``"form-error"``
+        labels so the visual language matches -- objectName is deliberately
+        ``"overview-error"`` (NOT ``"form-error"``), since this label is
+        permanent (built once, toggled visible/hidden — never
+        detached/re-created the way ``_show_form_errors``/
+        ``_clear_form_errors`` churn theirs) and several existing tests
+        assert ``findChildren(QLabel, "form-error") == []`` / count exactly
+        the transient ones; a shared objectName would make this permanent,
+        usually-empty label a phantom match. Lives OUTSIDE ``cards_row`` so
+        ``_rebuild_overview`` (which only clears ``cards_row``) never
+        touches it. See ``_show_overview_error``/``_clear_overview_error``."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         # Acceptance-demo fix wave item 1: QAbstractScrollArea's viewport
@@ -402,6 +421,17 @@ class OnboardingHomePage(BasePage):
         layout = QVBoxLayout(inner)
         layout.setContentsMargins(48, 48, 48, 48)
         layout.setSpacing(16)
+
+        error_label = QLabel("")
+        error_label.setObjectName("overview-error")
+        error_label.setWordWrap(True)
+        error_label.setStyleSheet(
+            f"color: {colors.DANGER}; background-color: {colors.BACKGROUND_ERROR}; "
+            "border-radius: 6px; padding: 8px 12px;"
+        )
+        error_label.setVisible(False)
+        layout.addWidget(error_label)
+        self._overview_error_label = error_label
 
         heading = QLabel("Your roles")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
@@ -518,12 +548,21 @@ class OnboardingHomePage(BasePage):
           ``request_flow.py``'s ``submit()``), rendered as a visible inline
           banner on the form view (acceptance-demo item 2).
         - ``("ApplyFlow", "apply_failed")`` — apply-mode request failures
-          (an ineligible identifier, an ambiguous/missing authority — see
-          the shell's ``_request_role``/``make_apply_doer``), rendered the
-          same way.
-        - ``("ApplyFlow", "apply_sent")`` — a successful apply send;
-          triggers ``refresh()`` so the role's card picks up its new
-          PENDING status.
+          (an ineligible identifier, an ambiguous/missing authority, an
+          unreachable issuer — see the shell's ``_request_role``/
+          ``make_apply_doer``). Apply-mode requests never leave the
+          OVERVIEW (``_role_id`` stays ``None`` — see ``_on_card_request``),
+          so this renders on the OVERVIEW's own banner
+          (``_show_overview_error``), not the form's ``_error_layout``
+          (review fix: rendering it there left it invisible). Also rolls
+          back a REVOKED role's speculative ``_reapplying_roles``
+          suppression (mapped from ``data["schema_said"]`` via
+          ``_role_id_for_schema``) and ``refresh()``es, so a failed
+          re-apply reverts the card to REVOKED instead of lying AVAILABLE
+          with no visible error.
+        - ``("ApplyFlow", "apply_sent")`` — a successful apply send; clears
+          the overview banner and triggers ``refresh()`` so the role's card
+          picks up its new PENDING status.
 
         Distinct from ``refresh()``: that one re-derives every role's
         status from ANY event (cheap, idempotent); this one reacts
@@ -536,10 +575,35 @@ class OnboardingHomePage(BasePage):
             self._show_form_errors([str(data.get("message", ""))])
             return
         if doer_name == "ApplyFlow" and event_type == "apply_failed":
-            self._clear_form_errors()
-            self._show_form_errors([str(data.get("error", ""))])
+            message = str(data.get("error", ""))
+            if self._role_id is not None:
+                # Defensive fallback only: apply-mode requests never set
+                # `_role_id` (they never leave the overview -- see
+                # `_on_card_request`), so this branch should be dead in
+                # practice. Kept so a future change routing apply-mode
+                # through the form view doesn't silently regress back to an
+                # invisible failure.
+                self._clear_form_errors()
+                self._show_form_errors([message])
+                return
+            # Review fix: the OVERVIEW is what's actually on screen for an
+            # apply-mode failure, so the banner belongs there, not in the
+            # (invisible) form's `_error_layout`.
+            self._show_overview_error(message)
+            # Suppression rollback: a REVOKED role's Request-again click
+            # (`_on_card_request`) speculatively added it to
+            # `_reapplying_roles` so the outstanding PENDING wasn't
+            # immediately re-masked by the still-held revoked grant. That
+            # request just failed, so undo the speculation -- otherwise the
+            # card keeps lying AVAILABLE with no visible error instead of
+            # reverting to REVOKED.
+            role_id = self._role_id_for_schema(data.get("schema_said"))
+            if role_id is not None:
+                self._reapplying_roles.discard(role_id)
+            self.refresh()
             return
         if doer_name == "ApplyFlow" and event_type == "apply_sent":
+            self._clear_overview_error()
             self.refresh()
 
     def _render(self) -> None:
@@ -582,6 +646,9 @@ class OnboardingHomePage(BasePage):
         ``_reapplying_roles`` first when it was REVOKED, so this apply's
         outstanding-request PENDING status isn't immediately re-masked by
         the still-held revoked grant (see ``refresh()``'s docstring)."""
+        # A new request attempt begins -- any stale banner from a PRIOR
+        # apply_failed no longer applies (review fix, item 4).
+        self._clear_overview_error()
         role = self._egf.role(role_id)
         if role.onboarding is not None and not role.onboarding.apply_mode:
             self._role_id = role_id            # carrier-pattern form flow
@@ -599,6 +666,40 @@ class OnboardingHomePage(BasePage):
         per the role-plugin-page-key convention documented on ``RoleCard``)."""
         if self._open_role_cb is not None:
             self._open_role_cb(role_id)
+
+    # -- OVERVIEW error banner (review fix: apply-mode failures were invisible) --
+
+    def _show_overview_error(self, message: str) -> None:
+        """Render an apply-mode failure on the OVERVIEW's own banner
+        (``self._overview_error_label``, built in ``_build_overview_shell``)
+        -- apply-mode requests never leave the overview (``_role_id`` stays
+        ``None``), so the FORM view's error layout is never the widget
+        actually on screen to show it. Scrolls it into view the same way
+        ``_show_form_errors`` does for the form banner (item 2's "must
+        actually be seen" posture)."""
+        self._overview_error_label.setText(message)
+        self._overview_error_label.setVisible(bool(message))
+        if message:
+            self._overview_widget.ensureWidgetVisible(self._overview_error_label)
+
+    def _clear_overview_error(self) -> None:
+        self._overview_error_label.setText("")
+        self._overview_error_label.setVisible(False)
+
+    def _role_id_for_schema(self, schema_said: Optional[str]) -> Optional[str]:
+        """The persona whose grant credential's schema SAID matches
+        ``schema_said``, or ``None``. Used by ``on_doer_event``'s
+        ``apply_failed`` handler to map the failure (which carries the
+        GRANT credential's ``schema_said`` -- see
+        ``serviceaid_bridge.ServiceaidApplyDoer``/``make_apply_doer``) back
+        to a role id for the reapply-suppression rollback."""
+        if not schema_said:
+            return None
+        for persona in self._egf.personas():
+            grant = self._egf.credential(persona.onboarding.grant_credential_id)
+            if grant.schema_said == schema_said:
+                return persona.id
+        return None
 
     # -- FORM construction ---------------------------------------------------
 
