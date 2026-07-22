@@ -37,6 +37,16 @@ class PluginCore(ABC):
     def initialize(self, app: Any) -> None:
         """Called once at startup after plugin discovery, before any hooks fire."""
 
+    def get_toolbar_entries(self, window) -> list:
+        """Optional top-toolbar contributions (HOA #4 seam).
+
+        Returns a list of ``(action_id, widget, section)`` tuples; section is
+        "left" or "right". Applied once by PluginManager.apply_toolbar_entries
+        after plugin initialization; ids are namespaced by plugin_id.
+        Default: contribute nothing.
+        """
+        return []
+
 
 class AppPlugin(PluginCore):
     """Plugin that hooks into app/window lifecycle.

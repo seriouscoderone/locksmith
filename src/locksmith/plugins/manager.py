@@ -341,6 +341,20 @@ class PluginManager:
             except Exception:
                 logger.exception("plugin.vault_ui.register_failed plugin_id=%s", pid)
 
+    def apply_toolbar_entries(self, toolbar, window) -> None:
+        """Fan plugin toolbar contributions into the top toolbar (HOA #4).
+
+        Per-plugin failures are isolated: one broken contributor never
+        blocks the rest (same posture as entry-point discovery).
+        """
+        for pid, plugin in self._plugins.items():
+            try:
+                for action_id, widget, section in plugin.get_toolbar_entries(window):
+                    toolbar.add_action(f"{pid}.{action_id}", widget,
+                                       section=section)
+            except Exception:
+                logger.exception("plugin.toolbar_entries_failed plugin_id=%s", pid)
+
     # ------------------- Role-activation (credential gate) ---------
 
     def reevaluate_role_gates(self, vault: Any) -> None:

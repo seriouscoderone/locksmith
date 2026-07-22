@@ -166,6 +166,8 @@ class LocksmithWindow(QMainWindow):
         self.app.plugin_manager.discover_and_initialize_vault_ui(
             vault_page, vault_page.nav_menu,
         )
+        # Fan plugin top-toolbar contributions in (HOA #4 seam).
+        self.app.plugin_manager.apply_toolbar_entries(self.toolbar, self)
 
         # Onboarding "home" persona-picker page (Plan B Task 8 + hardening
         # wave item 1). Extracted to _wire_onboarding for testability --
