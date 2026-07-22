@@ -11,7 +11,8 @@ toolbar bell is hidden AND the 5s ``NotificationToastDoer`` toast
 (``locksmith.core.vaulting``) had nowhere to click through to: an inbound
 IPEX grant landed nowhere the user could act on. This page is registered as
 "notifications" exactly like the onboarding "home" page (see
-``locksmith.ui.window._wire_onboarding``) so ``VaultPage.show_notifications``
+``HoaShellPlugin.on_vault_ui_ready``, ``locksmith.plugins.hoa_shell.plugin``)
+so ``VaultPage.show_notifications``
 (the toast-click / nav-menu-entry destination) resolves to something real.
 
 Deliberately a simple durable log, not a design showcase (owner directive,

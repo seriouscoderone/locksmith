@@ -61,8 +61,8 @@ def derive_role_states(held, sent_applies, egf, *,
     ``suppress_revoked_roles`` is the per-role re-apply escape hatch (a TEL
     rev never removes the credential, so REVOKED would otherwise be sticky).
     PENDING = an outstanding sent apply for the role's grant schema
-    (apply-mode), or a held application credential (form-mode, the carrier
-    pattern).
+    (apply-mode), or a held application credential (form-mode, the
+    submitted-application pattern).
     """
     states = {}
     for persona in egf.personas():

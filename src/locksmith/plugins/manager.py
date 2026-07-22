@@ -616,9 +616,10 @@ class PluginManager:
         # current vault, so a re-open-same-vault pattern can't accumulate
         # connections on THIS slot or leave the manager evaluating gates
         # against a stale vault. Scope note: this says nothing about the
-        # window's own per-vault-open connections (refresh/on_doer_event/
-        # notifications refresh wired in _maybe_wire_onboarding_for_vault) —
-        # those are a separate teardown concern, not handled here. Idempotent
+        # shell plugin's own per-vault-open connections (refresh/
+        # on_doer_event/notifications refresh wired in HoaShellPlugin.
+        # on_vault_opened, locksmith.plugins.hoa_shell.plugin) — those are
+        # a separate teardown concern, not handled here. Idempotent
         # — a never-connected slot or a vault that was never current must not
         # raise.
         signals = getattr(vault, "signals", None)

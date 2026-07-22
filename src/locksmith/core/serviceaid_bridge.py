@@ -444,11 +444,6 @@ class ServiceaidApplyDoer(doing.DoDoer):
 
     Mirrors `ServiceaidGrantDoer.grantDo`'s tail:
 
-    - parse the freshly-framed apply into the wallet's own exchanger
-      (`app.vault.exc`) so it lands in `hby.db.exns` -- required for
-      `keri_serviceaid.providers.list_sent_applies` (PENDING derivation)
-      to enumerate it, mirroring the grant path's own-exchanger persist
-      (`grantDo`'s `parseOne` call);
     - stream the sender's own KEL (`hab.db.clonePreIter`) so a
       first-contact recipient can verify the apply's signature without
       pre-resolved key state -- the apply path has no credential to hang
@@ -458,7 +453,13 @@ class ServiceaidApplyDoer(doing.DoDoer):
       peer-mode settings and this AID's peer exposure, same as `grantDo`;
     - send the framed apply exn last;
     - extend self with a `DoDoer` wrapping `.deliver()`'s doers, wait for
-      it to finish, then read `.last_outcome` for the transport channel.
+      it to finish, then read `.last_outcome` for the transport channel;
+    - only after a confirmed peer-channel delivery, parse the apply into
+      the wallet's own exchanger (`app.vault.exc`) so it lands in
+      `hby.db.exns` for `keri_serviceaid.providers.list_sent_applies`
+      (PENDING derivation). Persist-AFTER-delivery deliberately diverges
+      from `grantDo`'s persist-before: a failed-delivery apply must not
+      derive PENDING (see the inline comment in `applyDo`).
 
     Direct-mode contract: a non-"peer" channel is a FAILURE, not a silent
     mailbox fallback (mirrors `RequestFlow`'s send-outcome semantics,
@@ -514,15 +515,6 @@ class ServiceaidApplyDoer(doing.DoDoer):
                 sink=sink,
                 return_raw=True,
             )
-
-            # Parse the freshly-framed apply into the WALLET's exchanger --
-            # mirrors ServiceaidGrantDoer.grantDo (bridge.py:344-345).
-            # frame_apply_for does NOT persist into the vault's exc;
-            # without this the apply never lands in hby.db.exns, so
-            # list_sent_applies (PENDING derivation) never sees it. parseOne
-            # gets a bytes() copy so `raw` stays intact for the split below.
-            parsing.Parser().parseOne(ims=bytes(raw), exc=vault.exc,
-                                      version=message_version(raw))
 
             # Split the framed message the same way keri_serviceaid's own
             # PostmanDeliverer does: serder + trailing attachment bytes.
@@ -582,6 +574,22 @@ class ServiceaidApplyDoer(doing.DoDoer):
                     },
                 )
                 return
+
+            # Parse the now-DELIVERED apply into the WALLET's exchanger so
+            # it lands in hby.db.exns, where list_sent_applies enumerates
+            # it for derive_role_states's PENDING derivation. Deliberately
+            # AFTER the peer-success confirmation above (unlike grantDo,
+            # whose parseOne precedes delivery): outstanding = the admin
+            # could have seen it; a failed-delivery apply must not derive
+            # PENDING (spec direct-mode loud-failure contract) -- the
+            # apply_failed banner and a persisted "Requested" state would
+            # contradict each other, sticking the card at PENDING with no
+            # retry affordance across restarts. Same coroutine, no race: a
+            # grant can only arrive after delivery. parseOne gets a bytes()
+            # copy so `raw` stays intact (frame_apply_for did not persist
+            # into the vault's exc).
+            parsing.Parser().parseOne(ims=bytes(raw), exc=vault.exc,
+                                      version=message_version(raw))
 
             logger.info(
                 f"Apply message {apply_said} sent successfully to "

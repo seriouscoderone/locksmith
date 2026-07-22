@@ -529,6 +529,43 @@ def test_request_role_fails_loudly_when_authority_count_not_one(monkeypatch):
     assert "expected exactly one authority" in call.args[2]["error"]
 
 
+def test_request_role_fails_loudly_when_default_hab_not_yet_incepted(monkeypatch):
+    """First-run window: create_identifier's inception is async, so
+    ``habByName(default_aid_alias)`` can return None for a moment after a
+    fresh vault opens. A Request click in that window must surface an
+    ApplyFlow/apply_failed doer_event (this method's every-failure contract)
+    -- never hand hab=None to make_apply_doer (AttributeError inside a Qt
+    click handler)."""
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import ACTUARY_ROLE_SCHEMA_SAID
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    import locksmith.core.serviceaid_bridge as bridge_mod
+
+    fake_brand = SimpleNamespace(onboarding_enabled=True,
+                                 egf_accept_phases=("production",),
+                                 default_aid_alias="default")
+    monkeypatch.setattr(shell_mod, "brand", lambda: fake_brand)
+
+    app = SimpleNamespace(vault=MagicMock(name="vault"))
+    app.vault.hby.habByName.return_value = None    # inception still pending
+
+    plugin, egf_doc = _apply_mode_plugin(app)
+
+    make_apply_doer_mock = MagicMock(name="make_apply_doer")
+    monkeypatch.setattr(bridge_mod, "make_apply_doer", make_apply_doer_mock)
+
+    plugin._request_role("actuary")
+
+    make_apply_doer_mock.assert_not_called()
+    app.vault.extend.assert_not_called()
+    app.vault.signals.emit_doer_event.assert_called_once()
+    call = app.vault.signals.emit_doer_event.call_args
+    assert call.args[0] == "ApplyFlow"
+    assert call.args[1] == "apply_failed"
+    assert call.args[2]["success"] is False
+    assert "still being created" in call.args[2]["error"]
+    assert call.args[2]["schema_said"] == ACTUARY_ROLE_SCHEMA_SAID
+
+
 def test_request_role_noop_when_vault_none():
     plugin, egf_doc = _apply_mode_plugin(SimpleNamespace(vault=None))
     plugin._request_role("actuary")

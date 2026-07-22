@@ -25,8 +25,9 @@ Two rendering modes, switched on ``self._role_id``:
     ``request_micro_app_said`` — a bare IPEX apply, no form): calls
     ``on_apply(role_id)`` (the shell's ``_request_role`` — derives the
     apply plan, seeds schemas, sends the IPEX apply) and re-derives state.
-  - **form-mode** (the carrier pattern — a micro-app "submit application"
-    command): sets ``self._role_id`` and switches to the FORM view below.
+  - **form-mode** (a micro-app "submit application" command against the
+    issuing counterparty): sets ``self._role_id`` and switches to the FORM
+    view below.
 
   A REVOKED role's Request-again click additionally marks the role in
   ``self._reapplying_roles`` (apply-mode only — see ``_on_card_request``),
@@ -634,8 +635,9 @@ class OnboardingHomePage(BasePage):
 
     def _on_card_request(self, role_id: str) -> None:
         """A card's Request/Request-again button was clicked. Routes on the
-        role's onboarding mode: a form-mode role (the carrier pattern) opens
-        the FORM view exactly like the old ``select_persona``; an apply-mode
+        role's onboarding mode: a form-mode role (micro-app application
+        form) opens the FORM view exactly like the old ``select_persona``;
+        an apply-mode
         role calls ``on_apply`` directly (no form) — marking it in
         ``_reapplying_roles`` first when it was REVOKED, so this apply's
         outstanding-request PENDING status isn't immediately re-masked by
@@ -645,7 +647,7 @@ class OnboardingHomePage(BasePage):
         self._clear_overview_error()
         role = self._egf.role(role_id)
         if role.onboarding is not None and not role.onboarding.apply_mode:
-            self._role_id = role_id            # carrier-pattern form flow
+            self._role_id = role_id            # form-mode application flow
             self.refresh()
             return
         if self.role_states.get(role_id) is RoleStatus.REVOKED:

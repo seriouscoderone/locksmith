@@ -1,6 +1,8 @@
 # -*- encoding: utf-8 -*-
-"""ServiceaidApplyDoer: frame + persist + deliver an IPEX apply over the
-peer channel; direct-mode failures are loud (no silent mailbox fallback)."""
+"""ServiceaidApplyDoer: frame + deliver an IPEX apply over the peer channel,
+persisting into the wallet's exchanger only AFTER confirmed peer delivery;
+direct-mode failures are loud (no silent mailbox fallback) and leave nothing
+outstanding (a failed-delivery apply must not derive PENDING)."""
 from unittest.mock import MagicMock
 
 import pytest
@@ -90,6 +92,11 @@ def test_non_peer_channel_is_a_loud_failure(vaulted_app, monkeypatch):
     kinds = [(s, t) for s, t, _ in app.vault.signals.events]
     assert ("ApplyFlow", "apply_failed") in kinds
     assert ("ApplyFlow", "apply_sent") not in kinds
+    # Failed delivery persists NOTHING: an apply the admin never saw must
+    # not land in hby.db.exns, or derive_role_states would report PENDING
+    # forever (card stuck at "Requested", no retry, survives restart).
+    from keri_serviceaid.providers import list_sent_applies
+    assert list_sent_applies(app.vault.hby, hab.pre) == []
 
 
 def test_make_apply_doer_rejects_ineligible_hab(vaulted_app, monkeypatch):

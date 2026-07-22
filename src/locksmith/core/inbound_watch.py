@@ -58,7 +58,8 @@ class InboundGrantWatchDoer(doing.Doer):
             same vocabulary as ``RequestFlow``/``OnboardingHomePage``).
         held_provider: Zero-arg callable returning the vault's current
             held-credential views (``OnboardingHomePage``'s own
-            ``held_provider`` shape, e.g. ``_onboarding_held_credentials``)
+            ``held_provider`` shape, e.g. the shell's ``_held_credentials``
+            in ``locksmith.plugins.hoa_shell.plugin``)
             -- re-read on every scan so a just-issued application
             credential is visible without reconstructing the doer.
         applies_provider: Zero-arg callable returning the holder's own sent

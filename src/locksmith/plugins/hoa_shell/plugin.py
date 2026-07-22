@@ -332,6 +332,20 @@ class HoaShellPlugin(VaultPlugin):
         self._seeder.seed_for_role(role_id)
         hab = self._app.vault.hby.habByName(
             brand().default_aid_alias or "default")
+        if hab is None:
+            # First-run window: create_identifier schedules an async
+            # InceptDoer and returns before the hab exists (the same window
+            # _bring_up_direct_transport retries through), so a fast click
+            # can land here before the default AID is incepted. Surface it
+            # as apply_failed per this method's contract instead of letting
+            # make_apply_doer crash on hab=None inside a Qt click handler.
+            self._app.vault.signals.emit_doer_event(
+                "ApplyFlow", "apply_failed",
+                {"success": False,
+                 "error": "your workspace identity is still being created "
+                          "— try again in a moment",
+                 "schema_said": plan.grant_credential.schema_said})
+            return
         doer = make_apply_doer(self._app, hab,
                                schema_said=plan.grant_credential.schema_said,
                                recipient=authorities[0].aid)
