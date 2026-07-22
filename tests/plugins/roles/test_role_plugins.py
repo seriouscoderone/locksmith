@@ -41,7 +41,7 @@ def test_page_key_equals_plugin_id_and_menu_label(qapp, cls, pid, label):
     p = cls()
     p.initialize(object())
     assert list(p.get_pages().keys()) == [pid]
-    assert p.get_menu_entry().text() == label
+    assert p.get_menu_entry().text_label.text() == label
     assert p.get_menu_section() == []
 
 
