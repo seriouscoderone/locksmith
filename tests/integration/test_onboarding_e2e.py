@@ -143,13 +143,14 @@ from tests.integration.test_carrier_gate_e2e import (  # noqa: F401 (haberies)
     haberies,
 )
 
-# The vault's default identifier alias (mirrors brands/usurance/brand.toml's
-# [bootstrap] default_aid_alias) — RequestFlow._default_hab resolves it via
-# brand().default_aid_alias, so the injected brand.json below must agree.
+# The vault's default identifier alias — RequestFlow._default_hab resolves it
+# via brand().default_aid_alias, so the injected brand.json below must agree
+# (the shipping brand.toml no longer uses this alias; the retired carrier
+# example lives on as the tests/fixtures/carrier_egf_bundle/ fixture).
 CARRIER_ALIAS = "carrier"
 
 # A valid submit_application payload per the REAL bundled micro-app's
-# payload_schema (brands/usurance/egf/EBTP1zVb....json). ``submitted_at`` is
+# payload_schema (tests/fixtures/carrier_egf_bundle/EBTP1zVb....json). ``submitted_at`` is
 # deliberately omitted: it is required + format date-time, and the REAL flow
 # autofills it (RequestFlow._autofill_date_time_fields) exactly as the page
 # would — asserting the autofill path end to end.
@@ -165,7 +166,7 @@ SUBMIT_PAYLOAD = {
 }
 
 _REPO_ROOT = Path(__file__).resolve().parents[2]
-_BUNDLE_DIR = _REPO_ROOT / "brands" / "usurance" / "egf"
+_BUNDLE_DIR = _REPO_ROOT / "tests" / "fixtures" / "carrier_egf_bundle"
 
 
 # ---------------------------------------------------------------------------

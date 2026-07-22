@@ -6,7 +6,7 @@ import pathlib
 from locksmith.plugins.carrier.plugin import (
     CARRIER_LICENSE_SCHEMA_SAID, DOI_ISSUER_AID)
 
-BUNDLE = pathlib.Path("brands/usurance/egf")
+BUNDLE = pathlib.Path("tests/fixtures/carrier_egf_bundle")
 
 
 def _egf():

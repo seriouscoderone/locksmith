@@ -1,0 +1,91 @@
+{
+  "d": "EPyySfoR14je2B0cxb5xL0Ep9pf7qRcUrd3zAUY3iuF-",
+  "spec_version": "egf-doc/0.1",
+  "version": "0.1.0",
+  "ecosystem": {
+    "id": "usurance-internal",
+    "display_name": "Usurance Internal Operations",
+    "openness": "closed",
+    "description": "Usurance's own internal-role ecosystem: usurance-admin grants and revokes employee role credentials (Web2 role administration re-expressed KERI-native). Domain-independent of the us-insurance-regulation ecosystem \u2014 this document governs who holds which internal role, nothing else."
+  },
+  "governance": {
+    "phase": "production",
+    "transition_plan": "usurance-admin is the genuine authority for Usurance-internal roles (not a bootstrap stand-in); no phase transition is expected. Key compromise/rotation is handled by KERI key state, not by document transition."
+  },
+  "roles": [
+    {
+      "id": "actuary",
+      "display_name": "Actuarial",
+      "kind": "individual",
+      "description": "Usurance-internal actuarial role. Placeholder persona surface \u2014 this role exists to prove multi-role coexistence, not actuarial domain function.",
+      "onboarding": {
+        "grant_credential_id": "actuary_role"
+      }
+    },
+    {
+      "id": "product_designer",
+      "display_name": "Insurance Product Design",
+      "kind": "individual",
+      "description": "Usurance-internal insurance-product-design role. Placeholder persona surface \u2014 coexistence proof, not domain function.",
+      "onboarding": {
+        "grant_credential_id": "product_designer_role"
+      }
+    },
+    {
+      "id": "admin",
+      "display_name": "Usurance Administration",
+      "kind": "organization",
+      "description": "Issuer of internal role credentials. Operates on vanilla Locksmith (pure KERI); not a persona \u2014 no onboarding block."
+    }
+  ],
+  "credentials": [
+    {
+      "id": "actuary_role",
+      "name": "Actuary Role",
+      "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+      "issuer_role": "admin",
+      "holder_role": "actuary",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": false
+    },
+    {
+      "id": "product_designer_role",
+      "name": "Insurance Product Designer Role",
+      "schema_said": "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-",
+      "issuer_role": "admin",
+      "holder_role": "product_designer",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": false
+    }
+  ],
+  "authorities": [
+    {
+      "role_id": "admin",
+      "display_name": "Usurance Administration",
+      "context": {},
+      "aid": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+      "phase": "production",
+      "phase_note": "Usurance's own operational admin AID (usurance-custody vault) \u2014 the genuine authority for internal roles, first production-phase authority in the framework.",
+      "expected_transition": null,
+      "credentials": [
+        "actuary_role",
+        "product_designer_role"
+      ],
+      "endpoints": [
+        {
+          "mode": "direct",
+          "scheme": "tcp",
+          "oobi_ref": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO"
+        }
+      ]
+    }
+  ],
+  "accepted_schema_saids": [
+    "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+    "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-"
+  ],
+  "micro_apps": [],
+  "context_dimensions": []
+}
