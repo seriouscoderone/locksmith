@@ -61,6 +61,12 @@ class FakeEgf:
     def personas(self):
         return [r for r in self._roles if r.onboarding is not None]
 
+    def role(self, role_id):
+        """Task 10 addition: ``OnboardingHomePage._on_card_request`` needs
+        ``egf.role(role_id)`` to decide apply-mode vs form-mode routing —
+        mirrors ``EgfDocument.role``'s own linear-scan shape."""
+        return next(r for r in self._roles if r.id == role_id)
+
     def credential(self, cred_id):
         return self._creds[cred_id]
 

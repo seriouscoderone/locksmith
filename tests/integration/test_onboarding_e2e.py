@@ -88,6 +88,21 @@ hazard of the same class as the Task 7 finding fixed in
 it is out of this test task's scope.) With the registry pre-created, the
 real ``EgfSeeder`` two-gate logic still runs and schedules real schema-only
 ``LoadSchemaDoer`` passes (no interact), exercising the seeding path.
+
+TASK 10 ADDITION (roles-overview home surface)
+-----------------------------------------------
+``OnboardingHomePage``'s single-selected-role state machine
+(``derive_state``/``OnboardingState``) is now TRANSITIONAL — kept only as a
+thin shim because ``locksmith.core.inbound_watch`` still imports it (Task
+11 removes it). Every ``derive_state``/``OnboardingState`` checkpoint below
+is left in place UNCHANGED (still real, still passing) and paired with an
+ADDITIVE assertion against the new per-role model
+(``locksmith.ui.onboarding.role_states.derive_role_states``/``RoleStatus``)
+at the same point in the pipeline — this is the one REAL-credential
+integration proof for ``derive_role_states`` (Task 8's own test suite only
+exercises it against a FakeEgf/synthetic ``Held`` dataclass, never an
+actually-admitted ACDC): nothing held -> AVAILABLE, application held ->
+PENDING, license admitted -> ACTIVE.
 """
 from __future__ import annotations
 
@@ -111,6 +126,7 @@ from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.core.signals import DoerSignalBridge
 from locksmith.ui.onboarding.home_page import OnboardingState, derive_state
 from locksmith.ui.onboarding.request_flow import RequestFlow
+from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
 
 # Reuse the scaffold e2e's proven in-process fixture family (same test
 # package): parties, disclosure/admit (mocked transport, real Verifier),
@@ -334,6 +350,9 @@ def test_onboarding_e2e_persona_pick_to_licensed_surface(
         monkeypatch, tmp_path, qapp, trusted_issuer=hab_d.pre)
     held = mgr._held_credentials(_vault(hby_c, rgy_c))
     assert derive_state(held, egf_doc, None) is OnboardingState.PICKER
+    # Task 10: the new per-role model must agree -- nothing held, nothing
+    # applied -> the carrier role is simply AVAILABLE.
+    assert derive_role_states(held, [], egf_doc)["carrier"] is RoleStatus.AVAILABLE
 
     # ---- submit: the REAL pipeline (derive/validate/autofill/select/issue)
     flow.submit("carrier", dict(SUBMIT_PAYLOAD), {"jurisdiction": "US-UT"})
@@ -382,6 +401,10 @@ def test_onboarding_e2e_persona_pick_to_licensed_surface(
     # ---- onboarding state: application held -> PENDING; gate still shut ---
     held = mgr._held_credentials(_vault(hby_c, rgy_c))
     assert derive_state(held, egf_doc, "carrier") is OnboardingState.PENDING
+    # Task 10: the new per-role model must agree -- the self-issued
+    # application credential is held+chain-verified, so the role reads
+    # PENDING (form-mode's chained_from derivation — see derive_role_states).
+    assert derive_role_states(held, [], egf_doc)["carrier"] is RoleStatus.PENDING
     mgr.reevaluate_role_gates(_vault(hby_c, rgy_c))
     assert "carrier" not in mgr._active_roles
     mgr._surface_host.register_page.assert_not_called()
@@ -417,3 +440,8 @@ def test_onboarding_e2e_persona_pick_to_licensed_surface(
     # ---- acceptance: onboarding shows LICENSED -----------------------------
     held = mgr._held_credentials(_vault(hby_c, rgy_c))
     assert derive_state(held, egf_doc, None) is OnboardingState.LICENSED
+    # Task 10: the new per-role model must agree -- carrier goes licensed ->
+    # its role shows ACTIVE (the real-credential integration proof for
+    # derive_role_states; Task 8's own suite only exercises it against a
+    # FakeEgf/synthetic Held dataclass, never a REAL admitted ACDC).
+    assert derive_role_states(held, [], egf_doc)["carrier"] is RoleStatus.ACTIVE

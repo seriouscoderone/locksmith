@@ -445,6 +445,177 @@ def test_bring_up_direct_transport_aborts_on_vault_switch(monkeypatch):
     assert called == []                                       # never touched transport
 
 
+def _apply_mode_plugin(app):
+    """A plugin wired for `_request_role`'s apply-mode path: a REAL
+    EgfDocument (one apply-mode persona "actuary", one production-phase
+    "admin" authority -- keri_serviceaid.tests.egf.fixtures.make_fixture_egf.
+    apply_mode_egf's canonical shape) + a MagicMock seeder (the doer
+    scheduling itself is the real serviceaid_bridge.make_apply_doer seam,
+    patched per-test below)."""
+    from keri_serviceaid.egf.documents import EgfDocument
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import apply_mode_egf
+
+    egf_doc = EgfDocument.from_sad(apply_mode_egf({"grant_credential_id": "actuary_role"}))
+    plugin = HoaShellPlugin()
+    plugin.initialize(app)
+    plugin._egf_doc = egf_doc
+    plugin._seeder = MagicMock(name="seeder")
+    return plugin, egf_doc
+
+
+# ---------------------------------------------------------------------------
+# _request_role -- apply-mode request wiring (Task 10, HOA #4)
+# ---------------------------------------------------------------------------
+
+def test_request_role_seeds_and_sends_apply_for_single_authority(monkeypatch):
+    """The happy path: exactly one authority for the grant's issuer_role ->
+    seed the grant schema, build the apply doer, extend the vault with it."""
+    from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import ACTUARY_ROLE_SCHEMA_SAID
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    import locksmith.core.serviceaid_bridge as bridge_mod
+
+    fake_brand = SimpleNamespace(onboarding_enabled=True,
+                                 egf_accept_phases=("production",),
+                                 default_aid_alias="default")
+    monkeypatch.setattr(shell_mod, "brand", lambda: fake_brand)
+
+    app = SimpleNamespace(vault=MagicMock(name="vault"))
+    hab = MagicMock(name="hab")
+    hab.pre = "E" + "H" * 43
+    app.vault.hby.habByName.return_value = hab
+
+    plugin, egf_doc = _apply_mode_plugin(app)
+
+    fake_doer = MagicMock(name="doer")
+    make_apply_doer_mock = MagicMock(return_value=fake_doer)
+    monkeypatch.setattr(bridge_mod, "make_apply_doer", make_apply_doer_mock)
+
+    plugin._request_role("actuary")
+
+    plugin._seeder.seed_for_role.assert_called_once_with("actuary")
+    make_apply_doer_mock.assert_called_once()
+    args, kwargs = make_apply_doer_mock.call_args
+    assert args[0] is app
+    assert args[1] is hab
+    assert kwargs["schema_said"] == ACTUARY_ROLE_SCHEMA_SAID
+    assert kwargs["recipient"] == "E" + "B" * 43  # apply_mode_egf's admin_aid
+    app.vault.extend.assert_called_once_with([fake_doer])
+    app.vault.signals.emit_doer_event.assert_not_called()
+
+
+def test_request_role_fails_loudly_when_authority_count_not_one(monkeypatch):
+    """accept_phases that exclude the fixture's one (production-phase)
+    authority narrow the match to zero -- must fail loudly (an
+    ApplyFlow/apply_failed doer_event), never seed or schedule anything."""
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+
+    fake_brand = SimpleNamespace(onboarding_enabled=True,
+                                 egf_accept_phases=("bootstrap",),
+                                 default_aid_alias="default")
+    monkeypatch.setattr(shell_mod, "brand", lambda: fake_brand)
+
+    app = SimpleNamespace(vault=MagicMock(name="vault"))
+    plugin, egf_doc = _apply_mode_plugin(app)
+
+    plugin._request_role("actuary")
+
+    plugin._seeder.seed_for_role.assert_not_called()
+    app.vault.extend.assert_not_called()
+    app.vault.signals.emit_doer_event.assert_called_once()
+    call = app.vault.signals.emit_doer_event.call_args
+    assert call.args[0] == "ApplyFlow"
+    assert call.args[1] == "apply_failed"
+    assert call.args[2]["success"] is False
+    assert "expected exactly one authority" in call.args[2]["error"]
+
+
+def test_request_role_noop_when_vault_none():
+    plugin, egf_doc = _apply_mode_plugin(SimpleNamespace(vault=None))
+    plugin._request_role("actuary")
+    plugin._seeder.seed_for_role.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# get_toolbar_entries -- always-accessible "Roles" button (Task 10, HOA #4)
+# ---------------------------------------------------------------------------
+
+def test_get_toolbar_entries_empty_when_onboarding_disabled(monkeypatch):
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    monkeypatch.setattr(shell_mod, "brand",
+                        lambda: SimpleNamespace(onboarding_enabled=False))
+    plugin = HoaShellPlugin()
+    plugin.initialize(MagicMock())
+    assert plugin.get_toolbar_entries(MagicMock()) == []
+
+
+def test_get_toolbar_entries_returns_roles_button_when_enabled(qapp, monkeypatch):
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    monkeypatch.setattr(shell_mod, "brand",
+                        lambda: SimpleNamespace(onboarding_enabled=True))
+    plugin = HoaShellPlugin()
+    plugin.initialize(MagicMock())
+
+    entries = plugin.get_toolbar_entries(MagicMock())
+
+    assert len(entries) == 1
+    action_id, widget, section = entries[0]
+    assert action_id == "roles"
+    assert section == "right"
+    assert widget.objectName() == "toolbar.rolesButton"
+
+
+# ---------------------------------------------------------------------------
+# _open_roles -- navigate-then-show idiom (mirrors window._on_toast_clicked)
+# ---------------------------------------------------------------------------
+
+def test_open_roles_noop_when_vault_none():
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=None))
+    plugin._vault_page = MagicMock(name="vault_page")
+
+    plugin._open_roles(MagicMock(name="window"))
+
+    plugin._vault_page._show_vault_page.assert_not_called()
+
+
+def test_open_roles_noop_when_vault_page_never_registered():
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=MagicMock(name="vault")))
+    assert plugin._vault_page is None
+
+    plugin._open_roles(MagicMock(name="window"))  # must not raise
+
+
+def test_open_roles_navigates_when_elsewhere_then_shows_home():
+    from locksmith.ui.navigation import Pages
+
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=MagicMock(name="vault")))
+    plugin._vault_page = MagicMock(name="vault_page")
+
+    window = MagicMock(name="window")
+    window.main_stack.currentWidget.return_value = MagicMock(name="some_other_page")
+
+    plugin._open_roles(window)
+
+    window.nav_manager.navigate_to.assert_called_once_with(Pages.VAULT)
+    plugin._vault_page._show_vault_page.assert_called_once_with("home")
+
+
+def test_open_roles_skips_navigate_when_already_on_vault_page():
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=MagicMock(name="vault")))
+    plugin._vault_page = MagicMock(name="vault_page")
+
+    window = MagicMock(name="window")
+    window.main_stack.currentWidget.return_value = plugin._vault_page
+
+    plugin._open_roles(window)
+
+    window.nav_manager.navigate_to.assert_not_called()
+    plugin._vault_page._show_vault_page.assert_called_once_with("home")
+
+
 def test_bring_up_direct_transport_stops_at_budget(monkeypatch):
     """If the hab never appears, the retry chain stops at max_attempts with
     a warning rather than scheduling forever."""

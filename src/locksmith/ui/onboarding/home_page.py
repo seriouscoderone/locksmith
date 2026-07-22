@@ -2,46 +2,44 @@
 """
 locksmith.ui.onboarding.home_page module
 
-``OnboardingHomePage`` — the "Who are you?" persona picker and the
-vault-derived onboarding state machine (design spec §7.4, Task 6).
+``OnboardingHomePage`` — the roles-overview home surface (HOA #4, Task 10):
+one ``RoleCard`` per onboardable persona, each showing that role's OWN
+``RoleStatus`` (``locksmith.ui.onboarding.role_states.derive_role_states``,
+Task 8) with a Request / Open / Request-again affordance. Replaces the
+earlier app-global, single-selected-role state machine (``derive_state`` /
+``OnboardingState`` / ``PersonaCard`` / ``select_persona`` — see git history)
+whose role-agnostic first-match LICENSED/REVOKED scan could not represent
+holding role A while applying for role B (the #2-flagged multi-role
+boundary).
 
-Renders one clickable card per onboardable role (an EGF ``Role`` with an
-``onboarding`` block — see ``EgfDocument.personas()``). Picking a card
-builds that role's application form (Task 5's ``SchemaFormBuilder``) from
-its micro-app's ``request_command_id`` command, plus a per-issuer
-context-selection control (design spec §7.4 "context binding") so the
-holder also picks WHICH authority (e.g. which state regulator) they're
-applying to.
+Two rendering modes, switched on ``self._role_id``:
 
-**State derivation is pure** (``derive_state``, no Qt): it reads the
-vault's held-credential views (the credential gate's ``HeldCredential``
-shape — see ``plugins/manager.py``'s ``_held_credentials``) against the
-EGF document to decide which of PICKER/FORM/PENDING/LICENSED/REVOKED to
-show. Precedence is LICENSED > REVOKED > PENDING > FORM > PICKER:
+- **Overview** (``self._role_id is None``, the default landing view): a
+  scrollable row of ``RoleCard`` widgets, one per ``egf.personas()`` entry,
+  each showing its current ``RoleStatus`` (AVAILABLE / PENDING / ACTIVE /
+  REVOKED) and the matching affordance. Clicking a card's Request button
+  calls ``_on_card_request(role_id)``, which routes on the role's onboarding
+  mode:
 
-- LICENSED — a held, chain-verified, ``state == "active"`` credential
-  whose schema matches ANY onboardable role's grant credential
-  (``egf.credential(role.onboarding.grant_credential_id).schema_said``).
-  Checked independent of the chosen ``role_id`` (a returning, already-
-  licensed holder should land here even before picking a persona card).
-  A REVOKED grant does not count — it simply fails this check and falls
-  through to the next precedence level.
-- REVOKED — a held, chain-verified credential whose schema matches ANY
-  onboardable role's grant credential and whose ``state`` is exactly
-  ``"revoked"``. Checked role-agnostically, same as LICENSED, and
-  independent of the chosen ``role_id`` — a returning holder whose
-  license was revoked sees the revocation treatment even before picking
-  a persona card, and even if their own (now superseded) application
-  credential is still held (REVOKED wins over PENDING). An ACTIVE grant
-  elsewhere still wins LICENSED first (checked one precedence level
-  above), and a credential that was never chain-verified (still escrowed)
-  does NOT count as a revocation — it falls through same as before.
-- PENDING — the chosen role's application credential (the credential the
-  grant chains FROM: ``credential(grant.chained_from)``) is held and
-  chain-verified (and not itself revoked). Requires a chosen ``role_id``
-  (there is no single, role-agnostic "application" credential to check).
-- FORM — a ``role_id`` has been chosen and none of the above applied.
-- PICKER — nothing chosen yet (the default landing state).
+  - **apply-mode** (``role.onboarding.apply_mode``, i.e. no
+    ``request_micro_app_said`` — a bare IPEX apply, no form): calls
+    ``on_apply(role_id)`` (the shell's ``_request_role`` — derives the
+    apply plan, seeds schemas, sends the IPEX apply) and re-derives state.
+  - **form-mode** (the carrier pattern — a micro-app "submit application"
+    command): sets ``self._role_id`` and switches to the FORM view below.
+
+  A REVOKED role's Request-again click additionally marks the role in
+  ``self._reapplying_roles`` (apply-mode only — see ``_on_card_request``),
+  passed to ``derive_role_states`` as ``suppress_revoked_roles`` so a TEL
+  ``rev`` (which never removes the credential from the holder's store)
+  doesn't keep the role stuck at REVOKED after the holder re-applies;
+  cleared the moment ``refresh()`` re-derives ACTIVE for that role (a fresh
+  grant landed).
+- **Form** (``self._role_id is not None``): unchanged FORM machinery (Task
+  5/6) — ``SchemaFormBuilder`` renders the role's onboarding command's
+  payload schema, plus a per-issuer context-selection control (design spec
+  §7.4 "context binding") so the holder also picks WHICH authority (e.g.
+  which state regulator) they're applying to.
 
 Context binding mechanism (spec §7.4, "one control serves both"): each
 ``context_dimensions(issuer_role)`` entry is rendered as a combo whose
@@ -57,6 +55,12 @@ mirror the value afterward) rather than stripping the property out of
 the schema handed to ``SchemaFormBuilder`` — it keeps ``page.form``
 addressable by the field's real name for callers/tests (``set_field``,
 ``widget_for``) exactly as if it weren't dual-purposed at all.
+
+TRANSITIONAL(Task 11): ``OnboardingState``/``derive_state`` are kept below
+as thin deprecated aliases of the OLD single-role state machine — purely
+because ``locksmith.core.inbound_watch.InboundGrantWatchDoer`` still imports
+them (Task 11 rewrites that watcher onto ``derive_role_states`` and removes
+this shim). Nothing in THIS module calls them anymore.
 """
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -78,22 +82,17 @@ from keri_serviceaid.egf.documents import EgfDocument, Role
 
 from locksmith.ui import colors
 from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
-from locksmith.ui.onboarding.role_states import _held_matches, _held_revoked
+from locksmith.ui.onboarding.role_states import (
+    RoleStatus,
+    _held_matches,
+    _held_revoked,
+    derive_role_states,
+)
 from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
 
 from enum import Enum
-
-
-class OnboardingState(Enum):
-    """The onboarding home page's five possible views."""
-
-    PICKER = "picker"
-    FORM = "form"
-    PENDING = "pending"
-    LICENSED = "licensed"
-    REVOKED = "revoked"
 
 
 _KIND_GLYPHS = {
@@ -130,84 +129,43 @@ _GROUP_BOX_QSS = f"""
 """
 
 
-def derive_state(
-    held: list,
-    egf: EgfDocument,
-    role_id: Optional[str],
-    *,
-    suppress_revoked: bool = False,
-) -> OnboardingState:
-    """Pure state derivation — no Qt, no I/O. See module docstring for the
-    full precedence rationale (LICENSED > REVOKED > PENDING > FORM > PICKER).
+class RoleCard(QFrame):
+    """One persona's status card on the roles overview (HOA #4).
 
-    ``suppress_revoked`` (default False, so every other caller/test is
-    unaffected): when True, skips the REVOKED branch entirely — falls
-    through to PENDING/FORM/PICKER as if no revoked gating credential were
-    held. This exists because a TEL ``rev`` does NOT remove the credential
-    from the holder's store, so a revoked license stays held (and would
-    otherwise re-derive REVOKED) forever after. It's the escape hatch an
-    explicit user re-application uses (``OnboardingHomePage._reapply``) to
-    get past the otherwise-sticky REVOKED state. LICENSED is still checked
-    first regardless — an active grant elsewhere always wins, flag or not."""
-    # LICENSED: checked against EVERY onboardable role's grant credential,
-    # regardless of role_id — a returning, already-licensed holder should
-    # be recognized even before picking a persona card.
-    for persona in egf.personas():
-        grant = egf.credential(persona.onboarding.grant_credential_id)
-        if _held_matches(held, grant.schema_said, require_active=True):
-            return OnboardingState.LICENSED
-
-    # REVOKED: a held, chain-verified gating credential in the revoked state,
-    # checked role-agnostically (like LICENSED) and BEFORE the PENDING/PICKER
-    # fall-through — so a returning holder whose license was revoked sees the
-    # revocation treatment rather than silently dropping to PENDING (they still
-    # hold their own self-issued application) or PICKER. Skipped entirely when
-    # suppress_revoked is set (see param docs above).
-    if not suppress_revoked:
-        for persona in egf.personas():
-            grant = egf.credential(persona.onboarding.grant_credential_id)
-            if _held_revoked(held, grant.schema_said):
-                return OnboardingState.REVOKED
-
-    if role_id is not None:
-        role = egf.role(role_id)
-        if role.onboarding is not None:
-            grant = egf.credential(role.onboarding.grant_credential_id)
-            if grant.chained_from is not None:
-                application = egf.credential(grant.chained_from)
-                if _held_matches(held, application.schema_said, require_active=False):
-                    return OnboardingState.PENDING
-        return OnboardingState.FORM
-
-    return OnboardingState.PICKER
-
-
-class PersonaCard(QFrame):
-    """One clickable card in the persona picker — display_name,
-    description, and a kind glyph for a single onboardable ``Role``.
-
-    Emits ``selected(role_id)`` on click; ``OnboardingHomePage`` wires
-    that to ``select_persona``. Styled following ``LocksmithRadioPanel``'s
-    precedent (``ui/toolkit/widgets/buttons.py``) of keying the stylesheet
-    off the Python class name rather than an objectName selector.
+    Shows the role's display_name/description/kind-glyph (same visual
+    house style as the old ``PersonaCard``) plus a status badge and, per
+    ``status``, a Request / Request-again button (``request_clicked``) and,
+    only once ACTIVE **and** the caller confirms the role's own page is
+    actually registered (``page_available``), an Open button
+    (``open_clicked``). Convention (see role-plugin docstrings): a
+    role-plugin's primary page key == its plugin_id == the EGF role id.
     """
 
-    selected = Signal(str)
+    request_clicked = Signal(str)
+    open_clicked = Signal(str)
 
-    def __init__(self, role: Role, parent: Optional[QWidget] = None):
+    _STATUS_COPY = {
+        RoleStatus.AVAILABLE: ("Available", "Request access to add this role."),
+        RoleStatus.PENDING: ("Requested",
+                             "Waiting for the administrator to grant this role."),
+        RoleStatus.ACTIVE: ("Active", "This role's workspace is loaded."),
+        RoleStatus.REVOKED: ("Revoked", "Your access to this role was revoked."),
+    }
+
+    def __init__(self, role: Role, status: RoleStatus, *,
+                page_available: bool = False, parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.role_id = role.id
-        self.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.status = status
+        self.open_button: Optional[LocksmithButton] = None
+        self.request_button: Optional[LocksmithButton] = None
+
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(f"""
-            PersonaCard {{
+            RoleCard {{
                 border: 1px solid {colors.BORDER};
                 border-radius: 8px;
                 background-color: {colors.BACKGROUND_CONTENT};
-            }}
-            PersonaCard:hover {{
-                border: 1px solid {colors.PRIMARY};
-                background-color: {colors.BACKGROUND_HOVER};
             }}
         """)
 
@@ -234,10 +192,38 @@ class PersonaCard(QFrame):
         )
         layout.addWidget(description)
 
-    def mousePressEvent(self, event) -> None:  # noqa: N802 (Qt override)
-        if event.button() == Qt.MouseButton.LeftButton:
-            self.selected.emit(self.role_id)
-        super().mousePressEvent(event)
+        status_text, status_detail = self._STATUS_COPY[status]
+        badge = QLabel(status_text)
+        badge.setObjectName(f"roleCard.status.{status.value}")
+        badge.setStyleSheet(
+            f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
+            "border-radius: 8px; font-size: 11px; font-weight: 600; padding: 1px 8px;"
+        )
+        layout.addWidget(badge)
+
+        detail = QLabel(status_detail)
+        detail.setWordWrap(True)
+        detail.setStyleSheet(
+            f"font-size: 12px; color: {colors.TEXT_SECONDARY}; border: none; background: transparent;"
+        )
+        layout.addWidget(detail)
+
+        buttons_row = QHBoxLayout()
+        if status in (RoleStatus.AVAILABLE, RoleStatus.REVOKED):
+            label = "Request" if status is RoleStatus.AVAILABLE else "Request again"
+            self.request_button = LocksmithButton(label)
+            self.request_button.setObjectName("roleCard.requestButton")
+            self.request_button.clicked.connect(
+                lambda: self.request_clicked.emit(self.role_id))
+            buttons_row.addWidget(self.request_button)
+        if status is RoleStatus.ACTIVE and page_available:
+            self.open_button = LocksmithButton("Open")
+            self.open_button.setObjectName("roleCard.openButton")
+            self.open_button.clicked.connect(
+                lambda: self.open_clicked.emit(self.role_id))
+            buttons_row.addWidget(self.open_button)
+        if self.request_button is not None or self.open_button is not None:
+            layout.addLayout(buttons_row)
 
 
 class OnboardingErrorPage(QWidget):
@@ -250,11 +236,7 @@ class OnboardingErrorPage(QWidget):
 
     Deliberately NOT a state machine like ``OnboardingHomePage`` -- there is
     no vault-derived state to react to; the workspace's onboarding surface
-    is simply unusable until an administrator fixes the bundle. Follows
-    ``OnboardingHomePage``'s message-view house style (see
-    ``_build_message_view``) and reuses its ``"form-error"`` objectName
-    convention (``_show_form_errors``) for the message label so tests and
-    stylesheets can find/style it the same way.
+    is simply unusable until an administrator fixes the bundle.
     """
 
     def __init__(self, detail: str, parent: Optional[QWidget] = None):
@@ -295,8 +277,9 @@ class OnboardingErrorPage(QWidget):
 
 
 class OnboardingHomePage(BasePage):
-    """The onboarding home screen: persona picker + role application form,
-    driven by ``derive_state``.
+    """The roles-overview home screen: one ``RoleCard`` per onboardable
+    persona, plus the (unchanged) role application form, driven by
+    ``derive_role_states``.
 
     Args:
         egf_doc: The ecosystem's typed ``EgfDocument`` (source of
@@ -306,13 +289,29 @@ class OnboardingHomePage(BasePage):
             held-credential views (the gate's ``HeldCredential`` shape).
             Called fresh on every ``refresh()``.
         on_submit: ``(role_id, payload, context) -> None`` invoked once
-            the chosen role's form validates cleanly.
+            the chosen (form-mode) role's form validates cleanly.
+        applies_provider: Zero-arg callable returning the holder's own
+            currently-sent ``/ipex/apply`` exns (``keri_serviceaid.
+            providers.list_sent_applies`` shape) — feeds
+            ``derive_role_states``'s PENDING derivation for apply-mode
+            roles. Called fresh on every ``refresh()``.
+        on_apply: ``(role_id) -> None`` invoked when an apply-mode role's
+            Request button is clicked (the shell's ``_request_role`` —
+            derives the apply plan, seeds schemas, sends the IPEX apply).
+        open_role: ``(role_id) -> None`` invoked when an ACTIVE role's
+            Open button is clicked (the shell navigates to that role's own
+            page).
+        page_available: ``(role_id) -> bool`` — whether that role's own
+            page is currently registered (gates the Open button;
+            ``RoleCard`` only shows it when ACTIVE **and** this is True).
+            Defaults to always-False (no page ever "available") so a
+            caller that hasn't wired page discovery yet degrades safely.
         micro_app_resolver: ``(said) -> dict`` resolving a micro-app
             template (its ``commands`` list, each with an ``id`` and
             ``payload_schema``) — e.g. B8's ``resolver.resolve_micro_app``.
-            Only required once a persona is actually selected; may be
-            omitted while the page is only ever shown in PICKER/LICENSED
-            states (as in tests that don't select a persona).
+            Only required once a form-mode persona is actually selected;
+            may be omitted while no role ever reaches the FORM view (as in
+            tests that only exercise the overview).
         accept_phases: Governance phases (e.g. ``("bootstrap",
             "production")``) whose authorities are offered as
             context-selection options. Forwarded to
@@ -325,6 +324,11 @@ class OnboardingHomePage(BasePage):
         egf_doc: EgfDocument,
         held_provider: Callable[[], list],
         on_submit: Callable[[str, dict, dict], None],
+        *,
+        applies_provider: Callable[[], list] = lambda: [],
+        on_apply: Optional[Callable[[str], None]] = None,
+        open_role: Optional[Callable[[str], None]] = None,
+        page_available: Callable[[str], bool] = lambda rid: False,
         micro_app_resolver: Optional[Callable[[str], dict]] = None,
         accept_phases: Iterable[str] = ("production",),
         parent: Optional[QWidget] = None,
@@ -332,18 +336,22 @@ class OnboardingHomePage(BasePage):
         super().__init__(parent)
         self._egf = egf_doc
         self._held_provider = held_provider
+        self._applies_provider = applies_provider
         self._on_submit = on_submit
+        self._on_apply = on_apply
+        self._open_role_cb = open_role
+        self._page_available = page_available
         self._micro_app_resolver = micro_app_resolver
         self._accept_phases = tuple(accept_phases)
 
         self._role_id: Optional[str] = None
-        # Set (and cleared) around an explicit re-apply -- see _reapply() and
-        # refresh(). Suppresses derive_state's otherwise-sticky REVOKED branch
-        # for exactly the refresh() the re-apply triggers, since a TEL rev
-        # doesn't remove the credential from the holder's store (it stays
-        # held forever after).
-        self._reapplying = False
-        self.state: OnboardingState = OnboardingState.PICKER
+        # role_id -> suppressed past the (otherwise-sticky) REVOKED branch
+        # for exactly one apply-mode reapply cycle -- see _on_card_request
+        # and refresh(). A TEL rev never removes the credential from the
+        # holder's store, so without this the role would re-derive REVOKED
+        # forever after, and the Request-again button would be a dead end.
+        self._reapplying_roles: set = set()
+        self.role_states: Dict[str, RoleStatus] = {}
         self.form: Optional[SchemaFormBuilder] = None
         self._context_widgets: Dict[str, QComboBox] = {}
         self._context_prompts: Dict[str, str] = {}
@@ -358,7 +366,7 @@ class OnboardingHomePage(BasePage):
         # source the context combo(s) draw their options from).
         self._context_authorities: List[Any] = []
         self._built_form_role_id: Optional[str] = None
-        self._persona_cards: List[PersonaCard] = []
+        self._role_cards: List[RoleCard] = []
         self._error_labels: List[QLabel] = []
 
         outer = QVBoxLayout(self)
@@ -366,35 +374,28 @@ class OnboardingHomePage(BasePage):
         self._stack = QStackedWidget(self)
         outer.addWidget(self._stack)
 
-        self._picker_widget = self._build_picker_view()
-        self._pending_widget = self._build_pending_view()
-        self._licensed_widget = self._build_message_view(
-            "You're all set", "A valid license was found in your vault."
-        )
-        self._revoked_widget = self._build_revoked_view()
+        self._overview_widget, self._overview_cards_layout = self._build_overview_shell()
         self._form_container, self._form_layout, self._error_layout = self._build_form_shell()
 
-        self._stack.addWidget(self._picker_widget)
-        self._stack.addWidget(self._pending_widget)
-        self._stack.addWidget(self._licensed_widget)
-        self._stack.addWidget(self._revoked_widget)
+        self._stack.addWidget(self._overview_widget)
         self._stack.addWidget(self._form_container)
 
         self.refresh()
 
     # -- construction: static views ---------------------------------------
 
-    def _build_picker_view(self) -> QWidget:
+    def _build_overview_shell(self):
+        """The roles-overview scroll area shell: a heading + an (initially
+        empty) horizontal row of ``RoleCard`` widgets, rebuilt on every
+        ``refresh()`` by ``_rebuild_overview``. Returns ``(scroll_widget,
+        cards_layout)`` so the caller can clear/repopulate the row."""
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         # Acceptance-demo fix wave item 1: QAbstractScrollArea's viewport
-        # paints from its OWN palette, not the app-wide QSS cascade (see
-        # KFOnboardingPage's identical treatment) — without this, an
-        # unstyled scroll area shows the OS's native (dark, under a dark
-        # system appearance) background regardless of this app's own light
-        # theme, which is exactly what made the "Who are you?" heading
-        # below (styled in TEXT_PRIMARY, meant for a LIGHT background)
-        # unreadable on a black page.
+        # paints from its OWN palette, not the app-wide QSS cascade — without
+        # this, an unstyled scroll area shows the OS's native (dark, under a
+        # dark system appearance) background regardless of this app's own
+        # light theme.
         scroll.setStyleSheet("QScrollArea { background: transparent; border: none; }")
         inner = QWidget()
         inner.setStyleSheet("background: transparent;")
@@ -402,267 +403,22 @@ class OnboardingHomePage(BasePage):
         layout.setContentsMargins(48, 48, 48, 48)
         layout.setSpacing(16)
 
-        heading = QLabel("Who are you?")
+        heading = QLabel("Your roles")
         heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
         heading.setStyleSheet(f"font-size: 24px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
         layout.addWidget(heading)
 
         cards_row = QHBoxLayout()
         cards_row.setSpacing(16)
-        for role in self._egf.personas():
-            card = PersonaCard(role)
-            card.selected.connect(self.select_persona)
-            self._persona_cards.append(card)
-            cards_row.addWidget(card)
         layout.addLayout(cards_row)
         layout.addStretch(1)
 
         scroll.setWidget(inner)
-        return scroll
-
-    def _build_message_view(self, heading_text: str, body_text: str) -> QWidget:
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.addStretch(1)
-
-        heading = QLabel(heading_text)
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
-        layout.addWidget(heading)
-
-        body = QLabel(body_text)
-        body.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        body.setWordWrap(True)
-        body.setStyleSheet(f"font-size: 14px; color: {colors.TEXT_SECONDARY};")
-        layout.addWidget(body)
-
-        layout.addStretch(2)
-        return widget
-
-    def _build_revoked_view(self) -> QWidget:
-        """The REVOKED view — "your access was revoked", issuer + revocation
-        time, and a re-apply affordance back into the persona flow. Widgets are
-        populated per-render by ``_update_revoked_view`` (the revoked role /
-        issuer / time are read from EGF + the current held snapshot)."""
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.addStretch(1)
-
-        self._revoked_heading = QLabel("Your access was revoked")
-        self._revoked_heading.setObjectName("onboarding.revokedHeading")
-        self._revoked_heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._revoked_heading.setStyleSheet(
-            f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
-        layout.addWidget(self._revoked_heading)
-
-        self._revoked_detail = QLabel("")
-        self._revoked_detail.setObjectName("onboarding.revokedDetail")
-        self._revoked_detail.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._revoked_detail.setWordWrap(True)
-        self._revoked_detail.setStyleSheet(
-            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;")
-        layout.addWidget(self._revoked_detail)
-
-        reapply_btn = LocksmithButton("Apply again")
-        reapply_btn.setObjectName("onboarding.reapplyButton")
-        reapply_btn.clicked.connect(self._reapply)
-        row = QHBoxLayout()
-        row.addStretch(1)
-        row.addWidget(reapply_btn)
-        row.addStretch(1)
-        layout.addLayout(row)
-
-        layout.addStretch(2)
-        return widget
-
-    def _revoked_role(self):
-        """The onboardable ``Role`` whose grant credential is currently held-
-        and-revoked, or ``None``. Mirrors ``derive_state``'s REVOKED scan so
-        the two never disagree on WHICH role was revoked."""
-        held = self._held_provider()
-        for persona in self._egf.personas():
-            grant = self._egf.credential(persona.onboarding.grant_credential_id)
-            if _held_revoked(held, grant.schema_said):
-                return persona
-        return None
-
-    def _revoked_at_for(self, grant) -> str:
-        for h in self._held_provider():
-            if (h.schema_said == grant.schema_said and h.chain_verified
-                    and h.state == "revoked"):
-                return getattr(h, "revoked_at", "") or ""
-        return ""
-
-    def _update_revoked_view(self) -> None:
-        role = self._revoked_role()
-        if role is None:
-            # Shouldn't happen once derive_state returned REVOKED, but stay
-            # defensive: generic copy rather than a crash.
-            self._revoked_heading.setText("Your access was revoked")
-            self._revoked_detail.setText("")
-            return
-        grant = self._egf.credential(role.onboarding.grant_credential_id)
-        self._revoked_heading.setText(f"Your {role.display_name} access was revoked")
-
-        authorities = self._egf.authorities(
-            grant.issuer_role, accept_phases=self._accept_phases)
-        issuer = authorities[0] if len(authorities) == 1 else None
-        revoked_at = self._revoked_at_for(grant)
-        parts = []
-        if issuer is not None:
-            parts.append(f"{grant.name} issued by {issuer.display_name} was revoked.")
-        else:
-            parts.append(f"Your {grant.name} was revoked.")
-        if revoked_at:
-            parts.append(f"Revoked {revoked_at}.")
-        parts.append("You can apply again below.")
-        self._revoked_detail.setText(" ".join(parts))
-
-    def _reapply(self) -> None:
-        """Re-apply affordance: clear the chosen role and re-derive. A TEL
-        ``rev`` does NOT remove the credential from the holder's store, so
-        the revoked license is still held at this point -- derive_state's
-        REVOKED branch is checked role-agnostically and would otherwise keep
-        re-deriving REVOKED forever (the "Apply again" button would be a
-        dead end). Setting ``self._reapplying`` BEFORE clearing the role and
-        refreshing tells ``refresh()`` to pass ``suppress_revoked=True`` for
-        this one derivation, which skips past the sticky REVOKED state and
-        lands on the persona picker instead, so the user can re-enter the
-        application flow (the DOI can re-issue against the still-held
-        application). A re-issued license arrives via Notifications and,
-        once admitted, ``refresh()`` re-derives LICENSED and clears the
-        flag there. The durable revocation notice remains visible in the
-        Notifications surface regardless."""
-        self._reapplying = True
-        self._role_id = None
-        self.refresh()
-
-    def _build_pending_view(self) -> QWidget:
-        """The PENDING view — dedicated (no longer ``_build_message_view``)
-        so it can carry EGF-derived context instead of a static "awaiting
-        approval" dead end (owner live-demo finding, hoa-onboarding
-        branch). Widgets built here are populated per-render by
-        ``_update_pending_view`` (called from ``_render``, since
-        ``select_persona``/``refresh`` may switch to a different role
-        between PENDING renders) with two pieces:
-
-        1. WHO it went to — the accepted authority's display_name +
-           truncated AID + phase badge, formatted the same way as the
-           form's "applying to" header (``_applying_to_text_for``, verb
-           "Submitted to"). Honest-data-path note: the vault's
-           held-credential view (``HeldCredential`` in
-           ``plugins/manager.py`` — schema_said/issuer_aid/state/
-           chain_verified) carries no ACDC attributes, so the jurisdiction
-           actually chosen at submission time can't be read back off it.
-           ``_pending_authority`` therefore falls back to the grant
-           credential's issuer_role's full accepted-authorities list and
-           shows it only when that narrows to exactly one authority (true
-           today — the pilot has a single bootstrap-phase regulator);
-           otherwise this row stays hidden rather than guessing among
-           several.
-        2. WHAT HAPPENS NEXT — a fixed sentence template
-           (``_pending_next_steps_text``) with the authority's
-           display_name (when resolved), the grant credential's ``name``,
-           and the onboarded role's ``display_name`` interpolated in — no
-           other hard-coded strings.
-        3. A NOTIFICATION HINT (Task 10, HOA #2 live-demo finding) — a
-           fixed line pointing at the new persistent Notifications surface
-           (``locksmith.ui.hoa.notifications_page.HoaNotificationsPage``),
-           so the PENDING view doesn't read as a dead end with no
-           indication anything will ever happen.
-        4. AN APPLICATION ID ROW — the held application credential's own
-           SAID (Task 9 grew ``HeldCredential.said`` for exactly this).
-           Previously deliberately absent (see history: ``HeldCredential``
-           used to expose no per-instance identifier, only the type-
-           identifying ``schema_said``, and labeling that as the
-           application's instance SAID would have been mislabeled
-           identifier data on a trust surface). Resolved via
-           ``_pending_application_said`` against the CURRENT
-           ``held_provider()`` snapshot; hidden (not shown blank) when it
-           can't be resolved — e.g. no matching held view, or (back-compat)
-           a held-credential view that predates Task 9's ``said`` field.
-        """
-        widget = QWidget()
-        layout = QVBoxLayout(widget)
-        layout.setContentsMargins(48, 48, 48, 48)
-        layout.addStretch(1)
-
-        heading = QLabel("Application pending")
-        heading.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        heading.setStyleSheet(f"font-size: 22px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
-        layout.addWidget(heading)
-
-        # WHO (item 1): same row styling as the form's "applying to"
-        # header (_build_form_shell) — reused rather than re-invented so
-        # the two authority call-outs read as the same UI element.
-        authority_row = QHBoxLayout()
-        authority_row.setSpacing(8)
-        authority_row.addStretch(1)
-        self._pending_authority_text = QLabel("")
-        self._pending_authority_text.setObjectName("onboarding.pendingAuthorityText")
-        self._pending_authority_text.setStyleSheet(
-            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;"
-        )
-        self._pending_authority_badge = QLabel("")
-        self._pending_authority_badge.setObjectName("onboarding.pendingAuthorityPhaseBadge")
-        self._pending_authority_badge.setStyleSheet(
-            f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
-            "border-radius: 8px; font-size: 11px; font-weight: 600; padding: 1px 8px;"
-        )
-        authority_row.addWidget(self._pending_authority_text)
-        authority_row.addWidget(self._pending_authority_badge)
-        authority_row.addStretch(1)
-        self._pending_authority_row_widget = QWidget()
-        self._pending_authority_row_widget.setStyleSheet("background: transparent;")
-        self._pending_authority_row_widget.setLayout(authority_row)
-        self._pending_authority_row_widget.setVisible(False)
-        layout.addWidget(self._pending_authority_row_widget)
-
-        # WHAT HAPPENS NEXT (item 2).
-        self._pending_next_steps_label = QLabel("")
-        self._pending_next_steps_label.setObjectName("onboarding.pendingNextSteps")
-        self._pending_next_steps_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pending_next_steps_label.setWordWrap(True)
-        self._pending_next_steps_label.setStyleSheet(
-            f"font-size: 14px; color: {colors.TEXT_SECONDARY}; background: transparent;"
-        )
-        layout.addWidget(self._pending_next_steps_label)
-
-        # NOTIFICATION HINT (item 3) — fixed copy, always shown while
-        # PENDING; a separate label from the next-steps sentence above so
-        # neither ever bleeds into the other's exact text.
-        self._pending_notification_hint_label = QLabel(
-            "You'll be notified here the moment your license arrives."
-        )
-        self._pending_notification_hint_label.setObjectName("onboarding.pendingNotificationHint")
-        self._pending_notification_hint_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pending_notification_hint_label.setWordWrap(True)
-        self._pending_notification_hint_label.setStyleSheet(
-            f"font-size: 13px; color: {colors.TEXT_SECONDARY}; background: transparent;"
-        )
-        layout.addWidget(self._pending_notification_hint_label)
-
-        # APPLICATION ID ROW (item 4) — populated/shown only when
-        # _pending_application_said resolves one; hidden (not blank) when
-        # it can't (see _update_pending_view).
-        self._pending_application_said_label = QLabel("")
-        self._pending_application_said_label.setObjectName("onboarding.pendingApplicationSaid")
-        self._pending_application_said_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._pending_application_said_label.setWordWrap(True)
-        self._pending_application_said_label.setStyleSheet(
-            f"font-size: 12px; color: {colors.TEXT_SECONDARY}; background: transparent;"
-        )
-        self._pending_application_said_label.setVisible(False)
-        layout.addWidget(self._pending_application_said_label)
-
-        layout.addStretch(2)
-        return widget
+        return scroll, cards_row
 
     def _build_form_shell(self):
         # Acceptance-demo fix wave item 1: same QScrollArea-viewport
-        # background fix as `_build_picker_view` (see its comment) — the
+        # background fix as `_build_overview_shell` (see its comment) — the
         # form view is long enough on a real application schema to need
         # scrolling anyway, which item 2 also relies on (scrolling a
         # freshly-rendered error/banner into view).
@@ -721,67 +477,128 @@ class OnboardingHomePage(BasePage):
 
     # -- accessors (test seams) --------------------------------------------
 
-    def persona_cards(self) -> List[PersonaCard]:
-        """The rendered persona cards — one per onboardable role."""
-        return list(self._persona_cards)
+    def role_cards(self) -> List[RoleCard]:
+        """The currently-rendered overview cards — one per onboardable role.
+        Rebuilt (see ``_rebuild_overview``) every time ``_render()`` shows
+        the overview; empty while the FORM view is showing instead."""
+        return list(self._role_cards)
 
     # -- state machine ------------------------------------------------------
 
-    def select_persona(self, role_id: str) -> None:
-        """Programmatic equivalent of clicking a persona card."""
-        self._role_id = role_id
-        self.refresh()
-
     def refresh(self) -> None:
-        """Recompute state from ``held_provider()`` and re-render.
-        Callers (B8) connect this to ``doer_event`` so a newly-issued or
-        revoked credential is reflected without reconstructing the page.
+        """Recompute every persona's ``RoleStatus`` from ``held_provider()``
+        + ``applies_provider()`` and re-render. Callers (the shell) connect
+        this to ``doer_event`` so a newly-issued/sent/revoked credential is
+        reflected without reconstructing the page.
 
-        Passes ``self._reapplying`` through to ``derive_state`` as
-        ``suppress_revoked`` -- set by ``_reapply()`` immediately before
-        calling this, so THIS refresh escapes the otherwise-sticky REVOKED
-        state. Cleared the moment a fresh LICENSED is derived (a re-issued
-        license landed and was admitted) -- the escape hatch is no longer
-        needed once the holder is licensed again, and every subsequent
-        refresh() should go back to the normal (non-suppressing) precedence."""
+        ``suppress_revoked_roles`` is passed straight through to
+        ``derive_role_states`` as the current ``_reapplying_roles`` set (the
+        per-role re-apply escape hatch — see ``_on_card_request``); a role
+        is dropped from that set the moment THIS refresh re-derives it as
+        ACTIVE (a fresh grant landed and was admitted) — the escape hatch is
+        no longer needed once the holder is active again.
+        """
         held = self._held_provider()
-        self.state = derive_state(held, self._egf, self._role_id, suppress_revoked=self._reapplying)
-        if self.state is OnboardingState.LICENSED:
-            self._reapplying = False   # re-licensed — the escape hatch is no longer needed
+        applies = self._applies_provider()
+        self.role_states = derive_role_states(
+            held, applies, self._egf,
+            suppress_revoked_roles=frozenset(self._reapplying_roles))
+        for role_id, status in self.role_states.items():
+            if status is RoleStatus.ACTIVE:
+                self._reapplying_roles.discard(role_id)
         self._render()
 
     def on_doer_event(self, doer_name: str, event_type: str, data: dict) -> None:
-        """Wired (by the window, alongside ``refresh``) to the vault's
-        ``doer_event`` signal bridge — surfaces ``RequestFlow``'s OWN
-        ``request_failed`` emissions (``NoAuthorityError``,
-        ``EgfDocumentError``, the envelope self-enforcement guard, etc. —
-        see ``request_flow.py``'s ``submit()``) as a visible inline banner
-        on the form view (acceptance-demo item 2). Distinct from
-        ``refresh()``: that one re-derives PICKER/FORM/PENDING/LICENSED
-        state from ANY event (cheap, idempotent); this one reacts
-        specifically to ``RequestFlow``'s failure event, which carries a
-        human-readable message ``refresh()`` has no use for. Ignores every
-        other ``(doer_name, event_type)`` combination."""
-        if doer_name != "RequestFlow" or event_type != "request_failed":
+        """Wired (by the shell, alongside ``refresh``) to the vault's
+        ``doer_event`` signal bridge. Three sources surface here:
+
+        - ``("RequestFlow", "request_failed")`` — form-mode submission
+          failures (``NoAuthorityError``, ``EgfDocumentError``, the
+          envelope self-enforcement guard, etc. — see
+          ``request_flow.py``'s ``submit()``), rendered as a visible inline
+          banner on the form view (acceptance-demo item 2).
+        - ``("ApplyFlow", "apply_failed")`` — apply-mode request failures
+          (an ineligible identifier, an ambiguous/missing authority — see
+          the shell's ``_request_role``/``make_apply_doer``), rendered the
+          same way.
+        - ``("ApplyFlow", "apply_sent")`` — a successful apply send;
+          triggers ``refresh()`` so the role's card picks up its new
+          PENDING status.
+
+        Distinct from ``refresh()``: that one re-derives every role's
+        status from ANY event (cheap, idempotent); this one reacts
+        specifically to the two failure events (which carry a
+        human-readable message ``refresh()`` has no use for) and the
+        apply-sent success event. Ignores every other ``(doer_name,
+        event_type)`` combination."""
+        if doer_name == "RequestFlow" and event_type == "request_failed":
+            self._clear_form_errors()
+            self._show_form_errors([str(data.get("message", ""))])
             return
-        self._clear_form_errors()
-        self._show_form_errors([str(data.get("message", ""))])
+        if doer_name == "ApplyFlow" and event_type == "apply_failed":
+            self._clear_form_errors()
+            self._show_form_errors([str(data.get("error", ""))])
+            return
+        if doer_name == "ApplyFlow" and event_type == "apply_sent":
+            self.refresh()
 
     def _render(self) -> None:
-        if self.state is OnboardingState.PICKER:
-            self._stack.setCurrentWidget(self._picker_widget)
-        elif self.state is OnboardingState.PENDING:
-            self._update_pending_view(self._role_id)
-            self._stack.setCurrentWidget(self._pending_widget)
-        elif self.state is OnboardingState.LICENSED:
-            self._stack.setCurrentWidget(self._licensed_widget)
-        elif self.state is OnboardingState.REVOKED:
-            self._update_revoked_view()
-            self._stack.setCurrentWidget(self._revoked_widget)
-        elif self.state is OnboardingState.FORM:
+        if self._role_id is not None:          # form-mode flow in progress
             if self._built_form_role_id != self._role_id:
-                self._build_form_view(self._role_id)
+                # A broken/incomplete role config (missing micro_app_resolver,
+                # or a resolved template lacking the expected command) must
+                # not crash the whole page render -- surface it as the same
+                # inline banner request_failed/apply_failed use, mirroring
+                # the "never let a page-level render crash" posture the rest
+                # of this module already follows (RequestFlow.submit,
+                # on_doer_event). _build_form_view's own guard tests call it
+                # directly and still observe the raw ValueError.
+                try:
+                    self._build_form_view(self._role_id)
+                except ValueError as exc:
+                    self._clear_form_errors()
+                    self._show_form_errors([str(exc)])
             self._stack.setCurrentWidget(self._form_container)
+            return
+        self._rebuild_overview()
+        self._stack.setCurrentWidget(self._overview_widget)
+
+    def _rebuild_overview(self) -> None:
+        self._clear_layout(self._overview_cards_layout)
+        self._role_cards = []
+        for role in self._egf.personas():
+            status = self.role_states.get(role.id, RoleStatus.AVAILABLE)
+            card = RoleCard(role, status, page_available=self._page_available(role.id))
+            card.request_clicked.connect(self._on_card_request)
+            card.open_clicked.connect(self._open_role)
+            self._role_cards.append(card)
+            self._overview_cards_layout.addWidget(card)
+
+    def _on_card_request(self, role_id: str) -> None:
+        """A card's Request/Request-again button was clicked. Routes on the
+        role's onboarding mode: a form-mode role (the carrier pattern) opens
+        the FORM view exactly like the old ``select_persona``; an apply-mode
+        role calls ``on_apply`` directly (no form) — marking it in
+        ``_reapplying_roles`` first when it was REVOKED, so this apply's
+        outstanding-request PENDING status isn't immediately re-masked by
+        the still-held revoked grant (see ``refresh()``'s docstring)."""
+        role = self._egf.role(role_id)
+        if role.onboarding is not None and not role.onboarding.apply_mode:
+            self._role_id = role_id            # carrier-pattern form flow
+            self.refresh()
+            return
+        if self.role_states.get(role_id) is RoleStatus.REVOKED:
+            self._reapplying_roles.add(role_id)
+        if self._on_apply is not None:
+            self._on_apply(role_id)
+        self.refresh()
+
+    def _open_role(self, role_id: str) -> None:
+        """An ACTIVE card's Open button was clicked -- hand off to the
+        shell's own navigation (e.g. ``vault_page._show_vault_page(role_id)``,
+        per the role-plugin-page-key convention documented on ``RoleCard``)."""
+        if self._open_role_cb is not None:
+            self._open_role_cb(role_id)
 
     # -- FORM construction ---------------------------------------------------
 
@@ -793,7 +610,7 @@ class OnboardingHomePage(BasePage):
         if self._micro_app_resolver is None:
             raise ValueError(
                 "micro_app_resolver is required once a persona is selected "
-                "(the page only defers it while showing PICKER/LICENSED)"
+                "(the page only defers it while showing the overview)"
             )
 
         template = self._micro_app_resolver(onboarding.request_micro_app_said)
@@ -921,11 +738,9 @@ class OnboardingHomePage(BasePage):
     @staticmethod
     def _applying_to_text_for(authority, *, verb: str = "Applying to") -> "tuple[str, str]":
         """(main_text, phase_badge_text) for a resolved authority — shared
-        by ``_update_applying_to_header`` (renders it), ``applying_to_summary``
-        (a test/inspection seam), and ``_update_pending_view`` (verb
-        "Submitted to", past-tense phrasing for a WHO-it-went-to callout on
-        an already-submitted application), so all three can never drift
-        apart on the display_name/AID/phase-badge formatting itself."""
+        by ``_update_applying_to_header`` (renders it) and
+        ``applying_to_summary`` (a test/inspection seam), so both can never
+        drift apart on the display_name/AID/phase-badge formatting itself."""
         aid = authority.aid
         truncated_aid = aid if len(aid) <= 12 else f"{aid[:12]}…"
         phase_label = "pilot" if authority.phase == "bootstrap" else authority.phase
@@ -958,103 +773,6 @@ class OnboardingHomePage(BasePage):
             return ""
         text, badge = self._applying_to_text_for(authority)
         return f"{text}  {badge}"
-
-    # -- PENDING view (WHO / WHAT / WHAT'S NEXT) ------------------------------
-
-    def _pending_authority(self, grant: Any):
-        """The single ``Authority`` the pending application is best-guessed
-        to have gone to, or ``None`` when that can't be narrowed to exactly
-        one. See ``_build_pending_view``'s docstring item 1 for why this is
-        a fallback (the held-credential view carries no ACDC attributes,
-        so the actual jurisdiction chosen at submission time isn't
-        recoverable) rather than an exact lookup."""
-        authorities = self._egf.authorities(grant.issuer_role, accept_phases=self._accept_phases)
-        return authorities[0] if len(authorities) == 1 else None
-
-    @staticmethod
-    def _pending_next_steps_text(role: Role, grant: Any, authority: Optional[Any]) -> str:
-        """WHAT HAPPENS NEXT copy (item 3) — a fixed sentence template with
-        only EGF-sourced names interpolated in: the authority's
-        display_name (omitted from the sentence when unresolved — see
-        ``_pending_authority``), the grant credential's ``name``, and the
-        onboarded role's ``display_name``."""
-        if authority is not None:
-            reviewer = f"The {authority.display_name} will review your application."
-        else:
-            reviewer = "Your application will be reviewed."
-        return (
-            f"{reviewer} When your {grant.name} is granted and accepted, "
-            f"the {role.display_name} workspace unlocks here automatically."
-        )
-
-    def _pending_application_said(self, grant: Any) -> Optional[str]:
-        """The held application credential's own SAID (Task 9's
-        ``HeldCredential.said``), sourced from the CURRENT
-        ``held_provider()`` snapshot, or ``None`` when it can't be
-        resolved. Mirrors ``_held_matches``'s own filter (matching
-        ``schema_said``, chain-verified, not revoked) rather than reusing
-        it directly, since that helper returns a bool and this needs the
-        matching view itself. Returns ``None`` (never raises) when: the
-        grant has no ``chained_from`` application credential (shouldn't
-        happen once ``derive_state`` has already returned PENDING, but
-        defensive regardless); no held view matches; or a matching view
-        predates Task 9 and carries no ``said`` attribute at all
-        (``getattr`` default, not a hard requirement — back-compat for
-        any caller still using the older gate-shaped view)."""
-        if grant.chained_from is None:
-            return None
-        application = self._egf.credential(grant.chained_from)
-        for h in self._held_provider():
-            if h.schema_said != application.schema_said or not h.chain_verified:
-                continue
-            if h.state == "revoked":
-                continue
-            said = getattr(h, "said", None)
-            if said:
-                return said
-        return None
-
-    def _update_pending_view(self, role_id: str) -> None:
-        """Populate the PENDING view's EGF-derived pieces (WHO / WHAT'S
-        NEXT / the notification hint / the application ID row — see
-        ``_build_pending_view``'s docstring) for ``role_id``. Called from
-        ``_render`` on every PENDING render (not cached like
-        ``_build_form_view``) since ``select_persona``/``refresh`` may
-        switch to a different pending role between renders and the work
-        here is cheap label updates, not a rebuild. Reachable only once
-        ``derive_state`` has already returned PENDING, which guarantees
-        ``role.onboarding`` is set (see ``derive_state``'s PENDING
-        branch) — no extra None-guard needed here."""
-        role = self._egf.role(role_id)
-        grant = self._egf.credential(role.onboarding.grant_credential_id)
-        authority = self._pending_authority(grant)
-
-        if authority is not None:
-            text, badge = self._applying_to_text_for(authority, verb="Submitted to")
-            self._pending_authority_text.setText(text)
-            self._pending_authority_badge.setText(badge)
-            self._pending_authority_row_widget.setVisible(True)
-        else:
-            # Cleared, not just hidden -- a stale display_name/AID from a
-            # previously-resolved role must never linger if this render's
-            # role resolves ambiguously (see _pending_authority).
-            self._pending_authority_text.setText("")
-            self._pending_authority_badge.setText("")
-            self._pending_authority_row_widget.setVisible(False)
-
-        self._pending_next_steps_label.setText(
-            self._pending_next_steps_text(role, grant, authority)
-        )
-
-        application_said = self._pending_application_said(grant)
-        if application_said:
-            self._pending_application_said_label.setText(f"Application ID: {application_said}")
-            self._pending_application_said_label.setVisible(True)
-        else:
-            # Cleared, not just hidden -- same stale-leftover rationale as
-            # the WHO row above.
-            self._pending_application_said_label.setText("")
-            self._pending_application_said_label.setVisible(False)
 
     @staticmethod
     def _dedup_context_options(authorities, dimension_key: str):
@@ -1139,10 +857,10 @@ class OnboardingHomePage(BasePage):
             self._error_layout.addWidget(label)
             self._error_labels.append(label)
 
-        # Item 2: a freshly-rendered error (validation OR a request_failed
-        # banner) must actually be seen, not just exist below the fold on a
-        # long form — scroll the form's QScrollArea (see _build_form_shell)
-        # so the newest error row is visible.
+        # Item 2: a freshly-rendered error (validation OR a request_failed/
+        # apply_failed banner) must actually be seen, not just exist below
+        # the fold on a long form — scroll the form's QScrollArea (see
+        # _build_form_shell) so the newest error row is visible.
         if self._error_labels:
             self._form_container.ensureWidgetVisible(self._error_labels[-1])
 
@@ -1165,3 +883,67 @@ class OnboardingHomePage(BasePage):
             "show_lock_button": False,
             "show_settings_button": True,
         }
+
+
+# ---------------------------------------------------------------------------
+# TRANSITIONAL(Task 11): the OLD app-global, single-selected-role state
+# machine. Kept ONLY because `locksmith.core.inbound_watch.
+# InboundGrantWatchDoer` still imports `OnboardingState`/`derive_state` (Task
+# 11 rewrites that watcher onto `derive_role_states` and removes this shim).
+# Nothing in this module uses them anymore — see the module docstring.
+# ---------------------------------------------------------------------------
+
+class OnboardingState(Enum):
+    """TRANSITIONAL(Task 11): the onboarding home page's old five possible
+    views. Superseded by `locksmith.ui.onboarding.role_states.RoleStatus`
+    (per-role, not page-global)."""
+
+    PICKER = "picker"
+    FORM = "form"
+    PENDING = "pending"
+    LICENSED = "licensed"
+    REVOKED = "revoked"
+
+
+def derive_state(
+    held: list,
+    egf: EgfDocument,
+    role_id: Optional[str],
+    *,
+    suppress_revoked: bool = False,
+) -> OnboardingState:
+    """TRANSITIONAL(Task 11): pure state derivation — no Qt, no I/O. See the
+    (now-superseded) precedence rationale this used to document in full:
+    LICENSED > REVOKED > PENDING > FORM > PICKER, role-agnostic for the
+    first two, `role_id`-scoped for the rest. Superseded by
+    `locksmith.ui.onboarding.role_states.derive_role_states`, which supports
+    holding role A while applying for role B (the #2-flagged multi-role
+    boundary this single-role machine could not represent)."""
+    # LICENSED: checked against EVERY onboardable role's grant credential,
+    # regardless of role_id — a returning, already-licensed holder should
+    # be recognized even before picking a persona card.
+    for persona in egf.personas():
+        grant = egf.credential(persona.onboarding.grant_credential_id)
+        if _held_matches(held, grant.schema_said, require_active=True):
+            return OnboardingState.LICENSED
+
+    # REVOKED: a held, chain-verified gating credential in the revoked state,
+    # checked role-agnostically (like LICENSED) and BEFORE the PENDING/PICKER
+    # fall-through. Skipped entirely when suppress_revoked is set.
+    if not suppress_revoked:
+        for persona in egf.personas():
+            grant = egf.credential(persona.onboarding.grant_credential_id)
+            if _held_revoked(held, grant.schema_said):
+                return OnboardingState.REVOKED
+
+    if role_id is not None:
+        role = egf.role(role_id)
+        if role.onboarding is not None:
+            grant = egf.credential(role.onboarding.grant_credential_id)
+            if grant.chained_from is not None:
+                application = egf.credential(grant.chained_from)
+                if _held_matches(held, application.schema_said, require_active=False):
+                    return OnboardingState.PENDING
+        return OnboardingState.FORM
+
+    return OnboardingState.PICKER

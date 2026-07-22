@@ -394,7 +394,7 @@ class HoaNotificationsPage(BasePage):
         frame.setObjectName("hoaNotifications.row")
         frame.setFrameShape(QFrame.Shape.StyledPanel)
         # Type selector (not an objectName "#" selector — house style avoids
-        # dotted objectName selectors in QSS, see PersonaCard/_GROUP_BOX_QSS
+        # dotted objectName selectors in QSS, see RoleCard/_GROUP_BOX_QSS
         # in onboarding/home_page.py), applied via setStyleSheet directly on
         # this instance so it never leaks to sibling QFrames elsewhere.
         background = colors.BACKGROUND_CONTENT if row["read"] else colors.BACKGROUND_HOVER
