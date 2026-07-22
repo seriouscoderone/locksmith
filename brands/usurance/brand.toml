@@ -76,7 +76,7 @@ default_toad       = 0
 # brand composes is brand config, never a framework hardcode. carrier stays
 # bundled here until Task 13 re-points the brand to the persona-specific set.
 [plugins]
-bundled = ["carrier"]
+bundled = ["carrier", "hoa_shell"]
 
 # Ecosystem Governance Framework this brand pins (bundled verbatim,
 # content-addressed, under brands/usurance/egf/ — see

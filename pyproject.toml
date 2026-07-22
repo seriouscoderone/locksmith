@@ -97,6 +97,7 @@ build-windows = [
 [project.entry-points."locksmith.plugins"]
 kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
 carrier = "locksmith.plugins.carrier.plugin:CarrierPlugin"
+hoa_shell = "locksmith.plugins.hoa_shell.plugin:HoaShellPlugin"
 
 
 [tool.setuptools.packages.find]

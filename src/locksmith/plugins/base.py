@@ -106,9 +106,20 @@ class VaultPlugin(PluginCore):
         deleted from disk (used when the user is deleting the vault entirely).
         """
 
+    def on_vault_ui_ready(self, vault_page) -> None:
+        """Called once per VaultPage construction, after ungated plugin pages
+        are registered and the surface host is captured (HOA #4). Shell-style
+        plugins use the handle to register conditional surfaces directly
+        (multiple pages/menu entries, error fallbacks). Default: no-op."""
+        return None
+
     @abstractmethod
-    def get_menu_entry(self) -> "MenuButton":
-        """Entry button shown in the main vault sidebar."""
+    def get_menu_entry(self) -> "MenuButton | None":
+        """Entry button shown in the main vault sidebar.
+
+        May return None: plugins that register their own menu entries (or
+        none) return None and the manager skips nav registration.
+        """
 
     @abstractmethod
     def get_menu_section(self) -> list["QWidget"]:

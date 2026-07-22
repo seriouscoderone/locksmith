@@ -333,11 +333,21 @@ class PluginManager:
             try:
                 for key, widget in plugin.get_pages().items():
                     vault_page.register_page(key, widget)
-                nav_menu.register_plugin_section(
-                    pid, plugin.get_menu_entry(), plugin.get_menu_section(),
-                )
+                entry = plugin.get_menu_entry()
+                if entry is not None:
+                    nav_menu.register_plugin_section(
+                        pid, entry, plugin.get_menu_section(),
+                    )
             except Exception:
                 logger.exception("plugin.vault_ui.register_failed plugin_id=%s", pid)
+
+        for pid, plugin in self._plugins.items():
+            if not isinstance(plugin, VaultPlugin):
+                continue
+            try:
+                plugin.on_vault_ui_ready(vault_page)
+            except Exception:
+                logger.exception("plugin.vault_ui_ready_failed plugin_id=%s", pid)
 
     def apply_toolbar_entries(self, toolbar, window) -> None:
         """Fan plugin toolbar contributions into the top toolbar (HOA #4).
