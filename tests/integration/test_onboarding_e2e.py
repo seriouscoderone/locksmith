@@ -198,6 +198,7 @@ def _inject_test_brand(tmp_path: Path, monkeypatch, request, doi_aid: str) -> st
             "peel_core_pages": True,
             "default_aid_alias": CARRIER_ALIAS,
         },
+        "plugins": {"bundled": ["carrier", "hoa_shell"]},
         "egf": {
             "source": "local",
             "document_said": egf_said,

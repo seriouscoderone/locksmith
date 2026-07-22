@@ -62,14 +62,12 @@ ENTRY_POINT_GROUP = "locksmith.plugins"
 # plugin class is even loaded/instantiated.
 HOA_PEELED_PLUGIN_IDS = frozenset({"kerifoundation"})
 
-# In-tree entry-point plugin that is the mirror-image case: an
-# insurance-specific (HOA) demo role-plugin that must NOT load for the
-# default Locksmith build. pyproject.toml's entry-point declaration is
-# shared across brands (same constraint as HOA_PEELED_PLUGIN_IDS above), so
-# the gating happens here too, filtered by plugin_id before the plugin
-# class is loaded/instantiated — skipped when the active brand does NOT
-# peel core pages (i.e. it loads only under peel/HOA brands).
-HOA_ONLY_PLUGIN_IDS = frozenset({"carrier"})
+# Bundled-only plugins: in-tree shell/role plugins that load ONLY when the
+# active brand explicitly lists them under [plugins] bundled. Replaces the
+# former HOA_ONLY_PLUGIN_IDS peel-brand heuristic (HOA #4): which surfaces a
+# brand composes is brand config, never a framework hardcode.
+BUNDLED_ONLY_PLUGIN_IDS = frozenset({"carrier", "hoa_shell", "actuary",
+                                     "product_designer"})
 
 
 @dataclass
@@ -176,10 +174,10 @@ class PluginManager:
                     "plugin.skipped reason=hoa_peel plugin_id=%s", ep.name,
                 )
                 continue
-            if not peel_core_pages and ep.name in HOA_ONLY_PLUGIN_IDS:
-                logger.info(
-                    "plugin.skipped reason=hoa_only plugin_id=%s", ep.name,
-                )
+            if (ep.name in BUNDLED_ONLY_PLUGIN_IDS
+                    and ep.name not in brand().bundled_plugins):
+                logger.info("plugin.skipped reason=not_bundled plugin_id=%s",
+                            ep.name)
                 continue
             try:
                 plugin_cls = ep.load()

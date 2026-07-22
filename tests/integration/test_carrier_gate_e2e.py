@@ -666,7 +666,10 @@ def _build_carrier_manager(monkeypatch, tmp_path, qapp, *, trusted_issuer):
     monkeypatch.setattr(storage, "_user_home", lambda: tmp_path)
     monkeypatch.setattr(
         manager_module, "brand",
-        lambda: SimpleNamespace(peel_core_pages=True),
+        # bundled_plugins carries "carrier" — HOA #4: which surfaces a brand
+        # composes is brand config (brands/usurance/brand.toml's [plugins]
+        # bundled), not the old peel-based HOA_ONLY_PLUGIN_IDS heuristic.
+        lambda: SimpleNamespace(peel_core_pages=True, bundled_plugins=("carrier",)),
     )
     app = MagicMock()
     app.config = SimpleNamespace(base="", environment=Environments.DEVELOPMENT)

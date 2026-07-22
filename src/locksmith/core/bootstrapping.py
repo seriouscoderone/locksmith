@@ -119,7 +119,8 @@ def bootstrap_default_environment(
     aid_salt = signing.Salter().qb64[2:23]
     result = create_identifier(
         app,
-        alias=brand_cfg.default_aid_alias,
+        # neutral code fallback; brands override (HOA #4 domain-neutrality)
+        alias=brand_cfg.default_aid_alias or "default",
         key_type="salty",
         salt=aid_salt,
         toad=str(brand_cfg.default_toad),

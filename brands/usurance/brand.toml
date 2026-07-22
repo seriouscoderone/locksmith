@@ -72,6 +72,12 @@ default_aid_alias  = "carrier"
 default_witnesses  = []          # witnessless POC (backlog witness defaults)
 default_toad       = 0
 
+# Bundled-only in-tree plugins this brand activates (HOA #4): which surfaces a
+# brand composes is brand config, never a framework hardcode. carrier stays
+# bundled here until Task 13 re-points the brand to the persona-specific set.
+[plugins]
+bundled = ["carrier"]
+
 # Ecosystem Governance Framework this brand pins (bundled verbatim,
 # content-addressed, under brands/usurance/egf/ — see
 # docs/superpowers/specs/... EGF substrate design). document_said is the

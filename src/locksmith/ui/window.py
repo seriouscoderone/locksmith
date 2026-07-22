@@ -51,6 +51,12 @@ def _onboarding_held_credentials(app) -> list:
     return app.plugin_manager._held_credentials(app.vault)
 
 
+def _setup_prefill_name() -> str:
+    """Workspace-name prefill for first-run setup: brand value or the
+    neutral code default (never a domain string — HOA #4 owner law)."""
+    return brand().default_vault_name or "Default"
+
+
 class LocksmithWindow(QMainWindow):
     """
     Main application window.
@@ -506,7 +512,7 @@ class LocksmithWindow(QMainWindow):
         with the user's chosen name/passcode."""
         from locksmith.ui.onboarding.setup_page import SetupPage
 
-        setup_page = SetupPage(default_name=brand().default_vault_name, parent=self)
+        setup_page = SetupPage(default_name=_setup_prefill_name(), parent=self)
         self.pages[Pages.SETUP] = setup_page
         self.main_stack.addWidget(setup_page)
         setup_page.setup_submitted.connect(self._on_setup_submitted)
