@@ -226,6 +226,7 @@ class HoaShellPlugin(VaultPlugin):
             InboundGrantWatchDoer(
                 self._app, self._request_flow.egf_doc, brand().egf_accept_phases,
                 held_provider=lambda: _held_credentials(self._app),
+                applies_provider=lambda: _sent_applies(self._app),
             ),
             GateRecheckDoer(self._app),
         ])

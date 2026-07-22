@@ -41,6 +41,13 @@ Two rendering modes, switched on ``self._role_id``:
   §7.4 "context binding") so the holder also picks WHICH authority (e.g.
   which state regulator) they're applying to.
 
+Task 11: the old ``OnboardingState``/``derive_state`` app-global,
+single-selected-role state machine (kept as a TRANSITIONAL shim only for
+``locksmith.core.inbound_watch.InboundGrantWatchDoer``'s own import) has
+been removed now that that watcher reads ``derive_role_states`` directly
+(fed by a new ``applies_provider`` alongside ``held_provider``). Nothing
+in the codebase imports ``OnboardingState``/``derive_state`` any longer.
+
 Context binding mechanism (spec §7.4, "one control serves both"): each
 ``context_dimensions(issuer_role)`` entry is rendered as a combo whose
 options are the deduped contexts of ``authorities(issuer_role,
@@ -55,12 +62,6 @@ mirror the value afterward) rather than stripping the property out of
 the schema handed to ``SchemaFormBuilder`` — it keeps ``page.form``
 addressable by the field's real name for callers/tests (``set_field``,
 ``widget_for``) exactly as if it weren't dual-purposed at all.
-
-TRANSITIONAL(Task 11): ``OnboardingState``/``derive_state`` are kept below
-as thin deprecated aliases of the OLD single-role state machine — purely
-because ``locksmith.core.inbound_watch.InboundGrantWatchDoer`` still imports
-them (Task 11 rewrites that watcher onto ``derive_role_states`` and removes
-this shim). Nothing in THIS module calls them anymore.
 """
 from typing import Any, Callable, Dict, Iterable, List, Optional
 
@@ -82,17 +83,10 @@ from keri_serviceaid.egf.documents import EgfDocument, Role
 
 from locksmith.ui import colors
 from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
-from locksmith.ui.onboarding.role_states import (
-    RoleStatus,
-    _held_matches,
-    _held_revoked,
-    derive_role_states,
-)
+from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
 from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
-
-from enum import Enum
 
 
 _KIND_GLYPHS = {
@@ -984,67 +978,3 @@ class OnboardingHomePage(BasePage):
             "show_lock_button": False,
             "show_settings_button": True,
         }
-
-
-# ---------------------------------------------------------------------------
-# TRANSITIONAL(Task 11): the OLD app-global, single-selected-role state
-# machine. Kept ONLY because `locksmith.core.inbound_watch.
-# InboundGrantWatchDoer` still imports `OnboardingState`/`derive_state` (Task
-# 11 rewrites that watcher onto `derive_role_states` and removes this shim).
-# Nothing in this module uses them anymore — see the module docstring.
-# ---------------------------------------------------------------------------
-
-class OnboardingState(Enum):
-    """TRANSITIONAL(Task 11): the onboarding home page's old five possible
-    views. Superseded by `locksmith.ui.onboarding.role_states.RoleStatus`
-    (per-role, not page-global)."""
-
-    PICKER = "picker"
-    FORM = "form"
-    PENDING = "pending"
-    LICENSED = "licensed"
-    REVOKED = "revoked"
-
-
-def derive_state(
-    held: list,
-    egf: EgfDocument,
-    role_id: Optional[str],
-    *,
-    suppress_revoked: bool = False,
-) -> OnboardingState:
-    """TRANSITIONAL(Task 11): pure state derivation — no Qt, no I/O. See the
-    (now-superseded) precedence rationale this used to document in full:
-    LICENSED > REVOKED > PENDING > FORM > PICKER, role-agnostic for the
-    first two, `role_id`-scoped for the rest. Superseded by
-    `locksmith.ui.onboarding.role_states.derive_role_states`, which supports
-    holding role A while applying for role B (the #2-flagged multi-role
-    boundary this single-role machine could not represent)."""
-    # LICENSED: checked against EVERY onboardable role's grant credential,
-    # regardless of role_id — a returning, already-licensed holder should
-    # be recognized even before picking a persona card.
-    for persona in egf.personas():
-        grant = egf.credential(persona.onboarding.grant_credential_id)
-        if _held_matches(held, grant.schema_said, require_active=True):
-            return OnboardingState.LICENSED
-
-    # REVOKED: a held, chain-verified gating credential in the revoked state,
-    # checked role-agnostically (like LICENSED) and BEFORE the PENDING/PICKER
-    # fall-through. Skipped entirely when suppress_revoked is set.
-    if not suppress_revoked:
-        for persona in egf.personas():
-            grant = egf.credential(persona.onboarding.grant_credential_id)
-            if _held_revoked(held, grant.schema_said):
-                return OnboardingState.REVOKED
-
-    if role_id is not None:
-        role = egf.role(role_id)
-        if role.onboarding is not None:
-            grant = egf.credential(role.onboarding.grant_credential_id)
-            if grant.chained_from is not None:
-                application = egf.credential(grant.chained_from)
-                if _held_matches(held, application.schema_said, require_active=False):
-                    return OnboardingState.PENDING
-        return OnboardingState.FORM
-
-    return OnboardingState.PICKER

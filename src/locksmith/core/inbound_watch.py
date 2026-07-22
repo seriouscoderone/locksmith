@@ -4,16 +4,20 @@ locksmith.core.inbound_watch module
 
 ``InboundGrantWatchDoer`` -- HOA #2's owner-approved auto-admit policy
 (design spec, Task 11): when the user explicitly applied for role R (its
-vault-derived onboarding state is ``OnboardingState.PENDING`` -- see
-``locksmith.ui.onboarding.home_page.derive_state``) and the EXACT grant
-they're waiting on arrives -- the embedded ACDC's schema matches R's grant
-credential AND the exn's sender is one of the EGF's accepted authorities
-for that credential's ``issuer_role`` -- it is admitted WITHOUT prompting.
-The user already consented by submitting the application; this only
-short-circuits the confirmation click for the one grant that could not
-possibly be anything else.
+per-role onboarding status is ``RoleStatus.PENDING`` -- see
+``locksmith.ui.onboarding.role_states.derive_role_states``, Task 8) and the
+EXACT grant they're waiting on arrives -- the embedded ACDC's schema
+matches R's grant credential AND the exn's sender is one of the EGF's
+accepted authorities for that credential's ``issuer_role`` -- it is
+admitted WITHOUT prompting. The user already consented by submitting the
+application; this only short-circuits the confirmation click for the one
+grant that could not possibly be anything else. Multiple simultaneously
+PENDING roles (HOA #4 multi-role) are each honored independently -- Task
+11 generalizes this from a single-role check onto the full per-role
+``RoleStatus`` map, fed by a new ``applies_provider`` (the holder's own
+sent ``/ipex/apply`` exns, Task 2's row shape) alongside ``held_provider``.
 
-Anything that doesn't match all three conditions (wrong role state, wrong
+Anything that doesn't match all three conditions (role not PENDING, wrong
 schema, or an unexpected sender) is left unread: `/exn/ipex/grant` notes
 land in ``HoaNotificationsPage`` (Task 10), whose **Accept** button routes
 through the exact same ``make_admit_doer`` chokepoint on demand.
@@ -31,7 +35,6 @@ from keri import help
 from keri.peer import exchanging
 
 from locksmith.core.serviceaid_bridge import make_admit_doer
-from locksmith.ui.onboarding.home_page import OnboardingState, derive_state
 
 logger = help.ogler.getLogger(__name__)
 
@@ -58,15 +61,23 @@ class InboundGrantWatchDoer(doing.Doer):
             ``held_provider`` shape, e.g. ``_onboarding_held_credentials``)
             -- re-read on every scan so a just-issued application
             credential is visible without reconstructing the doer.
+        applies_provider: Zero-arg callable returning the holder's own sent
+            ``/ipex/apply`` exn rows (Task 2's shape, e.g.
+            ``keri_serviceaid.providers.list_sent_applies``'s return) --
+            re-read on every scan for the same reason as ``held_provider``.
+            Feeds ``derive_role_states``'s apply-mode PENDING derivation
+            (Task 11); defaults to no outstanding applies so callers that
+            only onboard form-mode roles need not pass it.
         tock: Poll interval in seconds (default 1.0).
     """
 
     def __init__(self, app, egf_doc, accept_phases, held_provider,
-                 tock: float = 1.0, **kwa):
+                 applies_provider=lambda: [], tock: float = 1.0, **kwa):
         self.app = app
         self.egf_doc = egf_doc
         self.accept_phases = tuple(accept_phases)
         self.held_provider = held_provider
+        self.applies_provider = applies_provider
         super(InboundGrantWatchDoer, self).__init__(tock=tock, **kwa)
 
     def do(self, tymth, tock=0.0, **opts):
@@ -132,20 +143,25 @@ class InboundGrantWatchDoer(doing.Doer):
         self._admit(rid, said, schema_said, recipient)
 
     def _match_expected_role(self, sender: str, schema_said: str):
-        """Returns the matching ``Role`` iff some onboardable role R is
-        PENDING, the embedded schema is R's grant credential's schema, and
-        `sender` is one of the accepted authorities for that credential's
-        `issuer_role` -- else ``None``. Held credentials are read fresh
-        (``held_provider()``) once per note, not cached across notes,
-        since a match on an earlier note in this same pass (already
-        admitted) can change subsequent state derivations."""
+        """A grant auto-admits iff it satisfies an OUTSTANDING request:
+        the role derived PENDING (apply-mode sent-apply or form-mode held
+        application) AND the sender is an accepted authority for the role's
+        issuer_role. Multiple simultaneously-PENDING roles each match
+        independently (HOA #4 multi-role). Held credentials and sent
+        applies are read fresh (``held_provider()``/``applies_provider()``)
+        once per note, not cached across notes, since a match on an
+        earlier note in this same pass (already admitted) can change
+        subsequent state derivations."""
+        from locksmith.ui.onboarding.role_states import (RoleStatus,
+                                                         derive_role_states)
         held = self.held_provider()
+        applies = self.applies_provider()
+        states = derive_role_states(held, applies, self.egf_doc)
         for role in self.egf_doc.personas():
-            onboarding = role.onboarding
-            grant = self.egf_doc.credential(onboarding.grant_credential_id)
+            grant = self.egf_doc.credential(role.onboarding.grant_credential_id)
             if grant.schema_said != schema_said:
                 continue
-            if derive_state(held, self.egf_doc, role.id) is not OnboardingState.PENDING:
+            if states.get(role.id) is not RoleStatus.PENDING:
                 continue
             authorities = self.egf_doc.authorities(
                 grant.issuer_role, accept_phases=self.accept_phases)

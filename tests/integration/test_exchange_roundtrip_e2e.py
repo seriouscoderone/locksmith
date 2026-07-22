@@ -34,8 +34,9 @@ PART 2 — return-grant → auto-admit → LICENSED (``test_return_grant_...``):
   genuinely exercised (``_held_credentials`` reports the license
   ``chain_verified=False`` for the first two evaluations post-admit before
   delegating to the real projection), and only then reveals the carrier
-  surface; ``derive_state`` reads LICENSED and the ``HoaNotificationsPage``
-  shows the arrival entry.
+  surface; ``derive_role_states`` reads ACTIVE (Task 11 — the old
+  page-global ``derive_state`` shim is gone) and the
+  ``HoaNotificationsPage`` shows the arrival entry.
 
 LAX CONTINGENCY OUTCOME (brief Step 2)
 --------------------------------------
@@ -106,7 +107,7 @@ from locksmith.peer.publishing import PublishPeerRoleDoer
 from locksmith.peer.records import PeerModeSettings
 from locksmith.peer.shim import PeerExchangerShim
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
-from locksmith.ui.onboarding.home_page import OnboardingState, derive_state
+from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
 
 # Reuse the scaffold e2e's proven in-process fixture family (same test
 # package): schemas + attribute blocks, the real no-backer issuance recipe,
@@ -450,7 +451,7 @@ def _reach_licensed(monkeypatch, tmp_path, request, qapp, haberies) -> dict:
 
     # PENDING before the license arrives; gate shut.
     held0 = mgr._held_credentials(vault_view)
-    assert derive_state(held0, egf_doc, "carrier") is OnboardingState.PENDING
+    assert derive_role_states(held0, [], egf_doc)["carrier"] is RoleStatus.PENDING
     mgr.reevaluate_role_gates(vault_view)
     assert "carrier" not in mgr._active_roles
 
@@ -534,9 +535,9 @@ def _reach_licensed(monkeypatch, tmp_path, request, qapp, haberies) -> dict:
     mgr._surface_host.register_page.assert_any_call(
         "carrier", carrier.get_pages()["carrier"])
 
-    # Onboarding derives LICENSED (real projection).
+    # Onboarding derives ACTIVE (real projection).
     held_final = real_held(vault_view)
-    assert derive_state(held_final, egf_doc, None) is OnboardingState.LICENSED
+    assert derive_role_states(held_final, [], egf_doc)["carrier"] is RoleStatus.ACTIVE
 
     return dict(
         mgr=mgr, app=app, vault=vault, vault_view=vault_view, egf_doc=egf_doc,
@@ -591,7 +592,8 @@ def test_revoked_license_deactivates_surface_and_shows_revoked(
     real_held = handles["real_held"]
 
     assert "carrier" in mgr._active_roles
-    assert derive_state(real_held(vault_view), egf_doc, None) is OnboardingState.LICENSED
+    assert derive_role_states(real_held(vault_view), [], egf_doc)["carrier"] \
+        is RoleStatus.ACTIVE
 
     # ---- DOI revokes the license (local TEL rev, pure KERI) -----------------
     # No keri_serviceaid here -- this mirrors RevokeCredentialDoer's own
@@ -649,7 +651,7 @@ def test_revoked_license_deactivates_surface_and_shows_revoked(
 
     # ---- onboarding derives REVOKED; notifications synthesize the card ----
     held_after = real_held(vault_view)
-    assert derive_state(held_after, egf_doc, None) is OnboardingState.REVOKED
+    assert derive_role_states(held_after, [], egf_doc)["carrier"] is RoleStatus.REVOKED
     page = HoaNotificationsPage(app, egf_doc, held_provider=lambda: real_held(vault_view))
     page.refresh()
     assert [r for r in page.rows() if r["route"] == "revoked"], \
