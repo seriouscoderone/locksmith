@@ -240,6 +240,10 @@ class MenuButton(QPushButton):
         if self.text_label:
             self.text_label.setVisible(visible)
 
+    def text(self) -> str:
+        """Return the label text."""
+        return self.label_text
+
 
 class MenuDivider(QFrame):
     """A horizontal divider line for the menu."""
