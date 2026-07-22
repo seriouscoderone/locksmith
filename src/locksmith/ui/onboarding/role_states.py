@@ -12,6 +12,7 @@ keri:acdc tel-registry; the ACTIVE predicate is exactly the plugin gate's
 (schema + state + chain_verified) minus issuer pinning, which the gate owns.
 """
 from enum import Enum
+from typing import Any, Iterable
 
 
 class RoleStatus(Enum):
@@ -21,7 +22,13 @@ class RoleStatus(Enum):
     REVOKED = "revoked"
 
 
-def _held_matches(held, schema_said, *, require_active):
+def _held_matches(held: Iterable[Any], schema_said: str, *, require_active: bool) -> bool:
+    """True iff any held-credential view matches ``schema_said`` and is
+    chain-verified. When ``require_active`` the view's ``state`` must be
+    exactly ``"active"`` (the LICENSED check); otherwise only a
+    ``"revoked"`` state disqualifies it (the PENDING check — application
+    credentials aren't necessarily TEL-backed the same way a license is,
+    so their state vocabulary isn't pinned to "active")."""
     for h in held:
         if h.schema_said != schema_said or not h.chain_verified:
             continue
@@ -34,10 +41,14 @@ def _held_matches(held, schema_said, *, require_active):
     return False
 
 
-def _held_revoked(held, schema_said):
+def _held_revoked(held: Iterable[Any], schema_said: str) -> bool:
+    """True iff a chain-verified held credential of ``schema_said`` is in the
+    revoked TEL state. Requires chain_verified (same as ``_held_matches``): a
+    revoked credential stays in ``reger.saved``, so a genuinely-granted-then-
+    revoked license still reads chain_verified=True — only an escrowed, never-
+    verified credential fails this, which must NOT read as a revocation."""
     for h in held:
-        if (h.schema_said == schema_said and h.chain_verified
-                and h.state == "revoked"):
+        if h.schema_said == schema_said and h.chain_verified and h.state == "revoked":
             return True
     return False
 
