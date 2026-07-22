@@ -78,6 +78,7 @@ from keri_serviceaid.egf.documents import EgfDocument, Role
 
 from locksmith.ui import colors
 from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
+from locksmith.ui.onboarding.role_states import _held_matches, _held_revoked
 from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
@@ -127,37 +128,6 @@ _GROUP_BOX_QSS = f"""
         color: {colors.TEXT_PRIMARY};
     }}
 """
-
-
-def _held_matches(held: Iterable[Any], schema_said: str, *, require_active: bool) -> bool:
-    """True iff any held-credential view matches ``schema_said`` and is
-    chain-verified. When ``require_active`` the view's ``state`` must be
-    exactly ``"active"`` (the LICENSED check); otherwise only a
-    ``"revoked"`` state disqualifies it (the PENDING check — application
-    credentials aren't necessarily TEL-backed the same way a license is,
-    so their state vocabulary isn't pinned to "active")."""
-    for h in held:
-        if h.schema_said != schema_said or not h.chain_verified:
-            continue
-        if require_active:
-            if h.state == "active":
-                return True
-        else:
-            if h.state != "revoked":
-                return True
-    return False
-
-
-def _held_revoked(held: Iterable[Any], schema_said: str) -> bool:
-    """True iff a chain-verified held credential of ``schema_said`` is in the
-    revoked TEL state. Requires chain_verified (same as ``_held_matches``): a
-    revoked credential stays in ``reger.saved``, so a genuinely-granted-then-
-    revoked license still reads chain_verified=True — only an escrowed, never-
-    verified credential fails this, which must NOT read as a revocation."""
-    for h in held:
-        if h.schema_said == schema_said and h.chain_verified and h.state == "revoked":
-            return True
-    return False
 
 
 def derive_state(
