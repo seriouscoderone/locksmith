@@ -51,28 +51,28 @@ class IconSizeProxyStyle(QProxyStyle):
 
 def set_global_styles(app: QApplication):
     global MONOSPACE_FONT_FAMILY
+    from locksmith.core import branding
+    branding.register_brand_resources()      # single atomic asset surface — must be first
 
     asset_root = _asset_root()
 
-    # Pick a window-icon format the running platform's Qt can actually render.
-    # Qt on Windows can't load .icns (a macOS format) — setting it yields an
-    # empty icon, which overrides the exe's embedded .ico and leaves a blank
-    # taskbar button. .ico renders on every platform; macOS prefers .icns (its
-    # dock icon comes from the app bundle regardless).
-    icon_dir = asset_root / "assets" / "custom"
+    # Runtime window/taskbar icon from the active brand's bundle dir (atomic
+    # with the registered logos); the .app/.exe embedded icon is a packaging
+    # concern. Fall back to the compiled symbol logo.
+    _src = branding.brand_source_dir()
     _icon_names = (
         ("AppIcon.icns", "AppIcon.ico") if sys.platform == "darwin"
         else ("AppIcon.ico", "AppIcon.icns")
     )
-    for _name in _icon_names:
-        cand = icon_dir / _name
-        if cand.exists():
-            app.setWindowIcon(QIcon(str(cand)))
-            break
-    else:
-        logger.warning(
-            f"App icon not found in {icon_dir}; falling back to symbol logo"
-        )
+    _set = False
+    if _src is not None:
+        for _name in _icon_names:
+            cand = _src / _name
+            if cand.exists():
+                app.setWindowIcon(QIcon(str(cand)))
+                _set = True
+                break
+    if not _set:
         app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
     from locksmith.core.branding import brand
     from locksmith.ui import colors as _colors
@@ -89,16 +89,14 @@ def set_global_styles(app: QApplication):
     app.setOrganizationName(_b.org_name)
     app.setOrganizationDomain(_b.org_domain)
 
-    font_path = asset_root / "assets" / "fonts" / "SourceCodePro-Regular.ttf"
-
-    font_id = QFontDatabase.addApplicationFont(str(font_path))
+    font_id = QFontDatabase.addApplicationFont(":/assets/fonts/SourceCodePro-Regular.ttf")
     if font_id != -1:
         families = QFontDatabase.applicationFontFamilies(font_id)
         if families:
             MONOSPACE_FONT_FAMILY = families[0]
             logger.info(f"Loaded monospace font: {MONOSPACE_FONT_FAMILY}")
     else:
-        logger.warning(f"Failed to load font at {font_path}, using system fallback")
+        logger.warning("Failed to load font at :/assets/fonts/SourceCodePro-Regular.ttf, using system fallback")
 
     app.setStyle(IconSizeProxyStyle())
 
