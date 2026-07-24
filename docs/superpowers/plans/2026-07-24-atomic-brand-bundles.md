@@ -792,6 +792,7 @@ git commit -m "feat(brand): boot off the registered brand bundle — splash/font
 **Files:**
 - Delete: `src/locksmith/resources_rc.py`
 - Modify: `.gitignore`
+- Modify: `tests/plugins/roles/test_role_plugins.py` (surfaced by the Step-3 grep — its two `from locksmith import resources_rc  # (register :/assets)` lines at ~92,103 are the ONLY real code importers left after Task 5 removed main.py's; replace them with brand-bundle registration — take the `default_brand_resources` fixture (added below) so `:/assets/*` resolves for the icon assertions — so `resources_rc.py` can be deleted. It is a safe in-process Qt test, no subprocess.)
 - Create: `tests/conftest.py` (or extend existing) — session fixture building the default bundle
 - Create: `tests/unit/branding/conftest.py` — test-isolation shims that make the WHOLE `tests/unit/branding/` dir run green regardless of order (removes both pre-existing baseline caveats). See "Step 1b" below. Reference content saved at `/tmp/stray_branding_conftest.py` (an out-of-scope investigation-scratch draft surfaced during Task 5 — do NOT copy it blindly; re-derive/verify it, it is unreviewed).
 - Test: reuse Task 5's `test_styles_boot.py` + a guard test
