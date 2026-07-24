@@ -793,10 +793,20 @@ git commit -m "feat(brand): boot off the registered brand bundle — splash/font
 - Delete: `src/locksmith/resources_rc.py`
 - Modify: `.gitignore`
 - Create: `tests/conftest.py` (or extend existing) — session fixture building the default bundle
+- Create: `tests/unit/branding/conftest.py` — test-isolation shims that make the WHOLE `tests/unit/branding/` dir run green regardless of order (removes both pre-existing baseline caveats). See "Step 1b" below. Reference content saved at `/tmp/stray_branding_conftest.py` (an out-of-scope investigation-scratch draft surfaced during Task 5 — do NOT copy it blindly; re-derive/verify it, it is unreviewed).
 - Test: reuse Task 5's `test_styles_boot.py` + a guard test
 
 **Interfaces:**
 - Produces: (a) a session-scoped autouse fixture `_ensure_default_brand_bundle` that BUILDS `src/locksmith/release/{assets.rcc,brand.json}` once (if absent) — build only, it does NOT register (first-wins precedence forbids a global default registration, or brand-override tests would keep reading locksmith bytes); (b) a function-scoped opt-in fixture `default_brand_resources` that registers the default bundle for a single test and unregisters after — for generic widget/icon tests that load `:/` paths without going through `set_global_styles`.
+
+- [ ] **Step 1b: Create `tests/unit/branding/conftest.py` — green the whole branding dir**
+
+Two pre-existing, order-dependent issues make `pytest tests/unit/branding/` (whole dir) fail while each file passes alone. Both are now diagnosed; neutralise them in a branding-suite conftest so broad runs (this task's Step 4, Task 10) are deterministic:
+
+1. **Qt singleton type.** Sibling tests create the process-wide Qt singleton as a bare `QGuiApplication`; `test_styles_branding` needs a `QApplication` (only it has `setStyle`, called by `set_global_styles`). Qt allows one app object per process, so a `QGuiApplication`-first order makes the styles tests crash. Fix: a session-scoped autouse fixture that creates the `QApplication` superset up front (`QApplication.instance() or QApplication([])`), so every later `*.instance()` resolves to it.
+2. **`keri` namespace shadow (root cause).** `scripts/keri/` is a kli config-data dir (`cf/*.json`, no `__init__.py`). Sibling tests do `sys.path.insert(0, <repo>/scripts)` at import time, so the first `import keri` resolves to that PEP-420 namespace package (no `__version__`) → keripy's `from keri import __version__` raises `ImportError: ... 'keri' (unknown location)`. Fix: `import keri` at the TOP of this conftest (runs before any test's `sys.path.insert`), caching real keripy in `sys.modules` so the data dir can never win.
+
+Write the conftest with `QT_QPA_PLATFORM` defaulted to `offscreen`, the early `import keri`, and the session-autouse `QApplication` fixture. A reference draft is at `/tmp/stray_branding_conftest.py` — verify its reasoning, don't trust it blindly. Confirm with: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/unit/branding --import-mode=importlib -p no:cacheprovider -q` → the WHOLE dir passes (this retires baseline caveats #1 and #2 in the ledger). Note: `tests/unit/pytest.ini` makes `tests/unit` the rootdir, so a `tests/conftest.py` does NOT apply here (confcutdir) — the branding conftest must be its own file.
 
 - [ ] **Step 1: Add the fixtures**
 
