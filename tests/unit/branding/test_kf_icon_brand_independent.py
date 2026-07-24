@@ -24,7 +24,7 @@ def test_kf_icon_asset_file_exists_outside_custom():
     asset = REPO_ROOT / "assets" / "kerifoundation" / "SymbolLogo.svg"
     assert asset.is_file(), "KF-owned icon asset missing"
     # Byte-identical to the committed Locksmith reference symbol.
-    reference = REPO_ROOT / "assets" / "custom" / "SymbolLogo.svg"
+    reference = REPO_ROOT / "brands" / "locksmith" / "SymbolLogo.svg"
     assert asset.read_bytes() == reference.read_bytes()
 
 
