@@ -49,11 +49,19 @@ def test_make_splash_returns_splashscreen_when_art_present(qapp):
         branding._reset_cache_for_tests()
 
 
-def test_make_splash_returns_none_when_art_missing(qapp, monkeypatch, tmp_path):
-    """Missing art must yield None (no splash) rather than crash startup."""
-    import locksmith.ui.styles as styles
-    # _make_splash resolves the art under _asset_root()/assets/custom/.
-    monkeypatch.setattr(styles, "_asset_root", lambda: tmp_path, raising=True)
+def test_make_splash_returns_none_when_art_missing(qapp):
+    """Missing art must yield None (no splash) rather than crash startup.
+
+    ``_make_splash`` resolves its art from ``:/assets/custom/SplashScreen.png``
+    (a Qt resource), not a disk path, so "missing art" now means "no brand
+    bundle registered". Force that state directly (regardless of what any
+    sibling test left registered) rather than relying on run order.
+    """
+    from locksmith.core import branding
     from locksmith.main import _make_splash
 
-    assert _make_splash() is None
+    branding._reset_cache_for_tests()  # unregisters — guarantee nothing is registered
+    try:
+        assert _make_splash() is None
+    finally:
+        branding._reset_cache_for_tests()

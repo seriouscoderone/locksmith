@@ -17,6 +17,9 @@ def test_set_global_styles_registers_bundle_and_splash_resolves(monkeypatch):
     monkeypatch.delenv(branding.BRAND_CONFIG_ENV_VAR, raising=False)
     from locksmith.ui.styles import set_global_styles
     app = QApplication.instance() or QApplication([])
-    set_global_styles(app)                                  # registers the rcc
-    assert app.applicationName() == "Locksmith"
-    assert not QPixmap(":/assets/custom/SplashScreen.png").isNull()   # splash via :/
+    try:
+        set_global_styles(app)                                  # registers the rcc
+        assert app.applicationName() == "Locksmith"
+        assert not QPixmap(":/assets/custom/SplashScreen.png").isNull()   # splash via :/
+    finally:
+        branding._reset_cache_for_tests()   # unregisters — leave no bundle registered

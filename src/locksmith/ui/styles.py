@@ -54,8 +54,6 @@ def set_global_styles(app: QApplication):
     from locksmith.core import branding
     branding.register_brand_resources()      # single atomic asset surface — must be first
 
-    asset_root = _asset_root()
-
     # Runtime window/taskbar icon from the active brand's bundle dir (atomic
     # with the registered logos); the .app/.exe embedded icon is a packaging
     # concern. Fall back to the compiled symbol logo.
