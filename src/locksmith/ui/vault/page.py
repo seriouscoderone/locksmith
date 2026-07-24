@@ -246,8 +246,17 @@ class VaultPage(BasePage):
                     self.nav_menu.push_plugin_menu(plugin_id)
                 self._show_page(page_key)
         else:
-            self.nav_menu.push_plugin_menu(plugin_id)
-            self._navigate_to_first_plugin_page(plugin_id)
+            # Page-only plugin (a page registered under its own id, but no
+            # submenu nav buttons): show that page directly instead of pushing
+            # an empty submenu that would blank the nav with no way back — the
+            # same call the roles-card "Open" button uses (live-demo fix).
+            has_submenu = bool(self.nav_menu._plugin_nav_buttons.get(plugin_id))
+            if plugin_id in self._pages and not has_submenu:
+                self._show_vault_page(plugin_id)
+                self.nav_menu.highlight_plugin_entry(plugin_id)
+            else:
+                self.nav_menu.push_plugin_menu(plugin_id)
+                self._navigate_to_first_plugin_page(plugin_id)
 
     def _navigate_to_first_plugin_page(self, plugin_id: str) -> None:
         """Click the first nav button in the plugin menu, triggering highlight + navigation."""

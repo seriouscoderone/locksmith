@@ -325,6 +325,9 @@ class VaultNavMenu(QFrame):
         # button, and submenu items) so unregister_plugin_section can remove
         # them symmetrically — used when a role gate flips off.
         self._plugin_sections: dict[str, list[QWidget]] = {}
+        # Entry button per plugin, so a page-only plugin's entry can be
+        # highlighted when its page is opened without pushing a submenu.
+        self._plugin_entry_buttons: dict[str, MenuButton] = {}
         self._active_plugin_id: str | None = None
         self._was_locked_before_plugin = False
 
@@ -826,6 +829,16 @@ class VaultNavMenu(QFrame):
         # Sync label visibility to current menu state (registration happens after __init__)
         entry_button.set_label_visible(self.is_expanded or not self.collapsible)
 
+        # Safety net: every pushed submenu must have a back route. If the plugin
+        # supplied no BackButton of its own, prepend a menu-owned one so any
+        # submenu that gets pushed is never a navigation dead end (live-demo
+        # fix). Tracked in _plugin_menus/_plugin_sections below so
+        # unregister_plugin_section removes it symmetrically.
+        if not any(isinstance(item, BackButton) for item in submenu_items):
+            auto_back = BackButton(dark_mode=False)
+            auto_back.setObjectName(f"vaultNavMenu.{plugin_id}AutoBackButton")
+            submenu_items = [auto_back, *submenu_items]
+
         # Insert submenu items BEFORE the stretch (right after the entry button),
         # then connect any BackButton instances to pop_to_vault_menu.
         nav_buttons = []
@@ -842,6 +855,7 @@ class VaultNavMenu(QFrame):
 
         self._plugin_menus[plugin_id] = submenu_items
         self._plugin_nav_buttons[plugin_id] = nav_buttons
+        self._plugin_entry_buttons[plugin_id] = entry_button
         # Track every layout widget this section owns, in insertion order, for
         # symmetric removal in unregister_plugin_section.
         self._plugin_sections[plugin_id] = [spacer, divider, entry_button, *submenu_items]
@@ -876,8 +890,21 @@ class VaultNavMenu(QFrame):
 
         self._plugin_menus.pop(plugin_id, None)
         self._plugin_nav_buttons.pop(plugin_id, None)
+        self._plugin_entry_buttons.pop(plugin_id, None)
 
         logger.info(f"Plugin section unregistered: {plugin_id}")
+
+    def highlight_plugin_entry(self, plugin_id: str):
+        """Mark a plugin's entry button active and clear all other selections.
+
+        Used when a page-only plugin's page is shown directly (no submenu is
+        pushed), so the left nav still reflects where the user is.
+        """
+        for btn in self.nav_buttons:
+            btn.set_active(False)
+        self.active_nav_button = None
+        for pid, btn in self._plugin_entry_buttons.items():
+            btn.set_active(pid == plugin_id)
 
     def _on_plugin_button_clicked(self, plugin_id: str):
         """Handle plugin entry button click - switch to plugin menu."""
