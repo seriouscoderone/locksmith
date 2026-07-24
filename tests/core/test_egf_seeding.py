@@ -219,6 +219,105 @@ def test_fully_seeded_run_schedules_nothing(seeder_env):
     assert seeder_env.run("carrier", issuer_aid="E" + "I" * 43) == []
 
 
+# ---------------------------------------------------------------------------
+# Apply-mode seeding (Task 10, HOA #4): schema-only, no registry ever.
+# ---------------------------------------------------------------------------
+
+class ApplyModeResolver:
+    """Stands in for `EgfResolver` for the apply-mode role: only
+    `resolve_schema` is ever called (no micro-app to resolve — apply-mode
+    has no form)."""
+
+    def __init__(self, schema_said: str):
+        self._schemas = {schema_said: _schema_sad(schema_said)}
+
+    def resolve_micro_app(self, said):
+        raise AssertionError("apply-mode seeding must never resolve a micro-app")
+
+    def resolve_schema(self, said):
+        return self._schemas[said]
+
+
+class ApplyModeSeederEnv:
+    """Mirrors `SeederEnv` above, but for an apply-mode EGF (one persona,
+    "actuary", no chained application — see `apply_mode_egf`)."""
+
+    def __init__(self, monkeypatch):
+        from keri_serviceaid.tests.egf.fixtures.make_fixture_egf import (
+            ACTUARY_ROLE_SCHEMA_SAID, apply_mode_egf)
+        self.schema_said = ACTUARY_ROLE_SCHEMA_SAID
+        self.egf_doc = EgfDocument.from_sad(
+            apply_mode_egf({"grant_credential_id": "actuary_role"}))
+        self.resolver = ApplyModeResolver(self.schema_said)
+        self.app = MagicMock(name="app")
+        self.schema_store: dict[str, object] = {}
+        self.scheduled: list = []
+
+        self.app.vault.hby.db.schema.get.side_effect = (
+            lambda keys: self.schema_store.get(keys[0])
+        )
+
+        def _fake_load_schema_doer(*args, **kwargs):
+            fake_doer = MagicMock(name="LoadSchemaDoer")
+            fake_doer.kwargs = kwargs
+            self.scheduled.append(fake_doer)
+            return fake_doer
+
+        monkeypatch.setattr(
+            "locksmith.core.egf_seeding.LoadSchemaDoer", _fake_load_schema_doer
+        )
+
+    def run(self, role_id: str = "actuary", issuer_aid=None) -> list:
+        self.scheduled = []
+        seeder = EgfSeeder(self.app, self.resolver, self.egf_doc)
+        seeder.seed_for_role(role_id, issuer_aid=issuer_aid)
+        for doer in self.scheduled:
+            said = json.loads(doer.kwargs["file_content"])["$id"]
+            self.schema_store[said] = object()
+        return list(self.scheduled)
+
+
+@pytest.fixture
+def apply_mode_seeder_env(monkeypatch):
+    return ApplyModeSeederEnv(monkeypatch)
+
+
+def test_apply_mode_seeds_schema_only_no_registry(apply_mode_seeder_env):
+    """The core Task 10 assertion: an apply-mode role's grant schema is
+    pinned, and create_registry is False -- never True, even though an
+    issuer_aid IS supplied (unlike the form-mode branch, there is no
+    application schema here to ever need one)."""
+    scheduled = apply_mode_seeder_env.run(issuer_aid="E" + "I" * 43)
+    assert len(scheduled) == 1
+    (doer,) = scheduled
+    assert doer.kwargs["create_registry"] is False
+    assert doer.kwargs["issuer_aid"] is None
+    assert json.loads(doer.kwargs["file_content"])["$id"] == apply_mode_seeder_env.schema_said
+
+
+def test_apply_mode_skips_already_pinned_schema(apply_mode_seeder_env):
+    """Idempotent: a second pass, with the schema now pinned, schedules
+    nothing."""
+    first = apply_mode_seeder_env.run()
+    assert len(first) == 1
+    assert apply_mode_seeder_env.run() == []
+
+
+def test_apply_mode_never_resolves_a_micro_app(apply_mode_seeder_env):
+    """Sanity check on the resolver seam itself: apply-mode seeding must
+    never touch resolve_micro_app (ApplyModeResolver raises if it does) --
+    proves seed_for_role branches BEFORE ever calling derive_request (which
+    would resolve a micro-app for a form-mode role)."""
+    apply_mode_seeder_env.run()  # must not raise
+
+
+def test_apply_mode_schedules_via_vault_extend(apply_mode_seeder_env):
+    scheduled = apply_mode_seeder_env.run()
+    apply_mode_seeder_env.app.vault.extend.assert_called_once()
+    (extended_doers,), _ = apply_mode_seeder_env.app.vault.extend.call_args
+    assert list(extended_doers) == scheduled
+
+
 def test_make_hoa_resolver_none_for_stock_brand():
     from locksmith.core.branding import Brand
     assert make_hoa_resolver(Brand()) is None

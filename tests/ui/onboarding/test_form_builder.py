@@ -15,7 +15,7 @@ from PySide6.QtWidgets import QCheckBox, QComboBox, QDoubleSpinBox, QGroupBox, Q
 from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
 
 _REPO_ROOT = Path(__file__).resolve().parents[3]
-_EGF_DOC = _REPO_ROOT / "brands/usurance/egf/EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP.json"
+_EGF_DOC = _REPO_ROOT / "tests/fixtures/carrier_egf_bundle/EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP.json"
 
 SCHEMA = {"type": "object", "additionalProperties": False,
           "properties": {

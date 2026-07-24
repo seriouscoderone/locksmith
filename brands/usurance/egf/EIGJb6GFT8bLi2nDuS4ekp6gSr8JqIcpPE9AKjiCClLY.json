@@ -1,0 +1,74 @@
+{
+  "$id": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usurance Actuary Role",
+  "description": "Role-authorization credential: Usurance administration grants the holder the internal Actuarial role. Deliberately content-free \u2014 authority derives from holding this credential (issuer + schema + TEL state, verified by the HOA credential gate), never from attribute payload. Root credential: no edge section; issuer trust is pinned by the usurance-internal EGF authorities[] entry, not baked into this schema.",
+  "type": "object",
+  "credentialType": "UsuranceActuaryRole",
+  "version": "1.0.0",
+  "properties": {
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "Credential SAID.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID (usurance-admin).",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Issuance/revocation TEL registry identifier.",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID.",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attributes block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "ENYxh310kYbbjjSqPhS4Jtd3KG-pqPSG_02EYdzdr2_M",
+          "description": "Actuary role attributes \u2014 protocol fields only; the credential itself is the authorization.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "i": {
+              "description": "Issuee AID (the user granted the role).",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time.",
+              "type": "string",
+              "format": "date-time"
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "i",
+            "dt"
+          ]
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a"
+  ]
+}

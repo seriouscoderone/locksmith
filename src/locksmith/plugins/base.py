@@ -37,6 +37,16 @@ class PluginCore(ABC):
     def initialize(self, app: Any) -> None:
         """Called once at startup after plugin discovery, before any hooks fire."""
 
+    def get_toolbar_entries(self, window) -> list:
+        """Optional top-toolbar contributions (HOA #4 seam).
+
+        Returns a list of ``(action_id, widget, section)`` tuples; section is
+        "left" or "right". Applied once by PluginManager.apply_toolbar_entries
+        after plugin initialization; ids are namespaced by plugin_id.
+        Default: contribute nothing.
+        """
+        return []
+
 
 class AppPlugin(PluginCore):
     """Plugin that hooks into app/window lifecycle.
@@ -96,9 +106,20 @@ class VaultPlugin(PluginCore):
         deleted from disk (used when the user is deleting the vault entirely).
         """
 
+    def on_vault_ui_ready(self, vault_page) -> None:
+        """Called once per VaultPage construction, after ungated plugin pages
+        are registered and the surface host is captured (HOA #4). Shell-style
+        plugins use the handle to register conditional surfaces directly
+        (multiple pages/menu entries, error fallbacks). Default: no-op."""
+        return None
+
     @abstractmethod
-    def get_menu_entry(self) -> "MenuButton":
-        """Entry button shown in the main vault sidebar."""
+    def get_menu_entry(self) -> "MenuButton | None":
+        """Entry button shown in the main vault sidebar.
+
+        May return None: plugins that register their own menu entries (or
+        none) return None and the manager skips nav registration.
+        """
 
     @abstractmethod
     def get_menu_section(self) -> list["QWidget"]:

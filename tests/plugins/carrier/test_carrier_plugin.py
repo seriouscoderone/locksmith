@@ -10,11 +10,13 @@ Covers:
 - Because ``required_credential`` is set, ``discover_and_initialize_vault_ui``
   (Task 7) must not auto-register the plugin's surface — it stays dormant
   until ``reevaluate_role_gates`` reveals it (Task 8, exercised elsewhere).
-- Brand-gating (this task's refinement): the carrier entry point is only
-  loaded by ``PluginManager.discover()`` under a peel/HOA brand
-  (``brand().peel_core_pages`` True); the default (non-HOA) Locksmith build
-  must not load it at all, and kerifoundation's existing Task 2b exclusion
-  under a peel brand must not regress.
+- Brand-gating (HOA #4 refinement): the carrier entry point — a
+  ``BUNDLED_ONLY_PLUGIN_IDS`` member — is only loaded by
+  ``PluginManager.discover()`` when the active brand explicitly lists it
+  under ``brand().bundled_plugins`` (``[plugins] bundled`` in brand.toml);
+  the default (non-HOA) Locksmith build must not load it at all, and
+  kerifoundation's existing Task 2b ``HOA_PEELED_PLUGIN_IDS`` exclusion under
+  a peel brand must not regress.
 """
 from __future__ import annotations
 
@@ -108,29 +110,36 @@ def fake_app():
     return app
 
 
-def _fake_brand(*, peel_core_pages: bool):
-    return SimpleNamespace(peel_core_pages=peel_core_pages)
+def _fake_brand(*, peel_core_pages: bool = False, bundled_plugins: tuple = ()):
+    return SimpleNamespace(
+        peel_core_pages=peel_core_pages, bundled_plugins=bundled_plugins,
+    )
 
 
-def test_carrier_loads_under_peel_brand(isolated_plugin_root, fake_app, monkeypatch, qtbot):
+def test_carrier_loads_when_brand_lists_it(isolated_plugin_root, fake_app, monkeypatch, qtbot):
     # discover() runs CarrierPlugin.initialize(), which builds the real
     # CarrierPlaceholderPage QWidget — qtbot guarantees a QApplication
     # exists for that construction.
+    # Mirrors the real usurance brand.toml: peel_core_pages True (kerifoundation
+    # excluded) AND carrier explicitly bundled — the two gates are orthogonal,
+    # but this is the realistic combination.
     monkeypatch.setattr(
-        manager_module, "brand", lambda: _fake_brand(peel_core_pages=True),
+        manager_module, "brand",
+        lambda: _fake_brand(peel_core_pages=True, bundled_plugins=("carrier",)),
     )
     mgr = PluginManager(fake_app, keri_base=isolated_plugin_root / "keri")
     mgr.discover()
     assert "carrier" in mgr.loaded_ids()
     carrier = mgr.get_plugin("carrier")
     assert isinstance(carrier, VaultPlugin)
-    # Task 2b's kerifoundation exclusion must not regress under the peel brand.
+    # Task 2b's kerifoundation exclusion must not regress under a bundled brand.
     assert "kerifoundation" not in mgr.loaded_ids()
 
 
-def test_carrier_skipped_under_default_brand(isolated_plugin_root, fake_app, monkeypatch):
+def test_carrier_skipped_when_brand_omits_it(isolated_plugin_root, fake_app, monkeypatch):
     monkeypatch.setattr(
-        manager_module, "brand", lambda: _fake_brand(peel_core_pages=False),
+        manager_module, "brand",
+        lambda: _fake_brand(bundled_plugins=()),
     )
     mgr = PluginManager(fake_app, keri_base=isolated_plugin_root / "keri")
     mgr.discover()
@@ -142,8 +151,8 @@ def test_carrier_skipped_under_default_brand(isolated_plugin_root, fake_app, mon
 
 def test_carrier_skipped_under_ambient_default_brand(isolated_plugin_root, fake_app):
     """No monkeypatch of brand() at all — the real default brand (Locksmith,
-    peel_core_pages=False) must not load carrier. This is the hard
-    constraint: the DEFAULT locksmith build must stay carrier-free."""
+    bundled_plugins=()) must not load carrier. This is the hard constraint:
+    the DEFAULT locksmith build must stay carrier-free."""
     mgr = PluginManager(fake_app, keri_base=isolated_plugin_root / "keri")
     mgr.discover()
     assert "carrier" not in mgr.loaded_ids()

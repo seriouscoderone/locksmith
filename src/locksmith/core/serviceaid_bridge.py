@@ -8,7 +8,7 @@ doer/signal machinery, WITHOUT touching Locksmith's peer-aware delivery
 (`locksmith.peer.posting.PeerAwarePoster`), which stays host-owned per the
 framework spec (Sec 5.1/8).
 
-Five pieces:
+Six pieces:
 
 - `QtProgressSink` adapts `keri_serviceaid.progress.ProgressSink` onto
   Locksmith's `DoerSignalBridge`, so serviceaid's progress emissions surface
@@ -45,9 +45,17 @@ Five pieces:
   granter AID from the original grant's `.ked["i"]` (`cloneMessage` returns
   a plain `(serder, pathed)` 2-tuple). Delivery failure is logged, never
   fatal -- the LOCAL landing (`admit_grant` succeeding) is what gates.
+- `ServiceaidApplyDoer` frames an IPEX apply (a role/credential request,
+  HOA #4) via `frame_apply_for(return_raw=True)` and mirrors
+  `ServiceaidGrantDoer.grantDo`'s delivery tail minus credential framing --
+  an apply carries NO ACDC. There is no legacy apply path: `make_apply_doer`
+  is serviceaid-only, and ineligible habs fail loudly (`None` + an
+  `apply_failed` emission) instead of falling back. A non-"peer" delivery
+  channel is likewise a loud failure, not a silent mailbox fallback.
 - `make_issue_doer`/`make_grant_doer`/`make_admit_doer` are the routing
   chokepoint: eligible habs get a bridge doer, everyone else gets the legacy
   doer with equivalent kwargs. No behavior change for ineligible habs.
+  `make_apply_doer` is the exception: it has no legacy fallback.
 """
 from types import SimpleNamespace
 
@@ -58,7 +66,7 @@ from keri.peer import exchanging
 from keri.vdr import credentialing
 
 from keri_serviceaid.providers import (
-    admit_grant, frame_grant_for, issue_credential,
+    admit_grant, frame_apply_for, frame_grant_for, issue_credential,
 )
 
 from locksmith.core.remoting import message_version
@@ -424,6 +432,225 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 },
             )
             return
+
+
+class ServiceaidApplyDoer(doing.DoDoer):
+    """Frames an IPEX apply (a role/credential request) via
+    `keri_serviceaid.providers.frame_apply_for(return_raw=True)`, then
+    delivers it through Locksmith's existing peer-aware transport
+    (`PeerAwarePoster`) -- the SAME delivery tail `ServiceaidGrantDoer`
+    uses, minus credential framing: an apply carries NO ACDC (it is the
+    request that precedes one).
+
+    Mirrors `ServiceaidGrantDoer.grantDo`'s tail:
+
+    - stream the sender's own KEL (`hab.db.clonePreIter`) so a
+      first-contact recipient can verify the apply's signature without
+      pre-resolved key state -- the apply path has no credential to hang
+      `credentialing.sendArtifacts` off of, so this streams the AID's own
+      key events directly instead;
+    - queue the in-band OOBI (`_inband_oobi_msgs`, spec Sec 6), gated on
+      peer-mode settings and this AID's peer exposure, same as `grantDo`;
+    - send the framed apply exn last;
+    - extend self with a `DoDoer` wrapping `.deliver()`'s doers, wait for
+      it to finish, then read `.last_outcome` for the transport channel;
+    - only after a confirmed peer-channel delivery, parse the apply into
+      the wallet's own exchanger (`app.vault.exc`) so it lands in
+      `hby.db.exns` for `keri_serviceaid.providers.list_sent_applies`
+      (PENDING derivation). Persist-AFTER-delivery deliberately diverges
+      from `grantDo`'s persist-before: a failed-delivery apply must not
+      derive PENDING (see the inline comment in `applyDo`).
+
+    Direct-mode contract: a non-"peer" channel is a FAILURE, not a silent
+    mailbox fallback (mirrors `RequestFlow`'s send-outcome semantics,
+    `request_flow.py:391-401`) -- an apply that only reached a mailbox
+    means the recipient's application isn't listening, and the requester
+    needs to know that rather than wait on a request that may never be
+    seen.
+
+    Single-sig/unwitnessed only; route ineligible habs via
+    `make_apply_doer` -- there is no legacy apply path (serviceaid-only).
+    """
+
+    def __init__(self, app, *, schema_said, recipient, hab_pre,
+                 message: str = "", **kwa):
+        self.app = app
+        self.schema_said = schema_said
+        self.recipient = recipient
+        self.hab_pre = hab_pre
+        self.message = message
+
+        doers = [doing.doify(self.applyDo)]
+        super(ServiceaidApplyDoer, self).__init__(doers=doers, **kwa)
+
+    def applyDo(self, tymth, tock=0.0, **opts):
+        """Generator method for framing + delivering the serviceaid apply."""
+        self.wind(tymth)
+        self.tock = tock
+        _ = (yield self.tock)
+
+        vault = self.app.vault
+        sink = QtProgressSink(vault.signals)
+
+        try:
+            hab = vault.hby.habs.get(self.hab_pre)
+            if not hab:
+                logger.error(f"Hab not found for prefix: {self.hab_pre}")
+                sink.on_event(
+                    "ApplyFlow",
+                    "apply_failed",
+                    {
+                        'error': 'Requesting identifier not found',
+                        'success': False,
+                        'schema_said': self.schema_said,
+                    },
+                )
+                return
+
+            apply_said, raw = frame_apply_for(
+                vault.hby, hab,
+                schema_said=self.schema_said,
+                recipient=self.recipient,
+                message=self.message,
+                sink=sink,
+                return_raw=True,
+            )
+
+            # Split the framed message the same way keri_serviceaid's own
+            # PostmanDeliverer does: serder + trailing attachment bytes.
+            serder, attachment = _split_message(raw)
+
+            postman = PeerAwarePoster(
+                hby=vault.hby,
+                hab=hab,
+                recp=self.recipient,
+                baser=vault.db,
+                topic="credential",
+            )
+
+            # Receiver-side verifiability: stream our own KEL first (no
+            # credential exists yet to hang sendArtifacts off of -- an
+            # apply requests one), then the in-band reply-as-OOBI, then
+            # the apply exn (grantDo's ordering: key state, then
+            # reachability, then the exn).
+            for msg in hab.db.clonePreIter(pre=hab.pre):
+                oserder, oatc = _split_message(msg)
+                postman.send(serder=oserder, attachment=oatc)
+
+            db = getattr(vault, "db", None)
+            settings = db.peerSettings.get(keys=("default",)) if db is not None else None
+            for oserder, oatc in _inband_oobi_msgs(hab, settings):
+                postman.send(serder=oserder, attachment=oatc)
+
+            # Send the framed apply exn last, after everything needed to
+            # verify it.
+            postman.send(serder=serder, attachment=attachment)
+
+            # Deliver all messages -- verbatim shape of grantDo's tail.
+            doer = doing.DoDoer(doers=postman.deliver())
+            self.extend([doer])
+
+            while not doer.done:
+                yield self.tock
+
+            channel = (
+                postman.last_outcome.value if postman.last_outcome else "mailbox"
+            )
+
+            if channel != "peer":
+                logger.info(
+                    f"Apply message {apply_said} did not reach "
+                    f"{self.recipient} over the peer channel (channel="
+                    f"{channel})"
+                )
+                sink.on_event(
+                    "ApplyFlow",
+                    "apply_failed",
+                    {
+                        'success': False,
+                        'schema_said': self.schema_said,
+                        'error': "the administrator's application isn't "
+                                 "reachable — is it running?",
+                    },
+                )
+                return
+
+            # Parse the now-DELIVERED apply into the WALLET's exchanger so
+            # it lands in hby.db.exns, where list_sent_applies enumerates
+            # it for derive_role_states's PENDING derivation. Deliberately
+            # AFTER the peer-success confirmation above (unlike grantDo,
+            # whose parseOne precedes delivery): outstanding = the admin
+            # could have seen it; a failed-delivery apply must not derive
+            # PENDING (spec direct-mode loud-failure contract) -- the
+            # apply_failed banner and a persisted "Requested" state would
+            # contradict each other, sticking the card at PENDING with no
+            # retry affordance across restarts. Same coroutine, no race: a
+            # grant can only arrive after delivery. parseOne gets a bytes()
+            # copy so `raw` stays intact (frame_apply_for did not persist
+            # into the vault's exc).
+            parsing.Parser().parseOne(ims=bytes(raw), exc=vault.exc,
+                                      version=message_version(raw))
+
+            logger.info(
+                f"Apply message {apply_said} sent successfully to "
+                f"{self.recipient} channel={channel}"
+            )
+
+            sink.on_event(
+                "ApplyFlow",
+                "apply_sent",
+                {
+                    'success': True,
+                    'said': apply_said,
+                    'schema_said': self.schema_said,
+                    'recipient': self.recipient,
+                    'channel': channel,
+                },
+            )
+            return
+
+        except Exception as e:
+            logger.exception(f"ServiceaidApplyDoer failed: {e}")
+            sink.on_event(
+                "ApplyFlow",
+                "apply_failed",
+                {
+                    'error': str(e),
+                    'success': False,
+                    'schema_said': self.schema_said,
+                },
+            )
+            return
+
+
+def make_apply_doer(app, hab, **kwargs):
+    """Apply-request routing chokepoint (HOA #4): eligible habs (single-sig,
+    unwitnessed) get the bridge doer; ineligible habs (GroupHab, witnessed)
+    fail loudly instead of degrading -- there is no legacy apply path.
+
+    Accepts the bridge doer's kwarg vocabulary: `schema_said`, `recipient`,
+    `message`. `hab_pre` defaults to `hab.pre`, matching `make_grant_doer`.
+    """
+    if not serviceaid_eligible(hab):
+        app.vault.signals.emit_doer_event(
+            "ApplyFlow",
+            "apply_failed",
+            {
+                'success': False,
+                'error': 'role requests require a single-sig, unwitnessed '
+                         'identifier',
+                'schema_said': kwargs.get("schema_said", ""),
+            },
+        )
+        return None
+
+    return ServiceaidApplyDoer(
+        app,
+        schema_said=kwargs["schema_said"],
+        recipient=kwargs["recipient"],
+        hab_pre=kwargs.get("hab_pre") or hab.pre,
+        message=kwargs.get("message", ""),
+    )
 
 
 def make_issue_doer(app, hab, **kwargs):

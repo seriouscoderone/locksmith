@@ -54,6 +54,12 @@ class Brand:
     default_aid_alias: str = ""
     default_witnesses: list[str] = field(default_factory=list)
     default_toad: int = 0
+    # --- [plugins] section: which bundled-only in-tree plugins (see
+    # plugins/manager.py's BUNDLED_ONLY_PLUGIN_IDS) this brand activates.
+    # Which surfaces a brand composes is brand config, never a framework
+    # hardcode (HOA #4) — a non-HOA brand.toml simply omits [plugins] and
+    # stays at this empty, inert default. ---
+    bundled_plugins: tuple[str, ...] = ()
     # --- [egf] / [onboarding] sections: which ecosystem-governance-framework
     # doc a brand pins and whether the HOA onboarding flow is exposed. A
     # non-onboarding brand simply omits both tables and stays at these inert
@@ -77,6 +83,7 @@ _brand_source_dir: Path | None = None
 
 def _from_dict(doc: dict) -> Brand:
     bs = doc.get("bootstrap", {}) or {}
+    pl = doc.get("plugins", {}) or {}
     eg = doc.get("egf", {}) or {}
     ob = doc.get("onboarding", {}) or {}
     return Brand(
@@ -96,6 +103,7 @@ def _from_dict(doc: dict) -> Brand:
         default_aid_alias=bs.get("default_aid_alias", ""),
         default_witnesses=list(bs.get("default_witnesses", [])),
         default_toad=int(bs.get("default_toad", 0)),
+        bundled_plugins=tuple(pl.get("bundled", [])),
         egf_source=eg.get("source", _DEFAULT.egf_source),
         egf_document_said=eg.get("document_said", _DEFAULT.egf_document_said),
         egf_accept_phases=tuple(eg.get("accept_phases", _DEFAULT.egf_accept_phases)),

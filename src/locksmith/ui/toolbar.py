@@ -46,6 +46,7 @@ class LocksmithToolbar(QToolBar):
         self.setFloatable(False)
         self.notifications_button_doer = None
         self._apply_styles()
+        self._contributed: dict[str, "QAction"] = {}
 
         # Build toolbar for homepage (default)
         self._build_homepage_toolbar()
@@ -124,7 +125,7 @@ class LocksmithToolbar(QToolBar):
         self.addWidget(self.vault_name_label)
 
         # Add spacer to push next items to the right
-        self.addWidget(create_spacer(expanding=True))
+        self._left_anchor_action = self.addWidget(create_spacer(expanding=True))
 
         # Peer-mode network-presence indicator. Always-visible at-a-
         # glance status for the direct peer listener, so the user
@@ -205,6 +206,25 @@ class LocksmithToolbar(QToolBar):
         """
         if hasattr(self, "vault_name_label"):
             self.vault_name_label.setText(name or "")
+
+    def add_action(self, action_id: str, widget, *, section: str = "right") -> None:
+        """Contribution seam (HOA #4): plugins add a widget to the top toolbar.
+
+        section "left" inserts before the expanding spacer (next to the app
+        title); "right" inserts before the Plugins button (the tool cluster).
+        Re-adding an existing action_id replaces the previous widget.
+        """
+        if action_id in self._contributed:
+            self.remove_action(action_id)
+        anchor = (self._left_anchor_action if section == "left"
+                  else self.plugins_action)
+        self._contributed[action_id] = self.insertWidget(anchor, widget)
+
+    def remove_action(self, action_id: str) -> None:
+        """Remove a contributed toolbar action; unknown ids are a no-op."""
+        action = self._contributed.pop(action_id, None)
+        if action is not None:
+            self.removeAction(action)
 
     def set_vaults_active(self, active: bool):
         """

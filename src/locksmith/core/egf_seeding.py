@@ -36,7 +36,7 @@ from typing import Optional, Tuple
 
 from keri_serviceaid.egf.config import EgfConfig, make_resolver
 from keri_serviceaid.egf.documents import EgfDocument
-from keri_serviceaid.egf.onboarding import derive_request
+from keri_serviceaid.egf.onboarding import derive_apply_request, derive_request
 from keri_serviceaid.egf.resolver import EgfResolver
 
 from locksmith.core.branding import Brand, egf_local_dir
@@ -80,7 +80,21 @@ class EgfSeeder:
         so a LATER call WITH `issuer_aid` (e.g. `RequestFlow.submit`, which
         always resolves one or fails closed first) retries the registry step
         cleanly.
+
+        Apply-mode roles (Task 10, HOA #4 — `role.onboarding.apply_mode`,
+        i.e. no `request_micro_app_said`, a bare IPEX apply) branch to
+        `_seed_apply_mode_schemas` instead: nothing is self-issued for an
+        apply-mode role (there is no application credential, just the grant
+        the holder is requesting), so there is no registry to create at
+        all — `derive_request` would in fact reject an apply-mode role_id
+        outright (see its own docstring), which is exactly why this checks
+        the mode FIRST, before ever calling it.
         """
+        role = self.egf_doc.role(role_id)
+        if role.onboarding is not None and role.onboarding.apply_mode:
+            self._seed_apply_mode_schemas(role_id)
+            return
+
         hby = self.app.vault.hby
         rgy = self.app.vault.rgy
         plan = derive_request(self.resolver, self.egf_doc, role_id)
@@ -137,6 +151,40 @@ class EgfSeeder:
             # inside the vault's `QtTask`/`Doist`, so extending it — not the
             # `QtTask` wrapper — is how a freshly built doer joins the running
             # vault.
+            self.app.vault.extend(doers)
+
+    def _seed_apply_mode_schemas(self, role_id: str) -> None:
+        """Apply-mode sibling of `seed_for_role`'s form-mode branch above:
+        pin ONLY `derive_apply_request(egf, role_id).schema_saids_to_seed`
+        (the grant credential's schema and, when chained, its own
+        application schema) into `hby.db.schema` — the same Schemer/pin
+        idiom the form branch uses (`resolve_schema` + as-parsed
+        `json.dumps` re-encoding) — and skip registry creation entirely:
+        nothing is self-issued for an apply-mode role (there is no
+        application credential the holder mints), so there is never a
+        `create_registry=True` doer to schedule here, unlike the one
+        registry-bearing SAID the form branch special-cases."""
+        hby = self.app.vault.hby
+        plan = derive_apply_request(self.egf_doc, role_id)
+
+        doers = []
+        for said in plan.schema_saids_to_seed:
+            if hby.db.schema.get(keys=(said,)) is not None:
+                continue  # already seeded — idempotent no-op
+
+            schema_sad = self.resolver.resolve_schema(said)
+            # as-parsed rule: see the form branch's identical comment above —
+            # re-serializing must NOT re-sort keys, or the SAID LoadSchemaDoer
+            # re-derives from these bytes would no longer match `said`.
+            file_content = json.dumps(schema_sad).encode("utf-8")
+            doers.append(LoadSchemaDoer(
+                app=self.app,
+                file_content=file_content,
+                create_registry=False,
+                issuer_aid=None,
+            ))
+
+        if doers:
             self.app.vault.extend(doers)
 
 

@@ -447,6 +447,65 @@ def test_vault_ui_init_swallows_plugin_registration_error(caplog):
     nav_menu.register_plugin_section.assert_not_called()
 
 
+def test_vault_ui_none_menu_entry_skips_nav_registration():
+    """A shell-style plugin (HOA #4) that registers its own menu entries
+    directly (or none at all) returns None from get_menu_entry() -- the
+    manager must still register its static pages, but skip the nav-menu
+    registration call entirely rather than passing None through."""
+    from locksmith.plugins.base import VaultPlugin
+
+    class _NoMenuEntry(VaultPlugin):
+        plugin_id = "shell"
+        required_credential = None
+
+        def initialize(self, app): ...
+        def on_vault_opened(self, vault): ...
+        def on_vault_closed(self, vault, *, clear=False): ...
+        def get_menu_entry(self): return None
+        def get_menu_section(self): return []
+        def get_pages(self): return {"shell": MagicMock()}
+
+    mgr = object.__new__(m.PluginManager)
+    mgr._plugins = {"shell": _NoMenuEntry()}
+    vault_page = MagicMock()
+    nav_menu = MagicMock()
+
+    mgr.discover_and_initialize_vault_ui(vault_page, nav_menu)
+
+    vault_page.register_page.assert_called_once()
+    nav_menu.register_plugin_section.assert_not_called()
+
+
+def test_vault_ui_ready_fanned_out_after_registration():
+    """After the registration loop, every VaultPlugin's on_vault_ui_ready
+    hook is fanned out exactly once with the vault_page host (HOA #4 shell
+    seam) -- this is what lets a shell plugin register conditional surfaces
+    (multiple pages/menu entries, error fallbacks) directly."""
+    from locksmith.plugins.base import VaultPlugin
+
+    class _Shell(VaultPlugin):
+        plugin_id = "shell"
+        required_credential = None
+
+        def initialize(self, app): ...
+        def on_vault_opened(self, vault): ...
+        def on_vault_closed(self, vault, *, clear=False): ...
+        def get_menu_entry(self): return None
+        def get_menu_section(self): return []
+        def get_pages(self): return {}
+
+    shell = _Shell()
+    shell.on_vault_ui_ready = MagicMock()
+    mgr = object.__new__(m.PluginManager)
+    mgr._plugins = {"shell": shell}
+    vault_page = MagicMock()
+    nav_menu = MagicMock()
+
+    mgr.discover_and_initialize_vault_ui(vault_page, nav_menu)
+
+    shell.on_vault_ui_ready.assert_called_once_with(vault_page)
+
+
 # --------------------------------------------------------------------------
 # Real HoaVaultPage host methods (offscreen UI) — page + menu add/remove
 # --------------------------------------------------------------------------

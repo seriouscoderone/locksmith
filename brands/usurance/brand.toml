@@ -66,11 +66,18 @@ deploy_config = "deploy_config.json"
 # Witnessless POC per backlog — real witness defaults land later.
 [bootstrap]
 peel_core_pages    = true
-default_vault_name = "Carrier"
+default_vault_name = "Default"
 default_passcode   = ""          # unencrypted for POC; owner may set a default later
-default_aid_alias  = "carrier"
+default_aid_alias  = "default"
 default_witnesses  = []          # witnessless POC (backlog witness defaults)
 default_toad       = 0
+
+# Bundled-only in-tree plugins this brand activates (HOA #4): which surfaces a
+# brand composes is brand config, never a framework hardcode. The usurance
+# brand is the multi-role internal-roles HOA (actuary + product designer);
+# the carrier example is retired to tests/fixtures/carrier_egf_bundle/.
+[plugins]
+bundled = ["hoa_shell", "actuary", "product_designer"]
 
 # Ecosystem Governance Framework this brand pins (bundled verbatim,
 # content-addressed, under brands/usurance/egf/ — see
@@ -81,8 +88,8 @@ default_toad       = 0
 # caught by tests/core/test_usurance_egf_bundle.py.
 [egf]
 source = "local"
-document_said = "ECf6PHHpOWWZ3ifPemqpJ6Dx0wE4HA50ucqtGhNNMUsV"
-accept_phases = ["bootstrap", "production"]   # pilot opt-in; library default is production-only
+document_said = "EPyySfoR14je2B0cxb5xL0Ep9pf7qRcUrd3zAUY3iuF-"
+accept_phases = ["production"]   # usurance-admin is a genuine production authority
 
 # HOA onboarding flow (workspace setup + credential request) is exposed for
 # this brand's first-run experience.
