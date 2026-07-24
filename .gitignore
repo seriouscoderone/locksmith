@@ -229,3 +229,16 @@ brands/*/deploy_config.json
 # scripts/devbuild-macos.sh loop stages the same Sparkle.framework here.
 packaging/macos/Sparkle.framework/
 packaging/windows/WinSparkle*/
+
+# Generated packaging artifacts — rendered per-brand into src/locksmith/release/<brand>/
+# by scripts/brand_apply.py (Locksmith.wxs, dmg-layout.json) and no longer emitted
+# to these tracked locations. Kept ignored so a stray legacy render can't be committed.
+packaging/wix/Locksmith.wxs
+packaging/dmg/layout.json
+# Per-brand generated bundles (assets.rcc, brand.json, wxs, dmg-layout.json, egf/, icons).
+src/locksmith/release/assets.rcc
+src/locksmith/release/Locksmith.wxs
+src/locksmith/release/dmg-layout.json
+src/locksmith/release/AppIcon.icns
+src/locksmith/release/AppIcon.ico
+src/locksmith/release/*/

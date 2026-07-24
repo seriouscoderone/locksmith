@@ -37,12 +37,11 @@ def test_render_dmg_layout():
     assert layout["icons"][0]["name"] == "Locksmith.app"
 
 
-def test_render_wxs_locksmith_matches_committed_wxs_exactly():
-    # The committed Locksmith.wxs must equal render_wxs(locksmith) byte-for-byte,
-    # so brand_apply --brand locksmith never dirties the tracked file.
-    from pathlib import Path
+def test_render_wxs_locksmith_matches_golden():
+    # The rendered wxs is generated (untracked); assert it matches a checked-in
+    # golden so template/manifest drift is caught without tracking the output.
     repo = Path(__file__).resolve().parents[3]
     template = (repo / "packaging" / "wix" / "Locksmith.wxs.in").read_text()
-    committed = (repo / "packaging" / "wix" / "Locksmith.wxs").read_text()
+    golden = (repo / "tests" / "unit" / "branding" / "fixtures" / "locksmith.wxs.golden").read_text()
     rendered = brandlib.render_wxs(brandlib.load_brand_manifest("locksmith"), template)
-    assert rendered == committed
+    assert rendered == golden
