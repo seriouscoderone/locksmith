@@ -208,6 +208,10 @@ src/locksmith/release/deploy_config.json
 # See locksmith.core.branding.load_brand.
 src/locksmith/release/brand.json
 
+# Generated Qt resource module — replaced by the per-brand release/assets.rcc
+# built by scripts/brand_apply.py. Never committed.
+src/locksmith/resources_rc.py
+
 # Per-brand trust material — the REAL publisher anchor + deploy_config for each
 # brand carry real AIDs/federation domains and are never committed. Only
 # brands/example/*.example.json placeholders and brands/<brand>/brand.toml
