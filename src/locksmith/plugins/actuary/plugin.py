@@ -51,7 +51,9 @@ class ActuaryPlugin(VaultPlugin):
         return {"actuary": self._page}   # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:
-        return MenuButton(icon=QIcon(), label="Actuarial")
+        return MenuButton(
+            icon=QIcon(":/assets/material-icons/badge.svg"), label="Actuarial"
+        )
 
     def get_menu_section(self) -> list[QWidget]:
         return []

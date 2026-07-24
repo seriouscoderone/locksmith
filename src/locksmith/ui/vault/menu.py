@@ -19,6 +19,11 @@ if TYPE_CHECKING:
 
 logger = help.ogler.getLogger(__name__)
 
+# Generic glyph for a plugin menu entry that supplies no icon of its own
+# (the puzzle-piece "plugin" icon). Keeps the side panel legible without
+# coupling the framework to any brand/domain-specific artwork.
+_DEFAULT_PLUGIN_ICON = ":/assets/material-icons/extension.svg"
+
 
 class MenuButton(QPushButton):
     """
@@ -36,6 +41,14 @@ class MenuButton(QPushButton):
             is_lock_button: Whether this is the lock button (has special styling)
         """
         super().__init__(parent)
+        # Domain-neutral default: a plugin (e.g. a bundled role-plugin) may
+        # register a menu entry without supplying an icon (QIcon()); fall back
+        # to the generic plugin glyph so the side panel never shows a blank
+        # entry. Core nav buttons always pass a real icon, so this is inert
+        # for them. The resource is registered at app start (main.py imports
+        # resources_rc); if unavailable the button simply stays icon-less.
+        if icon is None or icon.isNull():
+            icon = QIcon(_DEFAULT_PLUGIN_ICON)
         self.icon_obj = icon
         self.label_text = label
         self.is_active = False

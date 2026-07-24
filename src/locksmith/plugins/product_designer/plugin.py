@@ -51,7 +51,10 @@ class ProductDesignerPlugin(VaultPlugin):
         return {"product_designer": self._page}   # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:
-        return MenuButton(icon=QIcon(), label="Insurance Product Design")
+        return MenuButton(
+            icon=QIcon(":/assets/material-icons/schema.svg"),
+            label="Insurance Product Design",
+        )
 
     def get_menu_section(self) -> list[QWidget]:
         return []
