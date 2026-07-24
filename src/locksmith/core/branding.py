@@ -159,7 +159,63 @@ def egf_local_dir() -> Path | None:
     return candidate if candidate.is_dir() else None
 
 
+def brand_source_dir() -> Path | None:
+    """Directory the active brand was resolved from (populated by load_brand)."""
+    return _brand_source_dir
+
+
+def brand_assets_rcc() -> Path | None:
+    """The compiled Qt bundle sibling to the resolved brand source, or None."""
+    if _brand_source_dir is None:
+        return None
+    candidate = _brand_source_dir / "assets.rcc"
+    return candidate if candidate.is_file() else None
+
+
+def register_brand_resources() -> Path:
+    """Register the active brand's assets.rcc — the single atomic asset surface.
+
+    Must run before any ``:/assets/*`` access. Ensures the brand source dir is
+    resolved (via ``brand()``), then registers ``<dir>/assets.rcc`` so logos,
+    splash, fonts AND config all come from the same brand source. Raises
+    ``RuntimeError`` when no bundle is found (a partial/unbranded state is not
+    allowed to boot) or when Qt registration fails.
+    """
+    from PySide6.QtCore import QResource
+    brand()  # populate _brand_source_dir as a side effect
+    rcc = brand_assets_rcc()
+    if rcc is None:
+        raise RuntimeError(
+            "No brand asset bundle (assets.rcc) found. Build one with "
+            "`python scripts/brand_apply.py --brand locksmith` (writes "
+            "src/locksmith/release/assets.rcc), or point LOCKSMITH_BRAND_CONFIG "
+            "at a brand.json whose directory contains assets.rcc."
+        )
+    if not QResource.registerResource(str(rcc)):
+        raise RuntimeError(f"Failed to register brand asset bundle: {rcc}")
+    global _registered_rcc
+    _registered_rcc = rcc
+    return rcc
+
+
+_registered_rcc: Path | None = None
+
+
+def unregister_brand_resources() -> None:
+    """Detach the bundle registered by register_brand_resources() (test isolation).
+
+    No-op if nothing is registered. The running app never needs this; tests use
+    it to reset between brand switches (Qt resource overlap is first-wins).
+    """
+    global _registered_rcc
+    if _registered_rcc is not None:
+        from PySide6.QtCore import QResource
+        QResource.unregisterResource(str(_registered_rcc))
+        _registered_rcc = None
+
+
 def _reset_cache_for_tests() -> None:
     global _brand_source_dir
+    unregister_brand_resources()
     brand.cache_clear()
     _brand_source_dir = None
