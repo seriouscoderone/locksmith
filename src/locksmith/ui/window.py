@@ -15,7 +15,10 @@ from PySide6.QtWidgets import (
 from keri import help
 
 from locksmith.core.apping import LocksmithApplication
-from locksmith.core.bootstrapping import bootstrap_default_environment
+from locksmith.core.bootstrapping import (
+    bootstrap_default_environment,
+    hoa_workspace_vault,
+)
 from locksmith.core.branding import brand
 from locksmith.core.configing import LocksmithConfig
 from locksmith.ui.home import HomePage
@@ -207,10 +210,16 @@ class LocksmithWindow(QMainWindow):
         # keep the exact silent-bootstrap path from before this branch
         # existed; the default Locksmith brand carries neither and is
         # unaffected either way.
-        if brand().onboarding_enabled and not self.app.environments():
-            QTimer.singleShot(0, self._show_first_run_setup)
-        elif brand().default_vault_name:
-            QTimer.singleShot(0, self._run_default_bootstrap)
+        # A peeled HOA build has NO vault chooser, so "do nothing" is never a
+        # valid outcome here: if neither branch below fires, the user is left on
+        # the empty HomePage with no way to reach a workspace. Both old
+        # conditions keyed off "the machine has zero vaults", which is false on
+        # every launch after the first (and false from the start when an
+        # unrelated vault exists in the shared ~/.keri base), so the peeled
+        # build stranded the user on a blank page. Resolve the brand's OWN
+        # workspace instead, and resume it when it already exists.
+        if brand().peel_core_pages or brand().default_vault_name:
+            QTimer.singleShot(0, self._resume_or_bootstrap_hoa)
 
         # --- App-update menu + controller wiring (Phase 5) ---
         self._install_help_menu()
@@ -363,6 +372,38 @@ class LocksmithWindow(QMainWindow):
             parent=self,
         )
         dlg.open()
+
+    def _resume_or_bootstrap_hoa(self) -> None:
+        """Deferred slot (HOA brands only): land the user in a workspace.
+
+        Exactly one of three outcomes, and never "nothing":
+
+        * the brand's workspace vault already exists -> resume it (unlock via
+          the same targeted passcode dialog the ``--vault`` launch path uses);
+        * no workspace yet + onboarding brand -> first-run ``SetupPage``;
+        * no workspace yet + silent-bootstrap brand -> create it.
+
+        The resume branch is what a peeled build lacked: with the vault chooser
+        peeled away, an existing-but-unopened workspace was unreachable and the
+        window sat on an empty HomePage.
+        """
+        workspace = hoa_workspace_vault(self.app, brand())
+        if workspace is not None:
+            logger.info("hoa.resume vault=%s", workspace)
+            if getattr(self.app, "vault", None) is not None \
+                    and getattr(self.app, "name", None) == workspace:
+                # Already open (app tracks one vault: apping.open_vault sets
+                # .name/.vault) — just show it rather than re-prompting.
+                self.nav_manager.navigate_to(Pages.VAULT, vault_name=workspace)
+            else:
+                self.open_vault_targeted(workspace)
+            return
+        if brand().onboarding_enabled:
+            logger.info("hoa.first_run reason=no_workspace path=setup")
+            self._show_first_run_setup()
+        elif brand().default_vault_name:
+            logger.info("hoa.first_run reason=no_workspace path=silent_bootstrap")
+            self._run_default_bootstrap()
 
     def _run_default_bootstrap(self) -> None:
         """Deferred QTimer.singleShot slot (HOA brands only, first run).

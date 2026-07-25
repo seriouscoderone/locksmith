@@ -103,6 +103,10 @@ def test_onboarding_branch_uses_deferred_setup_page_scheduling():
           brands keep the exact Task 5 behavior;
       (c) both are wired after ``on_app_started()``, same ordering
           discipline as Task 5.
+
+    Both branches now live in the ``_resume_or_bootstrap_hoa`` dispatcher that
+    ``__init__`` schedules, so the deferral/ordering is asserted on that single
+    scheduling point and the branch structure on the dispatcher's own source.
     """
     from locksmith.ui.window import LocksmithWindow
 
@@ -110,33 +114,37 @@ def test_onboarding_branch_uses_deferred_setup_page_scheduling():
 
     app_started_idx = source.index("on_app_started(")
 
-    onboarding_idx = source.index("onboarding_enabled")
-    assert onboarding_idx > app_started_idx, (
-        "the onboarding first-run branch must be wired after on_app_started()"
+    dispatch_idx = source.index("_resume_or_bootstrap_hoa")
+    assert dispatch_idx > app_started_idx, (
+        "the HOA first-run dispatcher must be wired after on_app_started()"
     )
-
-    setup_idx = source.index("_show_first_run_setup")
-    preceding_setup = source[max(0, setup_idx - 200):setup_idx]
-    assert "QTimer.singleShot" in preceding_setup, (
-        "_show_first_run_setup must be deferred via QTimer.singleShot, "
+    preceding = source[max(0, dispatch_idx - 400):dispatch_idx]
+    assert "QTimer.singleShot" in preceding, (
+        "the HOA dispatcher must be deferred via QTimer.singleShot, "
         "not invoked inline in __init__"
     )
 
-    boot_idx = source.index("_run_default_bootstrap")
-    assert boot_idx > app_started_idx, (
-        "the silent-bootstrap elif branch must remain wired after on_app_started()"
+    dispatch = inspect.getsource(LocksmithWindow._resume_or_bootstrap_hoa)
+
+    onboarding_idx = dispatch.index("onboarding_enabled")
+    setup_idx = dispatch.index("_show_first_run_setup")
+    boot_idx = dispatch.index("_run_default_bootstrap")
+    assert onboarding_idx < boot_idx, (
+        "the onboarding branch must be checked before the silent-bootstrap branch"
     )
-    preceding_boot = source[max(0, boot_idx - 400):boot_idx]
-    assert "QTimer.singleShot" in preceding_boot, (
-        "the silent-bootstrap slot must stay deferred via QTimer.singleShot"
-    )
-    assert "default_vault_name" in preceding_boot, (
+    assert "default_vault_name" in dispatch, (
         "the silent-bootstrap branch must stay guarded by brand().default_vault_name"
     )
 
-    # The two branches must be mutually exclusive (if/elif), not two
+    # The two creation branches must be mutually exclusive (if/elif), not two
     # independent ifs that could both fire for the same brand.
-    between = source[onboarding_idx:boot_idx]
+    between = dispatch[setup_idx:boot_idx]
     assert "elif" in between, (
         "the silent-bootstrap branch must be an elif off the onboarding branch"
+    )
+
+    # And neither may fire when the brand's workspace already exists — the
+    # resume branch must return before them.
+    assert "hoa_workspace_vault(" in dispatch, (
+        "the dispatcher must resolve the brand's existing workspace first"
     )

@@ -23,11 +23,40 @@ def _brand(**over):
     return b
 
 
-def test_noop_when_a_vault_already_exists():
+def test_noop_when_the_brands_own_workspace_already_exists():
+    """The guard is workspace-scoped: the vault this brand would create is
+    already there, so leave it alone (ui/window.py resumes it instead)."""
     app = MagicMock()
-    app.environments.return_value = ["existing"]
+    app.environments.return_value = ["Carrier"]
     assert bootstrap_default_environment(app, _brand()) is False
     app.open_vault.assert_not_called()
+    app.coordinator.claim.assert_not_called()
+
+
+def test_bootstraps_even_when_unrelated_vaults_exist(monkeypatch):
+    """Regression: the guard used to be ``if app.environments()`` — ANY vault
+    on the machine made the HOA believe it was already set up. environments()
+    reads a SHARED ~/.keri base, so a vault from another brand (or a test
+    vault) suppressed the bootstrap; nothing opened a vault, and the peeled
+    build — which has no vault chooser — stranded the user on a blank page.
+    """
+    app = MagicMock()
+    # Exactly the user's disk state: three unrelated vaults, no "Carrier".
+    app.environments.return_value = ["Utah State", "usurance-custody", "Other"]
+
+    monkeypatch.setattr(
+        "locksmith.core.bootstrapping.open_hby",
+        lambda **kw: (MagicMock(), MagicMock()),
+    )
+    monkeypatch.setattr(
+        "locksmith.core.bootstrapping.create_identifier", lambda *a, **kw: None
+    )
+    monkeypatch.setattr(
+        "locksmith.core.bootstrapping.remember_workspace_vault", lambda *a, **kw: None
+    )
+
+    assert bootstrap_default_environment(app, _brand()) is True
+    app.open_vault.assert_called_once()
 
 
 def test_default_locksmith_brand_never_bootstraps():
@@ -163,19 +192,23 @@ def test_wired_after_on_app_started_deferred_and_brand_gated():
           on_app_started() call in __init__'s source, so plugin discovery +
           on_app_started run first;
       (b) it's scheduled via QTimer.singleShot rather than called inline;
-      (c) it's guarded by brand().default_vault_name so only HOA brands
-          opt in and the default Locksmith brand is unaffected;
-      (d) the slot itself (``_run_default_bootstrap``, factored out so
-          Task 5b's True->navigate wiring is unit-testable — see
+      (c) it's brand-gated so only HOA brands opt in and the default
+          Locksmith brand is unaffected;
+      (d) ``_run_default_bootstrap`` (factored out so Task 5b's
+          True->navigate wiring is unit-testable — see
           ``tests/ui/test_window_bootstrap_nav.py``) calls
           bootstrap_default_environment.
+
+    ``__init__`` now schedules the single ``_resume_or_bootstrap_hoa``
+    dispatcher, which picks resume / setup / silent-bootstrap; the silent
+    branch reaching ``_run_default_bootstrap`` is asserted there.
     """
     from locksmith.ui.window import LocksmithWindow
 
     source = inspect.getsource(LocksmithWindow.__init__)
 
     app_started_idx = source.index("on_app_started(")
-    boot_idx = source.index("_run_default_bootstrap")
+    boot_idx = source.index("_resume_or_bootstrap_hoa")
     assert boot_idx > app_started_idx, (
         "the deferred bootstrap slot must be wired after on_app_started()"
     )
@@ -185,8 +218,13 @@ def test_wired_after_on_app_started_deferred_and_brand_gated():
         "the bootstrap slot must be deferred via QTimer.singleShot, "
         "not invoked inline in __init__"
     )
-    assert "default_vault_name" in preceding, (
-        "the bootstrap slot must be guarded by brand().default_vault_name"
+    assert "peel_core_pages" in preceding or "default_vault_name" in preceding, (
+        "the bootstrap slot must be brand-gated (HOA brands only)"
+    )
+
+    dispatch_source = inspect.getsource(LocksmithWindow._resume_or_bootstrap_hoa)
+    assert "_run_default_bootstrap" in dispatch_source, (
+        "the dispatcher must still reach the silent-bootstrap slot"
     )
 
     slot_source = inspect.getsource(LocksmithWindow._run_default_bootstrap)
