@@ -45,21 +45,26 @@ def set_global_styles(app: QApplication):
     # Runtime window/taskbar icon from the active brand's bundle dir (atomic
     # with the registered logos); the .app/.exe embedded icon is a packaging
     # concern. Fall back to the compiled symbol logo.
-    _src = branding.brand_source_dir()
-    _icon_names = (
-        ("AppIcon.icns", "AppIcon.ico") if sys.platform == "darwin"
-        else ("AppIcon.ico", "AppIcon.icns")
-    )
-    _set = False
-    if _src is not None:
-        for _name in _icon_names:
-            cand = _src / _name
-            if cand.exists():
-                app.setWindowIcon(QIcon(str(cand)))
-                _set = True
-                break
-    if not _set:
-        app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
+    #
+    # NOT on macOS. There, setWindowIcon REPLACES the Dock icon that the .app's
+    # own AppIcon.icns already supplied — and macOS shows no per-window icon, so
+    # the call buys nothing and can only make things worse: when the brand dir
+    # lookup below missed (the staged AppIcon.* were not bundled), the flat
+    # transparent SymbolLogo fallback overwrote the correct plated Dock icon the
+    # moment Qt started — the icon visibly "reverted" after the launch bounce.
+    # The bundle icon is authoritative on macOS; leave it alone.
+    if sys.platform != "darwin":
+        _src = branding.brand_source_dir()
+        _set = False
+        if _src is not None:
+            for _name in ("AppIcon.ico", "AppIcon.icns"):
+                cand = _src / _name
+                if cand.exists():
+                    app.setWindowIcon(QIcon(str(cand)))
+                    _set = True
+                    break
+        if not _set:
+            app.setWindowIcon(QIcon(":/assets/custom/SymbolLogo.svg"))
     from locksmith.core.branding import brand
     from locksmith.ui import colors as _colors
 

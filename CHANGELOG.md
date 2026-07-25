@@ -9,6 +9,13 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
+## 0.3.3
+
+- The app icon no longer reverts to a faint version once the window finishes
+  loading — the dock and taskbar keep the proper icon.
+- **What's New** no longer prints its title twice, keeps each note on a single
+  bullet, and scrolls when a release has a lot of notes.
+
 ## 0.3.2
 
 - Fixed in-app updates for Usurance: the update verifier checked the wrong

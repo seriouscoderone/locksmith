@@ -79,12 +79,16 @@ def section_for(version: str, *, text: str | None = None) -> str | None:
 
 def notes_for(version: str, previous: str | None = None) -> str:
     """Render-ready Markdown for ``version``: the real notes when the CHANGELOG
-    has them, else the generic upgrade line (never empty)."""
+    has them, else the generic upgrade line (never empty).
+
+    Body only — NO "What's new in vX" heading. ``WhatsNewDialog`` already
+    renders its own headline plus a version line, so returning one here
+    printed the title twice.
+    """
     body = section_for(version)
-    header = f"# What's new in v{version}\n\n"
     if body:
-        return header + body
+        return body
     if previous:
-        return (header + f"You've upgraded from v{previous}. "
+        return (f"You've upgraded from v{previous}. "
                 "See the release notes on releases.keri.host for details.")
-    return header + "See the release notes on releases.keri.host for details."
+    return "See the release notes on releases.keri.host for details."

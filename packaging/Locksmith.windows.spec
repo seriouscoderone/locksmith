@@ -85,6 +85,10 @@ datas = [
     # section after an update (locksmith.update.notes). Without it the modal
     # falls back to generic "see the notes online" copy.
     (str(REPO_ROOT / "CHANGELOG.md"), "locksmith"),
+    # Staged brand app icons. ui/styles.py looks these up in the brand bundle
+    # dir for the runtime window/taskbar icon; unbundled, it fell back to the
+    # flat transparent SymbolLogo (see the darwin note in styles.py).
+    (str(_RELEASE / "AppIcon.ico"), "locksmith/release"),
 ]
 
 # Brand-bundled EGF docs — optional, only present when this brand ships one.

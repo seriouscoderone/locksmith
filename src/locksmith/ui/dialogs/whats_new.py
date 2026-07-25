@@ -15,9 +15,11 @@ from __future__ import annotations
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
+    QFrame,
     QHBoxLayout,
     QLabel,
     QPushButton,
+    QScrollArea,
     QVBoxLayout,
     QWidget,
 )
@@ -27,6 +29,11 @@ from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
 
 logger = help.ogler.getLogger(__name__)
+
+#: Cap for the scrolling notes area. Tall enough that a typical release shows
+#: without a scrollbar; short enough that a long one can't push the modal's
+#: "Got it" button off-screen.
+_NOTES_MAX_HEIGHT = 320
 
 
 def render_markdown(text: str) -> str:
@@ -107,6 +114,13 @@ def render_markdown(text: str) -> str:
                 out.append("</ul>")
                 in_list = False
             out.append(f"<h2>{_inline(line[2:])}</h2>")
+        elif in_list and line.strip() and out and out[-1].startswith("<li>"):
+            # Lazy continuation: a bullet wrapped across source lines (the
+            # CHANGELOG hard-wraps prose). Fold it into the current <li> instead
+            # of closing the list and emitting a flush-left <p>, which rendered
+            # as "• first line" followed by an unindented paragraph.
+            prev = out.pop()
+            out.append(f"{prev[:-len('</li>')]} {_inline(line.strip())}</li>")
         else:
             if in_list:
                 out.append("</ul>")
@@ -190,7 +204,20 @@ class WhatsNewDialog(LocksmithDialog):
         self.notes_label.setStyleSheet(
             f"color: {colors.TEXT_PRIMARY}; font-size: 13px; padding-top: 6px;"
         )
-        layout.addWidget(self.notes_label)
+        # Scroll the notes rather than letting a long release grow the modal past
+        # the screen. The area sizes to its content up to _NOTES_MAX_HEIGHT, so
+        # short notes look identical to before (no visible scrollbar).
+        self.notes_scroll = QScrollArea()
+        self.notes_scroll.setObjectName("whatsNewDialog.notesScroll")
+        self.notes_scroll.setWidget(self.notes_label)
+        self.notes_scroll.setWidgetResizable(True)
+        self.notes_scroll.setFrameShape(QFrame.Shape.NoFrame)
+        self.notes_scroll.setMaximumHeight(_NOTES_MAX_HEIGHT)
+        self.notes_scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff
+        )
+        self.notes_scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        layout.addWidget(self.notes_scroll)
         return wrap
 
     def _build_buttons(self) -> QHBoxLayout:
