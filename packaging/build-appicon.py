@@ -1,4 +1,4 @@
-"""Generate assets/custom/AppIcon.icns and AppIcon.ico from SymbolLogo.svg.
+"""Generate <brand>/AppIcon.icns and AppIcon.ico from that brand's SymbolLogo.svg.
 
 Composites the triquetra symbol onto a macOS-style squircle plate
 with a soft cream gradient, renders the 10 sizes Apple expects
@@ -8,13 +8,19 @@ The same squircle composition is then re-rendered at the six sizes
 Windows expects (16/32/48/64/128/256) and packed into a multi-image
 .ico via Pillow.
 
-Run from the repo root after any change to the source SVG:
-    python packaging/build-appicon.py
+Run from the repo root after any change to a brand's source SVGs:
+    python packaging/build-appicon.py [--brand <id>]
+
+--brand selects which brands/<id>/ dir supplies the source SVGs and
+receives the generated icon/splash outputs (default: locksmith — the
+reference brand). The banner/dialog WiX chrome images are neutral UI
+(not brand-specific) and always land in packaging/wix/.
 
 Both .icns and .ico outputs are committed; CI does not regenerate them.
 """
 from __future__ import annotations
 
+import argparse
 import shutil
 import subprocess
 import sys
@@ -34,13 +40,27 @@ from PySide6.QtGui import (
 from PySide6.QtSvg import QSvgRenderer
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-SVG = REPO_ROOT / "assets" / "custom" / "SymbolLogo.svg"
-FULL_SVG = REPO_ROOT / "assets" / "custom" / "FullLogo.svg"
-OUT_ICNS = REPO_ROOT / "assets" / "custom" / "AppIcon.icns"
-OUT_ICO = REPO_ROOT / "assets" / "custom" / "AppIcon.ico"
+BRANDS_DIR = REPO_ROOT / "brands"
+DEFAULT_BRAND = "locksmith"
+
+# Set by main() from --brand (default "locksmith") before any build_*
+# function runs below; module-level so render()/build_icns()/etc. can
+# reference them without threading a brand param through every call.
+SVG = FULL_SVG = OUT_ICNS = OUT_ICO = OUT_SPLASH = None
+
 OUT_WIX_BANNER = REPO_ROOT / "packaging" / "wix" / "banner.png"
 OUT_WIX_DIALOG = REPO_ROOT / "packaging" / "wix" / "dialog.png"
-OUT_SPLASH = REPO_ROOT / "assets" / "custom" / "SplashScreen.png"
+
+
+def _set_brand_paths(brand: str) -> None:
+    """Point the module-level SVG/output globals at brands/<brand>/."""
+    global SVG, FULL_SVG, OUT_ICNS, OUT_ICO, OUT_SPLASH
+    brand_dir = BRANDS_DIR / brand
+    SVG = brand_dir / "SymbolLogo.svg"
+    FULL_SVG = brand_dir / "FullLogo.svg"
+    OUT_ICNS = brand_dir / "AppIcon.icns"
+    OUT_ICO = brand_dir / "AppIcon.ico"
+    OUT_SPLASH = brand_dir / "SplashScreen.png"
 
 # Windows ICO contains nested PNG/BMP frames at well-known sizes.
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
@@ -212,6 +232,13 @@ def build_ico() -> None:
 
 
 def main() -> int:
+    ap = argparse.ArgumentParser(description=__doc__)
+    ap.add_argument("--brand", default=DEFAULT_BRAND,
+                    help=f"brands/<id>/ to read SVGs from and write icons/splash "
+                         f"into (default: {DEFAULT_BRAND})")
+    args = ap.parse_args()
+    _set_brand_paths(args.brand)
+
     QGuiApplication.instance() or QGuiApplication(sys.argv)
     build_icns()
     build_ico()

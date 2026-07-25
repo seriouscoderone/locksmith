@@ -10,6 +10,12 @@ overlaps brand art (as it did in v0.1.4).
 Run from the repo root::
 
     .venv/bin/python packaging/wix/gen_ui_images.py
+
+The SymbolLogo.svg source is brand-specific (moved to brands/<brand>/ — see
+the atomic-brand-bundles refactor); selects via $LOCKSMITH_BRAND same as the
+rest of the packaging tooling (brandlib.active_brand_id(), default
+"locksmith"). banner.png/dialog.png themselves are neutral WixUI chrome and
+always land in packaging/wix/ regardless of brand.
 """
 from __future__ import annotations
 
@@ -23,7 +29,10 @@ from PySide6.QtWidgets import QApplication
 
 
 REPO = Path(__file__).resolve().parents[2]
-ASSETS = REPO / "assets" / "custom"
+sys.path.insert(0, str(REPO / "packaging"))
+import brandlib  # noqa: E402
+
+ASSETS = REPO / "brands" / brandlib.active_brand_id()
 OUT = REPO / "packaging" / "wix"
 
 DIALOG_W, DIALOG_H = 493, 312

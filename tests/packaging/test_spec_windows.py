@@ -24,8 +24,12 @@ def test_spec_includes_libsodium_dll():
 
 
 def test_spec_includes_assets():
+    # The loose assets/ tree was dropped in favor of the compiled brand
+    # bundle (assets.rcc) staged into the brand release dir by brand_apply;
+    # see tests/packaging/test_spec_bundles_rcc.py for the guard that the
+    # loose datas entry stays gone.
     s = SPEC.read_text()
-    assert "'assets'" in s or '"assets"' in s
+    assert "assets.rcc" in s
 
 
 def test_spec_includes_publisher_anchor():

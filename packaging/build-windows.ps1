@@ -44,7 +44,6 @@ $repoRoot     = (Resolve-Path "$PSScriptRoot\..").Path
 $packagingDir = Join-Path $repoRoot "packaging"
 $wixDir       = Join-Path $packagingDir "wix"
 $buildDir     = Join-Path $repoRoot "build\windows"
-$iconSourceDir = Join-Path $repoRoot "assets\custom"
 
 New-Item -ItemType Directory -Force -Path $buildDir | Out-Null
 
@@ -54,10 +53,22 @@ if (-not $env:LOCKSMITH_BRAND) { $env:LOCKSMITH_BRAND = "locksmith" }
 Push-Location $packagingDir
 $AppName        = (& python -m brandlib id display_name).Trim()
 $ArtifactPrefix = (& python -m brandlib id artifact_prefix).Trim()
+$releaseDir     = (& python -c "import brandlib; print(brandlib.brand_release_dir('$($env:LOCKSMITH_BRAND)'))").Trim()
 Pop-Location
-Write-Host "[build] brand=$($env:LOCKSMITH_BRAND) app=$($AppName).exe prefix=$ArtifactPrefix"
+Write-Host "[build] brand=$($env:LOCKSMITH_BRAND) app=$($AppName).exe prefix=$ArtifactPrefix release=$releaseDir"
 
 $distDir = Join-Path $repoRoot "dist\$AppName"
+
+# Build (or refresh) the brand's self-contained release bundle — assets.rcc,
+# brand.json, Locksmith.wxs, dmg-layout.json, staged icons, trust material —
+# before PyInstaller/wix read it. Idempotent (brand_apply always rewrites its
+# output dir); CI's release workflow already runs this as its own step (once
+# per Stage invocation), but calling it here too keeps this script correct
+# standalone (e.g. local dev builds run directly, without the CI step).
+& python (Join-Path $repoRoot "scripts\brand_apply.py") --brand $env:LOCKSMITH_BRAND
+if ($LASTEXITCODE -ne 0) {
+    throw "[build] brand_apply.py exited $LASTEXITCODE"
+}
 
 # --- 1. Resolve version -------------------------------------------------------
 
@@ -141,14 +152,20 @@ Write-Host "[build] linking $msiPath"
 Push-Location $wixDir
 try {
     # -d NAME=VAL    compile-time variable; resolves $(var.NAME) in wxs sources
-    # -bindpath DIR  file lookup path; first hit wins for relative SourceFile refs
+    # -bindpath DIR  file lookup path; first hit wins for relative SourceFile refs.
+    # Locksmith.wxs itself is now the brand-rendered copy in the release dir
+    # (scripts/brand_apply.py -> brandlib.render_wxs), not the retired in-tree
+    # packaging/wix/Locksmith.wxs. Its relative SourceFile refs split across
+    # two roots: banner.png/dialog.png/license.rtf stay neutral in
+    # packaging/wix/ ($wixDir); AppIcon.ico is brand-specific and now lives
+    # in the release dir alongside Locksmith.wxs ($releaseDir).
     & wix build `
-        "Locksmith.wxs" $harvestedWxs `
+        (Join-Path $releaseDir "Locksmith.wxs") $harvestedWxs `
         -ext WixToolset.UI.wixext `
         -arch x64 `
         -d "Version=$Version" `
         -bindpath $wixDir `
-        -bindpath $iconSourceDir `
+        -bindpath $releaseDir `
         -out $msiPath
     if ($LASTEXITCODE -ne 0) {
         throw "[build] wix build exited $LASTEXITCODE"

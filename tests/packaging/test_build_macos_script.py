@@ -57,6 +57,15 @@ def test_script_reads_version_from_pyproject():
 
 
 def test_script_uses_dmg_layout():
+    # dmg-layout.json is brand-generated (scripts/brand_apply.py) into the
+    # brand release dir, not the retired packaging/dmg/layout.json; the
+    # background art stays neutral in packaging/dmg/.
     s = SCRIPT.read_text()
-    assert "packaging/dmg/layout.json" in s
+    assert "LOCKSMITH_RELEASE" in s and "dmg-layout.json" in s
     assert "packaging/dmg/background.png" in s
+
+
+def test_script_applies_brand_before_packaging():
+    s = SCRIPT.read_text()
+    assert "brand_apply.py" in s
+    assert "--brand" in s
