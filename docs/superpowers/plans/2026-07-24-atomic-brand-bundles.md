@@ -977,6 +977,7 @@ git commit -m "refactor(brand): untrack generated wxs/dmg-layout; golden-fixture
 - Modify: `packaging/Locksmith.macos.spec`, `packaging/Locksmith.windows.spec`
 - Modify: `packaging/build-macos.sh`, `packaging/build-windows.ps1`
 - Modify: `packaging/build-appicon.py` (the icon/splash generator — its source SVGs + outputs moved to `brands/locksmith/` in Task 1; repoint `SVG`/`FULL_SVG`/`OUT_ICNS`/`OUT_ICO`/`OUT_SPLASH` at `brands/<brand>/`, defaulting to `brands/locksmith/`, and take a `--brand` argument)
+- Modify: `tests/packaging/test_wix_authoring.py` and `tests/packaging/test_dmg_layout.py` (surfaced by the Task 8 review as a fresh-clone breakage from Task 7's untracking: both read the now-gitignored `packaging/wix/Locksmith.wxs` / `packaging/dmg/layout.json` directly and would fail on a clean clone). Fix them to lint the RENDERED artifact instead of the on-disk path: `test_wix_authoring` renders via `brandlib.render_wxs(brandlib.load_brand_manifest("locksmith"), <Locksmith.wxs.in>)` and `ET.fromstring(...)` it; `test_dmg_layout` uses `brandlib.render_dmg_layout(brandlib.load_brand_manifest("locksmith"))` (a dict). Drop/repurpose the now-meaningless `test_layout_exists`/any `WXS.is_file()` assertion; keep `test_background_exists` (background.png stays tracked).
 - Test: `tests/packaging/test_spec_bundles_rcc.py` (Create) + existing `tests/packaging/test_spec_macos.py`/`test_spec_windows.py` updates
 
 **Interfaces:**
