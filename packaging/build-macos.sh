@@ -45,12 +45,14 @@ with open("pyproject.toml", "rb") as f:
 echo "build-macos: building $APP_NAME $VERSION (channel=$CHANNEL)"
 
 # ---- 2. Bake version + channel into src/locksmith/build_info.py ---------
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
 cat > src/locksmith/build_info.py <<EOF
 """Build-time constants — REWRITTEN by packaging/build-macos.sh at build time."""
 from __future__ import annotations
 
 LOCKSMITH_VERSION: str = "$VERSION"
 LOCKSMITH_RELEASE_CHANNEL: str = "$CHANNEL"
+LOCKSMITH_GIT_COMMIT: str = "$GIT_COMMIT"
 EOF
 
 # ---- 3. Clean prior outputs ---------------------------------------------

@@ -146,15 +146,35 @@ class AppSettingsDialog(LocksmithDialog):
         about_layout.addWidget(about_header)
 
         try:
-            from locksmith.build_info import LOCKSMITH_VERSION
+            from locksmith.build_info import (
+                LOCKSMITH_VERSION,
+                LOCKSMITH_RELEASE_CHANNEL,
+                LOCKSMITH_GIT_COMMIT,
+            )
         except Exception:
-            LOCKSMITH_VERSION = "dev"
-        version_label = QLabel(f"Version: {LOCKSMITH_VERSION}")
-        version_label.setObjectName("appSettingsDialog.aboutVersionLabel")
-        version_label.setStyleSheet(
-            f"font-size: 13px; color: {colors.TEXT_SECONDARY};"
-        )
-        about_layout.addWidget(version_label)
+            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT = (
+                "dev", "stable", "dev")
+        try:
+            import keri
+            _keripy_ver = keri.__version__
+        except Exception:
+            _keripy_ver = "unknown"
+
+        # Fork identity: app version (our own line) + the exact build commit +
+        # the bundled keri.host keripy fork's own version. Together these make
+        # "which build / which keripy is this?" unambiguous vs upstream.
+        def _about_line(text: str, name: str) -> None:
+            lbl = QLabel(text)
+            lbl.setObjectName(name)
+            lbl.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_SECONDARY};")
+            about_layout.addWidget(lbl)
+
+        _about_line(f"Version: {LOCKSMITH_VERSION} ({LOCKSMITH_RELEASE_CHANNEL})",
+                    "appSettingsDialog.aboutVersionLabel")
+        _about_line(f"Build: {LOCKSMITH_GIT_COMMIT}",
+                    "appSettingsDialog.aboutBuildLabel")
+        _about_line(f"keripy: {_keripy_ver}",
+                    "appSettingsDialog.aboutKeripyLabel")
 
         self._insert_section(about_container)
 

@@ -88,12 +88,15 @@ Write-Host "[build] LOCKSMITH_VERSION=$Version LOCKSMITH_RELEASE_CHANNEL=$env:LO
 # --- 2. Bake build_info.py ----------------------------------------------------
 
 $buildInfo = Join-Path $repoRoot "src\locksmith\build_info.py"
+$GitCommit = (git rev-parse --short HEAD 2>$null)
+if (-not $GitCommit) { $GitCommit = "unknown" }
 @"
 """Build-time constants -- REWRITTEN by packaging/build-windows.ps1 at build time."""
 from __future__ import annotations
 
 LOCKSMITH_VERSION: str = "$Version"
 LOCKSMITH_RELEASE_CHANNEL: str = "$env:LOCKSMITH_RELEASE_CHANNEL"
+LOCKSMITH_GIT_COMMIT: str = "$GitCommit"
 "@ | Set-Content -Encoding utf8 -Path $buildInfo
 Write-Host "[build] wrote $buildInfo"
 

@@ -15,3 +15,9 @@ LOCKSMITH_VERSION: str = "0.0.0+dev"
 
 LOCKSMITH_RELEASE_CHANNEL: str = "stable"
 """Release channel. Phase 2 supports 'stable' only (spec §3)."""
+
+LOCKSMITH_GIT_COMMIT: str = "dev"
+"""Short git commit this build was cut from. Build scripts overwrite it with
+`git rev-parse --short HEAD`. Distinguishes THIS keri.host fork build from any
+other same-version build (the bundled keri fork carries its own
+`2.0.0+kerihost.<sha>` version, read at runtime via `keri.__version__`)."""

@@ -206,6 +206,20 @@ if __name__ == "__main__":
     app = QApplication(sys.argv)
     set_global_styles(app)
 
+    # Startup identity — makes "which build / which keripy fork is this?"
+    # explicit in the logs instead of guessing from a shared upstream-style
+    # version string.
+    try:
+        from locksmith.build_info import (
+            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT)
+        import keri as _keri
+        logger.info(
+            "startup.identity locksmith=%s channel=%s build=%s keripy=%s",
+            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT,
+            _keri.__version__)
+    except Exception:
+        logger.exception("startup.identity failed")
+
     # Show the splash BEFORE the (slow) window construction so it covers the
     # launch gap on every platform, then process events once to paint it now.
     splash = _make_splash()

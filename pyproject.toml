@@ -7,7 +7,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "Locksmith"
-version = "0.2.21"
+version = "0.3.0"
 description = "Locksmith – KERI identity vault application"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -34,7 +34,9 @@ dependencies = [
     # mailbox client (keri-serverless-mailbox) needs Schemes.wss to discover + select the WS
     # notify-and-fetch strategy; without it discovery degrades to SSE polling. Revert to the
     # WebOfTrust pin once the wss PR merges + a keri release carries it.
-    "keri @ git+https://github.com/seriouscoderone/keripy.git@development",
+    # Pinned to an exact commit (not @development) for reproducible builds — this
+    # is the keri.host keripy fork, version 2.0.0+kerihost.ddef17b6 (its __version__).
+    "keri @ git+https://github.com/seriouscoderone/keripy.git@e10dd08f16b31af5342a1eb7c2d6cd8e86688e50",
     "qtawesome>=1.4.0",
     "mnemonic==0.21",
     "multicommand==1.0.0",

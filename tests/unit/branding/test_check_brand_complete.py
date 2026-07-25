@@ -47,12 +47,23 @@ deploy_config = "deploy_config.json"
     if with_anchor:
         (bdir / "publisher_anchor.json").write_text(
             '{"publisher_aid": "EReal", "witness_oobis": ["https://w/oobi"]}')
+        # deploy_config is build-injected into the SAME brand dir as the anchor
+        # (both are staged into the brand's release dir by brand_apply); the
+        # completeness check now requires it too.
+        (bdir / "deploy_config.json").write_text('{"releases_cdn_base": "https://x"}')
     return tmp
 
 
 def test_clean_brand_passes(tmp_path):
     _write_brand(tmp_path, "acme")
     assert cbc.validate("acme", tmp_path / "brands") == []
+
+
+def test_missing_deploy_config_rejected(tmp_path):
+    _write_brand(tmp_path, "acme")
+    (tmp_path / "brands" / "acme" / "deploy_config.json").unlink()
+    probs = cbc.validate("acme", tmp_path / "brands")
+    assert any("deploy_config" in p for p in probs)
 
 
 def test_placeholder_url_rejected(tmp_path):
