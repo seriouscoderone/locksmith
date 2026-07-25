@@ -22,6 +22,17 @@ def active_brand_id() -> str:
     return os.environ.get("LOCKSMITH_BRAND", DEFAULT_BRAND)
 
 
+def brand_release_dir(brand_id: str, repo_root: Path = REPO_ROOT) -> Path:
+    """Where brand_apply writes a brand's generated bundle (gitignored).
+
+    locksmith → src/locksmith/release/ (flat: preserves the no-env dev launch
+    and the frozen _PACKAGED_BRAND_JSON path); every other brand → a namespaced
+    subdir so brands never overwrite each other and the tree stays clean.
+    """
+    base = repo_root / "src" / "locksmith" / "release"
+    return base if brand_id == DEFAULT_BRAND else base / brand_id
+
+
 def load_brand_manifest(brand_id: str | None = None) -> dict:
     """Parse brands/<brand>/brand.toml; fall back to brands/example if absent."""
     bid = brand_id or active_brand_id()
@@ -59,12 +70,6 @@ def runtime_brand_json(manifest: dict) -> dict:
 
 def exe_name(manifest: dict) -> str:
     return manifest["brand"]["display_name"]
-
-
-WIX_DIR = REPO_ROOT / "packaging" / "wix"
-WXS_TEMPLATE_PATH = WIX_DIR / "Locksmith.wxs.in"
-WXS_OUTPUT_PATH = WIX_DIR / "Locksmith.wxs"
-DMG_LAYOUT_PATH = REPO_ROOT / "packaging" / "dmg" / "layout.json"
 
 
 def render_wxs(manifest: dict, template_text: str) -> str:

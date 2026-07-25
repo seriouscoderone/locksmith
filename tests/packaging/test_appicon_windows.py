@@ -9,7 +9,7 @@ from pathlib import Path
 from PIL import Image
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
-ICO = REPO_ROOT / "assets" / "custom" / "AppIcon.ico"
+ICO = REPO_ROOT / "brands" / "locksmith" / "AppIcon.ico"
 
 
 def test_appicon_ico_exists():

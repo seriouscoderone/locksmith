@@ -102,7 +102,23 @@ git add -A brands/locksmith assets/custom resources.qrc tests/unit/branding/test
 git commit -m "refactor(brand): move reference logos/splash/app-icons to brands/locksmith; assets/ becomes neutral-only"
 ```
 
-> Note: after this task the app still boots off the (stale-but-present) tracked `resources_rc.py`; the runtime switch happens in Tasks 4–6.
+- [ ] **Step 6: Keep the focused test surface green — fix the disk-path readers of the moved files**
+
+The `git mv` breaks code/tests that read the moved brand files from the OLD `assets/custom/` disk path (the `:/` call sites still resolve off the stale tracked `resources_rc.py` until Task 6). Handle each:
+
+- **Permanent fixes (new source location is final) — do them here:**
+  - `tests/unit/branding/test_kf_icon_brand_independent.py:27` — change the reference from `assets/custom/SymbolLogo.svg` to `brands/locksmith/SymbolLogo.svg` (the reference symbol lives there now). Leave the tmp_path fake-repo lines (39-40, 60) untouched.
+  - `tests/packaging/test_appicon_windows.py:12` — change `ICO = REPO_ROOT / "assets" / "custom" / "AppIcon.ico"` to `REPO_ROOT / "brands" / "locksmith" / "AppIcon.ico"`.
+- **Bridge (behavior changes to `:/` in Task 5) — xfail with a tracking reason here:**
+  - `tests/unit/test_splash.py` — the disk-path test (`test_make_splash_returns_splashscreen_when_art_present`) breaks because `main.py:137` reads the moved `assets/custom/SplashScreen.png`. Mark it `@pytest.mark.xfail(reason="_make_splash moves to :/ in Task 5 (atomic-brand-bundles)", strict=False)`. Task 5 removes the xfail and rewrites the test for the `:/` path.
+- **Deferred to their named tasks (NOT changed here) — tracked, mostly not test-covered:** `src/locksmith/main.py:137` + `src/locksmith/ui/styles.py:62` (Task 5); `packaging/Locksmith.macos.spec:194`, `packaging/Locksmith.windows.spec:33`, `packaging/build-macos.sh:111`, `packaging/build-appicon.py:37-43` (Task 8).
+
+- [ ] **Step 7: Re-run the focused surface + commit**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/unit/branding/test_asset_reorg.py tests/unit/branding/test_kf_icon_brand_independent.py tests/packaging/test_appicon_windows.py tests/unit/test_splash.py --import-mode=importlib -p no:cacheprovider -q`
+Expected: all pass (test_splash's disk test shows as xfail). Then amend the commit (or add a follow-up commit) including the reader fixes.
+
+> Note: after this task the app still boots off the (stale-but-present) tracked `resources_rc.py`; the runtime switch happens in Tasks 4–6. The `assets/custom/` disk-path readers listed above are fixed here (tests) or deferred to Tasks 5/8 (production).
 
 ---
 
@@ -239,6 +255,7 @@ git commit -m "feat(brand): per-brand aliased qrc generator (neutral verbatim + 
 - Modify: `scripts/brand_apply.py`
 - Modify: `packaging/brandlib.py` (add `brand_release_dir`)
 - Test: `tests/unit/branding/test_brand_apply.py` (rewrite)
+- Test: `tests/packaging/test_usurance_brand_apply.py` (update — it currently asserts the OLD behavior: `apply()` staging over `assets/custom/AppIcon.icns` at line ~60. Change it to assert the usurance bundle now lands in `<out>` — `assets.rcc` + `brand.json` + staged `AppIcon.*` in the release dir — and that `assets/custom/` is NOT mutated.)
 
 **Interfaces:**
 - Consumes: `generate_qrc.build_brand_qrc` (Task 2); `brandlib.runtime_brand_json/render_wxs/render_dmg_layout`.
@@ -657,11 +674,14 @@ git commit -m "feat(brand): register_brand_resources() — atomic runtime .rcc r
 **Files:**
 - Modify: `src/locksmith/main.py:121` (drop `import resources_rc`), `src/locksmith/main.py:136-142` (splash via `:/`)
 - Modify: `src/locksmith/ui/styles.py:52-95` (register first; window-icon from bundle dir; font via `:/`)
+- Modify: `tests/unit/test_splash.py` (remove the Task-1 `xfail` on the disk-path test and rewrite it for the `:/` path — after this task `_make_splash()` loads `:/assets/custom/SplashScreen.png`; the test must register the default bundle first, e.g. via the `default_brand_resources` fixture from Task 6, or `set_global_styles`)
 - Test: `tests/unit/branding/test_styles_boot.py` (Create)
 
 **Interfaces:**
 - Consumes: `branding.register_brand_resources()`, `branding.brand_source_dir()` (Task 4).
 - Produces: `set_global_styles(app)` registers the brand bundle as its first action; splash + font resolve via `:/`.
+
+> Note (from Task 1 review): the disk-path readers of the moved brand files that this task owns are `src/locksmith/main.py:137` (splash) and `src/locksmith/ui/styles.py:62` (window-icon). Task 1 xfailed `tests/unit/test_splash.py`; this task un-xfails and rewrites it. If Task 6 (which adds `default_brand_resources`) has not run yet when this task executes, register the bundle inline in the test instead (build the default bundle via `brand_apply.apply("locksmith", REPO, out=REPO/"src"/"locksmith"/"release")` then `branding.register_brand_resources()` in a fixture that unregisters after).
 
 - [ ] **Step 1: Write the failing test**
 
@@ -772,11 +792,22 @@ git commit -m "feat(brand): boot off the registered brand bundle — splash/font
 **Files:**
 - Delete: `src/locksmith/resources_rc.py`
 - Modify: `.gitignore`
+- Modify: `tests/plugins/roles/test_role_plugins.py` (surfaced by the Step-3 grep — its two `from locksmith import resources_rc  # (register :/assets)` lines at ~92,103 are the ONLY real code importers left after Task 5 removed main.py's; replace them with brand-bundle registration — take the `default_brand_resources` fixture (added below) so `:/assets/*` resolves for the icon assertions — so `resources_rc.py` can be deleted. It is a safe in-process Qt test, no subprocess.)
 - Create: `tests/conftest.py` (or extend existing) — session fixture building the default bundle
+- Create: `tests/unit/branding/conftest.py` — test-isolation shims that make the WHOLE `tests/unit/branding/` dir run green regardless of order (removes both pre-existing baseline caveats). See "Step 1b" below. Reference content saved at `/tmp/stray_branding_conftest.py` (an out-of-scope investigation-scratch draft surfaced during Task 5 — do NOT copy it blindly; re-derive/verify it, it is unreviewed).
 - Test: reuse Task 5's `test_styles_boot.py` + a guard test
 
 **Interfaces:**
 - Produces: (a) a session-scoped autouse fixture `_ensure_default_brand_bundle` that BUILDS `src/locksmith/release/{assets.rcc,brand.json}` once (if absent) — build only, it does NOT register (first-wins precedence forbids a global default registration, or brand-override tests would keep reading locksmith bytes); (b) a function-scoped opt-in fixture `default_brand_resources` that registers the default bundle for a single test and unregisters after — for generic widget/icon tests that load `:/` paths without going through `set_global_styles`.
+
+- [ ] **Step 1b: Create `tests/unit/branding/conftest.py` — green the whole branding dir**
+
+Two pre-existing, order-dependent issues make `pytest tests/unit/branding/` (whole dir) fail while each file passes alone. Both are now diagnosed; neutralise them in a branding-suite conftest so broad runs (this task's Step 4, Task 10) are deterministic:
+
+1. **Qt singleton type.** Sibling tests create the process-wide Qt singleton as a bare `QGuiApplication`; `test_styles_branding` needs a `QApplication` (only it has `setStyle`, called by `set_global_styles`). Qt allows one app object per process, so a `QGuiApplication`-first order makes the styles tests crash. Fix: a session-scoped autouse fixture that creates the `QApplication` superset up front (`QApplication.instance() or QApplication([])`), so every later `*.instance()` resolves to it.
+2. **`keri` namespace shadow (root cause).** `scripts/keri/` is a kli config-data dir (`cf/*.json`, no `__init__.py`). Sibling tests do `sys.path.insert(0, <repo>/scripts)` at import time, so the first `import keri` resolves to that PEP-420 namespace package (no `__version__`) → keripy's `from keri import __version__` raises `ImportError: ... 'keri' (unknown location)`. Fix: `import keri` at the TOP of this conftest (runs before any test's `sys.path.insert`), caching real keripy in `sys.modules` so the data dir can never win.
+
+Write the conftest with `QT_QPA_PLATFORM` defaulted to `offscreen`, the early `import keri`, and the session-autouse `QApplication` fixture. A reference draft is at `/tmp/stray_branding_conftest.py` — verify its reasoning, don't trust it blindly. Confirm with: `QT_QPA_PLATFORM=offscreen .venv/bin/pytest tests/unit/branding --import-mode=importlib -p no:cacheprovider -q` → the WHOLE dir passes (this retires baseline caveats #1 and #2 in the ledger). Note: `tests/unit/pytest.ini` makes `tests/unit` the rootdir, so a `tests/conftest.py` does NOT apply here (confcutdir) — the branding conftest must be its own file.
 
 - [ ] **Step 1: Add the fixtures**
 
@@ -945,11 +976,15 @@ git commit -m "refactor(brand): untrack generated wxs/dmg-layout; golden-fixture
 **Files:**
 - Modify: `packaging/Locksmith.macos.spec`, `packaging/Locksmith.windows.spec`
 - Modify: `packaging/build-macos.sh`, `packaging/build-windows.ps1`
+- Modify: `packaging/build-appicon.py` (the icon/splash generator — its source SVGs + outputs moved to `brands/locksmith/` in Task 1; repoint `SVG`/`FULL_SVG`/`OUT_ICNS`/`OUT_ICO`/`OUT_SPLASH` at `brands/<brand>/`, defaulting to `brands/locksmith/`, and take a `--brand` argument)
+- Modify: `tests/packaging/test_wix_authoring.py` and `tests/packaging/test_dmg_layout.py` (surfaced by the Task 8 review as a fresh-clone breakage from Task 7's untracking: both read the now-gitignored `packaging/wix/Locksmith.wxs` / `packaging/dmg/layout.json` directly and would fail on a clean clone). Fix them to lint the RENDERED artifact instead of the on-disk path: `test_wix_authoring` renders via `brandlib.render_wxs(brandlib.load_brand_manifest("locksmith"), <Locksmith.wxs.in>)` and `ET.fromstring(...)` it; `test_dmg_layout` uses `brandlib.render_dmg_layout(brandlib.load_brand_manifest("locksmith"))` (a dict). Drop/repurpose the now-meaningless `test_layout_exists`/any `WXS.is_file()` assertion; keep `test_background_exists` (background.png stays tracked).
 - Test: `tests/packaging/test_spec_bundles_rcc.py` (Create) + existing `tests/packaging/test_spec_macos.py`/`test_spec_windows.py` updates
 
 **Interfaces:**
 - Consumes: `brandlib.brand_release_dir` (Task 3); `brand_apply` outputs.
 - Produces: freezes that bundle `<release>/assets.rcc` + `<release>/brand.json` (flat into `locksmith/release`), use `<release>/AppIcon.icns` as the app icon, and no longer bundle the loose `assets/` tree; build scripts read wxs/dmg-layout from `<release>`.
+
+> Note (from Task 1 review): the disk-path readers of the moved brand files that this task owns are `packaging/Locksmith.macos.spec:194` (`icon=…AppIcon.icns`), `packaging/Locksmith.windows.spec:33` (`WIN_ICON=…AppIcon.ico`), `packaging/build-macos.sh:111` (`--volicon`), and `packaging/build-appicon.py:37-43`. Repoint all of them at the brand release dir (icons the freeze consumes) or `brands/<brand>/` (the generator's source), never the old `assets/custom/`. Also VERIFY `packaging/wix/gen_ui_images.py:26` (`ASSETS = REPO/"assets"/"custom"`): if it reads any moved brand file (logo/splash), repoint it; if it only reads neutral UI images, leave it and say so in the report.
 
 - [ ] **Step 1: Write a guard test for the macOS spec**
 

@@ -23,13 +23,13 @@ From the repository root:
 Qt Resource Regeneration
 ------------------------
 
-The generated Qt resource module lives at ``src/locksmith/resources_rc.py``.
+The Qt resource bundle is no longer a tracked file. Build the reference brand's
+bundle once (writes the gitignored ``src/locksmith/release/assets.rcc`` and
+``brand.json``); the app registers it at startup:
 
 .. code-block:: bash
 
-   python ./scripts/generate_qrc.py
-   pyside6-rcc resources.qrc -o resources_rc.py
-   mv resources_rc.py ./src/locksmith/
+   python scripts/brand_apply.py --brand locksmith
 
 Running Locksmith
 -----------------

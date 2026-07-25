@@ -23,9 +23,18 @@ CHANNEL="${LOCKSMITH_RELEASE_CHANNEL:-stable}"
 
 # ---- 0. Resolve brand identity (build-time white-label). Default = locksmith.
 export LOCKSMITH_BRAND="${LOCKSMITH_BRAND:-locksmith}"
+export LOCKSMITH_RELEASE="$(cd packaging && python -c "import brandlib; print(brandlib.brand_release_dir('$LOCKSMITH_BRAND'))")"
 APP_NAME="$(cd packaging && python -m brandlib id display_name)"
 ARTIFACT_PREFIX="$(cd packaging && python -m brandlib id artifact_prefix)"
-echo "build-macos: brand=$LOCKSMITH_BRAND app=$APP_NAME.app prefix=$ARTIFACT_PREFIX"
+echo "build-macos: brand=$LOCKSMITH_BRAND app=$APP_NAME.app prefix=$ARTIFACT_PREFIX release=$LOCKSMITH_RELEASE"
+
+# Build (or refresh) the brand's self-contained release bundle — assets.rcc,
+# brand.json, Locksmith.wxs, dmg-layout.json, staged icons, trust material —
+# before PyInstaller/create-dmg read it. Idempotent (brand_apply always
+# rewrites its output dir); CI's release workflow already runs this as its
+# own step, but calling it here too keeps this script correct standalone
+# (e.g. local dev builds run directly, without the CI step preceding it).
+python scripts/brand_apply.py --brand "$LOCKSMITH_BRAND"
 
 # ---- 1. Read version from pyproject.toml ---------------------------------
 VERSION="$(python3 -c '
@@ -87,11 +96,11 @@ DMG_NAME="${ARTIFACT_PREFIX}-${VERSION}.dmg"
 DMG_PATH="dist/${DMG_NAME}"
 rm -f "$DMG_PATH"
 
-# Pull window + icon coords from layout.json
-read APP_X APP_Y APPS_X APPS_Y WIN_W WIN_H ICON_SIZE < <(APP_NAME="$APP_NAME" python3 - <<'PY'
+# Pull window + icon coords from the brand's generated dmg-layout.json
+read APP_X APP_Y APPS_X APPS_Y WIN_W WIN_H ICON_SIZE < <(APP_NAME="$APP_NAME" LOCKSMITH_RELEASE="$LOCKSMITH_RELEASE" python3 - <<'PY'
 import json, os
 name = os.environ["APP_NAME"]
-d = json.load(open("packaging/dmg/layout.json"))
+d = json.load(open(os.path.join(os.environ["LOCKSMITH_RELEASE"], "dmg-layout.json")))
 icons = {i["name"]: i for i in d["icons"]} if isinstance(d["icons"], list) else d["icons"]
 print(
     icons[f"{name}.app"]["pos"][0],
@@ -108,7 +117,7 @@ PY
 echo "build-macos: creating $DMG_PATH"
 create-dmg \
     --volname "${APP_NAME}" \
-    --volicon "assets/custom/AppIcon.icns" \
+    --volicon "$LOCKSMITH_RELEASE/AppIcon.icns" \
     --background "packaging/dmg/background.png" \
     --window-pos 200 200 \
     --window-size "$WIN_W" "$WIN_H" \

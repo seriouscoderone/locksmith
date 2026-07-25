@@ -1,10 +1,17 @@
-"""Lint checks for packaging/wix/Locksmith.wxs.
+"""Lint checks for the WiX authoring template (packaging/wix/Locksmith.wxs.in).
 
 Static-only — does not invoke the wix CLI. The end-to-end MSI build is
 exercised in CI on a Windows runner.
+
+Locksmith.wxs itself is no longer a tracked file (scripts/brand_apply.py
+renders it per-brand into the brand release dir, gitignored — see the
+atomic-brand-bundles refactor). These lint checks render the locksmith
+brand's wxs in-memory from the template so they stay fresh-clone-safe
+(no dependency on a stray on-disk render).
 """
 from __future__ import annotations
 
+import sys
 import uuid
 from pathlib import Path
 from xml.etree import ElementTree as ET
@@ -13,7 +20,6 @@ import pytest
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIX_DIR = REPO_ROOT / "packaging" / "wix"
-WXS = WIX_DIR / "Locksmith.wxs"
 LICENSE_RTF = WIX_DIR / "license.rtf"
 BANNER = WIX_DIR / "banner.png"
 DIALOG = WIX_DIR / "dialog.png"
@@ -25,9 +31,16 @@ NS = {
 }
 
 
+def _render_wxs() -> str:
+    sys.path.insert(0, str(REPO_ROOT / "packaging"))
+    import brandlib
+    template = (WIX_DIR / "Locksmith.wxs.in").read_text(encoding="utf-8")
+    return brandlib.render_wxs(brandlib.load_brand_manifest("locksmith"), template)
+
+
 @pytest.fixture(scope="module")
 def wxs_tree():
-    return ET.parse(WXS)
+    return ET.ElementTree(ET.fromstring(_render_wxs()))
 
 
 def test_wxs_is_well_formed(wxs_tree):
@@ -89,8 +102,7 @@ def test_heat_exclusions_present_and_nontrivial():
 
 
 def test_no_hardcoded_changeme_strings():
-    text = WXS.read_text(encoding="utf-8")
-    assert "CHANGEME" not in text.upper()
+    assert "CHANGEME" not in _render_wxs().upper()
 
 
 def test_manufacturer_is_keri_host(wxs_tree):

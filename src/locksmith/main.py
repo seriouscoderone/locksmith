@@ -117,9 +117,6 @@ from PySide6.QtWidgets import QApplication, QSplashScreen
 from keri import help
 from qasync import QEventLoop
 
-# Required for resource-path resolution.
-from locksmith import resources_rc  # noqa: F401
-
 FORMAT = "%(asctime)s [%(name)s] %(levelname)-8s %(message)s"
 
 
@@ -133,11 +130,9 @@ def _make_splash() -> QSplashScreen | None:
     Windows. Returns ``None`` when the art is missing (no splash, never crash).
     """
     try:
-        from locksmith.ui.styles import _asset_root
-        path = _asset_root() / "assets" / "custom" / "SplashScreen.png"
-        pixmap = QPixmap(str(path))
+        pixmap = QPixmap(":/assets/custom/SplashScreen.png")
         if pixmap.isNull():
-            logger.warning("splash art not found at %s; skipping splash", path)
+            logger.warning("splash art not found at :/assets/custom/SplashScreen.png; skipping splash")
             return None
         return QSplashScreen(pixmap, Qt.WindowType.WindowStaysOnTopHint)
     except Exception as exc:  # noqa: BLE001 - a splash must never block startup

@@ -87,20 +87,18 @@ def test_two_gates_coexist_and_revoke_deactivates_exactly_one(monkeypatch):
 
 # --- Side-panel icons (HOA #4 demo follow-up) --------------------------------
 
-def test_role_menu_entries_have_nonnull_icons(qapp):
+def test_role_menu_entries_have_nonnull_icons(qapp, default_brand_resources):
     """Each role plugin supplies a real side-panel icon (not a blank QIcon)."""
-    from locksmith import resources_rc  # noqa: F401  (register :/assets)
     for cls in (ActuaryPlugin, ProductDesignerPlugin):
         p = cls()
         p.initialize(object())
         assert not p.get_menu_entry().icon_obj.isNull()
 
 
-def test_menubutton_falls_back_to_default_plugin_icon(qapp):
+def test_menubutton_falls_back_to_default_plugin_icon(qapp, default_brand_resources):
     """A MenuButton given an empty icon adopts the generic plugin glyph, so a
     plugin that registers no icon never shows a blank side-panel entry."""
     from PySide6.QtGui import QIcon
-    from locksmith import resources_rc  # noqa: F401
     from locksmith.ui.vault.menu import MenuButton, _DEFAULT_PLUGIN_ICON
     assert not QIcon(_DEFAULT_PLUGIN_ICON).isNull(), "default icon resource missing"
     btn = MenuButton(icon=QIcon(), label="No Icon Plugin")
