@@ -42,6 +42,10 @@ name = "Usurance"
 app_icon_icns     = "AppIcon.icns"
 app_icon_ico      = "AppIcon.ico"
 splash            = "SplashScreen.png"
+# Solid white squircle plate behind the teal eye+globe symbol — the color
+# lockup on transparency goes faint on a dark dock. (Locksmith uses the
+# default cream gradient; see packaging/build-appicon.py render().)
+icon_plate        = "#FFFFFF"
 # Treatments: standard (color) / white (reversed, dark surfaces) / black
 # (mono-dark, light surfaces). The white + black symbols are the wordless
 # eye+globe, tightly cropped/centered, single flat color (no gradient),

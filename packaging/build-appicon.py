@@ -24,6 +24,7 @@ import argparse
 import shutil
 import subprocess
 import sys
+import tomllib
 from io import BytesIO
 from pathlib import Path
 
@@ -48,19 +49,32 @@ DEFAULT_BRAND = "locksmith"
 # reference them without threading a brand param through every call.
 SVG = FULL_SVG = OUT_ICNS = OUT_ICO = OUT_SPLASH = None
 
+# Optional flat squircle-plate color for the app icon, from the brand's
+# ``[assets] icon_plate = "#RRGGBB"``. None → the default cream gradient (the
+# Locksmith reference). A brand whose symbol needs contrast on a dark dock
+# (e.g. usurance's teal eye+globe) sets a solid color like white.
+ICON_PLATE_FLAT: "QColor | None" = None
+
 OUT_WIX_BANNER = REPO_ROOT / "packaging" / "wix" / "banner.png"
 OUT_WIX_DIALOG = REPO_ROOT / "packaging" / "wix" / "dialog.png"
 
 
 def _set_brand_paths(brand: str) -> None:
     """Point the module-level SVG/output globals at brands/<brand>/."""
-    global SVG, FULL_SVG, OUT_ICNS, OUT_ICO, OUT_SPLASH
+    global SVG, FULL_SVG, OUT_ICNS, OUT_ICO, OUT_SPLASH, ICON_PLATE_FLAT
     brand_dir = BRANDS_DIR / brand
     SVG = brand_dir / "SymbolLogo.svg"
     FULL_SVG = brand_dir / "FullLogo.svg"
     OUT_ICNS = brand_dir / "AppIcon.icns"
     OUT_ICO = brand_dir / "AppIcon.ico"
     OUT_SPLASH = brand_dir / "SplashScreen.png"
+    ICON_PLATE_FLAT = None
+    toml_path = brand_dir / "brand.toml"
+    if toml_path.is_file():
+        manifest = tomllib.loads(toml_path.read_text(encoding="utf-8"))
+        plate = manifest.get("assets", {}).get("icon_plate")
+        if plate:
+            ICON_PLATE_FLAT = QColor(plate)
 
 
 # Windows ICO contains nested PNG/BMP frames at well-known sizes.
@@ -102,10 +116,13 @@ def render(size: int) -> QImage:
     radius = size * CORNER_RADIUS_RATIO
     plate.addRoundedRect(0, 0, size, size, radius, radius)
 
-    grad = QLinearGradient(0, 0, 0, size)
-    grad.setColorAt(0.0, PLATE_TOP)
-    grad.setColorAt(1.0, PLATE_BOTTOM)
-    painter.fillPath(plate, grad)
+    if ICON_PLATE_FLAT is not None:
+        painter.fillPath(plate, ICON_PLATE_FLAT)
+    else:
+        grad = QLinearGradient(0, 0, 0, size)
+        grad.setColorAt(0.0, PLATE_TOP)
+        grad.setColorAt(1.0, PLATE_BOTTOM)
+        painter.fillPath(plate, grad)
 
     painter.setClipPath(plate)
     pad = size * SYMBOL_PADDING_RATIO
