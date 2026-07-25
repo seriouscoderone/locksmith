@@ -42,10 +42,6 @@ name = "Usurance"
 app_icon_icns     = "AppIcon.icns"
 app_icon_ico      = "AppIcon.ico"
 splash            = "SplashScreen.png"
-# Solid white squircle plate behind the teal eye+globe symbol — the color
-# lockup on transparency goes faint on a dark dock. (Locksmith uses the
-# default cream gradient; see packaging/build-appicon.py render().)
-icon_plate        = "#FFFFFF"
 # Treatments: standard (color) / white (reversed, dark surfaces) / black
 # (mono-dark, light surfaces). The white + black symbols are the wordless
 # eye+globe, tightly cropped/centered, single flat color (no gradient),
@@ -57,6 +53,13 @@ name_logo         = "NameLogo.svg"
 name_logo_black   = "NameLogoBlack.svg"
 full_logo         = "FullLogo.svg"
 full_logo_black   = "FullLogoBlack.svg"
+
+# App-icon squircle plate color (build-appicon.py). Solid white behind the teal
+# eye+globe symbol — the color lockup on transparency goes faint on a dark dock.
+# NOT under [assets] (check-brand-complete treats every [assets] value as a
+# file). Locksmith omits this and uses the default cream gradient.
+[icon]
+plate = "#FFFFFF"
 
 # Same publisher as Locksmith: Usurance reuses the shared keri.host publisher
 # trust anchor + deploy config, build-injected exactly like Locksmith (not

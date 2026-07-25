@@ -72,7 +72,7 @@ def _set_brand_paths(brand: str) -> None:
     toml_path = brand_dir / "brand.toml"
     if toml_path.is_file():
         manifest = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-        plate = manifest.get("assets", {}).get("icon_plate")
+        plate = manifest.get("icon", {}).get("plate")
         if plate:
             ICON_PLATE_FLAT = QColor(plate)
 
