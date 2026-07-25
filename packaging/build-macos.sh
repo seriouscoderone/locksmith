@@ -46,6 +46,8 @@ echo "build-macos: building $APP_NAME $VERSION (channel=$CHANNEL)"
 
 # ---- 2. Bake version + channel into src/locksmith/build_info.py ---------
 GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+KERIPY_COMMIT="$(grep -oE 'keripy\.git@[0-9a-f]+' pyproject.toml | head -1 | cut -d@ -f2 | cut -c1-8)"
+[ -z "$KERIPY_COMMIT" ] && KERIPY_COMMIT="unknown"
 cat > src/locksmith/build_info.py <<EOF
 """Build-time constants — REWRITTEN by packaging/build-macos.sh at build time."""
 from __future__ import annotations
@@ -53,6 +55,7 @@ from __future__ import annotations
 LOCKSMITH_VERSION: str = "$VERSION"
 LOCKSMITH_RELEASE_CHANNEL: str = "$CHANNEL"
 LOCKSMITH_GIT_COMMIT: str = "$GIT_COMMIT"
+KERIPY_COMMIT: str = "$KERIPY_COMMIT"
 EOF
 
 # ---- 3. Clean prior outputs ---------------------------------------------

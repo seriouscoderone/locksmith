@@ -19,5 +19,11 @@ LOCKSMITH_RELEASE_CHANNEL: str = "stable"
 LOCKSMITH_GIT_COMMIT: str = "dev"
 """Short git commit this build was cut from. Build scripts overwrite it with
 `git rev-parse --short HEAD`. Distinguishes THIS keri.host fork build from any
-other same-version build (the bundled keri fork carries its own
-`2.0.0+kerihost.<sha>` version, read at runtime via `keri.__version__`)."""
+other same-version build."""
+
+KERIPY_COMMIT: str = "dev"
+"""Short commit of the pinned keri.host keripy fork this build bundles. Build
+scripts overwrite it with the sha from the `keri @ …@<sha>` pin in pyproject.
+keri's OWN __version__ must stay '2.0.0-dev6' (it gates DB open — see the keri
+pin comment in pyproject), so the fork identity is carried here, not there:
+displayed as `kerihost @ <KERIPY_COMMIT>` on top of the KERI 2.0 protocol gen."""

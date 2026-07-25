@@ -19,8 +19,14 @@ Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KER
   toolchain (`pytest`, `pytest-qt` for the `qtbot` fixture, and the publisher runtime
   deps `click`/`fido2`/`boto3` that `tests/integration/test_publisher_roundtrip.py`
   needs — it bootstraps `tools/publisher/src` onto `sys.path` rather than installing
-  the publisher package). Do **not** `pip install -e tools/publisher` to get those:
+  the publisher package). Do **not** plain `pip install -e tools/publisher` to get those:
   its unpinned upstream `keri` git dep conflicts with the fork pinned in `[project]`.
+- **Restoring the `locksmith-publisher` CLI after a venv rebuild.** A fresh `pip install -e .`
+  does NOT install the separate `tools/publisher/` package, so the `locksmith-publisher` console
+  script disappears (off-CI publishing breaks with `No such file or directory`). Restore it with
+  `pip install -e tools/publisher --no-deps` (the `--no-deps` avoids its stale **upstream** keri dep
+  clobbering the fork) plus its runtime deps `pip install click boto3 fido2 requests` (none depend on
+  keri). Then `.venv/bin/locksmith-publisher --help` works and the fork keri is untouched.
 - **Always pass `--import-mode=importlib`.** The repo has a top-level `packaging/` directory (wix/installer
   assets) that otherwise shadows the real `packaging` library on `sys.path`, giving a spurious
   `ModuleNotFoundError: packaging.version`.
@@ -55,6 +61,14 @@ or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceipto
   else the example). CI/release builds MUST inject the real files (the PyInstaller specs assume the path).
 - The in-app updater verify gate (`core/apping.py`) is wired but stays **dark** (non-enforcing) until a real
   publisher anchor is injected.
+- **NEVER relabel `keri.__version__`.** keripy gates DB open on `db.version == __version__`
+  (`keri/db/basing.py` `Baser.current`): existing keystores/vaults were created under the current string,
+  and any change drops them out of the exact-match path into the migration gate → `DatabaseError:
+  Database migrations must be run` → the publisher keystore AND every shipped user vault fail to open.
+  So the keripy fork's `__version__` MUST stay `2.0.0-dev6`. The **fork identity** is carried Locksmith-side
+  instead: `build_info.KERIPY_COMMIT` (stamped by the build scripts from the `keri @ …@<sha>` pin in
+  `pyproject`), shown in About/logs as `keripy: kerihost @ <sha> (KERI 2.0)`. Pin keri by exact commit
+  (not `@development`) for reproducible builds.
 - **Multi-brand cuts (Phase 3).** One signed `vX.Y.Z` tag builds BOTH brands via the `brand` matrix in
   `release.ci.yml`; each brand's DMG/MSI lands under its own S3 prefix (`releases/…` for locksmith,
   `usurance/releases/…` for usurance). Publishing (appcast + KEL anchor) stays off-CI and is run **once per

@@ -211,12 +211,12 @@ if __name__ == "__main__":
     # version string.
     try:
         from locksmith.build_info import (
-            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT)
-        import keri as _keri
+            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL,
+            LOCKSMITH_GIT_COMMIT, KERIPY_COMMIT)
         logger.info(
-            "startup.identity locksmith=%s channel=%s build=%s keripy=%s",
+            "startup.identity locksmith=%s channel=%s build=%s keripy=kerihost@%s",
             LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT,
-            _keri.__version__)
+            KERIPY_COMMIT)
     except Exception:
         logger.exception("startup.identity failed")
 

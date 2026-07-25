@@ -150,19 +150,17 @@ class AppSettingsDialog(LocksmithDialog):
                 LOCKSMITH_VERSION,
                 LOCKSMITH_RELEASE_CHANNEL,
                 LOCKSMITH_GIT_COMMIT,
+                KERIPY_COMMIT,
             )
         except Exception:
-            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT = (
-                "dev", "stable", "dev")
-        try:
-            import keri
-            _keripy_ver = keri.__version__
-        except Exception:
-            _keripy_ver = "unknown"
+            LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT, KERIPY_COMMIT = (
+                "dev", "stable", "dev", "dev")
 
         # Fork identity: app version (our own line) + the exact build commit +
-        # the bundled keri.host keripy fork's own version. Together these make
-        # "which build / which keripy is this?" unambiguous vs upstream.
+        # the pinned keri.host keripy fork commit. Together these make
+        # "which build / which keripy is this?" unambiguous vs upstream. (keri's
+        # own __version__ stays 2.0.0-dev6 — it gates DB open — so the keripy
+        # fork identity is carried here, not read from keri.__version__.)
         def _about_line(text: str, name: str) -> None:
             lbl = QLabel(text)
             lbl.setObjectName(name)
@@ -173,7 +171,7 @@ class AppSettingsDialog(LocksmithDialog):
                     "appSettingsDialog.aboutVersionLabel")
         _about_line(f"Build: {LOCKSMITH_GIT_COMMIT}",
                     "appSettingsDialog.aboutBuildLabel")
-        _about_line(f"keripy: {_keripy_ver}",
+        _about_line(f"keripy: kerihost @ {KERIPY_COMMIT} (KERI 2.0)",
                     "appSettingsDialog.aboutKeripyLabel")
 
         self._insert_section(about_container)
