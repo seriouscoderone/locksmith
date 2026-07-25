@@ -41,7 +41,13 @@ from pathlib import Path
 # Drop those entries so `import packaging.version` (pulled in by keri) resolves
 # to site-packages regardless of the caller's CWD.
 _REPO_ROOT = str(Path(__file__).resolve().parent.parent)
-sys.path[:] = [p for p in sys.path if p not in ("", ".", _REPO_ROOT)]
+_SCRIPT_DIR = str(Path(__file__).resolve().parent)
+# Also drop the script's own dir (sys.path[0] when run as a file) and the repo
+# root: both shadow the real `packaging` and can make an editable `keri` resolve
+# as a namespace package (only `__version__`-less) when extra editable .pth
+# entries reorder sys.path. Running via stdin already has sys.path[0]="" which
+# the "" filter handles; this makes file-invocation behave the same.
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _REPO_ROOT, _SCRIPT_DIR)]
 
 
 def _mount_dmg(dmg: Path):
