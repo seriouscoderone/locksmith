@@ -155,11 +155,14 @@ jobs:
         run: |
           # check-brand-complete + brand_apply read brands/<brand>/publisher_anchor.json;
           # write the shared anchor there (gitignored) so the gate passes and
-          # brand_apply copies it to release/. deploy_config goes straight to release/.
+          # brand_apply copies BOTH into the brand's release dir. Write deploy_config
+          # to brands/<brand>/ too (symmetric with the anchor) — otherwise for a
+          # non-default brand whose release dir is release/<brand>/ (e.g. usurance),
+          # a flat release/deploy_config.json is never staged into the bundle.
           mkdir -p "brands/${LOCKSMITH_BRAND}" src/locksmith/release
           printf '%s' "$PUBLISHER_ANCHOR" > "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
-          printf '%s' "$DEPLOY_CONFIG"    > src/locksmith/release/deploy_config.json
-          python -c "import json; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+          printf '%s' "$DEPLOY_CONFIG"    > "brands/${LOCKSMITH_BRAND}/deploy_config.json"
+          python -c "import json; json.load(open('brands/${LOCKSMITH_BRAND}/deploy_config.json')); print('deploy_config OK')" \
             || { echo '::error::LOCKSMITH_DEPLOY_CONFIG missing or invalid JSON'; exit 1; }
 
       - name: Apply brand (stages assets, brand.json, resources_rc, wix/dmg, trust)
@@ -168,7 +171,7 @@ jobs:
           source /tmp/venv/bin/activate 2>/dev/null || true
           python scripts/brand_apply.py --brand "$LOCKSMITH_BRAND"
           python scripts/check-brand-complete.py --brand "$LOCKSMITH_BRAND"
-          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
+          python scripts/check-anchor-present.py --anchor "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
 
       - name: Build, sign, notarize, staple DMG
         env:
@@ -362,11 +365,14 @@ jobs:
         run: |
           # check-brand-complete + brand_apply read brands/<brand>/publisher_anchor.json;
           # write the shared anchor there (gitignored) so the gate passes and
-          # brand_apply copies it to release/. deploy_config goes straight to release/.
+          # brand_apply copies BOTH into the brand's release dir. Write deploy_config
+          # to brands/<brand>/ too (symmetric with the anchor) — otherwise for a
+          # non-default brand whose release dir is release/<brand>/ (e.g. usurance),
+          # a flat release/deploy_config.json is never staged into the bundle.
           mkdir -p "brands/${LOCKSMITH_BRAND}" src/locksmith/release
           printf '%s' "$PUBLISHER_ANCHOR" > "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
-          printf '%s' "$DEPLOY_CONFIG"    > src/locksmith/release/deploy_config.json
-          python -c "import json; json.load(open('src/locksmith/release/deploy_config.json')); print('deploy_config OK')" \
+          printf '%s' "$DEPLOY_CONFIG"    > "brands/${LOCKSMITH_BRAND}/deploy_config.json"
+          python -c "import json; json.load(open('brands/${LOCKSMITH_BRAND}/deploy_config.json')); print('deploy_config OK')" \
             || { echo '::error::LOCKSMITH_DEPLOY_CONFIG missing or invalid JSON'; exit 1; }
 
       - name: Apply brand (stages assets, brand.json, resources_rc, wix/dmg, trust)
@@ -374,7 +380,7 @@ jobs:
         run: |
           python scripts/brand_apply.py --brand "$LOCKSMITH_BRAND"
           python scripts/check-brand-complete.py --brand "$LOCKSMITH_BRAND"
-          python scripts/check-anchor-present.py --anchor src/locksmith/release/publisher_anchor.json
+          python scripts/check-anchor-present.py --anchor "brands/${LOCKSMITH_BRAND}/publisher_anchor.json"
 
       - name: Build .exe (PyInstaller stage)
         shell: pwsh

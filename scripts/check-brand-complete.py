@@ -66,6 +66,14 @@ def validate(brand_id: str, brands_dir: Path) -> list[str]:
                 problems.append(f"placeholder/empty publisher_aid ({aid!r})")
             if not doc.get("witness_oobis"):
                 problems.append("anchor has no witness_oobis")
+
+        # deploy_config is bundled from the SAME brand dir as the anchor (both
+        # are build-injected there so brand_apply stages them into the brand's
+        # release dir). A flat release/deploy_config.json is NOT enough for a
+        # non-default brand whose release dir is release/<brand>/.
+        dc_name = m.get("publisher", {}).get("deploy_config", "deploy_config.json")
+        if not (bdir / dc_name).is_file():
+            problems.append(f"missing deploy_config at {bdir / dc_name}")
     return problems
 
 
