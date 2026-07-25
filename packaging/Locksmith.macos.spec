@@ -80,6 +80,10 @@ datas = [
     (str(_RELEASE / "brand.json"), "locksmith/release"),
     # qtawesome icon fonts (needed at runtime; not auto-collected reliably)
     (str(_QTA_FONTS), "qtawesome/fonts"),
+    # User-facing release notes: the What's New dialog renders this version's
+    # section after an update (locksmith.update.notes). Without it the modal
+    # falls back to generic "see the notes online" copy.
+    (str(REPO_ROOT / "CHANGELOG.md"), "locksmith"),
 ]
 
 # Brand-bundled EGF docs — optional, only present when this brand ships one.

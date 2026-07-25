@@ -326,10 +326,16 @@ class LocksmithWindow(QMainWindow):
         dlg.open()
 
     def _maybe_show_whats_new(self) -> None:
-        """If LOCKSMITH_VERSION is newer than the user's last_seen_version
-        AND the change crosses a major-or-minor boundary, fire the
-        What's New modal. Updates last_seen_version unconditionally so
-        future launches in this version don't re-show it."""
+        """If LOCKSMITH_VERSION is newer than the user's last_seen_version,
+        fire the What's New modal with that version's real release notes.
+        Updates last_seen_version unconditionally so future launches in this
+        version don't re-show it.
+
+        ANY forward version change qualifies, patch releases included: a patch
+        is exactly where "what changed?" is least obvious, and the notes now
+        come from the bundled CHANGELOG (``locksmith.update.notes``) rather
+        than generic boilerplate, so there is something worth showing.
+        """
         try:
             from locksmith.build_info import LOCKSMITH_VERSION
         except ImportError:
@@ -343,22 +349,17 @@ class LocksmithWindow(QMainWindow):
         if prev is None or LOCKSMITH_VERSION == prev:
             return
         try:
-            prev_major_minor = tuple(int(x) for x in prev.split(".")[:2])
-            cur_major_minor = tuple(int(x) for x in LOCKSMITH_VERSION.split(".")[:2])
+            prev_parts = tuple(int(x) for x in prev.split(".")[:3])
+            cur_parts = tuple(int(x) for x in LOCKSMITH_VERSION.split(".")[:3])
         except ValueError:
             return
-        if cur_major_minor <= prev_major_minor:
-            return
-        # Genuine major or minor bump — show the modal.
+        if cur_parts <= prev_parts:
+            return  # downgrade or re-run of a version already seen
         from locksmith.ui.dialogs.whats_new import WhatsNewDialog
-        notes = (
-            f"# What's new in v{LOCKSMITH_VERSION}\n\n"
-            f"You've upgraded from v{prev}. "
-            f"See the release notes on releases.keri.host for details."
-        )
+        from locksmith.update.notes import notes_for
         dlg = WhatsNewDialog(
             version=LOCKSMITH_VERSION,
-            release_notes_md=notes,
+            release_notes_md=notes_for(LOCKSMITH_VERSION, prev),
             parent=self,
         )
         dlg.open()
