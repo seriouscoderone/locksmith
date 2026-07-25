@@ -144,10 +144,15 @@ hiddenimports = [
     "keri.db.basing",
 ]
 
-# The KERI Foundation plugin package is reached only via an entry-point
-# ep.load() at runtime, so PyInstaller's static analysis never sees it — pull its
-# submodules in explicitly (paired with the copy_metadata above).
-hiddenimports += collect_submodules("locksmith.plugins.kerifoundation")
+# Bundled entry-point plugins (kerifoundation, hoa_shell, actuary,
+# product_designer, carrier) are reached only via entry-point ep.load() at
+# runtime, so PyInstaller's static analysis never sees them — pull the whole
+# locksmith.plugins tree in explicitly (paired with the copy_metadata above) so
+# every current AND future [project.entry-points."locksmith.plugins"] entry
+# resolves in the frozen app. Scoping to just kerifoundation left the HOA
+# plugins (hoa_shell/actuary/product_designer) out, so the Usurance brand fell
+# back to the vanilla vault picker instead of the peeled HOA roles surface.
+hiddenimports += collect_submodules("locksmith.plugins")
 
 block_cipher = None
 
