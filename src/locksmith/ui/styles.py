@@ -6,24 +6,12 @@ This module contains global setting for the Archimedes UI
 """
 import logging
 import sys
-from pathlib import Path
 
 from PySide6.QtGui import QIcon, QFontDatabase
 from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 
 logger = logging.getLogger(__name__)
 
-
-def _asset_root() -> Path:
-    """Directory where `assets/` lives.
-
-    - Dev: the repo root (4 levels up from src/locksmith/ui/styles.py).
-    - Frozen PyInstaller .app: sys._MEIPASS, which is where the spec's
-      datas put the assets tree.
-    """
-    if getattr(sys, "frozen", False):
-        return Path(sys._MEIPASS)
-    return Path(__file__).resolve().parents[3]
 
 # Default monospace font family (updated when custom font loads successfully)
 MONOSPACE_FONT_FAMILY = "monospace"

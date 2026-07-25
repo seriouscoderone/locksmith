@@ -18,7 +18,7 @@ Selection: --brand or $LOCKSMITH_BRAND (default 'locksmith'). --check writes
 nothing and just reports what would happen. Fails loud (SystemExit) if
 pyside6-rcc is unavailable or produces no output — never ships stale logos.
 """
-import argparse, json, os, subprocess, shutil, sys, tempfile
+import argparse, json, subprocess, shutil, sys, tempfile
 from pathlib import Path
 
 _THIS = Path(__file__).resolve()

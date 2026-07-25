@@ -29,9 +29,9 @@ toolbar_dark    = "#1A252C"
 name = "keri.host"
 
 [assets]
-# The locksmith reference brand uses the canonical committed assets/custom/
-# tree; it ships NO asset files in its brand dir, so brand_apply copies nothing
-# and the in-tree assets are used as-is. Listed here for documentation only.
+# The locksmith reference brand's logos, splash, and app-icon files live in
+# this brand dir like any white-label brand; brand_apply compiles them into
+# the per-brand assets.rcc (and stages the app-icon files) the same way.
 app_icon_icns     = "AppIcon.icns"
 app_icon_ico      = "AppIcon.ico"
 splash            = "SplashScreen.png"

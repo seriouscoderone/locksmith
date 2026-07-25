@@ -72,12 +72,6 @@ def exe_name(manifest: dict) -> str:
     return manifest["brand"]["display_name"]
 
 
-WIX_DIR = REPO_ROOT / "packaging" / "wix"
-WXS_TEMPLATE_PATH = WIX_DIR / "Locksmith.wxs.in"
-WXS_OUTPUT_PATH = WIX_DIR / "Locksmith.wxs"
-DMG_LAYOUT_PATH = REPO_ROOT / "packaging" / "dmg" / "layout.json"
-
-
 def render_wxs(manifest: dict, template_text: str) -> str:
     # Strip the template's own doc-header comment so it is neither
     # token-substituted nor emitted (keeps rendered .wxs == committed .wxs).
