@@ -62,6 +62,7 @@ def _set_brand_paths(brand: str) -> None:
     OUT_ICO = brand_dir / "AppIcon.ico"
     OUT_SPLASH = brand_dir / "SplashScreen.png"
 
+
 # Windows ICO contains nested PNG/BMP frames at well-known sizes.
 ICO_SIZES = [16, 32, 48, 64, 128, 256]
 
