@@ -26,6 +26,7 @@ import urllib.request
 from importlib import resources
 from pathlib import Path
 
+from locksmith.core.branding import brand
 from locksmith.release import load_deploy_config
 from locksmith.release.deploy import frozen_release_file
 from locksmith.update.errors import NetworkError, UpdateError
@@ -33,12 +34,23 @@ from locksmith.update.verify import ssl_context, verify_artifact
 
 
 def _appcast_url(platform: str) -> str:
-    """Resolve the per-platform appcast URL from the deploy config.
+    """Resolve the per-platform appcast URL the verify gate replays against.
 
-    The release CDN domain is no longer hardcoded here: it lives in the
-    gitignored ``deploy_config.json`` (committed ``deploy_config.example.json``
-    template). See ``locksmith.release.deploy.load_deploy_config``.
+    The ACTIVE BRAND's feed wins. ``deploy_config.json`` is shared across
+    brands and its ``appcast_urls`` point at locksmith's feed, so resolving
+    from it made a non-locksmith brand verify against locksmith's appcast:
+    the seal's ``brand`` then mismatched the app's brand and every update was
+    rejected ("update could not be verified") while Sparkle — which reads the
+    brand's own XML feed — happily offered the update. Sparkle and the gate
+    MUST read the same brand's feed.
+
+    Falls back to the deploy config only when the brand carries no JSON feed
+    (an older packaged brand.json predating these keys).
     """
+    b = brand()
+    url = b.appcast_macos if platform == "macos" else b.appcast_windows
+    if url:
+        return url
     urls = load_deploy_config()["appcast_urls"]
     return urls["macos"] if platform == "macos" else urls["windows"]
 

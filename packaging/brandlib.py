@@ -58,6 +58,13 @@ def runtime_brand_json(manifest: dict) -> dict:
         "org_domain": manifest["identity"]["org_domain"],
         "website": manifest["urls"]["website"],
         "support": manifest["urls"]["support"],
+        # BOTH the XML feeds (Sparkle/WinSparkle read these) and the JSON feeds
+        # (the in-app KERI verify gate reads these). The gate MUST use the
+        # brand's own feed: deploy_config.json is shared across brands and its
+        # appcast_urls point at locksmith's, so a non-locksmith brand verifying
+        # against it sees a `locksmith` seal and fails the brand check.
+        "appcast_macos": manifest["urls"]["appcast_macos"],
+        "appcast_windows": manifest["urls"]["appcast_windows"],
         "appcast_macos_xml": manifest["urls"]["appcast_macos_xml"],
         "appcast_windows_xml": manifest["urls"]["appcast_windows_xml"],
         "theme": dict(manifest.get("theme", {})),

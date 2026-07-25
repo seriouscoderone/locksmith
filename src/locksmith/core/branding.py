@@ -44,6 +44,13 @@ class Brand:
     id: str = "locksmith"
     appcast_macos_xml: str = "https://releases.keri.host/appcast/v1/macos.xml"
     appcast_windows_xml: str = "https://releases.keri.host/appcast/v1/windows.xml"
+    # JSON feeds — what the in-app KERI verify gate replays against
+    # (``update/cli.py:_appcast_url``). MUST be the brand's own feed:
+    # deploy_config.json is shared across brands and points at locksmith's, so a
+    # non-locksmith brand verifying against it reads a `locksmith` seal and fails
+    # the brand check ("update could not be verified").
+    appcast_macos: str = "https://releases.keri.host/appcast/v1/macos.json"
+    appcast_windows: str = "https://releases.keri.host/appcast/v1/windows.json"
     theme: dict = field(default_factory=_reference_theme)
     # --- [bootstrap] section: first-run HOA defaults (Locksmith itself never
     # sets these — a non-HOA brand.toml simply omits [bootstrap] and every
@@ -96,6 +103,8 @@ def _from_dict(doc: dict) -> Brand:
         id=doc.get("id", _DEFAULT.id),
         appcast_macos_xml=doc.get("appcast_macos_xml", _DEFAULT.appcast_macos_xml),
         appcast_windows_xml=doc.get("appcast_windows_xml", _DEFAULT.appcast_windows_xml),
+        appcast_macos=doc.get("appcast_macos", _DEFAULT.appcast_macos),
+        appcast_windows=doc.get("appcast_windows", _DEFAULT.appcast_windows),
         theme=dict(doc.get("theme", {})),
         peel_core_pages=bool(bs.get("peel_core_pages", False)),
         default_vault_name=bs.get("default_vault_name", ""),
