@@ -31,11 +31,57 @@ here (an earlier investigation assumed one was; the code does not have it).
 """
 from keri import help
 from keri.core import signing
+from PySide6.QtCore import QSettings
 
 from locksmith.core.crypto import stretch_password_to_passcode
 from locksmith.core.habbing import create_identifier, format_bran, open_hby
 
 logger = help.ogler.getLogger(__name__)
+
+#: QSettings group for HOA shell state. QSettings is already brand-scoped —
+#: ``ui/styles.py`` sets ``applicationName`` to the brand's display name — so
+#: this key never leaks one brand's workspace to another.
+_HOA_GROUP = "Hoa"
+_WORKSPACE_KEY = f"{_HOA_GROUP}/workspace_vault"
+
+
+def remembered_workspace_vault(settings: QSettings | None = None) -> str | None:
+    """The vault name this brand's HOA shell recorded as its workspace, if any.
+
+    Needed because the workspace name is user-chosen at first run (the
+    onboarding ``SetupPage``), so it is NOT necessarily
+    ``brand_cfg.default_vault_name`` on later launches.
+    """
+    value = (settings or QSettings()).value(_WORKSPACE_KEY, None)
+    return str(value) if value else None
+
+
+def remember_workspace_vault(name: str, settings: QSettings | None = None) -> None:
+    """Record ``name`` as this brand's HOA workspace, so the next launch resumes
+    it instead of treating the build as un-set-up."""
+    s = settings or QSettings()
+    s.setValue(_WORKSPACE_KEY, name)
+    s.sync()
+
+
+def hoa_workspace_vault(app, brand_cfg, *, settings: QSettings | None = None) -> str | None:
+    """The EXISTING vault this HOA build owns, or ``None`` if it must be created.
+
+    Resolution order: the remembered workspace (survives a user-chosen rename),
+    then the brand's ``default_vault_name``. Both are checked against
+    ``app.environments()`` so a stale record can't point at a deleted vault.
+
+    ``None`` means "this brand has no workspace yet" — i.e. a genuine first run
+    for THIS brand, even when the machine holds unrelated vaults.
+    """
+    envs = set(app.environments())
+    remembered = remembered_workspace_vault(settings)
+    if remembered and remembered in envs:
+        return remembered
+    default_name = getattr(brand_cfg, "default_vault_name", "") or ""
+    if default_name and default_name in envs:
+        return default_name
+    return None
 
 
 def bootstrap_default_environment(
@@ -80,12 +126,22 @@ def bootstrap_default_environment(
     to receive only once they've been discovered and started.
     """
     if not (brand_cfg.default_vault_name or vault_name):
+        logger.info("bootstrap.skipped reason=not_opted_in")
         return False  # neither brand default nor override — never bootstraps
 
-    if app.environments():
-        return False  # not first run — a vault already exists on disk
-
     name = vault_name or brand_cfg.default_vault_name
+
+    # Brand-scoped "first run": bootstrap when THIS brand's workspace vault is
+    # absent — NOT when the machine merely holds some vault. environments()
+    # reads a SHARED ~/.keri base, so any unrelated vault (another brand's, a
+    # test vault) used to satisfy the old `if app.environments()` guard: the
+    # bootstrap no-op'd silently, nothing opened the vault, and a peeled HOA
+    # build — which has no vault chooser — stranded the user on a blank home
+    # page. See `_resume_or_bootstrap_hoa` in ui/window.py for the resume side.
+    if name in app.environments():
+        logger.info("bootstrap.skipped reason=workspace_exists name=%s", name)
+        return False
+
     config = app.config
 
     effective_pass = brand_cfg.default_passcode if passcode is None else passcode
@@ -113,6 +169,11 @@ def bootstrap_default_environment(
         return False
 
     app.open_vault(name, vault, qtask)
+    # Remember which vault is this brand's workspace BEFORE the AID step, so a
+    # failure there still leaves the next launch able to resume rather than
+    # trying to create a second workspace.
+    remember_workspace_vault(name)
+    logger.info("bootstrap.created name=%s", name)
 
     # Witnessless default AID: 'salty' key type needs its own random salt
     # (the manual dialog's field default is generated the same way).

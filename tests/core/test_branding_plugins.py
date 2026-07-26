@@ -43,6 +43,12 @@ def test_runtime_brand_json_passes_plugins_through():
         "urls": {
             "website": "https://example.com",
             "support": "https://example.com/support",
+            # BOTH feed flavors are required: XML for Sparkle, JSON for the
+            # in-app KERI verify gate. Every real brand.toml declares all four,
+            # and runtime_brand_json requires them on purpose — a brand missing
+            # its JSON feed used to silently verify against locksmith's.
+            "appcast_macos": "https://example.com/appcast/macos.json",
+            "appcast_windows": "https://example.com/appcast/windows.json",
             "appcast_macos_xml": "https://example.com/appcast/macos.xml",
             "appcast_windows_xml": "https://example.com/appcast/windows.xml",
         },
