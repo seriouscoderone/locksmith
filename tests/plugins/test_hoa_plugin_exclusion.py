@@ -115,7 +115,7 @@ def test_kerifoundation_loads_under_ambient_default_brand(
 
 # --------------------------------------------------------------------------
 # [plugins] bundled brand-composition gating (HOA #4): the carrier entry
-# point — a BUNDLED_ONLY_PLUGIN_IDS member — loads iff the active brand
+# point — declared in the `locksmith.plugins.composed` group — loads iff the brand
 # explicitly lists it under bundled_plugins, replacing the old peel-based
 # HOA_ONLY_PLUGIN_IDS heuristic. kerifoundation's HOA_PEELED_PLUGIN_IDS path
 # is untouched by this change.

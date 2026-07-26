@@ -100,8 +100,18 @@ build-windows = [
     "pyinstaller>=6.6,<7",
 ]
 
+# Default-on in-tree plugins: discovered for every brand (an HOA peel can still
+# remove one — see activation_policy.HOA_PEELED_PLUGIN_IDS).
 [project.entry-points."locksmith.plugins"]
 kerifoundation = "locksmith.plugins.kerifoundation.plugin:KeriFoundationPlugin"
+
+# Brand-COMPOSED in-tree plugins: discovered only when the active brand lists the
+# plugin under `[plugins] bundled` in its brand.toml. The group carries that
+# policy because it must be decidable BEFORE the module is imported, and it keeps
+# the framework from hardcoding plugin ids (it replaces the old
+# BUNDLED_ONLY_PLUGIN_IDS frozenset). Both groups live under locksmith.plugins,
+# so the specs' collect_submodules("locksmith.plugins") covers them unchanged.
+[project.entry-points."locksmith.plugins.composed"]
 carrier = "locksmith.plugins.carrier.plugin:CarrierPlugin"
 hoa_shell = "locksmith.plugins.hoa_shell.plugin:HoaShellPlugin"
 actuary = "locksmith.plugins.actuary.plugin:ActuaryPlugin"

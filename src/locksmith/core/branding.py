@@ -62,7 +62,7 @@ class Brand:
     default_witnesses: list[str] = field(default_factory=list)
     default_toad: int = 0
     # --- [plugins] section: which bundled-only in-tree plugins (see
-    # plugins/manager.py's BUNDLED_ONLY_PLUGIN_IDS) this brand activates.
+    # the `locksmith.plugins.composed` entry-point group) this brand activates.
     # Which surfaces a brand composes is brand config, never a framework
     # hardcode (HOA #4) — a non-HOA brand.toml simply omits [plugins] and
     # stays at this empty, inert default. ---

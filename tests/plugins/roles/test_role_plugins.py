@@ -46,9 +46,25 @@ def test_page_key_equals_plugin_id_and_menu_label(qapp, cls, pid, label):
 
 
 def test_entry_points_registered():
+    """Role plugins are brand-COMPOSED, so they live in the composed group.
+
+    The group is what makes "brand must opt in" decidable before import; see
+    docs/superpowers/specs/2026-07-25-plugin-origin-strategy-design.md. They are
+    deliberately NOT in the default-on ``locksmith.plugins`` group — that would
+    load them for every brand.
+    """
     import importlib.metadata as md
-    eps = {ep.name for ep in md.entry_points(group="locksmith.plugins")}
-    assert {"actuary", "product_designer"} <= eps
+
+    from locksmith.plugins.origins import (
+        COMPOSED_ENTRY_POINT_GROUP,
+        ENTRY_POINT_GROUP,
+    )
+
+    composed = {ep.name for ep in md.entry_points(group=COMPOSED_ENTRY_POINT_GROUP)}
+    assert {"actuary", "product_designer"} <= composed
+
+    default_on = {ep.name for ep in md.entry_points(group=ENTRY_POINT_GROUP)}
+    assert not ({"actuary", "product_designer"} & default_on)
 
 
 def test_two_gates_coexist_and_revoke_deactivates_exactly_one(monkeypatch):

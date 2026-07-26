@@ -27,6 +27,13 @@ Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KER
   `pip install -e tools/publisher --no-deps` (the `--no-deps` avoids its stale **upstream** keri dep
   clobbering the fork) plus its runtime deps `pip install click boto3 fido2 requests` (none depend on
   keri). Then `.venv/bin/locksmith-publisher --help` works and the fork keri is untouched.
+- **Plugin entry-point groups.** In-tree plugins are declared in TWO groups:
+  `locksmith.plugins` (default-on) and `locksmith.plugins.composed` (loaded only when the
+  active brand lists them under `[plugins] bundled`). The *group* carries that policy
+  because it must be readable before the module is imported. After changing either group
+  in `pyproject.toml`, **re-run `pip install -e .`** — entry-point metadata is snapshotted
+  at install time, so a stale dist-info silently hides a plugin. See
+  `docs/superpowers/specs/2026-07-25-plugin-origin-strategy-design.md`.
 - **Always pass `--import-mode=importlib`.** The repo has a top-level `packaging/` directory (wix/installer
   assets) that otherwise shadows the real `packaging` library on `sys.path`, giving a spurious
   `ModuleNotFoundError: packaging.version`.

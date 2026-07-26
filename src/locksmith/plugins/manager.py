@@ -2,18 +2,23 @@
 """
 locksmith.plugins.manager module
 
-Plugin discovery, lifecycle dispatch, and state tracking.
+Plugin lifecycle dispatch and state tracking.
 
-Discovery order:
-1. Walk ``~/.locksmith/plugins/index.json``. For each entry:
-   - skip if in this wallet's exclude list
-   - skip if requires_locksmith is not satisfied (mark Incompatible)
-   - skip if clone dir is missing (mark Files-Missing)
-   - else add the clone to sys.path, import the entry_point, instantiate
-2. Walk Python entry-points registered under ``locksmith.plugins`` for
-   in-tree plugins (kerifoundation today). Same exclude check applies.
-3. Call ``initialize(app)`` on each loaded plugin (any exception marks
-   it Failed and removes it from the loaded set).
+Discovery itself is delegated to two collaborators (see
+``docs/superpowers/specs/2026-07-25-plugin-origin-strategy-design.md``):
+
+- ``origins`` — WHERE a plugin comes from. Each ``PluginOrigin`` yields
+  *unimported* ``Candidate`` objects: the installed-clone index
+  (``~/.locksmith/plugins/index.json``), the default-on in-tree entry-point
+  group, and the brand-composed entry-point group. Registry order is
+  precedence, so an installed clone still wins over an in-tree plugin of the
+  same id.
+- ``activation_policy`` — WHETHER it loads: an ordered veto chain (exclude
+  list, HOA peel, brand composition, compatibility, files-present). Policy is
+  evaluated on a candidate's identity BEFORE its module is imported.
+
+``discover()`` then calls ``initialize(app)`` on each loaded plugin (any
+exception marks it Failed and removes it from the loaded set).
 
 Dispatch:
 - App lifecycle hooks (on_app_started, on_app_stopping, app shortcuts,
@@ -36,7 +41,7 @@ from keri import help
 from PySide6.QtCore import QTimer
 
 from locksmith.core.branding import brand
-from locksmith.plugins import storage
+from locksmith.plugins import activation_policy, origins, storage
 from locksmith.plugins.base import (
     AccountProviderPlugin,
     AppPlugin,
@@ -44,6 +49,7 @@ from locksmith.plugins.base import (
     VaultPlugin,
 )
 from locksmith.plugins.credential_gate import RequiredCredential, gate_satisfied
+from locksmith.plugins.origins import Candidate, PluginOrigin
 from locksmith.plugins.role_activation import RevealBundledSurface, RoleActivationStrategy
 
 if TYPE_CHECKING:
@@ -52,22 +58,17 @@ if TYPE_CHECKING:
 
 logger = help.ogler.getLogger(__name__)
 
-ENTRY_POINT_GROUP = "locksmith.plugins"
+# Re-exported for callers/tests that referenced these here before discovery was
+# extracted into `origins` / `activation_policy`.
+ENTRY_POINT_GROUP = origins.ENTRY_POINT_GROUP
+COMPOSED_ENTRY_POINT_GROUP = origins.COMPOSED_ENTRY_POINT_GROUP
+HOA_PEELED_PLUGIN_IDS = activation_policy.HOA_PEELED_PLUGIN_IDS
 
-# In-tree entry-point plugin excluded from HOA (peel_core_pages) brands at
-# runtime. pyproject.toml's entry-point declaration is shared across brands
-# and is NOT brand-gated — deleting it there broke the default Locksmith
-# build (see backlog/2026-07-09-kerifoundation-plugin-brand-leak-and-onboarding-crash.md).
-# The exclusion instead happens here, filtered by plugin_id before the
-# plugin class is even loaded/instantiated.
-HOA_PEELED_PLUGIN_IDS = frozenset({"kerifoundation"})
-
-# Bundled-only plugins: in-tree shell/role plugins that load ONLY when the
-# active brand explicitly lists them under [plugins] bundled. Replaces the
-# former HOA_ONLY_PLUGIN_IDS peel-brand heuristic (HOA #4): which surfaces a
-# brand composes is brand config, never a framework hardcode.
-BUNDLED_ONLY_PLUGIN_IDS = frozenset({"carrier", "hoa_shell", "actuary",
-                                     "product_designer"})
+# NOTE: the former BUNDLED_ONLY_PLUGIN_IDS frozenset is gone. Brand-composed
+# plugins are now identified by the entry-point GROUP they are declared in
+# (`locksmith.plugins.composed`), which is readable before import and needs no
+# framework-level id list — see origins.COMPOSED_ENTRY_POINT_GROUP and the
+# design doc's "Retiring BUNDLED_ONLY_PLUGIN_IDS — correctly".
 
 
 @dataclass
@@ -98,9 +99,16 @@ class HeldCredential:
 class PluginManager:
     """Discovers, initializes, and manages Locksmith plugins."""
 
-    def __init__(self, app: Any, *, keri_base: Path):
+    def __init__(self, app: Any, *, keri_base: Path,
+                 plugin_origins: tuple[PluginOrigin, ...] | None = None):
         self._app = app
         self._keri_base = Path(keri_base)
+        # Injectable so a test (or a future deployment) can add an origin
+        # without touching discovery. Order == precedence.
+        self._origins: tuple[PluginOrigin, ...] = (
+            plugin_origins if plugin_origins is not None
+            else origins.DEFAULT_ORIGINS
+        )
         self._plugins: dict[str, PluginCore] = {}
         self._states: dict[str, PluginState] = {}
         self._started_services: dict[str, list[Any]] = {}
@@ -120,114 +128,93 @@ class PluginManager:
     # ------------------- discovery ---------------------------------
 
     def discover(self) -> None:
+        """Walk each origin in precedence order, apply the activation policy to
+        every candidate, and import only the survivors.
+
+        Policy is decided from a candidate's identity BEFORE its module is
+        imported (see ``activation_policy`` and defect D1 in
+        ``docs/superpowers/specs/2026-07-25-plugin-origin-strategy-design.md``);
+        previously an excluded or superseded plugin was imported and constructed
+        first and rejected afterwards.
+        """
         excluded = set(
             storage.read_enable_list(self._keri_base).get("excluded", [])
         )
-        self._discover_from_index(excluded)
-        self._discover_from_entry_points(excluded)
+        # brand() resolved HERE (not inside the rules) so the policy stays pure
+        # and `manager.brand` remains the one patch point tests already use.
+        rules = activation_policy.default_rules(excluded, brand())
+        for origin in self._origins:
+            for candidate in origin.candidates():
+                self._consider(candidate, origin, rules)
         self._call_initialize_on_all()
 
-    def _discover_from_index(self, excluded: set[str]) -> None:
-        idx = storage.read_index()
-        for record in idx.get("plugins", []):
-            pid = record.get("plugin_id")
-            if not pid:
-                continue
-            self._states[pid] = PluginState(
-                plugin_id=pid,
-                source=record.get("source", {}),
-                manifest_snapshot=record.get("manifest_snapshot", {}),
-            )
-            if pid in excluded:
-                self._states[pid].status = "excluded"
-                logger.info("plugin.skipped reason=excluded plugin_id=%s", pid)
-                continue
-            if not self._compat_ok(record):
-                self._states[pid].status = "incompatible"
-                logger.info("plugin.skipped reason=incompatible plugin_id=%s", pid)
-                continue
-            clone = storage.plugin_clone_dir(pid)
-            if not clone.exists():
-                self._states[pid].status = "files_missing"
-                logger.warning(
-                    "plugin.skipped reason=files_missing plugin_id=%s expected_at=%s",
-                    pid, clone,
-                )
-                continue
-            try:
-                self._load_from_clone(record, clone)
-            except Exception as e:  # noqa: BLE001
-                self._states[pid].status = "failed"
-                self._states[pid].error = self._format_error(e)
-                logger.exception("plugin.load_failed plugin_id=%s", pid)
+    #: Skip reasons recorded only in the log — the pre-change code returned
+    #: before building any PluginState for these, so the Plugins page never
+    #: listed a peeled/uncomposed plugin. Preserved deliberately.
+    _LOG_ONLY_REASONS = frozenset({"hoa_peel", "not_bundled"})
 
-    def _discover_from_entry_points(self, excluded: set[str]) -> None:
-        try:
-            eps = importlib.metadata.entry_points(group=ENTRY_POINT_GROUP)
-        except Exception:
-            logger.exception("plugin.entry_points.discovery_failed")
+    def _consider(self, candidate: Candidate, origin: Any,
+                  rules: tuple[Any, ...]) -> None:
+        pid = candidate.plugin_id
+        if pid in self._states or pid in self._plugins:
+            # An earlier origin already claimed this id (index wins over
+            # in-tree). Skipped before import, unlike the pre-change code.
             return
-        peel_core_pages = brand().peel_core_pages
-        for ep in eps:
-            if peel_core_pages and ep.name in HOA_PEELED_PLUGIN_IDS:
-                logger.info(
-                    "plugin.skipped reason=hoa_peel plugin_id=%s", ep.name,
-                )
-                continue
-            if (ep.name in BUNDLED_ONLY_PLUGIN_IDS
-                    and ep.name not in brand().bundled_plugins):
-                logger.info("plugin.skipped reason=not_bundled plugin_id=%s",
-                            ep.name)
-                continue
-            try:
-                plugin_cls = ep.load()
-                plugin = plugin_cls()
-                pid = plugin.plugin_id
-                if pid in self._states:
-                    # Already loaded via index — index wins.
-                    continue
-                state = PluginState(plugin_id=pid, in_tree=True)
-                if pid in excluded:
-                    state.status = "excluded"
-                    self._states[pid] = state
-                    logger.info("plugin.skipped reason=excluded plugin_id=%s", pid)
-                    continue
-                self._plugins[pid] = plugin
-                self._states[pid] = state
-                logger.info("plugin.loaded plugin_id=%s source=entry_point", pid)
-            except Exception:  # noqa: BLE001
-                logger.exception(
-                    "plugin.entry_point.load_failed name=%s", ep.name,
-                )
 
-    def _load_from_clone(self, record: dict[str, Any], clone: Path) -> None:
-        pid = record["plugin_id"]
-        snap = record.get("manifest_snapshot", {})
-        entry_point = snap.get("entry_point")
-        if not entry_point or ":" not in entry_point:
-            raise RuntimeError(f"missing or malformed entry_point in record: {entry_point!r}")
+        reason = activation_policy.first_veto(candidate, rules)
+        if reason is not None:
+            self._record_skip(candidate, reason)
+            return
 
-        module_name, _, class_name = entry_point.partition(":")
+        state = self._new_state(candidate)
+        try:
+            plugin = candidate.load()
+        except Exception as e:  # noqa: BLE001
+            if candidate.in_tree:
+                # Matches the pre-change entry-point path: log the failure and
+                # leave no PluginState behind.
+                logger.exception("plugin.entry_point.load_failed name=%s", pid)
+                return
+            state.status = "failed"
+            state.error = self._format_error(e)
+            self._states[pid] = state
+            logger.exception("plugin.load_failed plugin_id=%s", pid)
+            return
 
-        # Support both flat-layout (<clone>/<pkg>/) and src-layout
-        # (<clone>/src/<pkg>/) plugins. Add src/ first if present so it
-        # takes priority; clone-root stays as a fallback for flat-layout.
-        src_dir = clone / "src"
-        for candidate in (src_dir, clone) if src_dir.is_dir() else (clone,):
-            cand_str = str(candidate)
-            if cand_str not in sys.path:
-                sys.path.insert(0, cand_str)
-
-        module = importlib.import_module(module_name)
-        cls = getattr(module, class_name)
-        plugin = cls()
-        if plugin.plugin_id != pid:
-            raise RuntimeError(
-                f"plugin_id mismatch: manifest says {pid!r}, "
-                f"class returns {plugin.plugin_id!r}"
-            )
         self._plugins[pid] = plugin
-        logger.info("plugin.loaded plugin_id=%s source=clone path=%s", pid, clone)
+        self._states[pid] = state
+        if origin.log_source == "clone":
+            logger.info("plugin.loaded plugin_id=%s source=clone path=%s",
+                        pid, origins.clone_path(pid))
+        else:
+            logger.info("plugin.loaded plugin_id=%s source=%s",
+                        pid, origin.log_source)
+
+    @staticmethod
+    def _new_state(candidate: Candidate) -> PluginState:
+        return PluginState(
+            plugin_id=candidate.plugin_id,
+            source=dict(candidate.source),
+            manifest_snapshot=dict(candidate.manifest_snapshot),
+            in_tree=candidate.in_tree,
+        )
+
+    def _record_skip(self, candidate: Candidate, reason: str) -> None:
+        pid = candidate.plugin_id
+        if reason == "files_missing":
+            state = self._new_state(candidate)
+            state.status = reason
+            self._states[pid] = state
+            logger.warning(
+                "plugin.skipped reason=files_missing plugin_id=%s expected_at=%s",
+                pid, origins.clone_path(pid),
+            )
+            return
+        if reason not in self._LOG_ONLY_REASONS:
+            state = self._new_state(candidate)
+            state.status = reason
+            self._states[pid] = state
+        logger.info("plugin.skipped reason=%s plugin_id=%s", reason, pid)
 
     def _call_initialize_on_all(self) -> None:
         for pid in list(self._plugins.keys()):
