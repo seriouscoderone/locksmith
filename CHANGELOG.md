@@ -9,6 +9,11 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
+## 0.3.4
+
+- Usurance now opens to its workspace setup on first launch, and returns you
+  straight to your workspace after that, instead of a blank screen.
+
 ## 0.3.3
 
 - The app icon no longer reverts to a faint version once the window finishes
