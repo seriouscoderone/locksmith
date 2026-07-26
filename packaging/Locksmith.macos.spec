@@ -16,7 +16,11 @@ import tomllib
 from pathlib import Path
 
 import qtawesome  # noqa: F401  — bundling its data only; we don't call it here
-from PyInstaller.utils.hooks import copy_metadata, collect_submodules
+from PyInstaller.utils.hooks import (
+    collect_data_files,
+    collect_submodules,
+    copy_metadata,
+)
 
 # ---- Resolve paths -------------------------------------------------------
 
@@ -89,6 +93,15 @@ datas = [
 # Brand-bundled EGF docs — optional, only present when this brand ships one.
 if (_RELEASE / "egf").is_dir():
     datas.append((str(_RELEASE / "egf"), "locksmith/release/egf"))
+
+# keri_serviceaid ships its EGF meta-schema as PACKAGE DATA and reads it off
+# disk (keri_serviceaid/egf/documents.py:_load_meta_schema). PyInstaller bundles
+# the .py modules because they're imported, but not the .json beside them — so a
+# frozen build died with FileNotFoundError on egf/schemas/egf-doc-0.1.json the
+# moment core/egf_seeding.make_hoa_resolver() resolved the brand's EGF, taking
+# the HOA persona/roles surface with it. Verified absent from the shipped 0.3.4
+# artifact (zero keri_serviceaid entries).
+datas += collect_data_files("keri_serviceaid")
 
 # Bundled entry-point plugins (e.g. KERI Foundation): discovered ONLY via
 # importlib.metadata.entry_points(group="locksmith.plugins"). PyInstaller strips
