@@ -11,7 +11,7 @@ Covers:
   (Task 7) must not auto-register the plugin's surface — it stays dormant
   until ``reevaluate_role_gates`` reveals it (Task 8, exercised elsewhere).
 - Brand-gating (HOA #4 refinement): the carrier entry point — a
-  ``BUNDLED_ONLY_PLUGIN_IDS`` member — is only loaded by
+  member of the ``locksmith.plugins.composed`` entry-point group — is only loaded by
   ``PluginManager.discover()`` when the active brand explicitly lists it
   under ``brand().bundled_plugins`` (``[plugins] bundled`` in brand.toml);
   the default (non-HOA) Locksmith build must not load it at all, and

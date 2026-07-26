@@ -73,7 +73,8 @@ def _sent_applies(app) -> list:
 
 class HoaShellPlugin(VaultPlugin):
     """The generic (domain-neutral) HOA onboarding shell, bundled-only
-    (HOA #4 -- see ``PluginManager.BUNDLED_ONLY_PLUGIN_IDS``)."""
+    (HOA #4 -- declared in the ``locksmith.plugins.composed``
+    entry-point group; see ``locksmith.plugins.origins``)."""
 
     plugin_id = "hoa_shell"
     required_credential = None

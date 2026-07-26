@@ -72,12 +72,20 @@ echo "devbuild-macos: deploy_config present at $DEPLOY_CONFIG_PATH"
 
 # ---- 3. Bake version + channel into build_info.py -----------------------
 # Same mechanism as build-macos.sh (§ version-override note at top of file).
+# Must write EVERY field build_info.py declares: main.py imports them together
+# for the startup.identity line, so omitting one made every devbuild log a
+# misleading `ImportError: cannot import name 'LOCKSMITH_GIT_COMMIT'`.
+GIT_COMMIT="$(git rev-parse --short HEAD 2>/dev/null || echo unknown)"
+KERIPY_COMMIT="$(grep -oE 'keripy\.git@[0-9a-f]+' pyproject.toml | head -1 | cut -d@ -f2 | cut -c1-8)"
+[ -z "$KERIPY_COMMIT" ] && KERIPY_COMMIT="unknown"
 cat > src/locksmith/build_info.py <<EOF
 """Build-time constants — REWRITTEN by scripts/devbuild-macos.sh at build time."""
 from __future__ import annotations
 
 LOCKSMITH_VERSION: str = "$VERSION"
 LOCKSMITH_RELEASE_CHANNEL: str = "$CHANNEL"
+LOCKSMITH_GIT_COMMIT: str = "$GIT_COMMIT"
+KERIPY_COMMIT: str = "$KERIPY_COMMIT"
 EOF
 echo "devbuild-macos: wrote build_info.py (LOCKSMITH_VERSION=$VERSION)"
 
