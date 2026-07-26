@@ -9,10 +9,12 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
-## 0.3.4
+## 0.3.5
 
 - Usurance now opens to its workspace setup on first launch, and returns you
   straight to your workspace after that, instead of a blank screen.
+- The roles screen works in installed builds: a governance-framework file was
+  missing from the packaged app, so the screen had nothing to load.
 
 ## 0.3.3
 
