@@ -381,7 +381,11 @@ class IdentifierViewSectionsMixin:
         if vault is None:
             return
         settings = vault.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
-        host = settings.advertised_host or "127.0.0.1"
+        # Blank advertised host resolves (env > brand > primary interface)
+        # instead of falling back to loopback — an rpy that says 127.0.0.1
+        # is unreachable for every peer that isn't on this machine.
+        from locksmith.peer.netaddr import resolve_advertised_host
+        host = settings.advertised_host or resolve_advertised_host()
         url = f"tcp://{host}:{settings.port}"
         signal_bridge = getattr(vault, "signals", None)
         doer = PublishPeerRoleDoer(

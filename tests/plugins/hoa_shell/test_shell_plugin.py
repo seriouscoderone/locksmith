@@ -85,8 +85,37 @@ def test_on_vault_ui_ready_registers_home_and_notifications(qapp, monkeypatch):
     p.on_vault_ui_ready(vault_page)
 
     registered = [c.args[0] for c in vault_page.register_page.call_args_list]
-    assert registered == ["home", "notifications"]
+    assert registered == ["home", "notifications", "connection"]
     assert p._home_page is not None and p._notifications_page is not None
+
+
+def test_connection_page_is_registered_before_any_vault_is_open(qapp, monkeypatch):
+    """The peeled HOA shell has no settings/peers page, so this is the only
+    place a user can see the listener port, the advertised address, and per-
+    peer reachability. It is registered at ui-ready time like "home" — before
+    any vault exists — so it must not touch app.vault during construction."""
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    import dataclasses
+    from locksmith.core.branding import Brand
+    monkeypatch.setattr(shell_mod, "brand", lambda: dataclasses.replace(
+        Brand(), onboarding_enabled=True, peel_core_pages=True))
+    fake_resolver, fake_egf = MagicMock(), MagicMock()
+    fake_egf.personas.return_value = []
+    monkeypatch.setattr(shell_mod, "make_hoa_resolver",
+                        lambda b: (fake_resolver, fake_egf))
+    monkeypatch.setattr(shell_mod, "HoaVaultPage", _FakeHoaVaultPage)
+    vault_page = _FakeHoaVaultPage()
+
+    app = MagicMock()
+    app.vault = None                       # nothing open yet
+    p = HoaShellPlugin()
+    p.initialize(app)
+    p.on_vault_ui_ready(vault_page)
+
+    keys = [c.args[0] for c in vault_page.register_page.call_args_list]
+    assert "connection" in keys
+    entries = [c.args[0] for c in vault_page.add_menu_entry.call_args_list]
+    assert "connection" in entries
 
 
 def test_broken_egf_registers_error_page(qapp, monkeypatch):
@@ -277,8 +306,9 @@ def test_on_vault_ui_ready_registers_home_and_notifications_success(qapp, monkey
     assert registered == {
         "home": onboarding_home_page_instance,
         "notifications": plugin._notifications_page,
+        "connection": plugin._connection_page,
     }
-    assert vault_page.add_menu_entry.call_count == 2
+    assert vault_page.add_menu_entry.call_count == 3
     assert plugin._vault_page is vault_page
 
 
@@ -336,6 +366,28 @@ def test_on_vault_opened_schedules_deferred_refresh(monkeypatch):
         "must schedule exactly one deferred refresh() via QTimer.singleShot(0, ...)"
     )
     assert plugin._wired_vault is vault
+
+
+def test_on_vault_opened_wires_the_connection_page_to_doer_events(monkeypatch):
+    """Pairing lands during transport bring-up, moments after vault open.
+    Without an event connection the diagnostics page would show "nothing
+    paired yet" for up to a full repaint interval, which reads as a fault."""
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+    monkeypatch.setattr(shell_mod.QTimer, "singleShot", lambda delay, slot: None)
+    monkeypatch.setattr(shell_mod, "make_hoa_oobi_source", lambda: None)
+
+    vault = MagicMock(name="vault")
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=vault))
+    plugin._request_flow = MagicMock(name="request_flow")
+    plugin._home_page = MagicMock(name="home_page")
+    plugin._notifications_page = MagicMock(name="notifications_page")
+    plugin._connection_page = MagicMock(name="connection_page")
+
+    plugin.on_vault_opened(vault)
+
+    connected = [c.args[0] for c in vault.signals.doer_event.connect.call_args_list]
+    assert plugin._connection_page.refresh in connected
 
 
 def test_on_vault_opened_is_idempotent_per_vault_no_double_schedule(monkeypatch):

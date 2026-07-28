@@ -192,10 +192,18 @@ class PeerSettingsSection(QFrame):
 
         layout.addWidget(card)
 
-        # Populate detected interfaces (best-effort)
-        for ip in _detect_interface_ips():
+        # Populate detected interfaces (best-effort). The primary — the
+        # address on the interface that owns the default route — goes first
+        # and becomes the prefilled advertised host, because a blank field
+        # is what gets published as an unreachable endpoint.
+        from locksmith.peer.netaddr import detect_primary_host
+        primary = detect_primary_host()
+        for ip in ([primary] if primary else []) + [
+                ip for ip in _detect_interface_ips() if ip != primary]:
             self.bind_combo.addItem(ip, ip)
             self.advertised_combo.addItem(ip, ip)
+        if primary:
+            self.advertised_combo.setCurrentText(primary)
 
         # --- Paired peers card ---
         layout.addSpacing(18)

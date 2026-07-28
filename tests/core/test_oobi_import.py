@@ -41,6 +41,60 @@ def test_parse_lands_kel_and_tcp_loc(exporter_cesr):
         assert loc is not None and loc.url == "tcp://127.0.0.1:5621"
 
 
+def _publish_peer_loc(hby, hab, url: str) -> bytes:
+    """Land a fresh /loc/scheme + /end/role/add for `url` and export the
+    resulting peer OOBI — what a re-baked brand artifact is."""
+    for msg in (
+        hab.reply(route="/loc/scheme",
+                  data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=url)),
+        hab.reply(route="/end/role/add",
+                  data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre)),
+    ):
+        hby.psr.parse(ims=bytearray(msg))
+    return bytes(hab.replyToOobi(aid=hab.pre, role=kering.Roles.peer))
+
+
+@pytest.fixture()
+def exporter():
+    with habbing.openHby(name="exp2", temp=True, version=Vrsn_1_0) as hby:
+        hab = hby.makeHab(name="exp2", transferable=True, version=Vrsn_1_0)
+        yield hby, hab
+
+
+def test_reparsing_a_known_aid_is_idempotent(exporter_cesr):
+    """Re-pairing has to be able to re-read the bundled artifact on every
+    vault open. The first parse makes the AID known, so a second parse adds
+    no NEW kever — that must not be mistaken for "no peer role in the blob"."""
+    aid, cesr = exporter_cesr
+    with habbing.openHby(name="imp4", temp=True) as hby:
+        assert parse_oobi_cesr(hby, cesr) == aid
+        assert parse_oobi_cesr(hby, cesr, expect=aid) == aid
+
+
+def test_reparse_supersedes_a_changed_endpoint(exporter):
+    """The whole point of re-baking an authority OOBI: a later-dated
+    /loc/scheme replaces the endpoint an install already learned."""
+    hby, hab = exporter
+    old = _publish_peer_loc(hby, hab, "tcp://127.0.0.1:5621")
+    new = _publish_peer_loc(hby, hab, "tcp://192.168.1.20:5621")
+    with habbing.openHby(name="imp5", temp=True) as imp:
+        parse_oobi_cesr(imp, old)
+        assert imp.db.locs.get(
+            keys=(hab.pre, kering.Schemes.tcp)).url == "tcp://127.0.0.1:5621"
+        parse_oobi_cesr(imp, new, expect=hab.pre)
+        assert imp.db.locs.get(
+            keys=(hab.pre, kering.Schemes.tcp)).url == "tcp://192.168.1.20:5621"
+
+
+def test_expect_raises_when_that_aid_has_no_peer_loc(exporter_cesr):
+    aid, cesr = exporter_cesr
+    other = "E" + "Z" * 43
+    with habbing.openHby(name="imp6", temp=True) as hby:
+        with pytest.raises(PeerBlobError) as ei:
+            parse_oobi_cesr(hby, cesr, expect=other)
+        assert ei.value.reason == "no_peer_role"
+
+
 def test_garbage_raises_parse_failed():
     with habbing.openHby(name="imp2", temp=True) as hby:
         with pytest.raises(PeerBlobError) as ei:

@@ -49,6 +49,60 @@ def _app(settings=None, no_hab=False):
     return app
 
 
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+@patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
+@patch("locksmith.core.direct_transport.find_free_port", return_value=5622)
+def test_advertised_host_is_the_resolved_primary_interface(_fp, _parse, _rah):
+    """The listener must advertise a routable address, not loopback — a
+    remote requester that reads `tcp://127.0.0.1:<port>` dials its OWN
+    machine and gets "the administrator's application isn't reachable"."""
+    from locksmith.core.direct_transport import ensure_direct_transport
+    app = _app(settings=None)
+    src = MagicMock(); src.fetch.return_value = b"cesr"
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+
+    pinned = app.vault.db.peerSettings.pin.call_args.kwargs["val"]
+    assert pinned.advertised_host == "192.168.1.20"
+
+
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+@patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
+def test_stale_advertised_host_is_refreshed_on_reopen(_parse, _rah):
+    """An HOA build has no peer-settings UI, so a vault that once stored a
+    loopback (or a since-changed DHCP lease) can never be corrected by hand.
+    Bring-up re-pins whenever the resolved address has moved."""
+    from locksmith.core.direct_transport import ensure_direct_transport
+    from locksmith.peer.records import PeerModeSettings
+    app = _app(settings=PeerModeSettings(
+        enabled=True, port=5622, advertised_host="127.0.0.1"))
+    src = MagicMock(); src.fetch.return_value = b"cesr"
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+
+    pinned = app.vault.db.peerSettings.pin.call_args.kwargs["val"]
+    assert pinned.advertised_host == "192.168.1.20"
+    assert pinned.port == 5622 and pinned.enabled is True
+
+
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+@patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
+@patch("locksmith.core.direct_transport.find_free_port", return_value=5622)
+def test_published_peer_role_url_uses_the_advertised_host(_fp, _parse, _rah):
+    """The /loc/scheme rpy this AID publishes is what a counterparty dials
+    back on — it must carry the same routable address."""
+    from locksmith.core.direct_transport import ensure_direct_transport
+    app = _app(settings=None)
+    src = MagicMock(); src.fetch.return_value = b"cesr"
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    with patch("locksmith.core.direct_transport.PublishPeerRoleDoer") as doer:
+        ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+    assert doer.call_args.args[2] == "tcp://192.168.1.20:5622"
+
+
 @patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
 @patch("locksmith.core.direct_transport.find_free_port", return_value=5622)
 def test_bring_up_full_sequence(_fp, _parse):
@@ -69,18 +123,92 @@ def test_bring_up_full_sequence(_fp, _parse):
     assert rec.aid == DOI and rec.endpoint_url == "tcp://127.0.0.1:5621"
 
 
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
 @patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
-def test_idempotent_second_call(_parse):
+def test_idempotent_second_call(_parse, _rah):
     from locksmith.core.direct_transport import ensure_direct_transport
     from locksmith.peer.records import PeerModeSettings, PeerRecord
-    app = _app(settings=PeerModeSettings(enabled=True, port=5622))
+    # advertised_host already matches what resolution returns, so there is
+    # genuinely nothing to re-pin (see
+    # test_stale_advertised_host_is_refreshed_on_reopen for the other side).
+    app = _app(settings=PeerModeSettings(
+        enabled=True, port=5622, advertised_host="192.168.1.20"))
     app.vault.db.peerAllowlist.get.return_value = PeerRecord(
         aid=DOI, label="Utah DOI", endpoint_url="tcp://127.0.0.1:5621")
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
     ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
     app.vault.db.peerSettings.pin.assert_not_called()   # settings kept
-    src.fetch.assert_not_called()                       # already paired
+    # The bundle IS re-read on every open (that is what makes a re-baked
+    # artifact take effect), but an unchanged endpoint rewrites nothing.
+    app.vault.db.peerAllowlist.pin.assert_not_called()
+
+
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+@patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
+def test_paired_peer_is_repaired_when_the_bundled_endpoint_changed(_parse, _rah):
+    """A PeerRecord written from a bad bake is what every send reads
+    (peer.sending.peer_send). Skipping re-pair "because a record exists"
+    makes the bad endpoint permanent for every install that ever saw it —
+    re-baking the artifact would fix nothing."""
+    from locksmith.core.direct_transport import ensure_direct_transport
+    from locksmith.peer.records import PeerModeSettings, PeerRecord
+    app = _app(settings=PeerModeSettings(
+        enabled=True, port=5622, advertised_host="192.168.1.20"))
+    app.vault.db.peerAllowlist.get.return_value = PeerRecord(
+        aid=DOI, label="Utah DOI", endpoint_url="tcp://127.0.0.1:5621",
+        paired_at="2026-07-01T00:00:00+00:00")
+    app.vault.hby.db.locs.get.return_value = MagicMock(
+        url="tcp://192.168.1.30:5621")
+    src = MagicMock(); src.fetch.return_value = b"cesr"
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+
+    rec = app.vault.db.peerAllowlist.pin.call_args.kwargs["val"]
+    assert rec.endpoint_url == "tcp://192.168.1.30:5621"
+    assert rec.paired_at == "2026-07-01T00:00:00+00:00"   # pairing preserved
+
+
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+@patch("locksmith.core.direct_transport.parse_oobi_cesr", return_value=DOI)
+def test_paired_peer_with_a_matching_endpoint_is_not_rewritten(_parse, _rah):
+    from locksmith.core.direct_transport import ensure_direct_transport
+    from locksmith.peer.records import PeerModeSettings, PeerRecord
+    app = _app(settings=PeerModeSettings(
+        enabled=True, port=5622, advertised_host="192.168.1.20"))
+    app.vault.db.peerAllowlist.get.return_value = PeerRecord(
+        aid=DOI, label="Utah DOI", endpoint_url="tcp://192.168.1.30:5621")
+    app.vault.hby.db.locs.get.return_value = MagicMock(
+        url="tcp://192.168.1.30:5621")
+    src = MagicMock(); src.fetch.return_value = b"cesr"
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+
+    app.vault.db.peerAllowlist.pin.assert_not_called()
+
+
+@patch("locksmith.core.direct_transport.resolve_advertised_host",
+       return_value="192.168.1.20")
+def test_unreadable_artifact_keeps_an_existing_pairing(_rah):
+    """A bundle that has gone missing must not wipe a working pairing, and
+    must not raise a "Couldn't pair" banner on every vault open for an
+    authority the user is already paired with."""
+    from keri_serviceaid.egf.errors import OobiNotFound
+    from locksmith.core.direct_transport import ensure_direct_transport
+    from locksmith.peer.records import PeerModeSettings, PeerRecord
+    app = _app(settings=PeerModeSettings(
+        enabled=True, port=5622, advertised_host="192.168.1.20"))
+    app.vault.db.peerAllowlist.get.return_value = PeerRecord(
+        aid=DOI, label="Utah DOI", endpoint_url="tcp://192.168.1.30:5621")
+    src = MagicMock(); src.fetch.side_effect = OobiNotFound(DOI, "bundle")
+    ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
+    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+
+    app.vault.db.peerAllowlist.pin.assert_not_called()
+    app.vault.signals.emit_doer_event.assert_not_called()
 
 
 def test_no_direct_endpoints_is_a_noop():

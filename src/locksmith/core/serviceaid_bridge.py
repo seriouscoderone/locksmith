@@ -71,6 +71,7 @@ from keri_serviceaid.providers import (
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
+from locksmith.peer.netaddr import resolve_advertised_host
 from locksmith.peer.posting import PeerAwarePoster
 
 logger = help.ogler.getLogger(__name__)
@@ -152,7 +153,11 @@ def _inband_oobi_msgs(hab, settings):
         return []
     if not is_aid_peer_exposed(hab):
         return []
-    url = f"tcp://{settings.advertised_host or '127.0.0.1'}:{settings.port}"
+    # A blank advertised_host resolves (env > brand > primary interface)
+    # rather than defaulting to loopback: this rpy is the RETURN address the
+    # recipient dials, so loopback here points them at their own machine.
+    url = (f"tcp://{settings.advertised_host or resolve_advertised_host()}"
+           f":{settings.port}")
     out = []
     for msg in (
         hab.reply(route="/loc/scheme",

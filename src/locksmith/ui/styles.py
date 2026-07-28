@@ -7,7 +7,7 @@ This module contains global setting for the Archimedes UI
 import logging
 import sys
 
-from PySide6.QtGui import QIcon, QFontDatabase
+from PySide6.QtGui import QColor, QFontDatabase, QIcon, QPalette
 from PySide6.QtWidgets import QApplication, QProxyStyle, QStyle
 
 logger = logging.getLogger(__name__)
@@ -91,11 +91,67 @@ def set_global_styles(app: QApplication):
 
     app.setStyle(IconSizeProxyStyle())
 
-    app.setStyleSheet(f"""
+    # Pin a light palette BEFORE the stylesheet. Locksmith renders light
+    # surfaces unconditionally, but inherits whatever palette the OS supplies;
+    # on macOS in Dark appearance that means white WindowText, so any widget
+    # the stylesheet does not explicitly colour draws white-on-white. Naming
+    # widget classes in the QSS only ever covers the ones somebody remembered
+    # (the peer card's open_inbound checkbox was not one of them), and it can
+    # never reach a combo-box POPUP, which is its own top-level view. Owning
+    # the palette fixes the whole class at once.
+    app.setPalette(light_palette())
+
+    app.setStyleSheet(global_stylesheet())
+
+
+def light_palette() -> QPalette:
+    """The app's own palette: dark text on light surfaces, always.
+
+    Values mirror the stylesheet's own colours so a widget covered by a QSS
+    rule and one falling back to the palette look identical.
+    """
+    palette = QPalette()
+    for role, value in (
+        (QPalette.ColorRole.Window, colors.BACKGROUND_WINDOW),
+        (QPalette.ColorRole.Base, colors.WHITE),
+        (QPalette.ColorRole.AlternateBase, colors.BACKGROUND_WINDOW),
+        (QPalette.ColorRole.Button, colors.WHITE),
+        (QPalette.ColorRole.ToolTipBase, colors.WHITE),
+        (QPalette.ColorRole.Highlight, colors.BACKGROUND_NEUTRAL_HOVER),
+        (QPalette.ColorRole.WindowText, colors.TEXT_PRIMARY),
+        (QPalette.ColorRole.Text, colors.TEXT_PRIMARY),
+        (QPalette.ColorRole.ButtonText, colors.TEXT_PRIMARY),
+        (QPalette.ColorRole.ToolTipText, colors.TEXT_PRIMARY),
+        (QPalette.ColorRole.HighlightedText, colors.TEXT_PRIMARY),
+        (QPalette.ColorRole.PlaceholderText, colors.TEXT_SECONDARY),
+    ):
+        palette.setColor(role, QColor(value))
+    # Disabled text still has to read as *text*, just muted — the default
+    # disabled role under a dark palette is another near-white.
+    for group in (QPalette.ColorGroup.Disabled,):
+        for role in (QPalette.ColorRole.WindowText, QPalette.ColorRole.Text,
+                     QPalette.ColorRole.ButtonText):
+            palette.setColor(group, role, QColor(colors.TEXT_SECONDARY))
+    return palette
+
+
+def global_stylesheet() -> str:
+    """The app-wide QSS. Split out of ``set_global_styles`` so the legibility
+    contract below is directly testable (``tests/ui/test_dark_palette_legibility``).
+
+    Load-bearing: the app paints its own LIGHT surfaces but never overrides the
+    palette, so on an OS in dark appearance Qt's WindowText is white. Every
+    text-bearing widget class therefore needs an explicit colour here —
+    anything left out renders white-on-white, invisible and unlogged. That is
+    how the peer card's ``open_inbound`` checkbox shipped as a bare tick box
+    with no label.
+    """
+    return f"""
         QMainWindow {{
             background-color: {colors.BACKGROUND_WINDOW};
         }}
-        QLabel, QPushButton, QLineEdit, QListWidget::Item {{
+        QLabel, QPushButton, QLineEdit, QListWidget::Item,
+        QCheckBox, QRadioButton, QGroupBox {{
             color: {colors.TEXT_PRIMARY};
             letter-spacing: 0.8px;
         }}
@@ -129,4 +185,4 @@ def set_global_styles(app: QApplication):
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
             background: transparent;
         }}
-    """)
+    """

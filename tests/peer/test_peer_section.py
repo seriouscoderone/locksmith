@@ -32,6 +32,27 @@ def test_section_loads_existing_settings(qapp, baser):
     assert section.port_spin.value() == 5621
 
 
+def test_first_time_setup_prefills_the_detected_primary_address(qapp, baser,
+                                                                monkeypatch):
+    """With no stored settings the advertised field used to come up blank,
+    and a blank advertised host is what ends up published as an unreachable
+    endpoint. Prefill what the wallet would auto-detect anyway."""
+    monkeypatch.setattr(
+        "locksmith.peer.netaddr.detect_primary_host", lambda: "192.168.1.20")
+    section = PeerSettingsSection(vault=_StubVault(baser))
+    assert section.advertised_combo.currentText() == "192.168.1.20"
+
+
+def test_stored_advertised_host_is_not_overwritten_by_detection(qapp, baser,
+                                                                monkeypatch):
+    monkeypatch.setattr(
+        "locksmith.peer.netaddr.detect_primary_host", lambda: "192.168.1.20")
+    baser.peerSettings.pin(keys=("default",), val=PeerModeSettings(
+        enabled=True, port=5621, advertised_host="admin.usurance.com"))
+    section = PeerSettingsSection(vault=_StubVault(baser))
+    assert section.advertised_combo.currentText() == "admin.usurance.com"
+
+
 def test_toggle_writes_settings(qapp, baser):
     vault = _StubVault(baser)
     section = PeerSettingsSection(vault=vault)

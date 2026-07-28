@@ -61,3 +61,39 @@ def test_publish_peer_role_dispatches_doer_to_vault(monkeypatch):
     assert captured_kwargs["hby"] is vault.hby
     assert captured_kwargs["url"] == "tcp://192.168.1.42:5621"
     assert captured_kwargs["signal_bridge"] is vault.signals
+
+
+def test_publish_peer_role_resolves_a_blank_advertised_host(monkeypatch):
+    """The published /loc/scheme rpy is what witnesses serve and what a peer
+    dials. With the advertised field left blank it used to publish loopback,
+    which is unreachable for every peer that isn't this machine."""
+    extended = []
+    vault = SimpleNamespace(
+        db=SimpleNamespace(
+            peerSettings=SimpleNamespace(
+                get=lambda keys: PeerModeSettings(advertised_host="", port=5621)
+            )
+        ),
+        hby=MagicMock(),
+        signals=MagicMock(),
+        extend=lambda doers: extended.extend(doers),
+    )
+    captured_kwargs = {}
+
+    class _SpyDoer:
+        def __init__(self, **kwa):
+            captured_kwargs.update(kwa)
+
+    monkeypatch.setattr("locksmith.peer.publishing.PublishPeerRoleDoer", _SpyDoer)
+    monkeypatch.setattr(
+        "locksmith.peer.netaddr.resolve_advertised_host", lambda: "192.168.1.20")
+
+    class _Holder(identifier_sections.IdentifierViewSectionsMixin):
+        pass
+
+    holder = _Holder()
+    holder.app = SimpleNamespace(vault=vault)
+    holder.hab = SimpleNamespace(pre="EAID_ALICE", db=MagicMock())
+    holder._publish_peer_role()
+
+    assert captured_kwargs["url"] == "tcp://192.168.1.20:5621"
