@@ -66,14 +66,16 @@ def test_pair_via_add_peer_dialog(two_wallets):
     assert blob.startswith("locksmith-peer-oobi:v1:"), blob
 
     # --- B: bring up vault, paste the blob via Add Peer dialog ---
-    open_test_vault_via_ui(devctl, b["sock"], name="ptest")
+    # Distinct vault name: the instance coordinator's per-vault local socket is
+    # system-wide, so reusing A's name makes B's auto-open be denied as
+    # "already open elsewhere". See open_test_vault_via_ui's docstring.
+    open_test_vault_via_ui(devctl, b["sock"], name="ptest_b")
     set_peer_mode_via_ui(devctl, b["sock"], port=free_port())
 
     import_peer_blob_via_ui(devctl, b["sock"], blob, label="alice@A")
 
     # B's paired-peers list should now show alice. Read it through the
-    # Settings → Peer Mode UI like a user would. The list widget joins
-    # label, AID, and endpoint into one display string per row.
+    # Settings → Peer Mode UI like a user would.
     r = devctl(b["sock"], "click", target="vaultNavMenu.settingsButton")
     assert r.get("ok"), r
     r = devctl(b["sock"], "wait_for",
@@ -85,6 +87,14 @@ def test_pair_via_add_peer_dialog(two_wallets):
     assert r.get("ok"), r
     items = r["items"]
     assert len(items) == 1, items
-    row = items[0]["text"]
+    # Each row renders as a custom item widget, so the QListWidgetItem itself
+    # carries no text on purpose (Qt would paint item text *and* the widget,
+    # overlapping them) — the AID rides on UserRole instead. What the user
+    # reads is the row's primary QLabel, so assert on that.
+    assert items[0]["data"], f"row carries no AID on UserRole: {items[0]}"
+    r = devctl(b["sock"], "get_text",
+               target="peerSettingsSection.peerRowPrimary")
+    assert r.get("ok"), r
+    row = r["text"]
     assert "alice@A" in row, row
     assert "tcp://" in row, row
