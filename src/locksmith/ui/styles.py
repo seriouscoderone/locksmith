@@ -91,11 +91,26 @@ def set_global_styles(app: QApplication):
 
     app.setStyle(IconSizeProxyStyle())
 
-    app.setStyleSheet(f"""
+    app.setStyleSheet(global_stylesheet())
+
+
+def global_stylesheet() -> str:
+    """The app-wide QSS. Split out of ``set_global_styles`` so the legibility
+    contract below is directly testable (``tests/ui/test_dark_palette_legibility``).
+
+    Load-bearing: the app paints its own LIGHT surfaces but never overrides the
+    palette, so on an OS in dark appearance Qt's WindowText is white. Every
+    text-bearing widget class therefore needs an explicit colour here —
+    anything left out renders white-on-white, invisible and unlogged. That is
+    how the peer card's ``open_inbound`` checkbox shipped as a bare tick box
+    with no label.
+    """
+    return f"""
         QMainWindow {{
             background-color: {colors.BACKGROUND_WINDOW};
         }}
-        QLabel, QPushButton, QLineEdit, QListWidget::Item {{
+        QLabel, QPushButton, QLineEdit, QListWidget::Item,
+        QCheckBox, QRadioButton, QGroupBox {{
             color: {colors.TEXT_PRIMARY};
             letter-spacing: 0.8px;
         }}
@@ -129,4 +144,4 @@ def set_global_styles(app: QApplication):
         QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {{
             background: transparent;
         }}
-    """)
+    """
