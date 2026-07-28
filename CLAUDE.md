@@ -44,6 +44,21 @@ Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KER
   run from a worktree root pick up the worktree's `src` via pytest's `pythonpath`, but code that bare-imports
   `locksmith` (e.g. publisher tests importing `locksmith.update`) resolves the MAIN tree. To validate
   cross-package changes against the real tree, merge to `development` and run there.
+- **Worktree venv isolation (agents: read this).** There is ONE venv, at the main checkout's `.venv`, and
+  worktrees do not get their own. `__editable__.locksmith-*.pth` holds an **absolute** path to
+  `<main>/src`, so it is a **shared mutable**: running `pip install -e .` from a worktree rewrites that
+  `.pth` to the worktree's `src` and silently repoints the main checkout **and every other worktree** at
+  your branch. With several worktrees live (`git worktree list`) that is a cross-contamination bomb, and
+  it is easy to hit by accident because the plugin-entry-point note above *tells* you to re-run
+  `pip install -e .`.
+  Rules for work done in a worktree:
+  1. **Default: do not run `pip install -e .` (or `pip install`/`pip uninstall` of anything) against the
+     shared venv.** Running tests is fine — `pythonpath` already resolves the worktree's `src`.
+  2. If the change **requires** a reinstall (adding/renaming a plugin entry-point group, changing deps),
+     build an isolated venv **inside the worktree** (`python -m venv .venv && .venv/bin/pip install -e .[test]`)
+     and use it. The pinned `keri` fork is a git dep, so expect a slow first install.
+  3. If you deliberately touch the shared venv anyway, **say so explicitly in your final report** so the
+     next agent knows the state changed.
 
 ## KERI communication model (read before touching witnessing / receipts)
 
