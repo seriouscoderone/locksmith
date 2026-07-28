@@ -102,3 +102,12 @@ accept_phases = ["production"]   # usurance-admin is a genuine production author
 # this brand's first-run experience.
 [onboarding]
 enabled = true
+
+# Direct-peer transport. `advertised_host` overrides what this wallet tells
+# peers to dial (locksmith.peer.netaddr). Leave it unset — the default is to
+# auto-detect the address of the interface that owns the default route, which
+# also returns the overlay address once a VPN/Tailscale interface carries that
+# route. Pin it ONLY when a host has both a LAN and an overlay address and the
+# wrong one wins; a per-install override is $LOCKSMITH_ADVERTISED_HOST.
+# [peer]
+# advertised_host = ""

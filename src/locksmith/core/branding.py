@@ -76,6 +76,11 @@ class Brand:
     egf_document_said: str = ""
     egf_accept_phases: tuple[str, ...] = ("production",)
     onboarding_enabled: bool = False
+    # --- [peer] section: the advertised-host override consumed by
+    # ``locksmith.peer.netaddr.resolve_advertised_host``. Empty (the default)
+    # means "auto-detect the primary interface" — a brand only pins this when
+    # the host is ambiguous (both a LAN and an overlay interface present). ---
+    peer_advertised_host: str = ""
 
 
 # The reference brand (#1). This is the SINGLE canonical hard-coded brand name.
@@ -93,6 +98,7 @@ def _from_dict(doc: dict) -> Brand:
     pl = doc.get("plugins", {}) or {}
     eg = doc.get("egf", {}) or {}
     ob = doc.get("onboarding", {}) or {}
+    pr = doc.get("peer", {}) or {}
     return Brand(
         display_name=doc.get("display_name", _DEFAULT.display_name),
         tagline=doc.get("tagline", _DEFAULT.tagline),
@@ -117,6 +123,7 @@ def _from_dict(doc: dict) -> Brand:
         egf_document_said=eg.get("document_said", _DEFAULT.egf_document_said),
         egf_accept_phases=tuple(eg.get("accept_phases", _DEFAULT.egf_accept_phases)),
         onboarding_enabled=bool(ob.get("enabled", _DEFAULT.onboarding_enabled)),
+        peer_advertised_host=pr.get("advertised_host", _DEFAULT.peer_advertised_host),
     )
 
 

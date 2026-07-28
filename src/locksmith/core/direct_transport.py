@@ -20,6 +20,7 @@ from locksmith.core.branding import brand, egf_local_dir
 from locksmith.core.instancing import find_free_port
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.cesr_blob import PeerBlobError
+from locksmith.peer.netaddr import resolve_advertised_host
 from locksmith.peer.oobi_import import parse_oobi_cesr
 from locksmith.peer.publishing import PublishPeerRoleDoer
 from locksmith.peer.records import PeerModeSettings, PeerRecord
@@ -75,13 +76,22 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> bool:
         logger.warning("direct_transport.no_hab vault has no identifiers yet")
         return False
 
-    # (1) listener
+    # (1) listener. The advertised host is DISCOVERED (env override > brand
+    # pin > primary interface), never hardcoded: a peeled HOA shell has no
+    # peer-settings UI, so a loopback here is undiagnosable and uncorrectable
+    # in the field. It is also re-pinned whenever the resolved address has
+    # moved (a changed DHCP lease, a laptop that changed networks, or a vault
+    # created by a build that still hardcoded 127.0.0.1) — otherwise the
+    # settings-exist-and-enabled branch would make a bad value permanent.
+    advertised = resolve_advertised_host()
     settings = vault.db.peerSettings.get(keys=("default",))
-    if settings is None or not settings.enabled:
+    if (settings is None or not settings.enabled
+            or settings.advertised_host != advertised):
         settings = PeerModeSettings(
             enabled=True,
             port=(settings.port if settings else find_free_port(start=5622)),
-            advertised_host="127.0.0.1",
+            bind_host=settings.bind_host if settings else "0.0.0.0",
+            advertised_host=advertised,
             open_inbound=settings.open_inbound if settings else False,
         )
         vault.db.peerSettings.pin(keys=("default",), val=settings)
@@ -90,27 +100,51 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> bool:
     # (2) expose + publish the default AID's peer role
     if hab.pre not in vault._peer_exposed_aids:
         vault._peer_exposed_aids.add(hab.pre)
-        url = f"tcp://{settings.advertised_host or '127.0.0.1'}:{settings.port}"
+        url = f"tcp://{settings.advertised_host}:{settings.port}"
         vault.extend([PublishPeerRoleDoer(
             vault.hby, hab, url, signal_bridge=vault.signals, allow=True)])
 
-    # (3) pair each direct authority from the bundled artifact
+    # (3) pair -- or RE-pair -- each direct authority from the bundled
+    # artifact. The bundle is re-read on every open, not skipped once a
+    # PeerRecord exists: that record's endpoint_url is what every outbound
+    # send dials (peer.sending.peer_send), so a record written from a bad
+    # bake would otherwise be permanent for every install that ever saw it
+    # and re-baking the artifact would fix nothing. Endpoint supersedure is
+    # BADA's (a later-dated /loc/scheme wins); this just re-reads the result.
     allowlist = PeerAllowlist(vault.db)
     for auth, ep in targets:
-        if allowlist.get(auth.aid) is not None:
-            continue
+        existing = allowlist.get(auth.aid)
         try:
             cesr = oobi_source.fetch(ep.oobi_ref or auth.aid)
-            parse_oobi_cesr(vault.hby, cesr)
+            parse_oobi_cesr(vault.hby, cesr, expect=auth.aid)
         except (EgfError, PeerBlobError) as e:
+            if existing is not None:
+                # Already paired: a missing/broken bundle is not actionable
+                # for the user and the existing endpoint still works. Log,
+                # keep the pairing, don't raise a banner on every open.
+                logger.warning(
+                    f"direct_transport.refresh_failed aid={auth.aid} err={e} "
+                    f"(keeping endpoint={existing.endpoint_url})")
+                continue
             logger.error(f"direct_transport.pair_failed aid={auth.aid} err={e}")
             vault.signals.emit_doer_event(
                 "DirectTransport", "transport_failed",
                 {"message": f"Couldn't pair {auth.display_name}: {e}"})
             continue
         loc = vault.hby.db.locs.get(keys=(auth.aid, kering.Schemes.tcp))
+        url = loc.url if loc else ""
+        if existing is not None:
+            if not url or url == existing.endpoint_url:
+                continue
+            logger.info(
+                f"direct_transport.repaired aid={auth.aid} "
+                f"from={existing.endpoint_url} to={url}")
+            allowlist.add(PeerRecord(
+                aid=auth.aid, label=auth.display_name, endpoint_url=url,
+                paired_at=existing.paired_at,
+                last_contacted_at=existing.last_contacted_at))
+            continue
         allowlist.add(PeerRecord(
-            aid=auth.aid, label=auth.display_name,
-            endpoint_url=loc.url if loc else ""))
+            aid=auth.aid, label=auth.display_name, endpoint_url=url))
         logger.info(f"direct_transport.paired aid={auth.aid}")
     return True

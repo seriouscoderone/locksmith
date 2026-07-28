@@ -56,6 +56,27 @@ def test_exposed_hab_yields_loc_and_endrole(monkeypatch):
     assert calls[1][1]["role"] == "peer"
 
 
+def test_blank_advertised_host_falls_back_to_the_resolved_primary_interface(
+        monkeypatch):
+    """The in-band OOBI IS the reply path: whatever host it carries is where
+    the counterparty sends the grant back. A blank advertised_host must not
+    silently become loopback — that tells the admin to reply to itself."""
+    monkeypatch.setattr(
+        "locksmith.core.serviceaid_bridge.is_aid_peer_exposed", lambda hab: True)
+    monkeypatch.setattr(
+        "locksmith.core.serviceaid_bridge.resolve_advertised_host",
+        lambda: "192.168.1.20")
+    hab = _hab()
+    calls = []
+    hab.reply.side_effect = lambda route, data: calls.append((route, data)) or None
+    try:
+        _inband_oobi_msgs(hab, PeerModeSettings(enabled=True, port=5622,
+                                                advertised_host=""))
+    except Exception:
+        pass  # split fails on None -- routes were captured first
+    assert calls[0][1]["url"] == "tcp://192.168.1.20:5622"
+
+
 # ---------------------------------------------------------------------------
 # Real-delegation coverage for the one-arg `is_aid_peer_exposed` adapter
 # (Finding 2, review round 2): every test above monkeypatches the adapter

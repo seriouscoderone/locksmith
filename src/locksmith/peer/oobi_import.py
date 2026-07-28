@@ -13,7 +13,19 @@ from locksmith.peer.cesr_blob import PeerBlobError
 logger = help.ogler.getLogger(__name__)
 
 
-def parse_oobi_cesr(hby, cesr: bytes) -> str:
+def parse_oobi_cesr(hby, cesr: bytes, *, expect: str | None = None) -> str:
+    """Parse an OOBI CESR stream into `hby` and return the peer AID it carries.
+
+    Without ``expect`` the answer is "whichever AID this stream introduced
+    that published a tcp peer endpoint" — the first-contact case.
+
+    With ``expect`` the answer is that AID specifically, whether or not the
+    stream introduced it. Re-reading a bundled artifact for an AID the vault
+    already knows adds no new kever, and the discovery form would report that
+    as ``no_peer_role``; ``expect`` is what makes re-pairing (a re-baked
+    authority OOBI whose /loc/scheme now names a different address) possible
+    at all. Supersedure is BADA's: a later-dated rpy wins.
+    """
     db = hby.db
     rvy = routing.Revery(db=db)
     kvy = eventing.Kevery(db=db, lax=True, local=False, rvy=rvy)
@@ -28,9 +40,9 @@ def parse_oobi_cesr(hby, cesr: bytes) -> str:
             "parse_failed",
             f"Couldn't parse the blob: {e}. The token may be corrupted.")
 
-    for pre in hby.kevers.keys():
-        if pre in pre_kevers:
-            continue
+    candidates = ([expect] if expect is not None
+                  else [p for p in hby.kevers.keys() if p not in pre_kevers])
+    for pre in candidates:
         loc = hby.db.locs.get(keys=(pre, kering.Schemes.tcp))
         if loc is not None and loc.url:
             logger.info(f"peer.oobi.imported aid={pre} endpoint={loc.url}")

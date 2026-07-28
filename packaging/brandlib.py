@@ -72,6 +72,11 @@ def runtime_brand_json(manifest: dict) -> dict:
         "plugins": dict(manifest.get("plugins", {})),
         "egf": dict(manifest.get("egf", {})),
         "onboarding": dict(manifest.get("onboarding", {})),
+        # [peer] advertised_host — the per-deployment override for the
+        # listener's advertised address (locksmith.peer.netaddr). brand.json
+        # is the only brand surface the running app reads, so dropping this
+        # here would silently disable the override.
+        "peer": dict(manifest.get("peer", {})),
     }
 
 

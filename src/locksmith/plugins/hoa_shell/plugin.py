@@ -32,6 +32,7 @@ from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oo
 from locksmith.core.egf_seeding import EgfSeeder, make_hoa_resolver
 from locksmith.core.inbound_watch import GateRecheckDoer, InboundGrantWatchDoer
 from locksmith.plugins.base import VaultPlugin
+from locksmith.ui.hoa.connection_page import HoaConnectionPage
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
 from locksmith.ui.onboarding.request_flow import RequestFlow
@@ -84,6 +85,7 @@ class HoaShellPlugin(VaultPlugin):
         self._request_flow: RequestFlow | None = None
         self._home_page: OnboardingHomePage | None = None
         self._notifications_page: HoaNotificationsPage | None = None
+        self._connection_page: HoaConnectionPage | None = None
         self._wired_vault = None
         self._vault_page = None
         self._egf_doc = None
@@ -149,6 +151,7 @@ class HoaShellPlugin(VaultPlugin):
             self._request_flow = None
             self._home_page = None
             self._notifications_page = None
+            self._connection_page = None
             error_page = OnboardingErrorPage(str(exc), parent=vault_page)
             vault_page.register_page("home", error_page)
             return
@@ -187,6 +190,23 @@ class HoaShellPlugin(VaultPlugin):
         vault_page.add_menu_entry("notifications", notifications_entry_btn, [])
         notifications_entry_btn.clicked.connect(
             lambda: vault_page._show_vault_page("notifications")
+        )
+
+        # Connection diagnostics (loopback-endpoint backlog item 5). The peel
+        # removes settings/peers/identifiers, so listener port, advertised
+        # address and per-peer reachability are invisible in an HOA build —
+        # and there is no in-app log viewer, which makes "the administrator's
+        # application isn't reachable" a dead end in the field. Registered
+        # exactly like "home"/"notifications" above; the vault is passed as a
+        # PROVIDER because no vault is open at this point.
+        self._connection_page = HoaConnectionPage(
+            lambda: self._app.vault, parent=vault_page)
+        vault_page.register_page("connection", self._connection_page)
+        connection_entry_btn = MenuButton(icon=QIcon(), label="Connection")
+        connection_entry_btn.setObjectName("vaultNavMenu.connectionButton")
+        vault_page.add_menu_entry("connection", connection_entry_btn, [])
+        connection_entry_btn.clicked.connect(
+            lambda: vault_page._show_vault_page("connection")
         )
 
     # -- per-vault wiring (was window._maybe_wire_onboarding_for_vault) ---
@@ -242,6 +262,11 @@ class HoaShellPlugin(VaultPlugin):
         # the onboarding home page's refresh() above.
         if self._notifications_page is not None:
             vault.signals.doer_event.connect(self._notifications_page.refresh)
+        # Same rationale for the connection diagnostics page: pairing and
+        # listener state land during transport bring-up right after this
+        # hook, and its own repaint timer is a slow 15s.
+        if self._connection_page is not None:
+            vault.signals.doer_event.connect(self._connection_page.refresh)
 
         # Live-observation fix: the page's __init__ already calls refresh()
         # once, but that happens at CONSTRUCTION time -- for a HOA whose
