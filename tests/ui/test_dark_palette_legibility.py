@@ -21,10 +21,13 @@ than no test.
 """
 import re
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
+from PySide6.QtGui import QPalette
 
-from locksmith.ui.styles import global_stylesheet
+from locksmith.ui import colors
+from locksmith.ui.styles import global_stylesheet, light_palette, set_global_styles
 
 _UI_ROOT = Path(__file__).resolve().parents[2] / "src" / "locksmith" / "ui"
 
@@ -62,6 +65,61 @@ def _classes_instantiated_in_the_ui() -> set[str]:
             if re.search(rf"\b{cls}\s*\(", src):
                 used.add(cls)
     return used
+
+
+# ---------------------------------------------------------------------------
+# The systemic fix: pin a light palette, rather than chasing selectors.
+#
+# Naming widget classes in the QSS (below) only ever covers the ones somebody
+# remembered. The root cause is that the app renders light surfaces on top of
+# whatever palette the OS supplies, so the fix that actually generalises is to
+# stop inheriting the OS palette at all — every unstyled widget then resolves
+# against light colours instead of dark ones. The combo-box POPUP is what made
+# this obvious: it is a separate top-level view, so no amount of styling the
+# card it sits on reaches it.
+# ---------------------------------------------------------------------------
+
+def _luminance(qcolor) -> float:
+    return (0.299 * qcolor.red() + 0.587 * qcolor.green()
+            + 0.114 * qcolor.blue()) / 255
+
+
+_FOREGROUND_ROLES = ("WindowText", "Text", "ButtonText", "ToolTipText",
+                     "HighlightedText")
+_SURFACE_ROLES = ("Window", "Base", "Button", "ToolTipBase", "AlternateBase")
+
+
+@pytest.mark.parametrize("role", _FOREGROUND_ROLES)
+def test_light_palette_keeps_foreground_roles_dark(role):
+    colour = light_palette().color(getattr(QPalette.ColorRole, role))
+    assert _luminance(colour) < 0.5, f"{role} is {colour.name()} — not legible on a light surface"
+
+
+@pytest.mark.parametrize("role", _SURFACE_ROLES)
+def test_light_palette_keeps_surface_roles_light(role):
+    colour = light_palette().color(getattr(QPalette.ColorRole, role))
+    assert _luminance(colour) > 0.5, f"{role} is {colour.name()} — a dark surface under dark text"
+
+
+def test_light_palette_agrees_with_the_stylesheet_text_colour():
+    """Palette and QSS must not disagree, or the same label changes colour
+    depending on which widget class happens to be covered."""
+    assert light_palette().color(
+        QPalette.ColorRole.WindowText).name().lower() == colors.TEXT_PRIMARY.lower()
+
+
+def test_set_global_styles_installs_the_light_palette():
+    """The wiring, not just the value: a palette nobody applies fixes nothing."""
+    from locksmith.core import branding
+    app = MagicMock()
+    try:
+        set_global_styles(app)
+    finally:
+        branding.unregister_brand_resources()
+    app.setPalette.assert_called_once()
+    installed = app.setPalette.call_args.args[0]
+    assert _luminance(installed.color(QPalette.ColorRole.WindowText)) < 0.5
+    assert _luminance(installed.color(QPalette.ColorRole.Base)) > 0.5
 
 
 def test_the_scan_finds_the_classes_it_is_meant_to_guard():

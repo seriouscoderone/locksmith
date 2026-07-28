@@ -43,6 +43,14 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 REPO = Path(__file__).resolve().parents[1]
+
+# Drop this script's own directory from sys.path before importing anything.
+# Python puts it at sys.path[0] for a directly-run script, and `scripts/`
+# contains a `keri/` subdirectory that then shadows the real keripy package
+# as a namespace package — `from keri import __version__` fails with an
+# unhelpful "unknown location".
+_HERE = str(Path(__file__).resolve().parent)
+sys.path[:] = [p for p in sys.path if p not in ("", ".", _HERE)]
 sys.path.insert(0, str(REPO / "src"))
 
 BLOB_PREFIX = "locksmith-peer-oobi:v1:"

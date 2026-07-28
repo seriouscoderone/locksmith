@@ -49,6 +49,25 @@ def authority():
         yield hab.pre, export
 
 
+def test_runs_as_a_real_subprocess(authority, tmp_path):
+    """Every other test here imports the module via importlib, which never
+    puts ``scripts/`` on sys.path. The real invocation does — and ``scripts/``
+    contains a ``keri/`` directory that shadows the keripy package, so the
+    script can be perfectly correct and still die on import."""
+    import base64
+    import subprocess
+    aid, export = authority
+    token = tmp_path / "token.txt"
+    token.write_text("locksmith-peer-oobi:v1:"
+                     + base64.b64encode(export("tcp://192.168.1.20:5621")).decode())
+    proc = subprocess.run(
+        [sys.executable, str(SCRIPT), "--brand", "usurance", "--aid", aid,
+         "--inspect-only", "--file", str(token)],
+        capture_output=True, text=True, cwd=REPO)
+    assert proc.returncode == 0, proc.stderr
+    assert proc.stdout.strip() == "tcp://192.168.1.20:5621"
+
+
 def test_decodes_a_wallet_exported_blob_token():
     mod = _load()
     raw = b"some-cesr-bytes"
