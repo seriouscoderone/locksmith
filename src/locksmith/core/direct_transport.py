@@ -11,7 +11,7 @@ never silent, never fatal to vault open.
 """
 from __future__ import annotations
 
-from keri import help, kering
+from keri import help
 
 from keri_serviceaid.egf.errors import EgfError
 from keri_serviceaid.egf.oobi_source import LocalDirOobiSource
@@ -24,6 +24,7 @@ from locksmith.peer.netaddr import resolve_advertised_host
 from locksmith.peer.oobi_import import parse_oobi_cesr
 from locksmith.peer.publishing import PublishPeerRoleDoer
 from locksmith.peer.records import PeerModeSettings, PeerRecord
+from locksmith.peer.resolution import resolve_peer_endpoint
 
 logger = help.ogler.getLogger(__name__)
 
@@ -131,8 +132,13 @@ def ensure_direct_transport(app, egf_doc, oobi_source, accept_phases) -> bool:
                 "DirectTransport", "transport_failed",
                 {"message": f"Couldn't pair {auth.display_name}: {e}"})
             continue
-        loc = vault.hby.db.locs.get(keys=(auth.aid, kering.Schemes.tcp))
-        url = loc.url if loc else ""
+        # Resolve natively: cid -> ends[peer] -> eid -> locs[eid]. The authority
+        # publishes its address under its listener EID, so there is no location
+        # filed under the authority's own AID to read. An artifact baked before
+        # the listener EID existed still resolves — eid == cid is a degenerate
+        # case of the same walk — which is what lets the shipped bundle keep
+        # working un-rebaked.
+        url = resolve_peer_endpoint(vault.hby.db, auth.aid) or ""
         if existing is not None:
             if not url or url == existing.endpoint_url:
                 continue

@@ -2,11 +2,17 @@
 """Re-bake a brand's bundled authority OOBI from a wallet export.
 
 ``brands/<brand>/egf/oobis/<aid>.cesr`` is the artifact every install pairs
-the ecosystem authority from. Inside it is a ``/loc/scheme`` rpy **signed by
-the authority's own AID** carrying the tcp address peers dial. That signature
-is why the file cannot be corrected by hand: change one byte of the URL and
-``parse_oobi_cesr`` rejects the whole blob. The endpoint can only be changed
-by re-publishing the rpy from the authority's vault and re-exporting.
+the ecosystem authority from. Inside it are two signed rpys: a ``/loc/scheme``
+carrying the tcp address peers dial, **signed by the endpoint provider** (the
+authority vault's peer listener EID), and an ``/end/role/add`` **signed by the
+authority's AID** authorizing that provider. Those signatures are why the file
+cannot be corrected by hand: change one byte of the URL and ``parse_oobi_cesr``
+rejects the whole blob. The endpoint can only be changed by re-publishing the
+rpys from the authority's vault and re-exporting.
+
+Artifacts baked before the listener EID existed carry ``eid == cid`` — the
+authority naming itself as its own endpoint provider. Those still verify and
+still pair; this script accepts either shape.
 
 Producing the input (on the authority's machine, in the authority's vault):
 
@@ -86,25 +92,36 @@ def inspect(cesr: bytes, aid: str) -> str:
 
     Parses into a temp Habery via the same code path the wallet uses, so a
     tampered or unsigned blob fails here rather than in the field.
+
+    The endpoint is resolved the way the wallet resolves it —
+    ``cid -> ends[peer] -> eid -> locs[eid]`` — so this accepts both shapes: an
+    export whose address is filed under the authority's own listener EID, and one
+    baked before that EID existed (``eid == cid``). It also means an export
+    carrying a location that nothing authorizes is refused rather than baked.
     """
-    from keri import kering
     from keri.app import habbing
     from locksmith.peer.cesr_blob import PeerBlobError
     from locksmith.peer.oobi_import import parse_oobi_cesr
+    from locksmith.peer.resolution import resolve_peer_endpoints
 
     with habbing.openHby(name="bake-verify", temp=True) as hby:
         try:
-            parse_oobi_cesr(hby, cesr)
+            parse_oobi_cesr(hby, cesr, expect=aid)
         except PeerBlobError as e:
             raise BakeError(f"the export did not verify: {e}")
-        loc = hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
-        if loc is None or not loc.url:
+        endpoints = resolve_peer_endpoints(hby.db, aid)
+        if not endpoints:
             raise BakeError(
                 f"the export does not carry a tcp peer endpoint for {aid} — "
                 f"expected the authority AID pinned by the brand's EGF. Check "
                 f"you exported from the right identifier, with 'Expose over "
                 f"peer mode' on.")
-        return loc.url
+        if len(endpoints) > 1:
+            routes = ", ".join(f"{eid[:12]}…={url}" for eid, url in endpoints)
+            print(f"bake_authority_oobi: note — {len(endpoints)} peer routes "
+                  f"authorized ({routes}); baking with the most recent first.",
+                  file=sys.stderr)
+        return endpoints[0][1]
 
 
 def bake(cesr: bytes, aid: str, out_dir: Path) -> Path:

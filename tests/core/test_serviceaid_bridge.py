@@ -318,9 +318,14 @@ def test_grant_doer_queues_inband_oobi_between_artifacts_and_chain_sources(monke
         enabled=True, port=5622, advertised_host="127.0.0.1",
     )
     monkeypatch.setattr(bridge, "is_aid_peer_exposed", lambda hab: True)
-    # Exactly FakeSerder.size (4) bytes each -- no attachment tail, matching
-    # the "attachment=None" case below.
-    s.hab.reply.side_effect = [b"loca", b"role"]
+    # This test is about WHERE the in-band rpys get queued, not what they
+    # contain. `_inband_oobi_msgs` loads already-published records out of the db
+    # (see test_inband_oobi.py, which exercises it against a real Habery) — a
+    # MagicMock hab has no such records, so stub the whole helper here and let
+    # the ordering assertions below be what this test actually proves.
+    monkeypatch.setattr(
+        bridge, "_inband_oobi_msgs",
+        lambda hab, settings: [(FakeSerder(), None), (FakeSerder(), None)])
 
     list(s.doer.grantDo(lambda: 0.0))
 

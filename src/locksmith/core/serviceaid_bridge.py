@@ -71,8 +71,8 @@ from keri_serviceaid.providers import (
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
-from locksmith.peer.netaddr import resolve_advertised_host
 from locksmith.peer.posting import PeerAwarePoster
+from locksmith.peer.resolution import peer_role_eids
 
 logger = help.ogler.getLogger(__name__)
 
@@ -143,29 +143,41 @@ def _split_message(raw: bytes) -> tuple:
 
 
 def _inband_oobi_msgs(hab, settings):
-    """Reply-as-OOBI for the sender itself (spec Sec 6): the two signed
-    rpys (/loc/scheme by the EID, /end/role/add by the CID) that let a
+    """Reply-as-OOBI for the sender itself (spec Sec 6): the signed rpys
+    (/loc/scheme by the EID, /end/role/add by the CID) that let a
     first-contact recipient verify AND reach back. The sender's KEL is
     already streamed by sendArtifacts -- only the OKEA rpys are needed.
     Empty unless the peer listener is on and this AID opted into peer
-    exposure (stock wallets without peer mode are unchanged)."""
+    exposure (stock wallets without peer mode are unchanged).
+
+    These are the rpys ALREADY PUBLISHED for this AID, loaded back out of the db
+    (``loadLocScheme`` / ``loadEndRole``) rather than re-signed here. Two reasons:
+
+    * The endpoint provider is the vault's peer listener, whose ``/loc/scheme``
+      only the listener can sign (BADA authenticates a loc as coming from its own
+      eid), and this function has only the ``hab``.
+    * Re-signing ``eid=hab.pre`` here would republish the legacy self-endpoint
+      that ``PublishPeerRoleDoer`` retires on upgrade — resurrecting, on every
+      send, the exact record the migration exists to remove.
+
+    Because these come from the db they carry whichever shape the vault is in, so
+    a vault still on ``eid == cid`` keeps working unchanged. ``settings`` is now
+    only the on/off gate; the address comes from what was published.
+    """
     if settings is None or not settings.enabled:
         return []
     if not is_aid_peer_exposed(hab):
         return []
-    # A blank advertised_host resolves (env > brand > primary interface)
-    # rather than defaulting to loopback: this rpy is the RETURN address the
-    # recipient dials, so loopback here points them at their own machine.
-    url = (f"tcp://{settings.advertised_host or resolve_advertised_host()}"
-           f":{settings.port}")
     out = []
-    for msg in (
-        hab.reply(route="/loc/scheme",
-                  data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=url)),
-        hab.reply(route="/end/role/add",
-                  data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre)),
-    ):
-        out.append(_split_message(msg))
+    for eid in peer_role_eids(hab.db, hab.pre):
+        loc = hab.loadLocScheme(eid=eid, scheme=kering.Schemes.tcp)
+        end = hab.loadEndRole(cid=hab.pre, eid=eid, role=kering.Roles.peer)
+        if not loc or not end:
+            # Authorized but nothing published to point at, or vice versa —
+            # nothing useful to hand the recipient for this eid.
+            continue
+        out.append(_split_message(bytes(loc)))
+        out.append(_split_message(bytes(end)))
     return out
 
 

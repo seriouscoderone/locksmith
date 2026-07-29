@@ -1,6 +1,13 @@
 """Publish role=peer + loc/scheme tcp rpys for an AID — locally and to
 its witnesses.
 
+The location is published under the **vault's listener EID**, not under the AID
+(``peer.listener_eid``): what a peer dials is a per-vault socket, so the AID
+authorizes that endpoint provider rather than claiming to be one. Two signers are
+therefore involved — the listener signs ``/loc/scheme`` for itself (BADA
+authenticates a loc as coming from its own eid), the AID signs
+``/end/role/add`` — and that is why the listener has to exist before publishing.
+
 makeLocScheme/makeEndRole on a Hab return signed rpy bytes but do not
 persist anything. To make those rpys discoverable they have to be:
 
@@ -27,6 +34,7 @@ from keri.app.agenting import messenger
 from keri.core import parsing
 
 from locksmith.core.remoting import message_version
+from locksmith.peer.listener_eid import ensure_listener_hab
 
 logger = help.ogler.getLogger(__name__)
 
@@ -52,11 +60,24 @@ def _is_ok_status(status) -> bool:
 class PublishPeerRoleDoer(doing.DoDoer):
     """Land peer role/loc rpys locally and push them to all witnesses.
 
-    allow=True (default): /end/role/add + /loc/scheme(tcp, url=<url>).
-    allow=False: /end/role/cut + /loc/scheme(tcp, url="") — the empty url
-    nullifies the location per Hab.makeLocScheme docs. Used when the
-    user toggles "Expose over peer mode" off, so witnesses learn that
-    this AID is no longer reachable in peer mode.
+    allow=True (default): /loc/scheme(tcp, url=<url>) signed by the vault's
+    listener EID, plus /end/role/add authorizing that EID for this AID.
+
+    allow=False: /end/role/cut for (cid, peer, listener) only. It does NOT
+    nullify the location, unlike the old eid == cid version: the location now
+    belongs to the vault's shared listener, so voiding it because one AID stopped
+    exposing would silently unreach every other exposed AID in the same vault.
+    The cut is the authorization statement and the read side honours it
+    (peer.resolution) — a cut end record means not reachable whatever db.locs
+    still holds.
+
+    Migration for already-shipped vaults: an install that published the old
+    shape holds ``ends[(cid, peer, cid)]`` allowed plus ``locs[(cid, tcp)]``.
+    Publishing with allow=True retires that record — a later-dated /end/role/cut
+    and a nullifying /loc/scheme — because leaving it standing would advertise
+    two endpoints and let a remote resolve the stale one. Conditional on the
+    record actually existing, and harmless if it re-fires. ``.migrated`` reports
+    whether it happened.
 
     Emits one of these events via signal_bridge on completion:
       - 'publish_complete' — reached the witness layer; payload includes
@@ -76,6 +97,7 @@ class PublishPeerRoleDoer(doing.DoDoer):
         self.signal_bridge = signal_bridge
         self.timeout_seconds = timeout_seconds
         self.completed = False
+        self.migrated = False
         super().__init__(doers=[doing.doify(self.publish_do)])
 
     def publish_do(self, tymth, tock=0.0, **opts):
@@ -85,16 +107,7 @@ class PublishPeerRoleDoer(doing.DoDoer):
 
         hab = self.hab
         try:
-            loc_url = self.url if self.allow else ""
-            loc_msg = hab.reply(
-                route="/loc/scheme",
-                data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=loc_url),
-            )
-            end_route = "/end/role/add" if self.allow else "/end/role/cut"
-            end_msg = hab.reply(
-                route=end_route,
-                data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre),
-            )
+            msgs = self._build_msgs()
 
             # Parse each rpy back at the version it was BUILT at. hab.reply
             # inherits the hab's protocol version (v1 under the KERI v2 v1-hold,
@@ -103,12 +116,10 @@ class PublishPeerRoleDoer(doing.DoDoer):
             # the version from the bytes (same message_version() pattern used in
             # ipexing/remoting/adjudication) so the round-trip is self-consistent
             # regardless of the hab's version.
-            parsing.Parser(version=message_version(loc_msg)).parse(
-                ims=bytearray(loc_msg), kvy=hab.kvy, rvy=hab.rvy,
-            )
-            parsing.Parser(version=message_version(end_msg)).parse(
-                ims=bytearray(end_msg), kvy=hab.kvy, rvy=hab.rvy,
-            )
+            for msg in msgs:
+                parsing.Parser(version=message_version(msg)).parse(
+                    ims=bytearray(msg), kvy=hab.kvy, rvy=hab.rvy,
+                )
 
             action = "published" if self.allow else "revoked"
             wits = _witnesses_for(hab)
@@ -122,12 +133,12 @@ class PublishPeerRoleDoer(doing.DoDoer):
                 self.completed = True
                 return
 
-            # One messenger per witness; push both rpys onto each.
+            # One messenger per witness; push every rpy onto each.
             witers: list[tuple[str, object]] = []
             for wit in wits:
                 witer = messenger(hab, wit)
-                witer.msgs.append(bytearray(loc_msg))
-                witer.msgs.append(bytearray(end_msg))
+                for msg in msgs:
+                    witer.msgs.append(bytearray(msg))
                 self.extend([witer])
                 witers.append((wit, witer))
 
@@ -179,6 +190,74 @@ class PublishPeerRoleDoer(doing.DoDoer):
             self._emit("publish_failed", aid=hab.pre,
                        witnesses_count=0, error=str(e))
             self.completed = True
+
+    def _build_msgs(self) -> list[bytes]:
+        """Signed rpys for this publish, in the order they must be parsed.
+
+        On allow: the listener's own ``/loc/scheme`` first (so the location exists
+        before anything authorizes it), then the AID's ``/end/role/add``, then any
+        migration rpys retiring a legacy ``eid == cid`` authorization.
+
+        On revoke: just the ``/end/role/cut``. See the class docstring for why the
+        location is deliberately left alone.
+        """
+        hab = self.hab
+        listener = ensure_listener_hab(self.hby)
+        msgs: list[bytes] = []
+
+        if self.allow:
+            # Signed by the LISTENER, not by hab: processReplyLocScheme
+            # authenticates a /loc/scheme as coming from its own eid, so a
+            # controller-signed loc for someone else's eid is dropped.
+            msgs.append(listener.reply(
+                route="/loc/scheme",
+                data=dict(eid=listener.pre, scheme=kering.Schemes.tcp,
+                          url=self.url),
+            ))
+        msgs.append(hab.reply(
+            route="/end/role/add" if self.allow else "/end/role/cut",
+            data=dict(cid=hab.pre, role=kering.Roles.peer, eid=listener.pre),
+        ))
+        if self.allow:
+            msgs.extend(self._legacy_retirement_msgs())
+        return msgs
+
+    def _legacy_retirement_msgs(self) -> list[bytes]:
+        """Rpys retiring a pre-listener-EID ``eid == cid`` authorization, if any.
+
+        Vaults shipped before the listener EID published themselves as their own
+        endpoint. Those records stay valid until superseded, so re-publishing
+        without retiring them leaves the AID advertising two endpoints — and a
+        remote resolving the stale address gets an unreachable one. BADA gives us
+        supersedure for free: these rpys are later-dated than the originals and
+        carry the same (cid, role, eid) / (eid, scheme) keys.
+        """
+        hab = self.hab
+        try:
+            legacy = hab.db.ends.get(
+                keys=(hab.pre, kering.Roles.peer, hab.pre))
+        except Exception:  # noqa: BLE001 — db can race shut during vault flips
+            return []
+        if legacy is None or not (legacy.enabled or legacy.allowed):
+            return []
+
+        self.migrated = True
+        logger.info(
+            f"peer.role.legacy_self_endpoint_retired aid={hab.pre} "
+            f"(published before the listener EID existed)"
+        )
+        return [
+            hab.reply(
+                route="/end/role/cut",
+                data=dict(cid=hab.pre, role=kering.Roles.peer, eid=hab.pre),
+            ),
+            # Nullify the orphaned location too (empty url nullifies, per
+            # Hab.makeLocScheme) so the vault holds no stale address for the AID.
+            hab.reply(
+                route="/loc/scheme",
+                data=dict(eid=hab.pre, scheme=kering.Schemes.tcp, url=""),
+            ),
+        ]
 
     @staticmethod
     def _collect_results(witers) -> list[dict]:
