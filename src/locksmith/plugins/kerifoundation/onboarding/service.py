@@ -19,6 +19,7 @@ from keri.kering import Vrsn_1_0
 from keri.app import agenting
 from keri.app.httping import CESR_ATTACHMENT_HEADER, CESR_CONTENT_TYPE, CESR_DESTINATION_HEADER
 from keri.core import exchange, parsing
+from keri.core.signing import Salter
 from keri.core.serdering import SerderKERI
 from keri.db import dbing
 from keri.help import helping
@@ -1173,6 +1174,15 @@ class KFOnboardingService:
             nsith="0",
             wits=[],
             toad=0,
+            # A FRESH RANDOM SALT, not the Habery's. This hidden auth principal is
+            # infrastructure, and salty derivation is (salt, stem) with the stem
+            # coming from the alias: omit the salt and it falls back to the
+            # keystore's root salt, which in Locksmith is the hardcoded
+            # config.salt — identical in every vault on every machine. The uuid4
+            # in the alias makes this unique today, but that is uniqueness by
+            # accident; the salt makes it unique by construction. See
+            # docs/superpowers/specs/2026-07-28-aid-salt-derivation-rule.md.
+            salt=Salter().qb64,
             # TRANSITIONAL: hold at v1 (makeHab defaults v2); lift with serviceaid.
             version=Vrsn_1_0,
         )

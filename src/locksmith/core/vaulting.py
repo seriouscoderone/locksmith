@@ -21,6 +21,7 @@ from keri.app import (
     signaling,
 )
 from keri.core import routing as keriRouting, eventing, coring
+from keri.core.signing import Salter
 from keri.peer import exchanging
 from keri.vc import protocoling
 from keri.vdr import credentialing, verifying
@@ -43,6 +44,37 @@ from locksmith.peer.records import PeerModeSettings, PeerRecord
 from locksmith.peer import exposure as peer_exposure
 
 logger = help.ogler.getLogger(__name__)
+
+TURRET_SETTINGS_NS = "settings"
+
+
+def ensure_turret_settings_hab(hby, alias):
+    """Return the turret's plugin-settings hab for ``alias``, minting it once.
+
+    Infrastructure, so it mints with a FRESH RANDOM SALT rather than inheriting
+    the Habery's. Salty key creation derives from (salt, stem); the stem is the
+    alias and an omitted salt falls back to the keystore's root salt, which in
+    Locksmith is the hardcoded ``config.salt`` — the same value in every vault on
+    every machine. The alias here is ``f"plugin-{hby.name}"``, so it reads as
+    per-vault but is only per-vault-*name*: two machines whose vault carries the
+    brand's default name minted the identical prefix. Same bug as the peer
+    listener (``peer/listener_eid.py``). Keys still persist, so the identifier is
+    stable across restarts — just not derivable.
+
+    See docs/superpowers/specs/2026-07-28-aid-salt-derivation-rule.md.
+    """
+    if (hab := hby.habByName(alias, ns=TURRET_SETTINGS_NS)) is not None:
+        return hab
+    return hby.makeHab(
+        name=alias,
+        transferable=True,
+        ns=TURRET_SETTINGS_NS,
+        salt=Salter().qb64,
+        # TRANSITIONAL: hold Locksmith events at v1
+        # (makeHab defaults v2 on the v2 keripy base);
+        # lift with serviceaid. grep TRANSITIONAL.
+        version=Vrsn_1_0,
+    )
 
 
 class Vault(doing.DoDoer):
@@ -74,14 +106,9 @@ class Vault(doing.DoDoer):
         self.pluginSettings: BrowserPluginSettings | None = self.db.pluginSettings.get(keys=("default",))
         if ENABLE_TURRET_BROWSER_PLUGIN and not self.pluginSettings:
             self.pluginSettings = BrowserPluginSettings("", f"plugin-{self.hby.name}", None)
-            if (hab := self.hby.habByName(self.pluginSettings.locksmith_alias, ns="settings")) is None:
-                hab = self.hby.makeHab(name=self.pluginSettings.locksmith_alias,
-                                       transferable=True,
-                                       ns="settings",
-                                       # TRANSITIONAL: hold Locksmith events at v1
-                                       # (makeHab defaults v2 on the v2 keripy base);
-                                       # lift with serviceaid. grep TRANSITIONAL.
-                                       version=Vrsn_1_0)
+            hab = ensure_turret_settings_hab(
+                self.hby, self.pluginSettings.locksmith_alias
+            )
             self.pluginSettings.locksmith_identifier = hab.pre
             self.db.pluginSettings.pin(keys=("default",), val=self.pluginSettings)
 
