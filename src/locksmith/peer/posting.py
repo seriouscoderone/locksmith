@@ -73,7 +73,17 @@ class PeerAwarePoster:
              Otherwise return the inner StreamPoster's mailbox doers.
         """
         allowlist = PeerAllowlist(self.baser)
-        record = allowlist.get(self.recp)
+        # Re-resolve the recipient's current authorized route before deciding
+        # anything: the record's endpoint_url is a pairing-time cache, and a
+        # peer that moved has already landed its newer signed /loc/scheme in
+        # the KERI db via BADA. Refreshing here (and again inside peer_send —
+        # idempotent) is what keeps an address change from being permanent
+        # (backlog/2026-07-29-peer-record-endpoint-never-refreshes.md).
+        keridb = getattr(self.hby, "db", None)
+        if keridb is not None:
+            record = allowlist.refresh_route(keridb, self.recp)
+        else:
+            record = allowlist.get(self.recp)
         if record is None or not record.endpoint_url:
             logger.info(
                 f"peer.outbound.no_record recipient={self.recp} → mailbox"
@@ -90,6 +100,7 @@ class PeerAwarePoster:
             recipient_aid=self.recp,
             exn_bytes=body,
             mailbox_send=lambda aid, bs: True,  # noop; we'll route below
+            keridb=keridb,
         )
 
         if outcome is SendOutcome.PEER:

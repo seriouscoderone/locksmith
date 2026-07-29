@@ -31,6 +31,8 @@ def peer_send(
     recipient_aid: str,
     exn_bytes: bytes,
     mailbox_send: Callable[[str, bytes], bool],
+    *,
+    keridb=None,
 ) -> SendOutcome:
     """Send `exn_bytes` to `recipient_aid` over peer or mailbox.
 
@@ -40,11 +42,20 @@ def peer_send(
         exn_bytes: framed CESR bytes ready to write.
         mailbox_send: callable that takes (aid, bytes) and returns True
             on successful enqueue to the mailbox path.
+        keridb: the keripy Baser holding ends/locs. When provided, the
+            recipient's cached route is re-resolved through
+            ``peer/resolution.py`` before dialing, so a peer that moved
+            (newer signed /loc/scheme) is dialed at its current address
+            instead of the one cached at pairing time. None keeps the
+            legacy dial-the-cache behavior.
 
     Returns:
         SendOutcome describing the channel actually used.
     """
-    record = allowlist.get(recipient_aid)
+    if keridb is not None:
+        record = allowlist.refresh_route(keridb, recipient_aid)
+    else:
+        record = allowlist.get(recipient_aid)
     if record is None or not record.endpoint_url:
         logger.info(
             f"peer.send.attempt recipient={recipient_aid} channel=mailbox reason=no_peer_record"

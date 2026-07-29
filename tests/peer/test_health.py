@@ -183,3 +183,79 @@ def test_doer_loop_terminates_on_stop(baser):
     doist = doing.Doist(limit=0.5, tock=0.01, real=False)
     # Should return within limit without raising.
     doist.do(doers=[doer])
+
+
+def test_probe_failure_refreshes_a_stale_route_and_reprobes(baser, caplog):
+    """A probe failure is the health monitor's cue to re-resolve the peer's
+    current authorized route (backlog/2026-07-29-peer-record-endpoint-never-
+    refreshes.md): the cached record points at a dead address while a newer
+    signed /loc/scheme (already BADA-accepted into the KERI db) says the peer
+    moved. The monitor must refresh the record and re-probe the fresh address,
+    so the UI shows green instead of red-forever after an address change."""
+    import logging
+
+    from keri import Vrsn_1_0, kering
+    from keri.app import habbing
+
+    with habbing.openHby(name="healthref", temp=True, version=Vrsn_1_0) as hby:
+        ctrl = hby.makeHab(name="ctrl", transferable=True, version=Vrsn_1_0)
+        lsn = hby.makeHab(name="lsn", transferable=False, ns="peer",
+                          version=Vrsn_1_0)
+
+        def _publish(url):
+            for msg in (
+                lsn.reply(route="/loc/scheme",
+                          data=dict(eid=lsn.pre, scheme=kering.Schemes.tcp,
+                                    url=url)),
+                ctrl.reply(route="/end/role/add",
+                           data=dict(cid=ctrl.pre, role=kering.Roles.peer,
+                                     eid=lsn.pre)),
+            ):
+                hby.psr.parse(ims=bytearray(msg))
+
+        allowlist = PeerAllowlist(baser)
+        _publish("tcp://127.0.0.1:1")             # paired here; now dead
+        _add_peer(allowlist, ctrl.pre, "tcp://127.0.0.1:1")
+
+        server, live_port = _bind_random_port()
+        try:
+            _publish(f"tcp://127.0.0.1:{live_port}")   # the peer moved
+
+            doer = PeerHealthMonitorDoer(
+                allowlist=allowlist, db=baser, keridb=hby.db,
+                interval_seconds=1.0, probe_timeout=0.5,
+            )
+            with caplog.at_level(logging.INFO,
+                                 logger="locksmith.peer.allowlist"), \
+                 caplog.at_level(logging.INFO,
+                                 logger="locksmith.peer.health"):
+                doer.probe_all_once()
+        finally:
+            server.close()
+
+        record = allowlist.get(ctrl.pre)
+        assert record.endpoint_url == f"tcp://127.0.0.1:{live_port}"
+        health = baser.peerHealth.get(keys=(ctrl.pre,))
+        assert health.last_outcome == "ok", (
+            "after the refresh the monitor should have re-probed the fresh "
+            f"address and found it reachable, got {health.last_outcome!r}")
+        assert any("peer.route.refreshed" in r.message for r in caplog.records)
+        assert any("peer.health.route_refreshed" in r.message
+                   for r in caplog.records)
+
+
+def test_probe_failure_without_keridb_keeps_the_legacy_shape(baser):
+    """No KERI db wired (or nothing newer published) → the failure is recorded
+    exactly as before; refresh never fires."""
+    allowlist = PeerAllowlist(baser)
+    _add_peer(allowlist, "EAID_BOB", "tcp://127.0.0.1:1")
+    doer = PeerHealthMonitorDoer(
+        allowlist=allowlist, db=baser,
+        interval_seconds=1.0, probe_timeout=0.3,
+    )
+    doer.probe_all_once()
+
+    assert allowlist.get("EAID_BOB").endpoint_url == "tcp://127.0.0.1:1"
+    health = baser.peerHealth.get(keys=("EAID_BOB",))
+    assert health.last_outcome == "refused"
+    assert health.consecutive_failures == 1

@@ -106,6 +106,16 @@ class PeerHealthMonitorDoer(doing.DoDoer):
         allowlist: read-only source of paired peers (read fresh each cycle
             so additions / removals take effect without restart).
         db: LocksmithBaser instance — writes go to ``db.peerHealth``.
+        keridb: the keripy Baser holding ends/locs. When provided, a
+            probe FAILURE triggers a route refresh through
+            ``peer/resolution.py`` (``allowlist.refresh_route``): a peer
+            that moved has already landed its newer signed /loc/scheme
+            in this db, and probing the stale cached address forever
+            renders red for a peer that is perfectly reachable
+            (backlog/2026-07-29-peer-record-endpoint-never-refreshes.md).
+            If the refresh moves the record, the fresh address is
+            re-probed immediately so the UI recovers on this cycle, not
+            the next one. None disables refresh (legacy shape).
         interval_seconds: base sleep between probe cycles. Jittered by
             ±25% so a flock of wallets started at the same time don't
             herd-probe a shared endpoint in lockstep.
@@ -115,11 +125,12 @@ class PeerHealthMonitorDoer(doing.DoDoer):
             not blocking forever on a dead host).
     """
 
-    def __init__(self, allowlist: PeerAllowlist, db, *,
+    def __init__(self, allowlist: PeerAllowlist, db, *, keridb=None,
                  interval_seconds: float = 60.0,
                  probe_timeout: float = 1.5):
         self.allowlist = allowlist
         self.db = db
+        self.keridb = keridb
         self.interval_seconds = interval_seconds
         self.probe_timeout = probe_timeout
         super().__init__(doers=[doing.doify(self.monitor_do)])
@@ -161,6 +172,20 @@ class PeerHealthMonitorDoer(doing.DoDoer):
             outcome = result.reason
             message = result.message
             ok = result.ok
+
+        if not ok and self.keridb is not None:
+            # Failure is the cue to check whether the peer moved: re-resolve
+            # its freshest authorized route and, if the record changed,
+            # re-probe the fresh address so this cycle reports the peer's
+            # actual reachability rather than the stale cache's.
+            refreshed = self.allowlist.refresh_route(self.keridb, aid)
+            if refreshed is not None and refreshed.endpoint_url != endpoint_url:
+                logger.info(
+                    f"peer.health.route_refreshed aid={aid} "
+                    f"from={endpoint_url} to={refreshed.endpoint_url}"
+                )
+                self._probe_one(aid, refreshed.endpoint_url)
+                return
 
         prior = self.db.peerHealth.get(keys=(aid,)) or PeerHealth(aid=aid)
         updated = PeerHealth(
