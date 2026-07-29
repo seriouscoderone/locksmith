@@ -78,3 +78,47 @@ def test_brand_id_from_injected_json(tmp_path, monkeypatch):
     monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
     branding._reset_cache_for_tests()
     assert branding.brand().id == "usurance"
+
+
+def test_app_data_dir_is_brand_scoped(tmp_path, monkeypatch):
+    """Diagnostic logs (and any future per-install app data) must not land in
+    another product's directory: a Usurance install writing into
+    ~/Library/Application Support/Locksmith is a support headache and a
+    brand-isolation leak (backlog/2026-07-29-grant-send-reports-success-
+    while-undeliverable.md item 3). Pure path computation — no mkdir."""
+    import platform as _platform
+    from pathlib import Path
+
+    cfg = tmp_path / "brand.json"
+    cfg.write_text(json.dumps({"id": "usurance", "display_name": "Usurance"}))
+    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
+    branding._reset_cache_for_tests()
+
+    p = branding.app_data_dir()
+
+    sysname = _platform.system()
+    if sysname == "Darwin":
+        assert p == (Path.home() / "Library" / "Application Support"
+                     / "Usurance")
+    elif sysname == "Windows":
+        assert p.name == "Usurance"
+    else:
+        assert p == Path.home() / ".local" / "share" / "usurance"
+
+
+def test_app_data_dir_reference_brand_keeps_the_shipped_location():
+    """The reference brand's dir must stay exactly where every shipped
+    Locksmith build already writes (~/…/Locksmith) — moving it would orphan
+    existing logs and verification history."""
+    import platform as _platform
+    from pathlib import Path
+
+    p = branding.app_data_dir()
+    sysname = _platform.system()
+    if sysname == "Darwin":
+        assert p == (Path.home() / "Library" / "Application Support"
+                     / "Locksmith")
+    elif sysname == "Windows":
+        assert p.name == "Locksmith"
+    else:
+        assert p == Path.home() / ".local" / "share" / "locksmith"

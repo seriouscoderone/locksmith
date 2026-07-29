@@ -15,6 +15,8 @@ from locksmith.peer.posting import (
     PeerAwarePoster,
     recipient_label,
     undeliverable,
+    undeliverable_reason,
+    unreachable_advertisement,
 )
 from keri.app.notifying import Notifier
 from keri.core import serdering, coring, parsing, eventing
@@ -511,24 +513,28 @@ class SendGrantDoer(doing.DoDoer):
                     label = recipient_label(
                         self.app.vault.db, recp,
                         org=getattr(self.app.vault, "org", None))
+                    advertised = unreachable_advertisement(sender.db, recp)
                     logger.warning(
                         f"peer.send.undeliverable recipient={recp} "
-                        f"channel={channel} grant={exn.said}"
+                        f"channel={channel} grant={exn.said} "
+                        f"advertised={advertised or '-'}"
                     )
                     if self.signal_bridge:
+                        data = {
+                            'error': undeliverable_reason(label, advertised),
+                            'success': False,
+                            'credential_said': self.credential_said,
+                            'recipient': recp,
+                            'grant_said': exn.said,
+                            'channel': channel,
+                            'undeliverable': True,
+                        }
+                        if advertised:
+                            data['advertised_host'] = advertised
                         self.signal_bridge.emit_doer_event(
                             doer_name="SendGrantDoer",
                             event_type="send_failed",
-                            data={
-                                'error': f"couldn't reach {label}'s wallet — "
-                                         f"it may be behind a firewall or NAT",
-                                'success': False,
-                                'credential_said': self.credential_said,
-                                'recipient': recp,
-                                'grant_said': exn.said,
-                                'channel': channel,
-                                'undeliverable': True,
-                            }
+                            data=data,
                         )
                     return
 

@@ -47,6 +47,15 @@ class PeerAllowlist:
         this makes the cache stop ignoring it
         (backlog/2026-07-29-peer-record-endpoint-never-refreshes.md).
 
+        **This alone does not make an address change survivable.** It can only
+        find what the peer actually announced, and a peer that changes address
+        currently never re-publishes: ``ensure_direct_transport`` re-pins
+        settings when the resolved address moves but runs
+        ``PublishPeerRoleDoer`` only on FIRST exposure. Both live two-machine
+        failures had the stale address in the admin's KEL state as well, so
+        this refresh would have re-resolved the same dead route. The upstream
+        link is backlog/2026-07-29-address-change-never-republished.md.
+
         Pairing identity (aid, label, paired_at, last_contacted_at) is
         preserved; only the route moves. When nothing resolves — a hand-typed
         pairing whose peer never published — the cached address is kept: an

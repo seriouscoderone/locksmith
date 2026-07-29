@@ -12,6 +12,8 @@ locksmith.core.ipexing can swap implementations with no other change.
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from hio.base import doing
 from hio.help import decking
 from keri import help, kering
@@ -73,6 +75,56 @@ def undeliverable(channel: str, hab, recp: str) -> bool:
     if channel == SendOutcome.PEER.value:
         return False
     return not mailbox_route_exists(hab, recp)
+
+
+def unreachable_advertisement(keridb, recp: str) -> str | None:
+    """The host ``recp`` advertises, when that host is reachable by nobody.
+
+    Returns the offending host (loopback or unspecified) or None. Resolved
+    through ``peer/resolution.py`` — the freshest AUTHORIZED route, never
+    ``db.locs`` directly.
+
+    This is the signature of the second live two-machine test: the peer's app
+    opened before its network was up, auto-detect fell back to loopback, and it
+    published that; the admin's send then dialed its own loopback
+    (backlog/2026-07-29-address-change-never-republished.md). Diagnostic only —
+    it names a condition after a send has already failed, and does NOT repair
+    the stale announcement (that fix belongs on the publishing side). Kept
+    separate from ``undeliverable`` because the two want different operator
+    actions: "open a port" versus "your network wasn't up when the app
+    started".
+    """
+    from locksmith.peer.netaddr import _UNUSABLE_HOSTS
+    from locksmith.peer.resolution import resolve_peer_endpoint
+
+    try:
+        url = resolve_peer_endpoint(keridb, recp)
+    except Exception:  # noqa: BLE001 — diagnosis must never break a send
+        return None
+    if not url:
+        return None
+    host = urlparse(url).hostname or ""
+    if host.startswith("127.") or host in _UNUSABLE_HOSTS or host == "::1":
+        return host
+    return None
+
+
+def undeliverable_reason(label: str, advertised_host: str | None) -> str:
+    """Operator-readable copy for a send that reached nobody.
+
+    Two distinct actions, so two distinct messages: an advertised
+    loopback/unspecified address means the peer's app came up before its
+    network did (nothing to open, they need to restart with the network up),
+    while any other unreachable address is the firewall/NAT case. Both live
+    two-machine failures rendered as one indistinguishable silence before
+    this existed.
+    """
+    if advertised_host:
+        return (f"couldn't reach {label}'s wallet — it is advertising "
+                f"{advertised_host}, an address reachable only on its own "
+                f"machine")
+    return (f"couldn't reach {label}'s wallet — it may be behind a firewall "
+            f"or NAT")
 
 
 def recipient_label(baser, aid: str, org=None) -> str:

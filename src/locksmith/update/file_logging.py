@@ -1,9 +1,17 @@
-"""Diagnostic file logging for the Locksmith updater.
+"""Diagnostic file logging for the whole app.
 
-On Windows, GUI apps have no console stderr, so update-path log lines
-([update] …, native_updater.*, winsparkle.*) are invisible at runtime.
-This module attaches a rotating file handler under the per-OS app data
-directory so those lines land on disk for post-hoc diagnosis.
+A Finder- or installer-launched build has no console anyone reads: on
+Windows a GUI app has no stderr at all, and on macOS a double-clicked
+``.app``'s stderr goes to a system log nobody thinks to open. Every
+structured line the app emits — ``[update] …``, ``winsparkle.*``, and
+(since the first live two-machine test) ``peer.send.*`` /
+``peer.recv.*`` / ``peer.route.*`` — was therefore unrecoverable after
+the fact. That is what made the lost grant undiagnosable: the exact
+lines that would have named the cause in one look were written to a
+stream with no reader. This module attaches a rotating file handler
+under the ACTIVE BRAND's app data directory so they land on disk
+(backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md
+item 3).
 
 The handler integrates with keri's hio.help.ogling.Ogler, which uses
 ``propagate=False`` on every logger it vends and attaches its own
@@ -25,7 +33,7 @@ from pathlib import Path
 
 from keri import help as _keri_help
 
-from locksmith.update.log import _app_data_base as _app_data_dir
+from locksmith.core.branding import app_data_dir as _app_data_dir, brand
 
 # ---------------------------------------------------------------------------
 # Sentinel attribute name on the ogler singleton
@@ -56,7 +64,7 @@ def setup_file_logging() -> Path:
     # Build the intended log path (returned even on failure so the call site
     # can log it — the value is only used for informational logging in main.py).
     log_dir = _app_data_dir() / "logs"
-    log_path = log_dir / "locksmith_update.log"
+    log_path = log_dir / f"{brand().id or 'locksmith'}.log"
 
     try:
         # Create the directory and open the handler.  On locked-down Windows
@@ -69,7 +77,7 @@ def setup_file_logging() -> Path:
         fmt.default_msec_format = None
         handler = logging.handlers.RotatingFileHandler(
             log_path,
-            maxBytes=1 * 1024 * 1024,  # 1 MiB per file
+            maxBytes=2 * 1024 * 1024,  # 2 MiB per file, ≤8 MiB with backups
             backupCount=3,
             encoding="utf-8",
         )

@@ -2,16 +2,28 @@
 
 Born from the first live two-machine test
 (backlog/2026-07-29-peer-record-endpoint-never-refreshes.md): the admin's
-``PeerRecord`` held the requester's old NAT address forever. The requester's
-newer signed ``/loc/scheme`` landed in ``db.locs`` via BADA — the *data* was
-right — but every send kept dialing the cached record. The fix: the route
-cache re-resolves through ``peer/resolution.py`` (authorization-recency
-ordered) at send time and on health-probe failure, refreshing a stale
-``endpoint_url`` while preserving the pairing identity (aid/label/paired_at).
+``PeerRecord`` held the requester's old NAT address forever, so every send kept
+dialing the pairing-time cache even once a newer signed ``/loc/scheme`` had
+landed in the KERI state. The fix here: the route cache re-resolves through
+``peer/resolution.py`` (authorization-recency ordered) at send time and on
+health-probe failure, refreshing a stale ``endpoint_url`` while preserving the
+pairing identity (aid/label/paired_at).
 
-The pinned regression is ``test_send_dials_the_newer_route...``: pair at
-address A, land a newer signed ``/loc/scheme`` for address B, assert the next
-send dials B.
+**Scope — read this before treating any of it as end-to-end coverage of the
+field failure.** Every test below *lands a newer signed rpy itself* and then
+asserts the cache stops ignoring it. That precondition is exactly what did NOT
+hold in either live incident: the peer never re-published after its address
+changed (``ensure_direct_transport`` re-pins settings when the resolved address
+moves but only runs ``PublishPeerRoleDoer`` on FIRST exposure), so on
+2026-07-29 the admin's ``db.locs`` held the same stale loopback and
+re-resolving would have found it. That missing upstream link is
+``backlog/2026-07-29-address-change-never-republished.md`` — a separate queued
+task, deliberately NOT fixed here. Three links are needed; this file covers
+exactly the middle one:
+
+1. the peer re-publishes when its address changes — NOT covered (upstream),
+2. the admin picks up the newer announcement — **this file**,
+3. undeliverable sends fail loudly — ``tests/peer/test_deliverability.py``.
 """
 from __future__ import annotations
 
@@ -149,13 +161,20 @@ def test_refresh_fills_an_empty_endpoint_from_a_later_publication(hby, baser):
     assert refreshed.label == "authority"
 
 
-def test_send_dials_the_newer_route_after_pairing_at_a_stale_one(hby, baser):
+def test_send_dials_the_newer_route_given_a_newer_rpy_has_arrived(hby, baser):
     """THE pinned regression (backlog work item 3): pair at address A, land a
     newer signed /loc/scheme for address B, assert the next send dials B.
 
-    A is a dead port (the old NAT address); B is a live listener. Without the
-    refresh the send dials A, times out, and falls back — exactly the live
-    failure. With it, the bytes arrive at B over the peer channel.
+    A is a dead port (the old address); B is a live listener. Without the
+    refresh the send dials A, times out, and falls back. With it, the bytes
+    arrive at B over the peer channel.
+
+    PRECONDITION, and the reason this is not end-to-end coverage of the live
+    failure: the ``_publish(url_b)`` call below is the peer having re-published
+    its new address. In both live incidents that never happened — no newer rpy
+    ever arrived, so the admin's KEL state held the stale address too and this
+    refresh would have re-resolved the same dead route. The missing upstream
+    link is backlog/2026-07-29-address-change-never-republished.md.
     """
     ctrl = hby.makeHab(name="mover", transferable=True, version=Vrsn_1_0)
     lsn = hby.makeHab(name="moverlsn", transferable=False, ns="peer",

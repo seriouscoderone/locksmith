@@ -24,6 +24,7 @@ from locksmith.peer.posting import (
     mailbox_route_exists,
     recipient_label,
     undeliverable,
+    unreachable_advertisement,
 )
 from locksmith.peer.records import PeerRecord
 
@@ -143,3 +144,65 @@ def test_recipient_label_falls_back_to_contact_alias_then_short_aid(baser):
 
     assert recipient_label(baser, aid, org=FakeOrg()) == "bob-from-contacts"
     assert recipient_label(baser, aid) == aid[:12] + "…"
+
+
+# --- "advertising an address nobody can reach" -----------------------------
+#
+# The exact signature of the second live two-machine test
+# (backlog/2026-07-29-address-change-never-republished.md): the requester's app
+# opened before its network was up, auto-detect fell back to loopback, and it
+# published THAT. The admin's send then dialed its OWN loopback and died. The
+# fix for the staleness itself is upstream (re-publish on change); all this
+# does is name the condition when a send has already failed, because
+# "unreachable" and "advertising 127.0.0.1" want different operator actions.
+
+
+def test_a_loopback_advertisement_is_named(hby):
+    ctrl = hby.makeHab(name="lb", transferable=True, version=Vrsn_1_0)
+    lsn = hby.makeHab(name="lblsn", transferable=False, ns="peer",
+                      version=Vrsn_1_0)
+    _reply(hby, lsn, "/loc/scheme",
+           dict(eid=lsn.pre, scheme=kering.Schemes.tcp,
+                url="tcp://127.0.0.1:5622"))
+    _reply(hby, ctrl, "/end/role/add",
+           dict(cid=ctrl.pre, role=kering.Roles.peer, eid=lsn.pre))
+
+    assert unreachable_advertisement(hby.db, ctrl.pre) == "127.0.0.1"
+
+
+def test_an_unspecified_advertisement_is_named(hby):
+    """0.0.0.0 means "every interface" to a listener and nothing at all to a
+    dialer — same dead end as loopback."""
+    ctrl = hby.makeHab(name="any", transferable=True, version=Vrsn_1_0)
+    lsn = hby.makeHab(name="anylsn", transferable=False, ns="peer",
+                      version=Vrsn_1_0)
+    _reply(hby, lsn, "/loc/scheme",
+           dict(eid=lsn.pre, scheme=kering.Schemes.tcp,
+                url="tcp://0.0.0.0:5622"))
+    _reply(hby, ctrl, "/end/role/add",
+           dict(cid=ctrl.pre, role=kering.Roles.peer, eid=lsn.pre))
+
+    assert unreachable_advertisement(hby.db, ctrl.pre) == "0.0.0.0"
+
+
+def test_a_routable_advertisement_is_not_flagged(hby):
+    """A LAN or NAT address is a legitimate advertisement — it may still be
+    firewalled (the FIRST live failure), which is the generic message's job,
+    not this one's."""
+    ctrl = hby.makeHab(name="lan", transferable=True, version=Vrsn_1_0)
+    lsn = hby.makeHab(name="lanlsn", transferable=False, ns="peer",
+                      version=Vrsn_1_0)
+    _reply(hby, lsn, "/loc/scheme",
+           dict(eid=lsn.pre, scheme=kering.Schemes.tcp,
+                url="tcp://10.211.55.7:5622"))
+    _reply(hby, ctrl, "/end/role/add",
+           dict(cid=ctrl.pre, role=kering.Roles.peer, eid=lsn.pre))
+
+    assert unreachable_advertisement(hby.db, ctrl.pre) is None
+
+
+def test_no_advertised_route_at_all_is_not_an_advertisement_problem(hby):
+    """Nothing published → the generic unreachable message applies; there is
+    no bad address to name."""
+    ctrl = hby.makeHab(name="none", transferable=True, version=Vrsn_1_0)
+    assert unreachable_advertisement(hby.db, ctrl.pre) is None

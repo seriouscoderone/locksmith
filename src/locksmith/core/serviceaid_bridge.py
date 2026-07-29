@@ -75,6 +75,8 @@ from locksmith.peer.posting import (
     PeerAwarePoster,
     recipient_label,
     undeliverable,
+    undeliverable_reason,
+    unreachable_advertisement,
 )
 from locksmith.peer.resolution import peer_role_eids
 
@@ -434,24 +436,24 @@ class ServiceaidGrantDoer(doing.DoDoer):
                 label = recipient_label(
                     self.app.vault.db, self.recipient,
                     org=getattr(self.app.vault, "org", None))
+                advertised = unreachable_advertisement(hab.db, self.recipient)
                 logger.warning(
                     f"peer.send.undeliverable recipient={self.recipient} "
-                    f"channel={channel} grant={grant_said}"
+                    f"channel={channel} grant={grant_said} "
+                    f"advertised={advertised or '-'}"
                 )
-                sink.on_event(
-                    "SendGrantDoer",
-                    "send_failed",
-                    {
-                        'error': f"couldn't reach {label}'s wallet — it may "
-                                 f"be behind a firewall or NAT",
-                        'success': False,
-                        'credential_said': self.credential_said,
-                        'recipient': self.recipient,
-                        'grant_said': grant_said,
-                        'channel': channel,
-                        'undeliverable': True,
-                    },
-                )
+                data = {
+                    'error': undeliverable_reason(label, advertised),
+                    'success': False,
+                    'credential_said': self.credential_said,
+                    'recipient': self.recipient,
+                    'grant_said': grant_said,
+                    'channel': channel,
+                    'undeliverable': True,
+                }
+                if advertised:
+                    data['advertised_host'] = advertised
+                sink.on_event("SendGrantDoer", "send_failed", data)
                 return
 
             logger.info(
