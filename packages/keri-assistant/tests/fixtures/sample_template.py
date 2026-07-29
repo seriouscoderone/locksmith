@@ -10,7 +10,7 @@ SAMPLE_TEMPLATE = {
     "commands": [
         {
             "id": "submit_quote",
-            "name": "Submit the quote",
+            "name": "Submit quote",
             "description": "Send the prepared quote to the counterparty",
             "route": "/insurance/cmd/submit_quote",
             "counterparty_role": "broker",
@@ -20,7 +20,7 @@ SAMPLE_TEMPLATE = {
         },
         {
             "id": "create_application",
-            "name": "Create an application",
+            "name": "Create application",
             "description": "Open a new application record",
             "route": "/insurance/cmd/create_application",
             "counterparty_role": None,
