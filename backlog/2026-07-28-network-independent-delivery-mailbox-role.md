@@ -1,6 +1,11 @@
 # Role requests only work on a shared network — mailbox role is the network-independent path
 
-**Status:** backlog · **Raised:** 2026-07-28 · **Priority:** high (this is what makes the flow work "on any network")
+**Status:** backlog — **DEFERRED by user 2026-07-29** (no internet-hosted mailbox yet; direct-mode
+LAN posture for now via bridged VM networking + Windows firewall rule). Note when picking this
+back up: a mailbox does NOT have to be internet-hosted — a LAN-local mailbox (e.g. one machine in
+the office) gives always-on delivery within the network without any public exposure; the
+internet-hosted one is only needed for cross-network reach. · **Raised:** 2026-07-28 ·
+**Priority:** high (this is what makes the flow work "on any network")
 
 ## What we saw
 
