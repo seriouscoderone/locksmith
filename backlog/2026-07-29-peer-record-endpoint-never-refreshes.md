@@ -25,6 +25,13 @@ re-breaks the return leg even when the new address is perfectly reachable, and t
 mode is the same silent mailbox-fallback loss as
 `2026-07-29-grant-send-reports-success-while-undeliverable.md`.
 
+## Proof the fix shape is right (2026-07-29)
+
+The live retest hand-executed exactly what item 1 automates: patching the cached record to the
+requester's current address (script against `db.peerAllowlist`, wallet closed) made the very next
+grant deliver and the role flip to Held. Bridged networking + firewall alone were NOT sufficient —
+the send still dialed the cached NAT address until the record changed.
+
 ## The actual work
 
 This is the concrete, already-bitten slice of `2026-07-28-single-route-per-peer.md`:
