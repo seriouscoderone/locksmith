@@ -20,6 +20,9 @@ class MatchResult:
     confident: bool
 
 
+# Note: matching is a plain token-overlap score with no stopword filtering, so a
+# command's display-name phrasings must avoid stopwords (e.g. "the", "a") — such
+# tokens would inflate scores for unrelated utterances that happen to contain them.
 def _score(verb: Verb, tokens: set[str]) -> int:
     return sum(1 for p in verb.phrasings if p in tokens)
 

@@ -1,7 +1,6 @@
-import pytest
 from keri_assistant.surface import build_micro_app_surface
 from keri_assistant.grounding import Grounding
-from keri_assistant.harness import Assistant, Outcome
+from keri_assistant.harness import Assistant
 from tests.fixtures.sample_template import SAMPLE_TEMPLATE
 from tests.fakes import FakeConfirmer, RecordingDispatcher, RecordingAudit
 
@@ -62,3 +61,17 @@ def test_ungrounded_receiver_is_refused_before_confirm():
     assert out.status == "refused_ungrounded"
     assert conf.previews == [] and disp.dispatched == []
     assert aud.events[-1].outcome == "refused_ungrounded"
+
+
+def test_dispatch_failure_is_not_audited_as_dispatched():
+    conf = FakeConfirmer(True)
+    disp = RecordingDispatcher(ok=False)
+    aud = RecordingAudit()
+    a = Assistant(surface=SURF, grounding=G, confirmer=conf, dispatcher=disp, audit=aud,
+                  proposed_by="assistant")
+    out = a.handle("submit the quote", payload={"amount": 10}, receiver_aid=BROKER)
+    assert out.status == "dispatch_failed"
+    assert len(disp.dispatched) == 1  # dispatch WAS attempted
+    assert aud.events[-1].outcome == "dispatch_failed"
+    assert aud.events[-1].authorized_by == "human"
+    assert out.reason == ""  # RecordingDispatcher(ok=False) defaults detail to ""

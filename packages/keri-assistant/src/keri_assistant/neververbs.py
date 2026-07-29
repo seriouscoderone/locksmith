@@ -16,7 +16,7 @@ NEVER_VERB_TOKENS: frozenset[str] = frozenset({
     "admit",  # spec §9.5 — human-only until reconciled with the KERI-protocol action space
 })
 
-_SPLIT = re.compile(r"[/_]+")
+_SPLIT = re.compile(r"[^a-z0-9]+")
 
 
 def is_never_verb(route: str) -> bool:

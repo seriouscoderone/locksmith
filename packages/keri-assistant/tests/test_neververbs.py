@@ -25,3 +25,15 @@ def test_allowed_verbs_not_flagged(route):
 
 def test_token_set_includes_admit_per_reconciliation_note():
     assert "admit" in NEVER_VERB_TOKENS  # spec §9.5: human-only until reconciled
+
+
+@pytest.mark.parametrize("route", [
+    "/x/revoke-credential",
+    "/keri/cmd/rotate-key",
+])
+def test_hyphenated_routes_are_detected(route):
+    assert is_never_verb(route) is True
+
+
+def test_allowed_hyphenated_route_not_flagged():
+    assert is_never_verb("/insurance/cmd/submit-quote") is False

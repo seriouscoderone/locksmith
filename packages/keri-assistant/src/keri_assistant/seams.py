@@ -33,7 +33,7 @@ class AuditEvent:
     proposed_by: str
     authorized_by: str | None
     intent: ResolvedIntent | None
-    outcome: str  # "dispatched" | "rejected" | "refused_ungrounded" | "no_match"
+    outcome: str  # "dispatched" | "dispatch_failed" | "rejected" | "refused_ungrounded" | "no_match"
 
 
 @runtime_checkable

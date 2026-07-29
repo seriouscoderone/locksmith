@@ -4,7 +4,7 @@ The model/matcher proposes; the human authorizes; the trusted Dispatcher execute
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 
 from .grounding import Grounding, check_grounded
 from .intent import ResolvedIntent
@@ -16,7 +16,7 @@ from .surface import CommandSurface, Verb
 
 @dataclass(frozen=True)
 class Outcome:
-    status: str  # dispatched | rejected | no_match | disambiguation | refused_ungrounded
+    status: str  # dispatched | dispatch_failed | rejected | no_match | disambiguation | refused_ungrounded
     intent: ResolvedIntent | None = None
     candidates: tuple[Verb, ...] = ()
     reason: str = ""
@@ -70,9 +70,14 @@ class Assistant:
                           payload=intent.payload, summary=_summary(verb, receiver_aid))
 
         if self._confirmer.confirm(preview):
-            self._dispatcher.dispatch(intent)
-            self._emit("dispatched", intent, "human")
-            return Outcome(status="dispatched", intent=intent)
+            result = self._dispatcher.dispatch(intent)
+            if result.ok:
+                self._emit("dispatched", intent, "human")
+                return Outcome(status="dispatched", intent=intent)
+            # Human authorized; execution failed. authorized_by stays "human" —
+            # the failure is the dispatcher's, not a lack of authorization.
+            self._emit("dispatch_failed", intent, "human")
+            return Outcome(status="dispatch_failed", intent=intent, reason=result.detail)
 
         self._emit("rejected", intent, None)
         return Outcome(status="rejected", intent=intent)
