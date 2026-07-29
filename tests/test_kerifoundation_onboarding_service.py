@@ -7,6 +7,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 
 import pytest
 from keri import kering
+from keri.core import signing
 
 from locksmith.plugins.kerifoundation.db.basing import (
     ACCOUNT_STATUS_FAILED,
@@ -629,8 +630,16 @@ def test_onboarding_service_runs_step_4_5_6_flow(tmp_path, monkeypatch):
                 "version": kering.Vrsn_1_0,
             },
         }
-        assert app.vault.hby.make_hab_calls[1] == {
-            "name": app.vault.hby.make_hab_calls[1]["name"],
+        auth_call = app.vault.hby.make_hab_calls[1]
+        # The hidden auth principal is infrastructure, so it mints with a fresh
+        # random salt — pulled out before the comparison because its whole point
+        # is being unpredictable. Without it the hab derives from (root salt,
+        # alias), and the root salt is a constant shared by every vault:
+        # docs/superpowers/specs/2026-07-28-aid-salt-derivation-rule.md.
+        auth_salt = auth_call["kwargs"].pop("salt")
+        assert signing.Salter(qb64=auth_salt).qb64 == auth_salt
+        assert auth_call == {
+            "name": auth_call["name"],
             "ns": ONBOARDING_AUTH_NAMESPACE,
             "transferable": False,
             "kwargs": {
