@@ -9,6 +9,18 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
+## 0.3.6
+
+- Peer connections now advertise a reachable network address instead of assuming
+  the local machine, and the address field is prefilled with the one detected on
+  your network — so pairing works between two computers, not just on one.
+- Each peer connection now has its own identifier, and an incoming first-contact
+  request has to be authorized before anything from it is accepted.
+- Usurance: the authority endpoint is reachable again, so role requests get
+  through.
+- Checkboxes, radio buttons and grouped settings are legible on dark system
+  themes.
+
 ## 0.3.5
 
 - Usurance now opens to its workspace setup on first launch, and returns you
