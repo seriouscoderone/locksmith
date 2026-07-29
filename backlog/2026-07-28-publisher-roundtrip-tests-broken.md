@@ -1,6 +1,13 @@
 # The publisher round-trip tests are broken — the release gate has been dark
 
-**Status:** backlog · **Raised:** 2026-07-28 · **Priority:** high (the only automated coverage of the release-anchor path, and it hasn't been running)
+**Status:** RESOLVED 2026-07-28 — both tests green (fixed by the PUBLISHER agent, merged as
+`d0d953c3`). One root cause, not two: `kli oobi resolve` exits 0 but persists nothing on the v2
+base, and `Receiptor` swallows the resulting `MissingEntryError` — the receipt "timeout" was a
+config error. Four further stale-signature breaks fixed behind it. The underlying trap and the
+CI gap are filed separately: `2026-07-28-kli-oobi-resolve-persists-nothing-on-v2.md`,
+`2026-07-28-ci-runs-no-tests-at-all.md`.
+
+**Raised:** 2026-07-28 · **Priority:** ~~high~~
 
 ## What we saw
 

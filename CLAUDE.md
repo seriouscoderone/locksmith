@@ -71,7 +71,9 @@ or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceipto
 ## Release publisher + update verification
 
 - The publisher (`tools/publisher/`) is a thin pipeline over keripy **`kli`**: `kli incept` / `kli interact`
-  (ALWAYS `--receipt-endpoint`, which routes to `Receiptor`) + `publish.anchor_release` (KEL export via
+  + a **programmatic `Receiptor`** for receipt collection (NOT `kli --receipt-endpoint` — that broke on the
+  v2 base; see `backlog/2026-07-28-kli-oobi-resolve-persists-nothing-on-v2.md` for the related v2 trap:
+  `kli oobi resolve` exits 0 but persists no loc/end records) + `publish.anchor_release` (KEL export via
   `db.clonePreIter`, wigs inline) + `appcast.build_appcast` + `s3 upload_release`. The release seal anchored
   in the ixn `a` field is `{"release": {"v": <ver>, "artifacts": [{"platform": <p>, "sha256": <hex>}, ...]}}`.
 - The verifier (`src/locksmith/update/verify.py`, `update/kel_replay.py`) replays the published `kel.cesr`
