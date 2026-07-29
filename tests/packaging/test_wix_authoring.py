@@ -21,8 +21,6 @@ import pytest
 REPO_ROOT = Path(__file__).resolve().parents[2]
 WIX_DIR = REPO_ROOT / "packaging" / "wix"
 LICENSE_RTF = WIX_DIR / "license.rtf"
-BANNER = WIX_DIR / "banner.png"
-DIALOG = WIX_DIR / "dialog.png"
 HEAT_EXCLUSIONS = WIX_DIR / "heat-exclusions.txt"
 
 NS = {
@@ -86,9 +84,13 @@ def test_major_upgrade_block_present(wxs_tree):
 
 
 def test_referenced_files_exist():
+    """Only genuinely brand-NEUTRAL wix assets live here.
+
+    banner.png/dialog.png are brand art and are rendered per-brand into the
+    brand's release dir at build time (packaging/wix/gen_ui_images.py via
+    scripts/brand_apply.py) — covered by tests/packaging/test_wix_brand_images.py.
+    """
     assert LICENSE_RTF.is_file(), f"missing {LICENSE_RTF}"
-    assert BANNER.is_file(), f"missing {BANNER}"
-    assert DIALOG.is_file(), f"missing {DIALOG}"
 
 
 def test_heat_exclusions_present_and_nontrivial():
@@ -123,13 +125,11 @@ def test_wix_ui_installdir_is_used(wxs_tree):
     assert ui.attrib.get("Id") == "WixUI_InstallDir"
 
 
-def test_banner_dimensions():
-    from PIL import Image
-    with Image.open(BANNER) as img:
-        assert img.size == (493, 58), f"banner {img.size} != (493, 58)"
-
-
-def test_dialog_dimensions():
-    from PIL import Image
-    with Image.open(DIALOG) as img:
-        assert img.size == (493, 312), f"dialog {img.size} != (493, 312)"
+def test_chrome_bitmaps_are_referenced_by_bare_name(wxs_tree):
+    """Bare names let `wix build`'s bindpath order pick the BRAND's rendered
+    chrome out of its release dir. Dimensions + per-brand art: see
+    tests/packaging/test_wix_brand_images.py."""
+    variables = {v.attrib["Id"]: v.attrib.get("Value")
+                 for v in wxs_tree.findall(".//w:WixVariable", NS)}
+    assert variables.get("WixUIBannerBmp") == "banner.png"
+    assert variables.get("WixUIDialogBmp") == "dialog.png"

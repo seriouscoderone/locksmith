@@ -162,17 +162,19 @@ try {
     # -bindpath DIR  file lookup path; first hit wins for relative SourceFile refs.
     # Locksmith.wxs itself is now the brand-rendered copy in the release dir
     # (scripts/brand_apply.py -> brandlib.render_wxs), not the retired in-tree
-    # packaging/wix/Locksmith.wxs. Its relative SourceFile refs split across
-    # two roots: banner.png/dialog.png/license.rtf stay neutral in
-    # packaging/wix/ ($wixDir); AppIcon.ico is brand-specific and now lives
-    # in the release dir alongside Locksmith.wxs ($releaseDir).
+    # packaging/wix/Locksmith.wxs. $releaseDir MUST come FIRST: everything
+    # brand-specific — AppIcon.ico, the rendered banner.png/dialog.png chrome,
+    # and license.rtf when the brand ships its own — lives there and has to win.
+    # $wixDir is only the fallback for genuinely brand-neutral assets (today:
+    # license.rtf for brands that don't override it). Putting $wixDir first is
+    # what shipped Locksmith's triquetra in the v0.3.6 Usurance MSI.
     & wix build `
         (Join-Path $releaseDir "Locksmith.wxs") $harvestedWxs `
         -ext WixToolset.UI.wixext `
         -arch x64 `
         -d "Version=$Version" `
-        -bindpath $wixDir `
         -bindpath $releaseDir `
+        -bindpath $wixDir `
         -out $msiPath
     if ($LASTEXITCODE -ne 0) {
         throw "[build] wix build exited $LASTEXITCODE"

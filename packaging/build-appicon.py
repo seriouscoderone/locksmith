@@ -13,8 +13,13 @@ Run from the repo root after any change to a brand's source SVGs:
 
 --brand selects which brands/<id>/ dir supplies the source SVGs and
 receives the generated icon/splash outputs (default: locksmith — the
-reference brand). The banner/dialog WiX chrome images are neutral UI
-(not brand-specific) and always land in packaging/wix/.
+reference brand).
+
+The WiX installer chrome (banner.png/dialog.png) is NOT built here: it is
+brand art, rendered per-brand into the brand's release dir at build time by
+packaging/wix/gen_ui_images.py (via scripts/brand_apply.py). This script used
+to emit its own competing pair into the shared packaging/wix/ — two generators
+writing one shared path, last writer wins, every brand's MSI showing it.
 
 Both .icns and .ico outputs are committed; CI does not regenerate them.
 """
@@ -54,9 +59,6 @@ SVG = FULL_SVG = OUT_ICNS = OUT_ICO = OUT_SPLASH = None
 # Locksmith reference). A brand whose symbol needs contrast on a dark dock
 # (e.g. usurance's teal eye+globe) sets a solid color like white.
 ICON_PLATE_FLAT: "QColor | None" = None
-
-OUT_WIX_BANNER = REPO_ROOT / "packaging" / "wix" / "banner.png"
-OUT_WIX_DIALOG = REPO_ROOT / "packaging" / "wix" / "dialog.png"
 
 
 def _set_brand_paths(brand: str) -> None:
@@ -162,40 +164,6 @@ def build_icns() -> None:
     print(f"wrote {OUT_ICNS.relative_to(REPO_ROOT)} ({OUT_ICNS.stat().st_size:,} bytes)")
 
 
-def build_wix_banner() -> None:
-    """493x58 PNG: white background, SymbolLogo mark on the right (WixUI banner slot)."""
-    OUT_WIX_BANNER.parent.mkdir(parents=True, exist_ok=True)
-    img = QImage(493, 58, QImage.Format.Format_ARGB32_Premultiplied)
-    img.fill(QColor("#FFFFFF"))
-    painter = QPainter(img)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    mark = 44
-    mx = 493 - mark - 12
-    my = (58 - mark) // 2
-    QSvgRenderer(str(SVG)).render(painter, QRectF(mx, my, mark, mark))
-    painter.end()
-    img.save(str(OUT_WIX_BANNER), "PNG")
-    print(f"wrote {OUT_WIX_BANNER.relative_to(REPO_ROOT)}")
-
-
-def build_wix_dialog() -> None:
-    """493x312 PNG: cream background, centered FullLogo (WixUI welcome/exit slot)."""
-    OUT_WIX_DIALOG.parent.mkdir(parents=True, exist_ok=True)
-    img = QImage(493, 312, QImage.Format.Format_ARGB32_Premultiplied)
-    img.fill(QColor("#FBF7EE"))
-    painter = QPainter(img)
-    painter.setRenderHint(QPainter.RenderHint.Antialiasing, True)
-    painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform, True)
-    logo_w, logo_h = 320, 160
-    x = (493 - logo_w) // 2
-    y = (312 - logo_h) // 2 - 16
-    QSvgRenderer(str(FULL_SVG)).render(painter, QRectF(x, y, logo_w, logo_h))
-    painter.end()
-    img.save(str(OUT_WIX_DIALOG), "PNG")
-    print(f"wrote {OUT_WIX_DIALOG.relative_to(REPO_ROOT)}")
-
-
 def build_splash() -> None:
     """600x360 PNG: cream gradient, centered FullLogo, used by PyInstaller's
     Splash() resource. Renders BEFORE the Python interpreter starts so it
@@ -260,8 +228,6 @@ def main() -> int:
     QGuiApplication.instance() or QGuiApplication(sys.argv)
     build_icns()
     build_ico()
-    build_wix_banner()
-    build_wix_dialog()
     build_splash()
     return 0
 
