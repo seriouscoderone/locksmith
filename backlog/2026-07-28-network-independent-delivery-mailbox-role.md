@@ -33,6 +33,17 @@ channel as a loud failure (`core/serviceaid_bridge.py:560`), and `RequestFlow` d
 grants (`ui/onboarding/request_flow.py:397`). Correct today, when direct is the only declared
 channel. Wrong the moment mailbox is a legitimate route.
 
+## Evidence update (2026-07-29, FIRST LIVE TWO-MACHINE TEST) — this item is now proven necessary
+
+v0.3.6 live test: HOA on a Windows VM (Parallels, Shared/NAT networking) successfully applied to
+the admin's Locksmith over peer TCP — **outbound through NAT works**. The GRANT never arrived:
+the VM's advertised address (`10.211.55.x`, Parallels-only) is unroutable from the LAN, Windows
+Defender Firewall blocks unsolicited inbound anyway (the MSI registers no rule), so the admin's
+`peer_send` timed out and fell back to mailbox — and the requester has no mailbox, so the grant
+evaporated. Restarting the requester cannot help: peer mode is push-only, there is nothing to
+poll. This is the exact scenario this entry predicts. **Acceptance case for the fix: an HOA on a
+NAT'd, firewalled machine receives the grant with zero user configuration.**
+
 ## Evidence update (2026-07-28, post loopback fix)
 
 The loopback fix (`38d1aea3`) baked `tcp://192.168.1.162:5621` — a **DHCP lease**. When it
