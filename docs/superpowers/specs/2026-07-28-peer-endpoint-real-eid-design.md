@@ -64,6 +64,18 @@ ensure_listener_hab(hby, alias=PEER_LISTENER_ALIAS)   # idempotent
 ```
 
 - `transferable=False` → `B…` prefix, cigar-signed replies (required, see above).
+- **Minted with a fresh random salt, not the Habery's.** Found the hard way: salty key
+  creation derives from `(salt, stem)`, the Habery's salt follows the passcode, and the
+  stem comes from the alias — so two vaults opened with the same passcode minted the
+  *identical* listener prefix. Because `db.locs` is keyed `(eid, scheme)`, two different
+  sockets then contended for one location record and BADA's datestamp picked a winner: a
+  peer paired with both resolved one address for both and sent to the wrong vault,
+  reporting success. Caught by the two-wallet integration test, where the sender dialed
+  its own port. The keys still persist in the keystore, so the EID remains stable across
+  restarts — it just is not derivable. Wider audit filed as
+  `backlog/2026-07-28-derived-aids-collide-across-vaults.md`, because the same collision
+  applies to any alias-derived hab, including transferable user identities where it would
+  be duplicity rather than a mixed-up address.
 - `ns="peer"` keeps it out of the Identifiers page, which filters `ns != ""`
   (`ui/vault/identifiers/list.py:106`), and out of the group surfaces. Precedent: the
   turret's `ns="settings"` hab (`core/vaulting.py:77`).
@@ -106,11 +118,23 @@ records where `enabled or allowed`, looks up `db.locs.get(keys=(eid, scheme))`, 
 returns the `(eid, url)` pairs with a non-empty url. It returns a **list** so the
 multi-route follow-on has nothing to unwind; today's callers take the first.
 
-Call sites converted: `peer/exposure.py:40`, `core/direct_transport.py:134`,
-`ui/vault/peers/add_dialog.py:333`, `peer/oobi_import.py`, plus a fifth the backlog
-entry did not list — `core/habbing.py:944` `generate_oobi(role="peer")`, which hardcodes
-`/oobi/{hab.pre}/peer/{hab.pre}` and must name the listener EID in the final path
-segment.
+Call sites converted — the four the backlog entry listed (`peer/exposure.py:40`,
+`core/direct_transport.py:134`, `ui/vault/peers/add_dialog.py:333`,
+`peer/oobi_import.py`) plus three it did not:
+
+- `core/habbing.py:944` `generate_oobi(role="peer")` hardcoded
+  `/oobi/{hab.pre}/peer/{hab.pre}`; the final segment must name the listener EID, since
+  the witness's OOBI handler filters by it.
+- `core/serviceaid_bridge.py` `_inband_oobi_msgs` re-signed `eid=hab.pre` on every send,
+  which would have **resurrected the legacy self-authorization the migration retires**.
+  It now loads the already-published rpys back out of the db
+  (`loadLocScheme`/`loadEndRole`) instead of minting new ones — which is also the only
+  way to get a listener-signed `/loc/scheme` from a function that holds just the `hab`.
+- `peer/shim.py` `_first_contact_accepted` — the open-inbound gate deciding whether to
+  talk to a stranger. Its stated rule is "KEL verified AND published a reachable tcp
+  loc-scheme", but reading `db.locs` directly meant the authorization half was never
+  actually checked. This was the most consequential instance of the
+  unauthorized-location hole.
 
 `peer/sending.py` is deliberately **not** converted. It dials
 `PeerRecord.endpoint_url`, which is a *pairing* record for a remote AID, not a
@@ -147,6 +171,23 @@ The mechanism is the one task 1 already proved against real keripy in
 `tests/core/test_oobi_import.py::test_reparse_supersedes_a_changed_endpoint`: a
 later-dated rpy supersedes what an install already learned (BADA). The migration tests
 extend that file.
+
+**But the cut does not travel, so ordering carries the migration.** `replyEndRole`
+exports only *currently authorized* records (`habbing.py:2480-2483`, and `loadEndRole`
+has the same guard), so a `/end/role/cut` is structurally unable to appear in an exported
+OOBI. An install that learned the old endpoint keeps holding it and ends up with two
+routes; the retirement above cleans up the publisher's own vault and its witnesses, and
+nothing more. What makes the upgrade land anyway is preference order: `peer_role_eids`
+sorts by the datestamp keripy recorded for each authorization (`db.eans` → `db.sdts`, the
+same pair BADA compares in `acceptReply`), newest first, so the current address is the one
+dialed and the retired one degrades to a fallback instead of shadowing it. LMDB key order
+is by EID and bears no relation to recency, so the sort is doing real work.
+
+This has a consequence past this task: **peer-mode revocation is not observable to an
+already-paired counterparty.** Turning exposure off publishes a cut that no re-exported
+blob can carry, while the counterparty dials a cached `PeerRecord.endpoint_url`. Local
+enforcement (`PeerDoer`'s `is_destination_exposed`) is the real control. Filed as
+`backlog/2026-07-28-endrole-cut-does-not-propagate.md`.
 
 ### 5. OOBI parse: damaged stream vs no peer role
 

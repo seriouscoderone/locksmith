@@ -32,6 +32,7 @@ here assumes there is only one.
 from __future__ import annotations
 
 from keri import Vrsn_1_0, help
+from keri.core.signing import Salter
 
 logger = help.ogler.getLogger(__name__)
 
@@ -70,6 +71,16 @@ def ensure_listener_hab(hby, alias: str = PEER_LISTENER_ALIAS):
         name=alias,
         ns=PEER_NS,
         transferable=False,
+        # A FRESH RANDOM SALT, not the Habery's. Salty key creation derives from
+        # (salt, stem) and the Habery's salt follows the passcode, so without this
+        # two vaults opened with the same passcode mint the IDENTICAL listener
+        # prefix. Since db.locs is keyed (eid, scheme), two different sockets then
+        # contend for one location record and BADA's datestamp picks a winner: a
+        # peer paired with both resolves one address for both and traffic goes to
+        # the wrong vault. One user's two vaults sharing a passcode is ordinary.
+        # The keys are persisted in the keystore, so the EID is still stable
+        # across restarts — it just isn't derivable.
+        salt=Salter().qb64,
         # TRANSITIONAL: hold Locksmith events at v1 (makeHab defaults v2 on the
         # v2 keripy base); lift with serviceaid. grep TRANSITIONAL.
         version=Vrsn_1_0,

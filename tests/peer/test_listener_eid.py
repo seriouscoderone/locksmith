@@ -14,6 +14,7 @@ from __future__ import annotations
 import pytest
 from keri import Vrsn_1_0
 from keri.app import habbing
+from keri.core import signing
 
 from locksmith.peer.listener_eid import (
     PEER_LISTENER_ALIAS, PEER_NS, ensure_listener_hab, listener_eid,
@@ -75,6 +76,32 @@ def test_listener_eid_reports_none_before_minting(hby):
     assert listener_eid(hby) is None
     hab = ensure_listener_hab(hby)
     assert listener_eid(hby) == hab.pre
+
+
+def test_two_vaults_with_the_same_passcode_get_different_listener_eids():
+    """The EID identifies THIS vault's socket, so it must not be derivable from
+    the passcode and the alias.
+
+    Salty key creation derives from (Habery salt, stem), and the salt follows the
+    passcode — so two vaults opened with the same passcode minted the *identical*
+    non-transferable prefix for alias "peer-listener". Since ``db.locs`` is keyed
+    ``(eid, scheme)``, two different sockets then fight over one location record
+    and BADA's datestamp picks a winner: a peer paired with both resolves ONE
+    address for both, and traffic silently goes to the wrong vault. Caught by
+    tests/integration/peer/test_send.py, where the sender dialed its own port.
+
+    Two users sharing a passcode is unlikely; one user's two vaults sharing one is
+    not.
+    """
+    eids = []
+    for name in ("vaultone", "vaulttwo"):
+        with habbing.openHby(name=name, temp=True, bran="A" * 21,
+                             salt=signing.Salter(raw=b"identical-salt00").qb64,
+                             version=Vrsn_1_0) as h:
+            eids.append(ensure_listener_hab(h).pre)
+    assert eids[0] != eids[1], (
+        f"both vaults minted the same listener EID {eids[0]} — a colliding "
+        f"endpoint identifier for two different sockets")
 
 
 def test_a_second_alias_mints_a_second_distinct_eid(hby):

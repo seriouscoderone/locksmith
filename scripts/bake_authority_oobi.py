@@ -106,7 +106,11 @@ def inspect(cesr: bytes, aid: str) -> str:
 
     with habbing.openHby(name="bake-verify", temp=True) as hby:
         try:
-            parse_oobi_cesr(hby, cesr, expect=aid)
+            # Discovery mode (no `expect`): the throwaway Habery knows nothing, so
+            # "whichever AID this stream introduced" is the right question. It also
+            # keeps the wrong-identifier case answerable HERE, with the specific
+            # advice below, instead of surfacing as a generic parse complaint.
+            parse_oobi_cesr(hby, cesr)
         except PeerBlobError as e:
             raise BakeError(f"the export did not verify: {e}")
         endpoints = resolve_peer_endpoints(hby.db, aid)

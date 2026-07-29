@@ -1,6 +1,6 @@
 # Peer integration tests can't run from worktrees — and would test the wrong tree if they could
 
-**Status:** backlog · **Raised:** 2026-07-28 · **Priority:** high (step 0 of the EID endpoint work — it needs these tests runnable)
+**Status:** DONE · **Raised:** 2026-07-28 · **Priority:** high (step 0 of the EID endpoint work — it needs these tests runnable)
 
 ## What we saw
 

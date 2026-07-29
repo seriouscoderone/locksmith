@@ -1,7 +1,10 @@
 # A peer can only have one route — no LAN-plus-public, no ordered fallback
 
 **Status:** backlog · **Raised:** 2026-07-28 · **Priority:** medium (blocked on the EID work)
-**Blocked by:** `2026-07-28-peer-endpoint-not-a-real-eid.md`
+**Blocked by:** ~~`2026-07-28-peer-endpoint-not-a-real-eid.md`~~ — UNBLOCKED 2026-07-28.
+`peer/resolution.py` returns all authorized routes (ordered by authorization recency) and
+`peer/listener_eid.py` mints per alias, so multi-EID is expressible. Still to do: `PeerRecord`
+holding N routes, the selector, and the policy-declaration decision.
 
 ## What we saw
 

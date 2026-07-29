@@ -5,6 +5,9 @@ from locksmith.peer.shim import PeerExchangerShim
 
 SENDER = "E" + "S" * 43
 DEST = "E" + "D" * 43
+# The sender's endpoint provider — its vault's peer listener, a separate
+# non-transferable identifier, not the sender's own AID.
+SENDER_EID = "B" + "S" * 43
 
 
 def _exn(sender=SENDER, dest=DEST):
@@ -15,11 +18,18 @@ def _exn(sender=SENDER, dest=DEST):
 
 
 def _shim(*, known=False, open_inbound=False, kel_known=True, has_loc=True,
-          on_first_contact=None):
+          has_end=True, on_first_contact=None):
     allowlist = MagicMock()
     allowlist.contains.return_value = known
     hby = MagicMock()
     hby.kevers = {SENDER: object()} if kel_known else {}
+    # The first-contact gate resolves the sender's endpoint natively:
+    # cid -> ends[peer] -> eid -> locs[eid]. Both stores are faked because BOTH
+    # halves are required — an address with no authorization behind it must not
+    # get a stranger past this gate (see has_end=False below).
+    end = MagicMock(); end.enabled = True; end.allowed = None
+    hby.db.ends.getTopItemIter.return_value = (
+        [((SENDER, "peer", SENDER_EID), end)] if has_end else [])
     loc = MagicMock(); loc.url = "tcp://127.0.0.1:5621"
     hby.db.locs.get.return_value = loc if has_loc else None
     exchanger = MagicMock()
@@ -57,6 +67,19 @@ def test_first_contact_requires_verifiable_kel():
 
 def test_first_contact_requires_tcp_loc():
     shim, exchanger, _ = _shim(open_inbound=True, has_loc=False)
+    shim.processEvent(_exn())
+    exchanger.processEvent.assert_not_called()
+
+
+def test_first_contact_requires_the_address_to_be_authorized():
+    """A location with no /end/role behind it must not admit a stranger.
+
+    That state is reachable without any malice: a stream damaged mid-flight can
+    land the /loc/scheme and drop the /end/role/add. The gate used to read
+    db.locs directly and would have accepted the sender at an address nothing
+    vouched for.
+    """
+    shim, exchanger, _ = _shim(open_inbound=True, has_end=False)
     shim.processEvent(_exn())
     exchanger.processEvent.assert_not_called()
 

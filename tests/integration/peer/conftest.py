@@ -420,4 +420,10 @@ def two_wallets():
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        shutil.rmtree(root, ignore_errors=True)
+        # Failures here are usually diagnosed from the wallets' logs, and pytest
+        # truncates them out of assertion messages. Set LOCKSMITH_KEEP_TEST_HOMES
+        # to keep both HOMEs (and a.log / b.log) for inspection.
+        if os.environ.get("LOCKSMITH_KEEP_TEST_HOMES"):
+            print(f"\n[two_wallets] logs kept at {root}")
+        else:
+            shutil.rmtree(root, ignore_errors=True)

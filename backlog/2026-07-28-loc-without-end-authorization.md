@@ -23,6 +23,13 @@ In the middle case the old code paired the peer at an address nothing had vouche
 and reported success. keripy's `Parser.parse` swallows per-message framing errors, so
 there was no exception to notice either.
 
+The instance that mattered most was not the pairing dialog but the **open-inbound
+first-contact gate** (`peer/shim.py` `_first_contact_accepted`). Its whole job is
+deciding whether to talk to a stranger, and its stated rule is "KEL verified AND it
+published a reachable tcp loc-scheme" — but it read `db.locs` directly, so the second
+half of the rule was not actually being checked. Now covered by
+`tests/core/test_open_inbound.py::test_first_contact_requires_the_address_to_be_authorized`.
+
 ## Resolution
 
 `peer/resolution.py` walks `cid → ends[peer] → eid → locs[eid]` and requires both halves,
