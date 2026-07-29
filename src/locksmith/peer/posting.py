@@ -14,13 +14,90 @@ from __future__ import annotations
 
 from hio.base import doing
 from hio.help import decking
-from keri import help
+from keri import help, kering
 from keri.app import forwarding
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.sending import SendOutcome, peer_send
 
 logger = help.ogler.getLogger(__name__)
+
+#: The roles keripy's StreamPoster routes the mailbox path through, in its
+#: own preference order (forwarding.StreamPoster._chunk): direct-send roles
+#: first, store-and-forward via a witness last.
+_FALLBACK_ROLES = (
+    kering.Roles.controller,
+    kering.Roles.agent,
+    kering.Roles.mailbox,
+    kering.Roles.witness,
+)
+
+
+def mailbox_route_exists(hab, recp: str) -> bool:
+    """True iff keripy's StreamPoster has anywhere to deliver for ``recp``.
+
+    Mirrors ``forwarding.StreamPoster._chunk``'s routing walk over
+    ``hab.endsFor(recp)``: controller/agent/mailbox ends first, else the
+    recipient's witnesses. A role only counts with at least one located URL —
+    an authorization with no ``/loc/scheme`` still routes nowhere. Peer-role
+    ends deliberately don't count: they are the direct channel, and this
+    predicate exists to say whether the mailbox FALLBACK can deliver.
+
+    When this is False, the inner StreamPoster's deliver() logs "No end
+    roles" and returns no doers — the fallback "delivery" is a silent no-op.
+    That is the condition the loud-failure policy below exists to surface
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+    """
+    try:
+        ends = hab.endsFor(recp)
+        for role in _FALLBACK_ROLES:
+            for _eid, locs in (ends.get(role) or {}).items():
+                if any(url for url in locs.values()):
+                    return True
+    except Exception:  # noqa: BLE001 — an errored walk would have errored
+        # StreamPoster's own routing too; treat as "nowhere to deliver".
+        return False
+    return False
+
+
+def undeliverable(channel: str, hab, recp: str) -> bool:
+    """True when a send's outcome means the message reached nobody.
+
+    ``channel`` is the ``SendOutcome`` value string the delivery tail already
+    reports (``last_outcome``). A confirmed peer delivery is always
+    deliverable; a mailbox/fallback outcome is honest only if the recipient
+    actually has somewhere the mailbox path can route — otherwise reporting
+    success is a lie (the first live two-machine test lost a grant exactly
+    this way).
+    """
+    if channel == SendOutcome.PEER.value:
+        return False
+    return not mailbox_route_exists(hab, recp)
+
+
+def recipient_label(baser, aid: str, org=None) -> str:
+    """Operator-readable name for ``aid`` in delivery-failure surfaces.
+
+    Pairing label first (what the user typed at Add Peer / first-contact
+    registration), then the contact alias (keripy Organizer), then a
+    shortened AID — never the full 44-char prefix in a banner.
+    """
+    try:
+        record = PeerAllowlist(baser).get(aid)
+    except Exception:  # noqa: BLE001 — label lookup must never break a send
+        record = None
+    label = getattr(record, "label", "")
+    if isinstance(label, str) and label:
+        return label
+    if org is not None:
+        try:
+            contact = org.get(aid)
+        except Exception:  # noqa: BLE001
+            contact = None
+        alias = (contact or {}).get("alias", "")
+        if isinstance(alias, str) and alias:
+            return alias
+    return f"{aid[:12]}…"
 
 
 class PeerAwarePoster:

@@ -166,3 +166,29 @@ def test_last_outcome_carries_each_send_outcome_through_deliver(baser):
     with patch.object(poster._inner, "deliver", return_value=[]):
         poster.deliver()
     assert poster.last_outcome.value == "peer→mailbox"
+
+
+def test_send_grant_goes_loud_when_fallback_has_nowhere_to_deliver():
+    """The silent-loss guard from the first live two-machine test
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md):
+    when the channel is not "peer" AND the recipient has no mailbox/agent/
+    witness ends, the fallback delivered nowhere — SendGrantDoer must emit
+    send_failed (the grant dialog's error banner) instead of send_complete.
+    The policy predicate is `locksmith.peer.posting.undeliverable`, shared
+    verbatim with ServiceaidGrantDoer (behaviorally covered in
+    tests/core/test_serviceaid_bridge.py); this pins the legacy doer's use
+    of it."""
+    src = inspect.getsource(ipexing.SendGrantDoer.sendGrantDo)
+    assert "undeliverable(" in src, (
+        "SendGrantDoer must consult the shared deliverability policy — "
+        "otherwise an unreachable peer with no mailbox ends reports "
+        "'sent successfully' while the grant went nowhere."
+    )
+    assert "send_failed" in src, (
+        "SendGrantDoer must emit send_failed on the undeliverable path so "
+        "the grant dialog surfaces a visible failure."
+    )
+    assert "recipient_label(" in src, (
+        "The failure copy must name the peer (pairing label / contact "
+        "alias) — an AID prefix is not operator-readable."
+    )

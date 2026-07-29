@@ -71,7 +71,11 @@ from keri_serviceaid.providers import (
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
-from locksmith.peer.posting import PeerAwarePoster
+from locksmith.peer.posting import (
+    PeerAwarePoster,
+    recipient_label,
+    undeliverable,
+)
 from locksmith.peer.resolution import peer_role_eids
 
 logger = help.ogler.getLogger(__name__)
@@ -419,6 +423,37 @@ class ServiceaidGrantDoer(doing.DoDoer):
             channel = (
                 postman.last_outcome.value if postman.last_outcome else "mailbox"
             )
+
+            # Loud-failure policy (never lie about delivery): a non-peer
+            # outcome is only a success if the mailbox fallback actually had
+            # somewhere to route. The first live two-machine test lost a
+            # grant to exactly this gap — peer dial failed, recipient had no
+            # mailbox ends, operator saw "sent"
+            # (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+            if undeliverable(channel, hab, self.recipient):
+                label = recipient_label(
+                    self.app.vault.db, self.recipient,
+                    org=getattr(self.app.vault, "org", None))
+                logger.warning(
+                    f"peer.send.undeliverable recipient={self.recipient} "
+                    f"channel={channel} grant={grant_said}"
+                )
+                sink.on_event(
+                    "SendGrantDoer",
+                    "send_failed",
+                    {
+                        'error': f"couldn't reach {label}'s wallet — it may "
+                                 f"be behind a firewall or NAT",
+                        'success': False,
+                        'credential_said': self.credential_said,
+                        'recipient': self.recipient,
+                        'grant_said': grant_said,
+                        'channel': channel,
+                        'undeliverable': True,
+                    },
+                )
+                return
+
             logger.info(
                 f"Grant message {grant_said} sent successfully to "
                 f"{self.recipient} channel={channel}"

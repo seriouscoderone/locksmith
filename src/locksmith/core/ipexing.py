@@ -11,7 +11,11 @@ from keri import help
 from keri.app import organizing, signing, grouping, forwarding, habbing, agenting
 from keri.kering import Vrsn_1_0
 
-from locksmith.peer.posting import PeerAwarePoster
+from locksmith.peer.posting import (
+    PeerAwarePoster,
+    recipient_label,
+    undeliverable,
+)
 from keri.app.notifying import Notifier
 from keri.core import serdering, coring, parsing, eventing
 from keri.help import helping
@@ -498,6 +502,36 @@ class SendGrantDoer(doing.DoDoer):
                 channel = (
                     postman.last_outcome.value if postman.last_outcome else "mailbox"
                 )
+
+                # Loud-failure policy (never lie about delivery): a non-peer
+                # outcome is only a success if the mailbox fallback actually
+                # had somewhere to route — mirrors ServiceaidGrantDoer
+                # (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+                if undeliverable(channel, sender, recp):
+                    label = recipient_label(
+                        self.app.vault.db, recp,
+                        org=getattr(self.app.vault, "org", None))
+                    logger.warning(
+                        f"peer.send.undeliverable recipient={recp} "
+                        f"channel={channel} grant={exn.said}"
+                    )
+                    if self.signal_bridge:
+                        self.signal_bridge.emit_doer_event(
+                            doer_name="SendGrantDoer",
+                            event_type="send_failed",
+                            data={
+                                'error': f"couldn't reach {label}'s wallet — "
+                                         f"it may be behind a firewall or NAT",
+                                'success': False,
+                                'credential_said': self.credential_said,
+                                'recipient': recp,
+                                'grant_said': exn.said,
+                                'channel': channel,
+                                'undeliverable': True,
+                            }
+                        )
+                    return
+
                 logger.info(
                     f"Grant message {exn.said} sent successfully to {recp} "
                     f"channel={channel}"
