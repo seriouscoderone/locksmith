@@ -29,10 +29,13 @@ background thread and run the ``kli`` subprocess commands against
 ``kel.cesr`` / anchor-event bytes.
 
 Witness bring-up mirrors ``test_confirmdoer_receipts_over_http.py`` on this
-branch (``indirecting.setupWitness`` HTTP-only). The OOBI-resolve step lets the
-publisher keystore learn the witness HTTP endpoint so ``--receipt-endpoint``
-(forced by ``locksmith_publisher.kli``) routes inception/ixn receipts back to
-the publisher KEL as inline wigs.
+branch (``indirecting.setupWitness`` HTTP-only). The publisher keystore is taught
+the witness's HTTP endpoint by seeding its ``locs`` record directly
+(``_seed_witness_into_keystore``) — NOT by ``kli oobi resolve``, which on the
+KERI v2 base exits 0 while persisting nothing. With the endpoint known,
+``--receipt-endpoint`` (forced by ``locksmith_publisher.kli``) routes the icp
+receipt back, and the anchor's ``Receiptor`` pass collects the ixn receipt; both
+land in the publisher KEL as inline wigs.
 """
 from __future__ import annotations
 
@@ -58,6 +61,7 @@ if str(_PUB_SRC) not in sys.path:
 
 from hio.base import doing, tyming  # noqa: E402
 from keri.app import habbing, indirecting  # noqa: E402
+from keri.db import basing  # noqa: E402
 from keri.core import Salter  # noqa: E402
 from keri import help, Schemes, Roles  # noqa: E402
 from keri.core import eventing, parsing, routing  # noqa: E402
@@ -75,6 +79,13 @@ kli.KLI = "/Users/seriouscoderone/code/locksmith/.venv/bin/kli"
 WIT_ALIAS = "wan"
 # 21-char keystore passcode (bran) — kli init requires exactly 21 chars.
 PUB_BRAN = "0123456789abcdefghijk"
+
+#: Brand the anchored seal is cut for. The reference brand, which is also what
+#: the CLI resolves by default (brand.brand_id() with no LOCKSMITH_BRAND set) and
+#: what verify_artifact's embedded_brand defaults to — so the library test and
+#: the CLI test below anchor the same brand, and the verifier's brand gate is
+#: checked against a matching pair rather than passing by coincidence.
+BRAND = "locksmith"
 
 
 def _free_port() -> int:
@@ -105,6 +116,61 @@ def _seed_wit_ends(ctrl_db, wit_hab, wit_url):
     msgs.extend(wit_hab.makeLocScheme(url=wit_url, scheme=Schemes.http,
                                       stamp=help.nowIso8601()))
     psr.parse(ims=msgs)
+
+
+def _json_block(output: str) -> dict:
+    """Parse the JSON object out of a publisher CLI run's captured stdout.
+
+    ``anchor_cmd`` itself echoes only ``json.dumps(info)``, but the library it
+    calls prints a human progress line first (``publish.anchor_release`` →
+    ``print("anchor: n/toad witness receipts …")``), and ``CliRunner`` captures
+    both into ``result.output``. So a bare ``json.loads(r.output)`` fails with
+    ``Expecting value: line 1 column 1``.
+
+    This mirrors what the real operator flow does with the same output
+    (``sed -n '/^{/,/^}/p'`` in the promote script), so the test parses the CLI
+    the same way a human does rather than depending on the command being the
+    only thing that writes to stdout.
+    """
+    start, end = output.index("{"), output.rindex("}")
+    return json.loads(output[start:end + 1])
+
+
+def _seed_witness_into_keystore(*, name, base, bran, wit_hab, wit_url):
+    """Teach an EXISTING kli keystore the witness's http endpoint, directly.
+
+    Why this exists instead of ``kli oobi resolve``: on the KERI v2 base
+    ``kli oobi resolve`` exits 0 but **persists nothing** — the publisher
+    keystore ends up with no loc-scheme and no end-role record for the witness
+    (verified: ``hab.fetchUrls(eid=wit)`` → ``Mict([])``, ``db.locs`` → ``None``).
+
+    That is silent and total: ``agenting.httpClient(hab, wit)`` then raises
+    ``MissingEntryError``, and ``Receiptor.receipt`` **catches and only logs it**
+    (`keri/app/agenting.py:96-100`), so receipt collection returns "cleanly"
+    having contacted zero witnesses. Every event stays at 0 wigs and
+    ``publish._wait_for_receipts`` burns its full timeout — the
+    ``only 0/1 witness receipts`` failure.
+
+    So seed the records the same way the witness seeds its own db
+    (``_seed_wit_ends``), but into the publisher's keystore. Must be called with
+    no kli subprocess running (LMDB single-writer) and before any command that
+    needs to reach the witness — i.e. before incept, which collects the icp
+    receipt.
+
+    Writes the ``locs`` record directly rather than replaying signed
+    ``/loc/scheme`` reply messages through ``Revery``: that path escrowed
+    silently here (records never landed), and the record is the only thing the
+    receipt path actually consults — ``httpClient`` calls
+    ``hab.fetchUrls(eid=wit, scheme=…)``, which reads exactly
+    ``db.locs.getTopItemIter(keys=(eid, scheme))`` and needs a non-empty
+    ``url``. ``pin`` (not ``put``) so re-seeding is idempotent.
+    """
+    hby = habbing.Habery(name=name, base=base, bran=bran)
+    try:
+        hby.db.locs.pin(keys=(wit_hab.pre, Schemes.http),
+                        val=basing.LocationRecord(url=wit_url))
+    finally:
+        hby.close()
 
 
 def _run_witness_doist(doers, stop_evt, limit):
@@ -218,8 +284,11 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, witness
         init_salt = Salter(raw=b"publishersalt000").qb64
         kli._run([kli.KLI, "init", "--name", name, "--base", base,
                   "--passcode", PUB_BRAN, "--salt", init_salt])
-        kli._run([kli.KLI, "oobi", "resolve", "--name", name, "--base", base,
-                  "--passcode", PUB_BRAN, "--oobi", witness.controller_oobi])
+        # Teach the keystore the witness's http endpoint. NOT via
+        # `kli oobi resolve` — on the v2 base that exits 0 and persists nothing,
+        # which left every event at 0 wigs (see _seed_witness_into_keystore).
+        _seed_witness_into_keystore(name=name, base=base, bran=PUB_BRAN,
+                                    wit_hab=witHab, wit_url=witness.url)
 
         # Incept the publisher AID witnessed (toad=1). --receipt-endpoint
         # (forced by kli.kli_incept) routes the icp receipt back as wigs.
@@ -230,12 +299,24 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, witness
         artifact = tmp_path / "Locksmith-0.2.0.dmg"
         artifact.write_bytes(b"fake-macos-dmg-payload-" + os.urandom(64))
 
-        # Anchor the release ixn (sign+witness via kli) and export the KEL.
+        # Anchor the release ixn and export the KEL. The ixn is created
+        # PROGRAMMATICALLY (hab.interact) and receipted via a stock keripy
+        # Receiptor — not `kli interact --receipt-endpoint`, which breaks on the
+        # v2 base (see publish.py's module docstring and kli.py's note).
+        #
+        # `brand` is REQUIRED (multi-brand work): it lands in the seal as
+        # {"d", "brand", "ver"}, and the verifier rejects an anchor whose seal
+        # brand does not match the app's brand. Use the reference brand so the
+        # verifier's brand gate is exercised with a matching pair below.
         info = publish.anchor_release(
             name=name, alias=alias, bran=PUB_BRAN, base=base,
-            version="0.2.0", artifacts=[("macos", artifact)],
+            version="0.2.0", brand=BRAND, artifacts=[("macos", artifact)],
             out_dir=str(tmp_path),
         )
+        # The seal actually carries the brand we asked for — a brand-mismatched
+        # seal is precisely what the multi-brand verifier work had to reject.
+        assert info["release_sad"]["brand"] == BRAND
+        assert info["release_sad"]["ver"] == "0.2.0"
 
         # Read the publisher prefix back out of the exported KEL path.
         pub_pre = Path(info["kel_path"]).name.rsplit("-kel.cesr", 1)[0]
@@ -258,6 +339,11 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, witness
                 anchor_url=anchor_url,
                 artifact_sha256=artifact_sha,
                 artifact_url="https://releases.example.com/releases/0.2.0/Locksmith-0.2.0.dmg",
+                # Required since the SAID-native seal work: the appcast carries
+                # the release SAD so the verifier can re-derive its SAID and
+                # match it against the digest seal in the KEL. Use the SAD the
+                # anchor actually produced, not a hand-built copy.
+                release_sad=info["release_sad"],
             )],
         )
 
@@ -271,6 +357,9 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, witness
         monkeypatch.setattr(verify, "_fetch_url", _fake_fetch)
 
         # The real round-trip: the EXISTING verifier accepts the artifact.
+        # embedded_brand is passed EXPLICITLY (not left to its "locksmith"
+        # default) so the seal-brand-vs-app-brand gate is a deliberate part of
+        # what this test proves.
         result = verify.verify_artifact(
             artifact_path=artifact,
             appcast_raw=appcast_raw,
@@ -279,6 +368,7 @@ def test_publisher_kel_cesr_verifies_against_existing_verifier(tmp_path, witness
             embedded_kel_sn=info["anchor_sn"],
             embedded_kel_said=info["anchor_said"],
             toad=1,
+            embedded_brand=BRAND,
         )
 
         assert result.ok
@@ -318,36 +408,41 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
 
     runner = CliRunner()
     try:
-        # NOTE: the CLI's `incept` resolves the WITNESS-role OOBI from the pool,
-        # but kli needs the witness's CONTROLLER endpoint to learn its HTTP loc
-        # scheme before incept can reach it. The witness was seeded with a
-        # /controller end-role + http loc-scheme. We hook the CLI's kli_init to
-        # resolve that controller OOBI right after the keystore is created, so
-        # the subsequent pool witness-OOBI resolve + incept can reach the
-        # witness over HTTP. (This is the same loc-scheme learning the library
-        # round-trip test does explicitly via an extra oobi resolve.)
+        # The CLI's `incept` creates the keystore and immediately needs to reach
+        # the witness (it collects the icp receipt), so the keystore must already
+        # know the witness's HTTP endpoint. We hook `kli_init` to seed that
+        # endpoint the moment the keystore exists.
         real_kli_init = kli.kli_init
 
-        # === In-process test witness OOBI hook (not a production gap) ===
-        # WHY: The in-process test witness (_seed_wit_ends) seeds its loc-scheme
-        # under the *controller* end-role (line 103–106). keripy's default
-        # witness-role OOBI reply role-filters that out per KERI conventions
-        # (witness role → witness endpoints only). To teach the test publisher's
-        # keystore the test witness's HTTP URL, we resolve the /controller OOBI.
+        # === In-process test witness endpoint hook (not a production gap) ===
+        # WHY: `incept` resolves only witness-role OOBIs from the pool, while the
+        # in-process test witness (_seed_wit_ends) publishes its loc-scheme under
+        # the *controller* end-role — keripy role-filters that out of a
+        # witness-role OOBI reply per KERI conventions. So the pool's OOBI alone
+        # cannot teach this keystore the URL.
         #
-        # PRODUCTION: The real keri.host federation witnesses serve their
+        # It is seeded DIRECTLY rather than by resolving the /controller OOBI,
+        # because on the KERI v2 base `kli oobi resolve` exits 0 and persists
+        # nothing (see _seed_witness_into_keystore) — which is what left every
+        # event at 0 wigs and made both tests in this file fail.
+        #
+        # PRODUCTION: the real keri.host federation witnesses serve their
         # loc-scheme in the witness-role OOBI reply (empirically confirmed via
-        # curl against live federation). Production `incept` resolves only
-        # witness-role OOBIs and reaches the real witnesses fine — no hook needed.
-        # This hook is a test-harness bridge for the in-process witness artifact,
-        # not a workaround for a production gap.
+        # curl against live federation), so production `incept` reaches them with
+        # no hook. This is a test-harness bridge for the in-process witness, not
+        # a workaround for a production gap. NOTE it therefore does NOT cover the
+        # v2 oobi-resolve defect for real keystores — see
+        # backlog/2026-07-28-kli-oobi-resolve-persists-nothing-on-v2.md.
         def _init_then_learn_witness(**kw):
             out = real_kli_init(**kw)
-            # Re-init is idempotent in kli; learn the witness HTTP loc-scheme
-            # via its /controller OOBI so the subsequent witness-OOBI resolve +
-            # incept can actually reach the witness over HTTP.
-            kli.kli_resolve_oobi(name=kw["name"], base=kw["base"],
-                                 bran=kw["bran"], oobi=witness.controller_oobi)
+            # Seed the witness's http loc-scheme straight into the freshly
+            # created keystore. This used to call `kli oobi resolve`, which on
+            # the v2 base exits 0 but persists NOTHING — so incept and the
+            # anchor's Receiptor had no endpoint to reach and every event stayed
+            # at 0 wigs (see _seed_witness_into_keystore).
+            _seed_witness_into_keystore(name=kw["name"], base=kw["base"],
+                                        bran=kw["bran"], wit_hab=witHab,
+                                        wit_url=witness.url)
             return out
 
         monkeypatch.setattr(cli_mod.kli, "kli_init", _init_then_learn_witness)
@@ -368,7 +463,7 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
             "--out-dir", str(out_dir),
         ])
         assert r.exit_code == 0, f"anchor failed: {r.output}\n{r.exception!r}"
-        info = json.loads(r.output)
+        info = _json_block(r.output)
         anchor_said = info["anchor_said"]
         anchor_sn = info["anchor_sn"]
 
@@ -382,6 +477,13 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
             "s3_bucket": "releases.example.com",
             "releases_cdn_base": cdn,
             "publisher_kel_url": kel_url,
+            # MUST match this harness's single witness. `publish` self-verifies
+            # the exported KEL via replay_kel using cfg.get("toad", 3)
+            # (cli.py:305), so omitting it asserted the production 3-of-5
+            # federation threshold against a one-witness test rig and failed with
+            # WitnessThresholdError('event sn=0 has 1 witness receipts, need
+            # toad=3') — a fake-config inconsistency, not a real threshold bug.
+            "toad": 1,
         }
         monkeypatch.setattr(cli_mod, "load_deploy_config", lambda: deploy_cfg)
 
@@ -398,6 +500,17 @@ def test_cli_roundtrip_verifies(tmp_path, witness, monkeypatch):
             def put_object(self, *, bucket, key, data, content_type):
                 captured.setdefault("puts", []).append(
                     {"key": key, "data": data, "content_type": content_type})
+
+            def head_object_size(self, *, bucket, key):
+                """Size the appcast records as ``artifact_size`` (cli.py:313).
+
+                Returns the REAL artifact's size rather than a dummy: publish
+                HEADs the object it just uploaded, and both platforms in this
+                test are the same file, so this is the honest value and keeps
+                the generated appcast internally consistent.
+                """
+                captured.setdefault("heads", []).append(key)
+                return artifact.stat().st_size
 
         monkeypatch.setattr(cli_mod.S3, "default", classmethod(lambda cls: _FakeS3()))
 
