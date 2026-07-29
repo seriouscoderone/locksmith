@@ -25,6 +25,15 @@ re-breaks the return leg even when the new address is perfectly reachable, and t
 mode is the same silent mailbox-fallback loss as
 `2026-07-29-grant-send-reports-success-while-undeliverable.md`.
 
+## Second live instance, and a scope correction (2026-07-29, co-worker laptop)
+
+Two-for-two: every real first contact so far has produced a poisoned record. The second case
+(`ECi0wVTxNIQT…`) cached `tcp://127.0.0.1:5622` because the requester announced loopback before
+its network was up. **Important:** re-resolving from `db.ends`/`db.locs` would NOT have fixed
+this one — the admin's `db.locs` held the same stale loopback, since the requester never
+re-published after its address changed. This item is necessary but not sufficient; the missing
+upstream link is `2026-07-29-address-change-never-republished.md`.
+
 ## Proof the fix shape is right (2026-07-29)
 
 The live retest hand-executed exactly what item 1 automates: patching the cached record to the
