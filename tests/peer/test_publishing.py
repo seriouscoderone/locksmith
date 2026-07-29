@@ -10,6 +10,8 @@ from unittest.mock import MagicMock
 import pytest
 from hio.base import doing
 
+from locksmith.peer.listener_eid import listener_eid
+
 
 @pytest.fixture
 def hab_with_witnesses():
@@ -32,12 +34,15 @@ def hab_with_witnesses():
         hby.close()
 
 
-def test_revoke_publishes_cut_rpy_and_nullifies_loc(monkeypatch, hab_with_witnesses):
-    """With allow=False the doer must (a) write /end/role/cut + an empty
-    /loc/scheme rpy locally — these are how keripy expresses "this role
-    is no longer authorized" — and (b) push them to witnesses so the
-    revocation propagates. Empty url='' on a /loc/scheme nullifies the
-    endpoint per Hab.makeLocScheme docs.
+def test_revoke_publishes_a_cut_rpy_to_witnesses(monkeypatch, hab_with_witnesses):
+    """With allow=False the doer must (a) write /end/role/cut locally — how
+    keripy expresses "this role is no longer authorized" — and (b) push it to
+    witnesses so the revocation propagates.
+
+    It must NOT nullify the location: that belongs to the vault's shared listener
+    EID, so voiding it because one AID stopped exposing would unreach every other
+    exposed AID in the vault (test_publishing_eid.py
+    ::test_revoking_one_aid_leaves_the_other_reachable).
     """
     from locksmith.peer import publishing
 
@@ -66,9 +71,14 @@ def test_revoke_publishes_cut_rpy_and_nullifies_loc(monkeypatch, hab_with_witnes
     doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
     doist.do(doers=[doer])
 
-    assert len(sent_msgs) == 2
+    # One message: the /end/role/cut. Revoke deliberately does NOT nullify the
+    # location any more — it belongs to the vault's shared listener EID, so
+    # voiding it because one AID stopped exposing would unreach every other
+    # exposed AID in the vault. See test_publishing_eid.py
+    # ::test_revoking_one_aid_leaves_the_other_reachable.
+    assert len(sent_msgs) == 1
 
-    # Verify the messages are the cut/empty forms by route inspection.
+    # Verify the message is the cut form by route inspection.
     import json
     routes = []
     for raw in sent_msgs:
@@ -88,9 +98,7 @@ def test_revoke_publishes_cut_rpy_and_nullifies_loc(monkeypatch, hab_with_witnes
         sad = json.loads(raw[:end])
         assert sad["t"] == "rpy"
         routes.append(sad["r"])
-        if sad["r"] == "/loc/scheme":
-            assert sad["a"]["url"] == "", "loc rpy must have empty url to nullify"
-    assert set(routes) == {"/loc/scheme", "/end/role/cut"}
+    assert routes == ["/end/role/cut"]
 
     complete_events = [e for e in captured if e[1] == "publish_complete"]
     assert len(complete_events) == 1
@@ -123,12 +131,11 @@ def test_publish_no_witnesses_emits_no_witnesses_event(hab_with_witnesses):
     doist = doing.Doist(limit=2.0, tock=0.03125, real=False)
     doist.do(doers=[doer])
 
-    # Local db should have a peer-role end and tcp loc for this AID
-    from keri import kering
-    end = hby.db.ends.get(keys=(hab.pre, kering.Roles.peer, hab.pre))
-    assert end is not None and (end.enabled or end.allowed)
-    loc = hby.db.locs.get(keys=(hab.pre, kering.Schemes.tcp))
-    assert loc is not None and loc.url == "tcp://127.0.0.1:5621"
+    # Local db should have a peer-role end authorizing the vault's listener EID,
+    # and a tcp loc filed under that EID (not under the AID).
+    from locksmith.peer.resolution import resolve_peer_endpoints
+    assert resolve_peer_endpoints(hby.db, hab.pre) == [
+        (listener_eid(hby), "tcp://127.0.0.1:5621")]
 
     # Signal should fire once with no_witnesses
     assert len(captured) == 1
@@ -174,8 +181,12 @@ class _FakeMessenger(doing.DoDoer):
 
     @property
     def idle(self):
-        # one queued msg per rpy (we always publish 2: loc + end)
-        return not self.msgs and self._processed >= 2
+        # Everything queued has been processed. `not self.msgs` alone would read
+        # idle before the doer has queued anything, so require at least one
+        # processed message too. Deliberately NOT a hardcoded count: an allow
+        # publishes loc + end (plus migration rpys when there is a legacy record
+        # to retire), a revoke publishes only the cut.
+        return not self.msgs and self._processed >= 1
 
 
 def test_publish_with_witnesses_emits_publish_complete(monkeypatch, hab_with_witnesses):
@@ -306,13 +317,12 @@ def test_publish_lands_locally_for_v1_and_v2_habs(hab_version_name):
         doer = PublishPeerRoleDoer(hby=hby, hab=hab, url="tcp://127.0.0.1:5621")
         doing.Doist(limit=2.0, tock=0.03125, real=False).do(doers=[doer])
 
-        end = hby.db.ends.get(keys=(hab.pre, kering.Roles.peer, hab.pre))
-        loc = hby.db.locs.get(keys=(hab.pre, kering.Schemes.tcp))
-        assert end is not None and (end.enabled or end.allowed), \
-            f"peer end-role must persist for a {hab_version_name} hab"
-        assert loc is not None and loc.url == "tcp://127.0.0.1:5621", \
-            f"tcp loc must persist for a {hab_version_name} hab"
-        urls = hab.fetchUrls(eid=hab.pre, scheme=kering.Schemes.tcp)
+        from locksmith.peer.resolution import resolve_peer_endpoints
+        eid = listener_eid(hby)
+        assert resolve_peer_endpoints(hby.db, hab.pre) == [
+            (eid, "tcp://127.0.0.1:5621")], \
+            f"peer end-role + tcp loc must persist for a {hab_version_name} hab"
+        urls = hab.fetchUrls(eid=eid, scheme=kering.Schemes.tcp)
         assert dict(urls).get("tcp") == "tcp://127.0.0.1:5621"
     finally:
         hby.close()

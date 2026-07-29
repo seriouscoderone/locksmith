@@ -7,12 +7,18 @@ land in ``hab.db.ends[(cid, 'peer', eid)]``. Anything that needs to ask
 initial state, the toolbar indicator — should read from this same
 source of truth, not the in-memory ``_peer_exposed_aids`` set on the
 vault (which only reflects toggles flipped *in the current process*).
+
+The ``eid`` is the vault's peer listener, not the AID (``peer.listener_eid``), so
+"is this exposed?" is "does this AID authorize ANY eid for the peer role?" —
+answered by ``peer.resolution``. Reading ``ends[(pre, peer, pre)]`` as this used to
+would report every AID as unexposed the moment the listener got its own identity,
+while still returning True for vaults holding the old ``eid == cid`` records.
 """
 from __future__ import annotations
 
 from typing import Iterable
 
-from keri import kering
+from locksmith.peer.resolution import is_peer_exposed
 
 
 def _db_open(hby) -> bool:
@@ -30,22 +36,13 @@ def _db_open(hby) -> bool:
 
 
 def is_aid_peer_exposed(hby, pre: str) -> bool:
-    """True if ``pre`` has a current peer-role end record in its KEL."""
+    """True if ``pre`` currently authorizes any endpoint for the peer role."""
     if not _db_open(hby):
         return False
     hab = hby.habs.get(pre)
     if hab is None:
         return False
-    try:
-        end = hab.db.ends.get(keys=(pre, kering.Roles.peer, pre))
-    except Exception:  # noqa: BLE001 — db can race shut during vault flips
-        return False
-    if end is None:
-        return False
-    # keripy's EndpointRecord uses .enabled (controller-cut) or .allowed
-    # (watcher-permitted). For our own AID exposing a peer role, both
-    # tracks indicate "currently authorized."
-    return bool(getattr(end, "enabled", None) or getattr(end, "allowed", None))
+    return is_peer_exposed(hab.db, pre)
 
 
 def exposed_pres(hby) -> list[str]:

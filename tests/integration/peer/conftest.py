@@ -17,6 +17,7 @@ import os
 import shutil
 import socket
 import subprocess
+import sys
 import tempfile
 import time
 import uuid
@@ -26,7 +27,6 @@ import pytest
 
 
 REPO_ROOT = Path(__file__).resolve().parents[3]
-VENV_PYTHON = REPO_ROOT / ".venv" / "bin" / "python"
 HOST_PLUGINS_DIR = Path.home() / ".locksmith" / "plugins"
 
 
@@ -54,8 +54,25 @@ def _start_wallet(home: Path, log_path: Path) -> subprocess.Popen:
     env = os.environ.copy()
     env["HOME"] = str(home)
     env["QT_QPA_PLATFORM"] = "offscreen"
+    # Run the tree under test, not whichever tree the shared venv points at.
+    #
+    # ``sys.executable`` is the interpreter running pytest — the venv python in
+    # both the main checkout and any worktree — which is what makes these tests
+    # runnable from a worktree at all (there is exactly one venv, at the main
+    # checkout; see CLAUDE.md "Worktree venv isolation").
+    #
+    # But that alone silently tests the WRONG TREE: the venv's editable ``.pth``
+    # holds an absolute path to the MAIN checkout's ``src``, so a bare
+    # ``python -m locksmith.main`` imports the main tree's code no matter which
+    # worktree pytest was invoked from. Prepending this repo root's ``src``
+    # mirrors what pytest's ``pythonpath`` already does for in-process tests.
+    # ``test_fixture_smoke.py`` asserts the wallet's own ``startup.identity
+    # source=`` line so a regression here fails loudly instead of going green.
+    src = str((REPO_ROOT / "src").resolve())
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = f"{src}{os.pathsep}{existing}" if existing else src
     proc = subprocess.Popen(
-        [str(VENV_PYTHON), "-m", "locksmith.main"],
+        [sys.executable, "-m", "locksmith.main"],
         env=env,
         stdout=log_path.open("w"),
         stderr=subprocess.STDOUT,
@@ -190,6 +207,18 @@ def open_test_vault_via_ui(
     default passcode (the test passcode is a fixture, not a secret —
     every test wallet uses the same one because the HOME is isolated
     to a tmpdir).
+
+    **``name`` must be unique across the two wallets.** The fixture's HOME
+    isolation does NOT isolate the instance coordinator: it claims a
+    QLocalServer named ``vault_server_name(config.base, vault)``
+    (``core/instancing.py:70``), ``base`` is the same for both wallets, and
+    local-socket names live in a system-wide namespace rather than under HOME.
+    So two wallets opening the same vault name is genuinely "one vault, two
+    processes" — the coordinator correctly denies the second claim, the wallet
+    falls back to the modal passcode dialog, and that modal blocks its Qt event
+    loop so the dev-control socket stops answering. The symptom is an opaque
+    ``TimeoutError`` from the *next* devctl call, which points nowhere near the
+    cause. Pass distinct names (``"ptest"`` / ``"ptest_b"``).
     """
     # --- Step 1+2: create ---
     r = devctl(sock, "click_list_item", text="Initialize New Vault")
@@ -391,4 +420,10 @@ def two_wallets():
                 proc.wait(timeout=5)
             except subprocess.TimeoutExpired:
                 proc.kill()
-        shutil.rmtree(root, ignore_errors=True)
+        # Failures here are usually diagnosed from the wallets' logs, and pytest
+        # truncates them out of assertion messages. Set LOCKSMITH_KEEP_TEST_HOMES
+        # to keep both HOMEs (and a.log / b.log) for inspection.
+        if os.environ.get("LOCKSMITH_KEEP_TEST_HOMES"):
+            print(f"\n[two_wallets] logs kept at {root}")
+        else:
+            shutil.rmtree(root, ignore_errors=True)

@@ -61,6 +61,35 @@ def test_bundled_oobi_advertises_a_routable_endpoint(artifact: Path):
     )
 
 
+@pytest.mark.parametrize(
+    "artifact", _oobi_artifacts(), ids=lambda p: f"{p.parents[2].name}/{p.name}")
+def test_bundled_oobi_still_pairs_under_native_resolution(artifact: Path):
+    """Every bundled artifact must still resolve to an endpoint through the real
+    pairing path — not just contain a routable-looking url in its bytes.
+
+    This is the migration guarantee for artifacts baked before the peer listener
+    got its own EID. Those carry ``eid == cid`` (the authority naming itself as
+    its own endpoint provider), and native ``cid -> ends[peer] -> eid -> locs``
+    resolution handles that as a degenerate case of the general walk. If that ever
+    stopped being true, every shipped install would lose its authority pairing
+    with no error at bake time — the artifact bytes would still look fine.
+    """
+    from keri.app import habbing
+
+    from locksmith.peer.oobi_import import parse_oobi_cesr
+    from locksmith.peer.resolution import resolve_peer_endpoints
+
+    aid = artifact.stem
+    with habbing.openHby(name="brandguard", temp=True) as hby:
+        assert parse_oobi_cesr(hby, artifact.read_bytes(), expect=aid) == aid
+        endpoints = resolve_peer_endpoints(hby.db, aid)
+        assert endpoints, (
+            f"{artifact.relative_to(_REPO)} parsed but resolves to no peer "
+            f"endpoint for {aid}. Every install pairing this authority gets "
+            f"nothing to dial.")
+        assert not _is_unroutable(_host_of(endpoints[0][1])), endpoints
+
+
 def test_unroutable_classification():
     """Pins what the guard treats as unroutable, so a future edit to
     _is_unroutable can't quietly widen the hole."""

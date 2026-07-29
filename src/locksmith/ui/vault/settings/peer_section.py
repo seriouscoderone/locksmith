@@ -437,11 +437,18 @@ class PeerSettingsSection(QFrame):
         dot.setFixedSize(10, 10)
         dot.setStyleSheet(f"background-color: {color}; border-radius: 5px;")
         h.addWidget(dot, 0, Qt.AlignVCenter)
+        # objectNames on the row labels are what make this row readable by a
+        # test. The QListWidgetItem carries no text (see _refresh_peers_list),
+        # so the visible label/AID/endpoint live only in these child QLabels —
+        # without names, nothing can assert on what the user actually sees.
+        # One widget per peer, so callers disambiguate with `occurrence`.
         primary = QLabel(f"{rec.label}   {short_aid}   {rec.endpoint_url}")
+        primary.setObjectName("peerSettingsSection.peerRowPrimary")
         primary.setStyleSheet("font-weight: 500;")
         h.addWidget(primary, 0, Qt.AlignVCenter)
         h.addStretch()
         secondary = QLabel(health_phrase)
+        secondary.setObjectName("peerSettingsSection.peerRowHealth")
         secondary.setStyleSheet("color: #6E7074; font-size: 11px;")
         h.addWidget(secondary, 0, Qt.AlignVCenter)
         return row

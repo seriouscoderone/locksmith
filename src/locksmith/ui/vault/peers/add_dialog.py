@@ -21,6 +21,7 @@ from keri import help, kering
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerRecord
+from locksmith.peer.resolution import resolve_peer_endpoint
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets.buttons import LocksmithButton
 
@@ -192,12 +193,12 @@ class AddPeerDialog(QDialog):
                     "This peer is already paired with this vault."
                 )
                 return
-            # Endpoint comes from the blob itself (locs Komer is now
-            # populated). If the user also typed one, prefer theirs
-            # (override / on-network address).
-            from keri import kering
-            loc = self._vault.hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
-            endpoint_url = endpoint if endpoint else (loc.url if loc else "")
+            # Endpoint comes from the blob itself, resolved natively through the
+            # authorization the blob carries (the address is filed under the
+            # peer's listener EID, not their AID). If the user also typed one,
+            # prefer theirs (override / on-network address).
+            endpoint_url = endpoint or (
+                resolve_peer_endpoint(self._vault.hby.db, aid) or "")
             if not endpoint_url:
                 self.error_label.setText(
                     "Blob parsed but no tcp endpoint is published. "
@@ -327,11 +328,13 @@ class AddPeerDialog(QDialog):
         if aid is None:
             return
         # Endpoint resolution order: manual override (typed in field) wins,
-        # else the rpy-populated locs Komer (works when the peer published
-        # role+loc rpys to their witness — see PublishPeerRoleDoer).
+        # else resolve natively from the rpys the peer published —
+        # cid -> ends[peer] -> eid -> locs[eid] (see PublishPeerRoleDoer for the
+        # publish side). The peer's address lives under their listener EID, so
+        # there is nothing filed under their AID to read directly; a peer still
+        # on the old eid == cid shape resolves through the same walk.
         manual = getattr(self, "_pending_endpoint", None) or None
-        loc = self._vault.hby.db.locs.get(keys=(aid, kering.Schemes.tcp))
-        from_kel = loc.url if (loc is not None and loc.url) else None
+        from_kel = resolve_peer_endpoint(self._vault.hby.db, aid)
         endpoint_url = manual or from_kel
         if not endpoint_url and attempts_remaining > 0:
             QTimer.singleShot(

@@ -1,6 +1,6 @@
 # Peer endpoint is not a real EID — a vault-scoped socket signed as if it were the AID
 
-**Status:** backlog · **Raised:** 2026-07-28 · **Priority:** high (BE KERI NATIVE; blocks multi-route and mailbox unification)
+**Status:** DONE (code) — one item outstanding, see below · **Raised:** 2026-07-28 · **Priority:** high (BE KERI NATIVE; blocks multi-route and mailbox unification)
 
 ## What we saw
 
@@ -61,6 +61,28 @@ the same EID learns they are co-located. `eid == cid` is sometimes *deliberately
 unlinkability. `usurance-internal` is a closed employee ecosystem so the trade is probably
 acceptable — but it should be an explicit decision recorded here, not inherited.
 
+### DECISION (2026-07-28): accept the shared listener EID
+
+**The unlinkability being given up does not currently exist.** Locksmith's listener is one
+socket per vault — one port, `db.peerSettings` keyed `("default",)`. Under the old shape two
+AIDs in one vault published two different EIDs pointing at *the same* `tcp://host:port`; the
+address already linked them. `eid == cid` made the model *look* privacy-preserving while
+leaking exactly as much, which is worse than leaking visibly, because it discourages anyone
+from fixing the transport. So this is not a privacy regression — it is the same exposure,
+now stated honestly in the endpoint model.
+
+Real unlinkability needs distinct *addresses* per AID (separate ports, interfaces, or overlay
+identities), which is a transport change rather than an EID-naming one. The design keeps that
+reachable: `ensure_listener_hab` takes an alias, so an unlinkable mode is "one listener EID
+and one port per AID" with no change to the endpoint model.
+
+Scope: `usurance-internal` is a closed employee ecosystem, where co-location of one
+employee's AIDs is not a threat. If a future brand serves mutually anonymous counterparties,
+the per-AID-listener variant is the answer, and it should be an explicit brand posture rather
+than a silent default.
+
+Full reasoning: `docs/superpowers/specs/2026-07-28-peer-endpoint-real-eid-design.md`.
+
 ## The actual work
 
 1. Mint/persist an EID for the vault's peer listener; publish `/loc/scheme` under that EID and
@@ -73,6 +95,37 @@ acceptable — but it should be an explicit decision recorded here, not inherite
    must not orphan a peer that paired under the old shape.
 4. Land **before** re-baking bundled OOBI artifacts (see the sequencing note in
    `2026-07-28-hoa-direct-endpoint-loopback-only.md`) to avoid baking twice.
+
+## Status 2026-07-28 — items 1-3 DONE, item 4 OUTSTANDING (needs the user)
+
+Items 1-3 are implemented (`peer/listener_eid.py`, `peer/resolution.py`, publish-side
+migration + recency ordering). Seven read call sites converted, not the four listed above:
+`generate_oobi(role="peer")`, `serviceaid_bridge._inband_oobi_msgs`, and
+`peer/shim.py::_first_contact_accepted` were also reading `db.locs` directly. `peer/sending.py`
+was deliberately **not** converted — it dials a cached `PeerRecord.endpoint_url` for a remote
+AID, which is pairing state rather than a resolution of our own KEL; that is the subject of
+`2026-07-28-single-route-per-peer.md`.
+
+**OUTSTANDING: re-bake `brands/usurance/egf/oobis/EGjm-X1JMz-….cesr` under the new shape.**
+Not blocking — the shipped artifact carries `eid == cid` and native resolution reads it
+unchanged (pinned by
+`tests/core/test_brand_oobi_endpoints.py::test_bundled_oobi_still_pairs_under_native_resolution`,
+and verified by hand: `--inspect-only` on the committed artifact returns
+`tcp://192.168.1.162:5621`). The re-bake requires re-signing in the usurance-custody vault,
+so **only the user can produce it**; `scripts/bake_authority_oobi.py` accepts either shape
+and is ready. Note the endpoint is also still a LAN address, so the re-bake should wait until
+the intended reachable address is settled.
+
+## Findings raised while doing this work
+
+- `2026-07-28-derived-aids-collide-across-vaults.md` — two vaults with the same passcode minted
+  the SAME listener EID (fixed here with a random salt; needs a wider `makeHab` audit).
+- `2026-07-28-endrole-cut-does-not-propagate.md` — `replyEndRole` cannot export a cut, so
+  endpoint retirement (and peer-mode revocation) never reaches an already-paired peer.
+- `2026-07-28-loc-without-end-authorization.md` — reading `db.locs` without its authorization
+  admitted an unvouched address, including at the open-inbound first-contact gate.
+- `2026-07-28-modal-dialog-starves-dev-control-socket.md` and
+  `2026-07-28-harness-cannot-read-custom-item-widget-rows.md` — test diagnosability.
 
 ## Evidence / references
 

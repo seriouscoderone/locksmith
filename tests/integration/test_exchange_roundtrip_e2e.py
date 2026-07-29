@@ -376,9 +376,11 @@ def test_first_contact_registers_unknown_carrier_and_delivers_grant(
     assert hab_c.pre in hby_d.kevers, (
         "strict lax=False parser must land the first-contact carrier KEL "
         "(lax contingency did NOT trigger)")
-    # (b) its advertised tcp reach-back loc landed.
-    loc = hby_d.db.locs.get(keys=(hab_c.pre, kering.Schemes.tcp))
-    assert loc is not None and loc.url == _CARRIER_PEER_URL
+    # (b) its advertised tcp reach-back endpoint landed — resolved natively
+    # (cid -> ends[peer] -> eid -> locs[eid]), since the carrier publishes its
+    # address under its listener EID rather than under its own AID.
+    from locksmith.peer.resolution import resolve_peer_endpoint
+    assert resolve_peer_endpoint(hby_d.db, hab_c.pre) == _CARRIER_PEER_URL
     # (c) on_first_contact fired exactly once with the carrier + its url.
     assert recorder == [(hab_c.pre, _CARRIER_PEER_URL)]
     # (d) the grant exn passed both shim gates into the DOI exchanger.

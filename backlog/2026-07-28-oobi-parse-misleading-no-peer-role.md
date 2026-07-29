@@ -1,6 +1,6 @@
 # A corrupted OOBI stream reports "no_peer_role" — blaming the operator's config for byte damage
 
-**Status:** backlog · **Raised:** 2026-07-28 · **Priority:** low-medium (diagnostics; fold into the EID read-side rewrite)
+**Status:** DONE · **Raised:** 2026-07-28 · **Priority:** low-medium (diagnostics; fold into the EID read-side rewrite)
 
 ## What we saw
 

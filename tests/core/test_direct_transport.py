@@ -42,11 +42,21 @@ def _app(settings=None, no_hab=False):
         # branch ensure_direct_transport takes resolves to the same hab.
         app.vault.hby.habByName.return_value = hab
         app.vault.hby.habs = {DEFAULT_HAB_PRE: hab}
-    loc = MagicMock()
-    loc.url = "tcp://127.0.0.1:5621"
-    app.vault.hby.db.locs.get.return_value = loc
     app.vault._peer_exposed_aids = set()
     return app
+
+
+# The endpoint an authority's artifact carries is resolved natively —
+# cid -> ends[peer] -> eid -> locs[eid] (locksmith.peer.resolution) — because the
+# address is filed under the authority's listener EID, not under its AID. These
+# tests are about bring-up sequencing and re-pin logic, so they stub that
+# collaborator at the module boundary the same way they stub parse_oobi_cesr and
+# resolve_advertised_host. The resolution semantics themselves (including that the
+# legacy eid == cid shape still resolves) are covered against a real Habery in
+# tests/peer/test_resolution.py.
+def _resolves_to(url):
+    return patch("locksmith.core.direct_transport.resolve_peer_endpoint",
+                 return_value=url)
 
 
 @patch("locksmith.core.direct_transport.resolve_advertised_host",
@@ -110,8 +120,9 @@ def test_bring_up_full_sequence(_fp, _parse):
     app = _app(settings=None)
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    assert ensure_direct_transport(
-        app, _egf([ep]), src, ("bootstrap", "production")) is True
+    with _resolves_to("tcp://127.0.0.1:5621"):
+        assert ensure_direct_transport(
+            app, _egf([ep]), src, ("bootstrap", "production")) is True
 
     pinned = app.vault.db.peerSettings.pin.call_args.kwargs["val"]
     assert pinned.enabled is True and pinned.port == 5622
@@ -138,7 +149,8 @@ def test_idempotent_second_call(_parse, _rah):
         aid=DOI, label="Utah DOI", endpoint_url="tcp://127.0.0.1:5621")
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+    with _resolves_to("tcp://127.0.0.1:5621"):
+        ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
     app.vault.db.peerSettings.pin.assert_not_called()   # settings kept
     # The bundle IS re-read on every open (that is what makes a re-baked
     # artifact take effect), but an unchanged endpoint rewrites nothing.
@@ -160,11 +172,10 @@ def test_paired_peer_is_repaired_when_the_bundled_endpoint_changed(_parse, _rah)
     app.vault.db.peerAllowlist.get.return_value = PeerRecord(
         aid=DOI, label="Utah DOI", endpoint_url="tcp://127.0.0.1:5621",
         paired_at="2026-07-01T00:00:00+00:00")
-    app.vault.hby.db.locs.get.return_value = MagicMock(
-        url="tcp://192.168.1.30:5621")
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+    with _resolves_to("tcp://192.168.1.30:5621"):
+        ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
 
     rec = app.vault.db.peerAllowlist.pin.call_args.kwargs["val"]
     assert rec.endpoint_url == "tcp://192.168.1.30:5621"
@@ -181,11 +192,10 @@ def test_paired_peer_with_a_matching_endpoint_is_not_rewritten(_parse, _rah):
         enabled=True, port=5622, advertised_host="192.168.1.20"))
     app.vault.db.peerAllowlist.get.return_value = PeerRecord(
         aid=DOI, label="Utah DOI", endpoint_url="tcp://192.168.1.30:5621")
-    app.vault.hby.db.locs.get.return_value = MagicMock(
-        url="tcp://192.168.1.30:5621")
     src = MagicMock(); src.fetch.return_value = b"cesr"
     ep = Endpoint(mode="direct", scheme="tcp", oobi_ref=DOI)
-    ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
+    with _resolves_to("tcp://192.168.1.30:5621"):
+        ensure_direct_transport(app, _egf([ep]), src, ("bootstrap", "production"))
 
     app.vault.db.peerAllowlist.pin.assert_not_called()
 

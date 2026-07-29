@@ -926,12 +926,15 @@ def generate_oobi(app, hab, role='witness'):
             # (per spec §4a.i). The role authorization on the KEL points
             # to a tcp:// endpoint; the OOBI URL itself is http(s).
             #
-            # Unlike the witness OOBI, the eid in the URL is the
-            # controller's own AID, not the witness's: in peer mode the
-            # controller IS the endpoint provider (no relay), so the
-            # /end/role/add rpy published by PublishPeerRoleDoer uses
-            # eid=hab.pre. The witness's OOBI handler filters by that
-            # eid; using the witness's AID instead returns no rpys.
+            # Unlike the witness OOBI, the eid in the URL path is not the
+            # witness's — it is the endpoint provider the controller authorized,
+            # which is the vault's peer listener (peer.listener_eid). The
+            # witness's OOBI handler filters by that eid, so naming the wrong one
+            # returns no rpys. Resolve it from the authorization records rather
+            # than assuming: a vault still on the pre-listener eid == cid shape
+            # resolves to its own AID through the same lookup.
+            from locksmith.peer.resolution import peer_role_eids
+            peer_eids = peer_role_eids(hab.db, hab.pre) or [hab.pre]
             for wit in hab.kever.wits:
                 urls = hab.fetchUrls(eid=wit, scheme=kering.Schemes.http) or hab.fetchUrls(
                     eid=wit, scheme=kering.Schemes.https
@@ -941,7 +944,9 @@ def generate_oobi(app, hab, role='witness'):
                 url = urls[kering.Schemes.http] if kering.Schemes.http in urls else urls.get(kering.Schemes.https)
                 if url:
                     up = urlparse(url)
-                    oobis.append(urljoin(up.geturl(), f'/oobi/{hab.pre}/peer/{hab.pre}'))
+                    for peer_eid in peer_eids:
+                        oobis.append(urljoin(
+                            up.geturl(), f'/oobi/{hab.pre}/peer/{peer_eid}'))
 
         if not oobis:
             return {

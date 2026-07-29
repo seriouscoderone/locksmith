@@ -210,13 +210,22 @@ if __name__ == "__main__":
     # explicit in the logs instead of guessing from a shared upstream-style
     # version string.
     try:
+        import locksmith as _locksmith_pkg
         from locksmith.build_info import (
             LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL,
             LOCKSMITH_GIT_COMMIT, KERIPY_COMMIT)
+        # ``source`` is the directory the ``locksmith`` package actually resolved
+        # from. In a checkout with git worktrees the shared venv's editable .pth
+        # points at the MAIN checkout, so a subprocess can silently run code from
+        # a tree other than the one you are editing — see CLAUDE.md "Worktree venv
+        # isolation". Logging it turns that from invisible to obvious, and
+        # tests/integration/peer asserts on it to prove the tree under test.
         logger.info(
-            "startup.identity locksmith=%s channel=%s build=%s keripy=kerihost@%s",
+            "startup.identity locksmith=%s channel=%s build=%s keripy=kerihost@%s "
+            "source=%s",
             LOCKSMITH_VERSION, LOCKSMITH_RELEASE_CHANNEL, LOCKSMITH_GIT_COMMIT,
-            KERIPY_COMMIT)
+            KERIPY_COMMIT,
+            Path(_locksmith_pkg.__file__).resolve().parent.parent)
     except Exception:
         logger.exception("startup.identity failed")
 

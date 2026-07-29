@@ -3,9 +3,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from keri import help, kering
+from keri import help
 
 from locksmith.peer.allowlist import PeerAllowlist
+from locksmith.peer.resolution import resolve_peer_endpoint
 
 logger = help.ogler.getLogger(__name__)
 
@@ -77,17 +78,25 @@ class PeerExchangerShim:
         """Config-gated open-inbound posture (spec Sec 7): accept a
         first-contact sender iff its KEL verified from the in-band OOBI
         (present in kevers) AND it published a reachable tcp loc-scheme.
-        RUN first-update: register it so the reply path works."""
+        RUN first-update: register it so the reply path works.
+
+        The endpoint is resolved natively — cid -> ends[peer] -> eid -> locs[eid]
+        — so the sender must have *authorized* the address, not merely had a
+        location land. Reading db.locs directly, as this used to, admits an
+        address nobody vouched for: a stream damaged (or trimmed) so that the
+        /loc/scheme lands while its /end/role/add is dropped leaves exactly that
+        state, and this is the gate deciding whether to talk to a stranger.
+        """
         if not (self._open_inbound and self._hby is not None):
             return False
         if sender not in self._hby.kevers:
             return False
-        loc = self._hby.db.locs.get(keys=(sender, kering.Schemes.tcp))
-        if loc is None or not loc.url:
+        url = resolve_peer_endpoint(self._hby.db, sender)
+        if not url:
             return False
         if self._on_first_contact is not None:
-            self._on_first_contact(sender, loc.url)
+            self._on_first_contact(sender, url)
         logger.info(
-            f"peer.gate.first_contact_registered sender={sender} url={loc.url}"
+            f"peer.gate.first_contact_registered sender={sender} url={url}"
         )
         return True

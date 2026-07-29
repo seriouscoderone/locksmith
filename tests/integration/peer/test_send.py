@@ -84,7 +84,9 @@ def test_ipex_grant_routes_over_peer_channel(two_wallets):
     create_aid_via_ui(devctl, a["sock"], alias="joseph")
     set_peer_mode_via_ui(devctl, a["sock"], port=free_port())
 
-    open_test_vault_via_ui(devctl, b["sock"], name="ptest")
+    # Distinct vault name — see open_test_vault_via_ui's docstring: the instance
+    # coordinator's per-vault local socket is not covered by HOME isolation.
+    open_test_vault_via_ui(devctl, b["sock"], name="ptest_b")
     create_aid_via_ui(devctl, b["sock"], alias="alice")
     set_peer_mode_via_ui(devctl, b["sock"], port=free_port())
 

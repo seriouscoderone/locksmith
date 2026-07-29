@@ -116,9 +116,11 @@ def test_import_peer_blob_roundtrips_v1_kel():
         imported_pre = import_peer_blob(hby_import, blob)
         assert imported_pre == hab.pre
 
-        loc = hby_import.db.locs.get(keys=(hab.pre, "tcp"))
-        assert loc is not None
-        assert loc.url == "tcp://127.0.0.1:5622"
+        # Resolved natively — the address is filed under the exporter's listener
+        # EID, so there is nothing under its AID to read directly.
+        from locksmith.peer.resolution import resolve_peer_endpoint
+        assert resolve_peer_endpoint(
+            hby_import.db, hab.pre) == "tcp://127.0.0.1:5622"
     finally:
         hby_export.close()
         hby_import.close()
@@ -185,10 +187,13 @@ def test_import_peer_blob_returns_imported_aid_not_local_peer():
         hby_exporter.close()
 
 
-def test_import_peer_blob_no_peer_endpoint_raises(tmp_path):
-    """Parser runs but no AID has a peer-role tcp endpoint in locs.
-    Uses a real Habery so the Revery/Kevery wiring inside import_peer_blob
-    can actually run.
+def test_import_peer_blob_empty_payload_is_reported_as_damaged(tmp_path):
+    """An empty payload lands nothing, which is a damaged/truncated token — not
+    a peer who forgot to enable exposure.
+
+    Those used to share the ``no_peer_role`` message, so byte damage was reported
+    as a misconfiguration on the other person's wallet. Uses a real Habery so the
+    Revery/Kevery wiring inside import_peer_blob actually runs.
     """
     from keri.app import habbing
     from keri.core import signing
@@ -200,13 +205,13 @@ def test_import_peer_blob_no_peer_endpoint_raises(tmp_path):
         temp=True,
     )
     try:
-        # An empty (non-CESR) payload parses to nothing — no AID is
-        # added to kevers, so the post-parse "find a peer-tcp endpoint"
-        # check fails.
+        # An empty (non-CESR) payload parses to nothing — no kever, no ends, no
+        # locs — which is exactly the "stream consumed nothing" signature.
         payload = base64.b64encode(b"").decode("ascii")
         blob = f"{BLOB_PREFIX}{payload}"
         with pytest.raises(PeerBlobError) as exc:
             import_peer_blob(hby, blob)
-        assert exc.value.reason == "no_peer_role"
+        assert exc.value.reason == "damaged_stream"
+        assert "damaged" in str(exc.value).lower()
     finally:
         hby.close()
