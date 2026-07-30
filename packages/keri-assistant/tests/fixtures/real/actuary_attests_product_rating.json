@@ -1,0 +1,3750 @@
+{
+  "aggregates": [
+    {
+      "boundary": {
+        "inception_event_type": "rate_program_opened",
+        "instance_key": "event.product_id"
+      },
+      "description": "The actuary's rating desk for one product: the Insurance Product Definition ingestions that brought the filed numbers in, the SAID-addressed shards they emitted, the coordinated rate programs sealed from them, the priceability verdicts on the designer's menu, every candidate observed, and every attestation issued against one. All of it is one consistency boundary on purpose: the attest gate is a single constraint spanning 'this candidate is frozen and in review' and 'this rate program is sealed, publishable, and still matches its staged shards' - split across two aggregates that guard would be advisory instead of enforced inside the transaction that appends the attestation. One instance per product; jurisdiction lives on the rows, because the Insurance Product Definition coordinate is per jurisdiction while a product is a multi-state container.",
+      "fold": {
+        "attestation_issued": [
+          {
+            "op": "append",
+            "target": "attestations",
+            "value": "{ \"attestation_said\": event.attestation_said, \"version_said\": event.version_said, \"rate_program_version\": event.rate_program_version, \"status\": 'issued', \"attested_at\": event.attested_at }"
+          }
+        ],
+        "attestation_revoked": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations.map(a, a.attestation_said == event.attestation_said ? { \"attestation_said\": a.attestation_said, \"version_said\": a.version_said, \"rate_program_version\": a.rate_program_version, \"status\": 'revoked', \"attested_at\": a.attested_at } : a), \"bounces\": state.bounces }"
+        },
+        "attestation_superseded": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations.map(a, a.attestation_said == event.attestation_said ? { \"attestation_said\": a.attestation_said, \"version_said\": a.version_said, \"rate_program_version\": a.rate_program_version, \"status\": 'superseded', \"attested_at\": a.attested_at } : a), \"bounces\": state.bounces }"
+        },
+        "candidate_approved": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates.map(c, c.version_said == event.version_said ? { \"version_said\": c.version_said, \"product_version\": c.product_version, \"content_said\": c.content_said, \"change_classification\": c.change_classification, \"status\": 'approved', \"observed_at\": c.observed_at } : c), \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "candidate_bounced": [
+          {
+            "op": "append",
+            "target": "bounces",
+            "value": "{ \"version_said\": event.version_said, \"finding\": event.finding, \"detail\": event.detail, \"bounced_at\": event.bounced_at }"
+          }
+        ],
+        "candidate_observed": [
+          {
+            "op": "append",
+            "target": "candidates",
+            "value": "{ \"version_said\": event.version_said, \"product_version\": event.product_version, \"content_said\": event.content_said, \"change_classification\": event.change_classification, \"status\": 'in_review', \"observed_at\": event.observed_at }"
+          }
+        ],
+        "candidate_published": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates.map(c, c.version_said == event.version_said ? { \"version_said\": c.version_said, \"product_version\": c.product_version, \"content_said\": c.content_said, \"change_classification\": c.change_classification, \"status\": 'published', \"observed_at\": c.observed_at } : c), \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "candidate_rejected": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates.map(c, c.version_said == event.version_said ? { \"version_said\": c.version_said, \"product_version\": c.product_version, \"content_said\": c.content_said, \"change_classification\": c.change_classification, \"status\": 'rejected', \"observed_at\": c.observed_at } : c), \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "candidate_superseded": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates.map(c, c.version_said == event.version_said ? { \"version_said\": c.version_said, \"product_version\": c.product_version, \"content_said\": c.content_said, \"change_classification\": c.change_classification, \"status\": 'superseded', \"observed_at\": c.observed_at } : c), \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "priceability_question_opened": {
+          "expression": "event.counterparty_role != 'actuary' || event.scope == 'general' ? state : { \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability.filter(o, o.option_ref != event.option_ref) + [{ \"option_ref\": event.option_ref, \"state\": event.state, \"scope\": event.scope, \"guard\": 'unassessed', \"verdict\": 'pending', \"basis\": event.subject, \"thread_id\": event.thread_id, \"reviewed_at\": '' }], \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "priceability_reviewed": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs, \"priceability\": state.priceability.filter(o, o.option_ref != event.option_ref) + [{ \"option_ref\": event.option_ref, \"state\": event.state, \"scope\": event.scope, \"guard\": event.guard, \"verdict\": event.verdict, \"basis\": event.basis, \"thread_id\": event.thread_id, \"reviewed_at\": event.reviewed_at }], \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "rate_program_opened": [
+          {
+            "op": "set",
+            "target": "product_id",
+            "value": "event.product_id"
+          },
+          {
+            "op": "set",
+            "target": "line_of_business",
+            "value": "event.line_of_business"
+          },
+          {
+            "op": "set",
+            "target": "states",
+            "value": "event.states"
+          }
+        ],
+        "rate_program_sealed": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs + [{ \"rate_program_version\": event.rate_program_version, \"ipd_coordinate\": event.ipd_coordinate, \"state\": event.state, \"index_said\": event.index_said, \"program_manifest_said\": event.program_manifest_said, \"shard_set\": state.shards.filter(s, s.state == event.state && (s.ipd_coordinate == event.ipd_coordinate || s.ipd_coordinate == '')).map(s, { \"shard_name\": s.shard_name, \"shard_said\": s.shard_said }), \"effective_date\": event.effective_date, \"filing_reference\": event.filing_reference, \"sealed_at\": event.sealed_at, \"status\": 'sealed' }], \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "rate_program_superseded": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards, \"programs\": state.programs.map(p, p.rate_program_version == event.rate_program_version ? { \"rate_program_version\": p.rate_program_version, \"ipd_coordinate\": p.ipd_coordinate, \"state\": p.state, \"index_said\": p.index_said, \"program_manifest_said\": p.program_manifest_said, \"shard_set\": p.shard_set, \"effective_date\": p.effective_date, \"filing_reference\": p.filing_reference, \"sealed_at\": p.sealed_at, \"status\": 'superseded' } : p), \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "rate_shard_staged": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions, \"shards\": state.shards.filter(s, !(s.state == event.state && s.shard_name == event.shard_name)) + [{ \"ipd_coordinate\": '', \"state\": event.state, \"shard_name\": event.shard_name, \"record_kind\": event.record_kind, \"shard_said\": event.shard_said, \"source_ref\": event.source_ref, \"staged_at\": event.staged_at }], \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        },
+        "rate_workbook_ingested": {
+          "expression": "{ \"product_id\": state.product_id, \"line_of_business\": state.line_of_business, \"states\": state.states, \"ingestions\": state.ingestions.filter(i, i.ipd_coordinate != event.ipd_coordinate) + [{ \"ipd_coordinate\": event.ipd_coordinate, \"state\": event.state, \"action\": event.action, \"filing_date\": event.filing_date, \"index_said\": event.index_said, \"workbook_ref\": event.workbook_ref, \"ingested_at\": event.ingested_at }], \"shards\": state.shards.filter(s, s.ipd_coordinate != event.ipd_coordinate && !(s.state == event.state && event.shards.exists(n, n.shard_name == s.shard_name))) + event.shards.map(n, { \"ipd_coordinate\": event.ipd_coordinate, \"state\": event.state, \"shard_name\": n.shard_name, \"record_kind\": n.record_kind, \"shard_said\": n.shard_said, \"source_ref\": event.workbook_ref, \"staged_at\": event.ingested_at }), \"programs\": state.programs, \"priceability\": state.priceability, \"candidates\": state.candidates, \"attestations\": state.attestations, \"bounces\": state.bounces }"
+        }
+      },
+      "id": "rating_desk",
+      "initial_state": {
+        "attestations": [],
+        "bounces": [],
+        "candidates": [],
+        "ingestions": [],
+        "line_of_business": "",
+        "priceability": [],
+        "product_id": "",
+        "programs": [],
+        "shards": [],
+        "states": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "unique_shard_per_state_slot"
+        },
+        {
+          "rule_ref": "unique_rate_program_version"
+        },
+        {
+          "rule_ref": "single_issued_attestation_per_candidate"
+        },
+        {
+          "rule_ref": "attestation_targets_observed_candidate"
+        },
+        {
+          "rule_ref": "attestation_pins_recorded_program"
+        }
+      ],
+      "log_scope": "witnessed",
+      "state_schema": {
+        "properties": {
+          "attestations": {
+            "items": {
+              "properties": {
+                "attestation_said": {
+                  "type": "string"
+                },
+                "attested_at": {
+                  "type": "string"
+                },
+                "rate_program_version": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "version_said": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "attestation_said",
+                "version_said",
+                "rate_program_version",
+                "status",
+                "attested_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "bounces": {
+            "items": {
+              "properties": {
+                "bounced_at": {
+                  "type": "string"
+                },
+                "detail": {
+                  "type": "string"
+                },
+                "finding": {
+                  "type": "string"
+                },
+                "version_said": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version_said",
+                "finding",
+                "detail",
+                "bounced_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "candidates": {
+            "items": {
+              "properties": {
+                "change_classification": {
+                  "type": "string"
+                },
+                "content_said": {
+                  "type": "string"
+                },
+                "observed_at": {
+                  "type": "string"
+                },
+                "product_version": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                },
+                "version_said": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "version_said",
+                "product_version",
+                "content_said",
+                "change_classification",
+                "status",
+                "observed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "ingestions": {
+            "items": {
+              "properties": {
+                "action": {
+                  "type": "string"
+                },
+                "filing_date": {
+                  "type": "string"
+                },
+                "index_said": {
+                  "type": "string"
+                },
+                "ingested_at": {
+                  "type": "string"
+                },
+                "ipd_coordinate": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "workbook_ref": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ipd_coordinate",
+                "state",
+                "action",
+                "filing_date",
+                "index_said",
+                "workbook_ref",
+                "ingested_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "line_of_business": {
+            "type": "string"
+          },
+          "priceability": {
+            "items": {
+              "properties": {
+                "basis": {
+                  "type": "string"
+                },
+                "guard": {
+                  "type": "string"
+                },
+                "option_ref": {
+                  "type": "string"
+                },
+                "reviewed_at": {
+                  "type": "string"
+                },
+                "scope": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "thread_id": {
+                  "type": "string"
+                },
+                "verdict": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "option_ref",
+                "state",
+                "scope",
+                "guard",
+                "verdict",
+                "basis",
+                "thread_id",
+                "reviewed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "programs": {
+            "items": {
+              "properties": {
+                "effective_date": {
+                  "type": "string"
+                },
+                "filing_reference": {
+                  "type": "string"
+                },
+                "index_said": {
+                  "type": "string"
+                },
+                "ipd_coordinate": {
+                  "type": "string"
+                },
+                "program_manifest_said": {
+                  "type": "string"
+                },
+                "rate_program_version": {
+                  "type": "string"
+                },
+                "sealed_at": {
+                  "type": "string"
+                },
+                "shard_set": {
+                  "items": {
+                    "properties": {
+                      "shard_name": {
+                        "type": "string"
+                      },
+                      "shard_said": {
+                        "type": "string"
+                      }
+                    },
+                    "required": [
+                      "shard_name",
+                      "shard_said"
+                    ],
+                    "type": "object"
+                  },
+                  "type": "array"
+                },
+                "state": {
+                  "type": "string"
+                },
+                "status": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "rate_program_version",
+                "ipd_coordinate",
+                "state",
+                "index_said",
+                "program_manifest_said",
+                "shard_set",
+                "effective_date",
+                "filing_reference",
+                "sealed_at",
+                "status"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "shards": {
+            "items": {
+              "properties": {
+                "ipd_coordinate": {
+                  "type": "string"
+                },
+                "record_kind": {
+                  "type": "string"
+                },
+                "shard_name": {
+                  "type": "string"
+                },
+                "shard_said": {
+                  "type": "string"
+                },
+                "source_ref": {
+                  "type": "string"
+                },
+                "staged_at": {
+                  "type": "string"
+                },
+                "state": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "ipd_coordinate",
+                "state",
+                "shard_name",
+                "record_kind",
+                "shard_said",
+                "source_ref",
+                "staged_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "states": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "product_id",
+          "line_of_business",
+          "states",
+          "ingestions",
+          "shards",
+          "programs",
+          "priceability",
+          "candidates",
+          "attestations",
+          "bounces"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            },
+            {
+              "payload": {
+                "product_id": "usurance-gl-product-liability",
+                "record_kind": "calc_order",
+                "shard_name": "us-ut/calc_order/premium_stack",
+                "shard_said": "EShardCalcOrderUTv10CORRECTEDxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-RU-003 p.7 stack order",
+                "staged_at": "2026-07-24T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_shard_staged"
+            }
+          ],
+          "expected": {
+            "attestations": [],
+            "bounces": [],
+            "candidates": [],
+            "ingestions": [
+              {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              }
+            ],
+            "line_of_business": "general_liability",
+            "priceability": [],
+            "product_id": "usurance-gl-product-liability",
+            "programs": [
+              {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "shard_set": [
+                  {
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "status": "sealed"
+              }
+            ],
+            "shards": [
+              {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "record_kind": "risk_value_table",
+                "shard_name": "us-ut/risk_value_table/loss_costs",
+                "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 + RU-003",
+                "staged_at": "2026-07-22T09:00:00Z",
+                "state": "US-UT"
+              },
+              {
+                "ipd_coordinate": "",
+                "record_kind": "calc_order",
+                "shard_name": "us-ut/calc_order/premium_stack",
+                "shard_said": "EShardCalcOrderUTv10CORRECTEDxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-RU-003 p.7 stack order",
+                "staged_at": "2026-07-24T09:00:00Z",
+                "state": "US-UT"
+              }
+            ],
+            "states": [
+              "US-UT"
+            ]
+          },
+          "name": "restaging a shard after the seal breaks the recorded set, so the program is no longer coordination-clean"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "action": "Sandbox",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv09SANDBOXxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-20T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/0.9",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv09xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "matrix",
+                    "shard_name": "us-ut/matrix/territory_preview",
+                    "shard_said": "EShardTerritoryPreviewUTv09xxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 draft"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "coverage",
+                    "shard_name": "us-ut/coverage/parts",
+                    "shard_said": "EShardCoverageUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "metadata",
+                    "shard_name": "us-ut/metadata/value_domains",
+                    "shard_said": "EShardMetadataUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            }
+          ],
+          "expected": {
+            "attestations": [],
+            "bounces": [],
+            "candidates": [],
+            "ingestions": [
+              {
+                "action": "Sandbox",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv09SANDBOXxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-20T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/0.9",
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 draft"
+              },
+              {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              }
+            ],
+            "line_of_business": "general_liability",
+            "priceability": [],
+            "product_id": "usurance-gl-product-liability",
+            "programs": [
+              {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "shard_set": [
+                  {
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "shard_name": "us-ut/coverage/parts",
+                    "shard_said": "EShardCoverageUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "shard_name": "us-ut/metadata/value_domains",
+                    "shard_said": "EShardMetadataUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "status": "sealed"
+              }
+            ],
+            "shards": [
+              {
+                "ipd_coordinate": "general_liability/US-UT/0.9",
+                "record_kind": "matrix",
+                "shard_name": "us-ut/matrix/territory_preview",
+                "shard_said": "EShardTerritoryPreviewUTv09xxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 draft",
+                "staged_at": "2026-07-20T09:00:00Z",
+                "state": "US-UT"
+              },
+              {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "record_kind": "risk_value_table",
+                "shard_name": "us-ut/risk_value_table/loss_costs",
+                "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 + RU-003",
+                "staged_at": "2026-07-22T09:00:00Z",
+                "state": "US-UT"
+              },
+              {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "record_kind": "calc_order",
+                "shard_name": "us-ut/calc_order/premium_stack",
+                "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 + RU-003",
+                "staged_at": "2026-07-22T09:00:00Z",
+                "state": "US-UT"
+              },
+              {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "record_kind": "coverage",
+                "shard_name": "us-ut/coverage/parts",
+                "shard_said": "EShardCoverageUTv10xxxxxxxxxxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 + RU-003",
+                "staged_at": "2026-07-22T09:00:00Z",
+                "state": "US-UT"
+              },
+              {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "record_kind": "metadata",
+                "shard_name": "us-ut/metadata/value_domains",
+                "shard_said": "EShardMetadataUTv10xxxxxxxxxxxxxxxxxxxxxxxxx",
+                "source_ref": "GL-UT-2027-LC-002 + RU-003",
+                "staged_at": "2026-07-22T09:00:00Z",
+                "state": "US-UT"
+              }
+            ],
+            "states": [
+              "US-UT"
+            ]
+          },
+          "name": "a second ingestion for the same jurisdiction is accepted, takes over every slot it re-emits, and the seal covers only the sealed coordinate's lane"
+        },
+        {
+          "append": {
+            "payload": {
+              "action": "Publish",
+              "filing_date": "2026-08-01",
+              "index_said": "EIpdIndexUTv11PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+              "ingested_at": "2026-11-02T09:00:00Z",
+              "ipd_coordinate": "general_liability/US-UT/1.1",
+              "product_id": "usurance-gl-product-liability",
+              "shards": [
+                {
+                  "record_kind": "risk_value_table",
+                  "shard_name": "us-ut/risk_value_table/loss_costs",
+                  "shard_said": "EShardLossCostsUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                },
+                {
+                  "record_kind": "calc_order",
+                  "shard_name": "us-ut/calc_order/premium_stack",
+                  "shard_said": "EShardCalcOrderUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                },
+                {
+                  "record_kind": "coverage",
+                  "shard_name": "us-ut/coverage/parts",
+                  "shard_said": "EShardCoverageUTv11xxxxxxxxxxxxxxxxxxxxxxxxx"
+                },
+                {
+                  "record_kind": "metadata",
+                  "shard_name": "us-ut/metadata/value_domains",
+                  "shard_said": "EShardMetadataUTv11xxxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              ],
+              "state": "US-UT",
+              "workbook_ref": "GL-UT-2028-LC-004 (ISO circular adoption)"
+            },
+            "type": "rate_workbook_ingested"
+          },
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "coverage",
+                    "shard_name": "us-ut/coverage/parts",
+                    "shard_said": "EShardCoverageUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "metadata",
+                    "shard_name": "us-ut/metadata/value_domains",
+                    "shard_said": "EShardMetadataUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "the forward-only correction is accepted: re-ingesting a jurisdiction at a new coordinate under the same shard names does not trip unique_shard_per_state_slot"
+        },
+        {
+          "append": {
+            "payload": {
+              "action": "Publish",
+              "filing_date": "2026-08-01",
+              "index_said": "EIpdIndexUTv11PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+              "ingested_at": "2026-11-02T09:00:00Z",
+              "ipd_coordinate": "general_liability/US-UT/1.1",
+              "product_id": "usurance-gl-product-liability",
+              "shards": [
+                {
+                  "record_kind": "risk_value_table",
+                  "shard_name": "us-ut/risk_value_table/loss_costs",
+                  "shard_said": "EShardLossCostsUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                },
+                {
+                  "record_kind": "risk_value_table",
+                  "shard_name": "us-ut/risk_value_table/loss_costs",
+                  "shard_said": "EShardLossCostsUTv11ALTxxxxxxxxxxxxxxxxxxxxx"
+                },
+                {
+                  "record_kind": "calc_order",
+                  "shard_name": "us-ut/calc_order/premium_stack",
+                  "shard_said": "EShardCalcOrderUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                }
+              ],
+              "state": "US-UT",
+              "workbook_ref": "GL-UT-2028-LC-004 (ISO circular adoption)"
+            },
+            "type": "rate_workbook_ingested"
+          },
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "coverage",
+                    "shard_name": "us-ut/coverage/parts",
+                    "shard_said": "EShardCoverageUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "metadata",
+                    "shard_name": "us-ut/metadata/value_domains",
+                    "shard_said": "EShardMetadataUTv10xxxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            }
+          ],
+          "expect_rejected_by": "unique_shard_per_state_slot",
+          "name": "an ingestion emitting the same shard name twice for a jurisdiction is rejected by unique_shard_per_state_slot"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "change_classification": "initial",
+                "content_said": "EContentManifest1SAIDxxxxxxxxxxxxxxxxxxxxxxx",
+                "observed_at": "2026-07-25T12:30:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "product_version": "1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "candidate_observed"
+            },
+            {
+              "payload": {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "attested_at": "2026-07-26T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "attestation_issued"
+            },
+            {
+              "payload": {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "product_id": "usurance-gl-product-liability",
+                "reason": "ILF table v2027.1 row for hazard group D was the draft, not the filed row",
+                "revoked_at": "2026-07-27T09:00:00Z",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "attestation_revoked"
+            }
+          ],
+          "expected": {
+            "attestations": [
+              {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "attested_at": "2026-07-26T09:00:00Z",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "status": "revoked",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ],
+            "bounces": [],
+            "candidates": [
+              {
+                "change_classification": "initial",
+                "content_said": "EContentManifest1SAIDxxxxxxxxxxxxxxxxxxxxxxx",
+                "observed_at": "2026-07-25T12:30:00Z",
+                "product_version": "1.0",
+                "status": "in_review",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            ],
+            "ingestions": [],
+            "line_of_business": "general_liability",
+            "priceability": [],
+            "product_id": "usurance-gl-product-liability",
+            "programs": [],
+            "shards": [],
+            "states": [
+              "US-UT"
+            ]
+          },
+          "name": "a revoked attestation stays on record with status revoked, never removed"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": null,
+      "description": "Open the rating desk for a product and the jurisdictions it will be filed in. The actuary starts on day one, in parallel with the designer's structural work (R91: not a relay) - the desk exists before any candidate is frozen, because rate work that waits for a candidate arrives too late to negotiate the limit menu. One desk per product.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "rate_program_opened",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"line_of_business\": command.line_of_business, \"states\": command.states, \"opened_at\": command.opened_at }"
+        }
+      ],
+      "id": "open_rate_program",
+      "name": "Open rate program",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "line_of_business": {
+            "description": "Line of business as the Insurance Product Definition ingestion contract spells it (the parser's lineOfBusiness input).",
+            "minLength": 1,
+            "type": "string"
+          },
+          "opened_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "states": {
+            "description": "Jurisdictions this product will be rated for.",
+            "items": {
+              "pattern": "^US-[A-Z]{2}$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "product_id",
+          "line_of_business",
+          "states",
+          "opened_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/open_rate_program",
+      "state_preconditions": [],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": null,
+      "description": "Record one ipd-parse ingestion: the rating workbook (or adopted ISO circular content) read through the named-range pseudo-API and emitted as an Insurance Product Definition - an index plus shard files, each SAIDified and staged here as rate content. The ingestion carries the parser's own invocation contract: line of business, jurisdiction, caller-supplied major.minor, filing date, and the Publish-or-Sandbox action. Publish is permanent and undeletable and is the only action that can later be sealed into a rate program; Sandbox is the validate-against-sample-risks path, purgeable by the Insurance Product Definition retention contract, and can never be sealed. A shard slot is (jurisdiction, shard name): an ingestion takes over every slot it emits, whatever put content there before - an earlier coordinate, a Sandbox preview, a hand-staged shard - and also clears any leftover from its own coordinate, so re-ingesting the same coordinate replaces that coordinate's whole set. The numbers are imported as versioned data, never re-keyed (R18, R98).",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "rate_workbook_ingested",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"ipd_coordinate\": command.ipd_coordinate, \"state\": command.state, \"action\": command.action, \"filing_date\": command.filing_date, \"index_said\": command.index_said, \"workbook_ref\": command.workbook_ref, \"shards\": command.shards, \"ingested_at\": command.ingested_at }"
+        }
+      ],
+      "id": "ingest_rate_workbook",
+      "name": "Ingest rate workbook",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "description": "The parser's ingestion intent. Publish is a permanent, undeletable release; Sandbox is temporary and purgeable, and can never be sealed or attested.",
+            "enum": [
+              "Publish",
+              "Sandbox"
+            ],
+            "type": "string"
+          },
+          "filing_date": {
+            "description": "The date the product was filed in this jurisdiction (provenance).",
+            "format": "date",
+            "type": "string"
+          },
+          "index_said": {
+            "description": "SAID of the Insurance Product Definition index for this coordinate. **Provenance of the parse run only.** The parser's emitted index.json lists relative filenames, not shard SAIDs (exchange-model spec section 5.2; ipd emit.py writes `\"files\": files`), so it does not change when a rate table's contents change and commits to nothing about them. The shard SAIDs are the commitment.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "ingested_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "ipd_coordinate": {
+            "description": "Insurance Product Definition coordinate - the parser's own identity for one ingested product version, '<lineOfBusiness>/<jurisdiction>/<major>.<minor>'. This is the rate program version label (R18): the one string that loads the frozen set for reconstruction.",
+            "pattern": "^[a-z0-9_]+/US-[A-Z]{2}/[0-9]+\\.[0-9]+$",
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "shards": {
+            "description": "The shards this ingestion emitted, each SAID-addressed. `shard_name` is the jurisdiction-scoped name the product-content manifest will carry, and it is the slot this content takes over: a name may appear at most once per ingestion, or the append is rejected by `unique_shard_per_state_slot`.",
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "record_kind": {
+                  "description": "Insurance Product Definition record kind. The parser's own vocabulary; new kinds the parser does not cover are added by the owning lane and staged individually.",
+                  "enum": [
+                    "calc_order",
+                    "coverage",
+                    "default",
+                    "derivation_logic",
+                    "event",
+                    "mapping",
+                    "matrix",
+                    "metadata",
+                    "risk_value_table"
+                  ],
+                  "type": "string"
+                },
+                "shard_name": {
+                  "description": "Manifest shard name, e.g. 'us-ut/risk_value_table/ilf_prem_ops'.",
+                  "minLength": 1,
+                  "type": "string"
+                },
+                "shard_said": {
+                  "description": "SAID of the shard file, verified by re-derivation on retrieval.",
+                  "maxLength": 44,
+                  "minLength": 44,
+                  "type": "string"
+                }
+              },
+              "required": [
+                "shard_name",
+                "record_kind",
+                "shard_said"
+              ],
+              "type": "object"
+            },
+            "minItems": 1,
+            "type": "array"
+          },
+          "state": {
+            "description": "Jurisdiction the Insurance Product Definition coordinate is bound to.",
+            "pattern": "^US-[A-Z]{2}$",
+            "type": "string"
+          },
+          "workbook_ref": {
+            "description": "The source the numbers came from - the rating workbook, the ISO circular adopted, the filed manual reference (R93 source tracing).",
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "ipd_coordinate",
+          "state",
+          "action",
+          "filing_date",
+          "index_said",
+          "workbook_ref",
+          "shards",
+          "ingested_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/ingest_rate_workbook",
+      "state_preconditions": [],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": null,
+      "description": "Stage a single hand-authored rate shard for a shard kind the parser does not cover. The workbook ingestion is the normal path and the disciplined one; this is the documented exception, and it carries a mandatory source reference for exactly that reason - a transcribed rate table is a defect waiting for a rate exam. A hand-staged shard occupies the same (jurisdiction, shard name) slot an ingestion would, and is recorded with an empty Insurance Product Definition coordinate to mark that no parse run produced it. That empty coordinate is provenance, not a key: a later ingestion emitting the same name displaces it like any other slot, and every seal for the jurisdiction includes the hand-staged shards alongside its own coordinate's - which is the point, since these are the record kinds the parser cannot produce and the program would be incomplete without them. Restaging replaces the shard under that name and, because the seal records the exact shard SAIDs it covered, structurally breaks the coordination guard until the program is resealed.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "rate_shard_staged",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"state\": command.state, \"shard_name\": command.shard_name, \"record_kind\": command.record_kind, \"shard_said\": command.shard_said, \"source_ref\": command.source_ref, \"staged_at\": command.staged_at }"
+        }
+      ],
+      "id": "stage_rate_shard",
+      "name": "Stage rate shard",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "record_kind": {
+            "description": "Insurance Product Definition record kind, or a new shard kind added by this lane where the parser has no equivalent.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "shard_name": {
+            "description": "Manifest shard name, jurisdiction-scoped.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "shard_said": {
+            "description": "SAID of the shard file.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "source_ref": {
+            "description": "The filed manual, circular, or rule reference this shard's values are provable against. Mandatory on the hand-authored path.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "staged_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "description": "Jurisdiction the Insurance Product Definition coordinate is bound to.",
+            "pattern": "^US-[A-Z]{2}$",
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "state",
+          "shard_name",
+          "record_kind",
+          "shard_said",
+          "source_ref",
+          "staged_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/stage_rate_shard",
+      "state_preconditions": [],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": "product_designer",
+      "description": "Seal one jurisdiction's staged shards as a coordinated, immutable rate program version (R18): the loss costs, the loss-cost multiplier, the increased-limit tables, the schedule and experience plans, the minimums, the taxes and fees, and the filed calculation order, pinned together under one coordinate with one effective date and one filing reference. The seal covers exactly this jurisdiction's slots holding the coordinate being sealed, plus the hand-staged shards that belong to no ingestion - content left in a slot by some other ingestion (a superseded parse run, a Sandbox preview) is not part of this program. It records that set as (shard name, shard SAID) pairs and commits to it with the rate-program sub-manifest SAID, which is what makes the coordination guard real and what makes the program reconstructable: restage any shard and the recorded set no longer equals the live set, so nothing can be attested against a mixture that was never filed. A prior sealed program for the same jurisdiction becomes superseded, never deleted. Notifies the product designer with the sub-manifest SAID so the sealed rate content can be pinned into the candidate's product-content manifest (R91 lock point 3: rates are done before the filing goes out).",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "rate_program_superseded",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"rate_program_version\": command.supersedes_program_version, \"ipd_coordinate\": command.supersedes_program_version, \"superseded_at\": command.sealed_at }"
+        },
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "rate_program_sealed",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"rate_program_version\": command.ipd_coordinate, \"ipd_coordinate\": command.ipd_coordinate, \"state\": command.state, \"index_said\": command.index_said, \"program_manifest_said\": command.program_manifest_said, \"effective_date\": command.effective_date, \"filing_reference\": command.filing_reference, \"sealed_at\": command.sealed_at }"
+        },
+        {
+          "exchange": {
+            "kind": "message",
+            "pattern": "notification",
+            "route": "/usurance/note/rate_program_sealed"
+          },
+          "kind": "exchange"
+        }
+      ],
+      "id": "seal_rate_program",
+      "name": "Seal rate program",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "effective_date": {
+            "description": "The filed effective date for this jurisdiction's program.",
+            "format": "date",
+            "type": "string"
+          },
+          "filing_reference": {
+            "description": "SERFF tracking number or filing reference the program is filed under; empty while the filing is still being assembled.",
+            "type": "string"
+          },
+          "index_said": {
+            "description": "SAID of the Insurance Product Definition index for this coordinate. **Provenance of the parse run only.** The parser's emitted index.json lists relative filenames, not shard SAIDs (exchange-model spec section 5.2; ipd emit.py writes `\"files\": files`), so it does not change when a rate table's contents change and commits to nothing about them. The shard SAIDs are the commitment.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "ipd_coordinate": {
+            "description": "Insurance Product Definition coordinate - the parser's own identity for one ingested product version, '<lineOfBusiness>/<jurisdiction>/<major>.<minor>'. This is the rate program version label (R18): the one string that loads the frozen set for reconstruction.",
+            "pattern": "^[a-z0-9_]+/US-[A-Z]{2}/[0-9]+\\.[0-9]+$",
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "program_manifest_said": {
+            "description": "SAID of the rate-program sub-manifest this seal commits to: a SAID-self-identifying JSON document carrying the product, the jurisdiction, this Insurance Product Definition coordinate, the effective date, and a shard map of every sealed shard name to its shard SAID. This - not the parse index - is what commits to rate content, and it is what the product designer pins into the candidate's product-content manifest.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "sealed_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "state": {
+            "description": "Jurisdiction the Insurance Product Definition coordinate is bound to.",
+            "pattern": "^US-[A-Z]{2}$",
+            "type": "string"
+          },
+          "supersedes_program_version": {
+            "description": "Coordinate of the sealed program this one displaces for this jurisdiction; empty string for a jurisdiction's first seal. The displaced program is marked superseded, never deleted - policies bound on it must stay reconstructable.",
+            "type": "string"
+          }
+        },
+        "required": [
+          "effective_date",
+          "filing_reference",
+          "index_said",
+          "ipd_coordinate",
+          "product_id",
+          "program_manifest_said",
+          "sealed_at",
+          "state",
+          "supersedes_program_version"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/seal_rate_program",
+      "state_preconditions": [
+        {
+          "rule_ref": "ingestion_is_publishable"
+        },
+        {
+          "rule_ref": "ipd_record_kinds_complete"
+        },
+        {
+          "rule_ref": "state_priceability_clear"
+        }
+      ],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": "product_designer",
+      "description": "Answer the designer's priceability question on a specific menu item and record the verdict where the dispute lives (R91 lock point 1, R92). The three seam guards this closes are the ones that put twelve unfiled policies on the street: a limit option with no increased-limit-factor row (R13 rule 4), an available endorsement with no filed rating method (R15 rule 5 - an intentional zero is a method, a missing one is not), and a rated class or subline with no filed minimum (R16 rule 5). An unpriceable verdict names the missing row and holds the seal and the attestation until it closes; answering is a first-class outcome, not a refusal. A question also closes when the designer drops the option - recorded as 'withdrawn', so the only path out of a pending question is never a false claim that a filed factor exists. Replies on the designer's negotiation thread so the loop lives in the tool rather than in email.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "priceability_reviewed",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"option_ref\": command.option_ref, \"state\": command.state, \"scope\": command.scope, \"guard\": command.guard, \"verdict\": command.verdict, \"basis\": command.note, \"thread_id\": command.thread_id, \"reviewed_at\": command.reviewed_at }"
+        },
+        {
+          "exchange": {
+            "kind": "message",
+            "pattern": "notification",
+            "route": "/usurance/note/lock_response"
+          },
+          "kind": "exchange"
+        }
+      ],
+      "id": "record_priceability_review",
+      "name": "Record priceability review",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "guard": {
+            "description": "Which config-time seam guard this verdict answers: the increased-limit factor row (R13), the endorsement's filed rating method (R15), the rated class or subline minimum (R16), or none for a general question.",
+            "enum": [
+              "ilf_row",
+              "rating_method",
+              "class_minimum",
+              "none"
+            ],
+            "type": "string"
+          },
+          "note": {
+            "description": "The answer in the designer's language - the factor that exists, or the exact row that is missing. Travels as the thread reply.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "option_ref": {
+            "description": "The exact artifact under review - the limit option, endorsement, or class.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "reviewed_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "scope": {
+            "description": "The negotiation lock this bears on; matches the designer's thread scopes.",
+            "enum": [
+              "limit_menu",
+              "endorsement_list",
+              "rates",
+              "general"
+            ],
+            "type": "string"
+          },
+          "state": {
+            "description": "Jurisdiction this verdict is scoped to; empty for a product-wide question, which blocks every jurisdiction's seal.",
+            "pattern": "^(US-[A-Z]{2})?$",
+            "type": "string"
+          },
+          "thread_id": {
+            "description": "The designer's negotiation thread this answers.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "verdict": {
+            "description": "priceable = a filed factor, method, or minimum exists behind it; unpriceable = it does not, and the option cannot reach a quote; withdrawn = the designer dropped the option, so there is nothing left to price. Withdrawn closes the question without asserting a filed factor that does not exist - the normal way a converging negotiation ends, and the reason retiring a question never requires a false 'priceable'.",
+            "enum": [
+              "priceable",
+              "unpriceable",
+              "withdrawn"
+            ],
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "option_ref",
+          "state",
+          "scope",
+          "guard",
+          "verdict",
+          "note",
+          "thread_id",
+          "reviewed_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/record_priceability_review",
+      "state_preconditions": [],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": "product_designer",
+      "description": "Attest that the rates behind exactly one frozen candidate are sound and reconstructable, and grant the attestation to the designer, filing specialist, and compliance officer (exchange spec section 4.3 step 4). The gate is four facts held together in one transaction: the candidate is on record and still in review; a sealed, Publish-sourced rate program exists for every jurisdiction on the desk and each still matches its staged shards exactly; no menu item is unpriceable or unanswered; and this candidate has no live attestation already. Runtime binding note: the attestation_said in the emitted aggregate event is the SAID of the credential issued by this command's own exchange emission - the runtime binds the just-issued credential as 'credential' in the emission context, the interim convention shared across this suite.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": "rating_attestation",
+            "imported_credential_id": null,
+            "kind": "credential",
+            "schema_said_referenced": "EENIsUsYkfReGnL_EhyJBEPw8HVTFsMPC5Y2ztsRyHIj",
+            "verb": "grant"
+          },
+          "kind": "exchange"
+        },
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "attestation_issued",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"attestation_said\": credential.said, \"version_said\": command.version_said, \"rate_program_version\": command.rate_program_version, \"attested_at\": command.attested_at }"
+        }
+      ],
+      "id": "attest_rating",
+      "name": "Attest product rating",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attested_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "product_version": {
+            "description": "Informative major.minor label of the attested candidate.",
+            "pattern": "^[0-9]+\\.[0-9]+$",
+            "type": "string"
+          },
+          "rate_program_version": {
+            "description": "Insurance Product Definition coordinate - the parser's own identity for one ingested product version, '<lineOfBusiness>/<jurisdiction>/<major>.<minor>'. This is the rate program version label (R18): the one string that loads the frozen set for reconstruction.",
+            "pattern": "^[a-z0-9_]+/US-[A-Z]{2}/[0-9]+\\.[0-9]+$",
+            "type": "string"
+          },
+          "statement": {
+            "description": "What is attested and on what basis - the actuary's own words, carried on the credential and read by every downstream verifier.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "version_said": {
+            "description": "SAID of the frozen product_definition_version candidate being attested.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "version_said",
+          "product_version",
+          "rate_program_version",
+          "statement",
+          "attested_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/attest_rating",
+      "state_preconditions": [
+        {
+          "rule_ref": "candidate_in_review"
+        },
+        {
+          "rule_ref": "rate_program_current_for_candidate"
+        },
+        {
+          "rule_ref": "all_options_priceable"
+        },
+        {
+          "rule_ref": "no_live_attestation_for_candidate"
+        }
+      ],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": "product_designer",
+      "description": "Bounce a frozen candidate instead of attesting it - the other half of review (exchange spec section 4.3 step 4). A refusal conveys no authority, so it earns no credential: it is a notification naming the exact blocking finding, which the designer answers with a successor candidate. The candidate cannot be edited in place, so the finding has to be specific enough to fix in one round.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_bounced",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"version_said\": command.version_said, \"finding\": command.finding, \"detail\": command.detail, \"bounced_at\": command.bounced_at }"
+        },
+        {
+          "exchange": {
+            "kind": "message",
+            "pattern": "notification",
+            "route": "/usurance/note/rating_objection"
+          },
+          "kind": "exchange"
+        }
+      ],
+      "id": "bounce_candidate",
+      "name": "Bounce candidate",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "bounced_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "detail": {
+            "description": "The exact artifact at fault - the option, endorsement, class, or shard.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "finding": {
+            "description": "Why the candidate cannot be attested: a menu option with no filed factor, an endorsement with no filed method, a rated class with no minimum, a rate program whose shards no longer match the seal, content that does not match the filed manual, or another actuarial objection.",
+            "enum": [
+              "unpriceable_option",
+              "missing_rating_method",
+              "missing_class_minimum",
+              "uncoordinated_rate_program",
+              "content_mismatch",
+              "other"
+            ],
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "version_said": {
+            "description": "SAID of the candidate being bounced.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "version_said",
+          "finding",
+          "detail",
+          "bounced_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/bounce_candidate",
+      "state_preconditions": [
+        {
+          "rule_ref": "candidate_in_review"
+        }
+      ],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": null,
+      "description": "Withdraw an issued attestation (R18 rule 5). A rate error found after signing is corrected forward - a new ingestion, a new sealed program, a new candidate - and this revocation is what makes the correction bite: the designer's approve and publish gates re-check the attestation at firing and fail, and every downstream verifier sees the same revocation for itself. Surfaced, never silent.",
+      "emissions": [
+        {
+          "exported_credential_id": "rating_attestation",
+          "kind": "lifecycle_advance",
+          "to_state": "revoked"
+        },
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "attestation_revoked",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"attestation_said\": command.attestation_said, \"version_said\": command.version_said, \"reason\": command.reason, \"revoked_at\": command.revoked_at }"
+        }
+      ],
+      "id": "revoke_attestation",
+      "name": "Revoke rating attestation",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attestation_said": {
+            "description": "SAID of the attestation being withdrawn.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "reason": {
+            "description": "Why the attestation is withdrawn - the record the correction answers.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "revoked_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "version_said": {
+            "description": "SAID of the candidate the withdrawn attestation was about.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "attestation_said",
+          "version_said",
+          "reason",
+          "revoked_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/revoke_attestation",
+      "state_preconditions": [
+        {
+          "rule_ref": "attestation_is_issued"
+        }
+      ],
+      "temporal_preconditions": []
+    },
+    {
+      "auth_preconditions": [],
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": null,
+      "description": "Mark an attestation superseded once a successor candidate has been attested. A superseded attestation is not wrong and is never deleted - it remains the record of what was attested about the candidate policies may have been bound under; it simply stops being the live sign-off for new business (the R2 discipline applied to the sign-off layer).",
+      "emissions": [
+        {
+          "exported_credential_id": "rating_attestation",
+          "kind": "lifecycle_advance",
+          "to_state": "superseded"
+        },
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "attestation_superseded",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": command.product_id, \"attestation_said\": command.attestation_said, \"version_said\": command.version_said, \"superseded_by_said\": command.superseded_by_said, \"superseded_at\": command.superseded_at }"
+        }
+      ],
+      "id": "supersede_attestation",
+      "name": "Supersede rating attestation",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attestation_said": {
+            "description": "SAID of the attestation being superseded.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "product_id": {
+            "description": "Stable kebab-case product identifier of the product this desk rates.",
+            "pattern": "^[a-z0-9]+(-[a-z0-9]+)*$",
+            "type": "string"
+          },
+          "superseded_at": {
+            "description": "Client-supplied date-time (the command binding has no runtime clock).",
+            "format": "date-time",
+            "type": "string"
+          },
+          "superseded_by_said": {
+            "description": "SAID of the successor attestation that now carries the sign-off.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "version_said": {
+            "description": "SAID of the candidate the superseded attestation was about.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          }
+        },
+        "required": [
+          "product_id",
+          "attestation_said",
+          "version_said",
+          "superseded_by_said",
+          "superseded_at"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/supersede_attestation",
+      "state_preconditions": [
+        {
+          "rule_ref": "attestation_is_issued"
+        },
+        {
+          "rule_ref": "successor_attestation_on_record"
+        }
+      ],
+      "temporal_preconditions": []
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "The actuary's sign-off that the rates behind exactly one frozen product-version candidate are actuarially sound, filed-consistent, and reconstructable (R5 'actuarial signs the rates'). Chains by required version edge to the immutable candidate it attests - content-addressed staleness: a changed candidate is a new SAID, visibly not the one attested. The attested rate content lives in the candidate's product-content manifest as ipd shards; the credential carries only the coordinate and the rate_program_version label that names the coordinated set (R18). TEL issuance (iss) creates the attestation in issued; superseded and revoked are the two exits (superseded = a successor candidate carries the current attestation; revoked = the attestation is withdrawn, which every downstream gate re-checks and fails).",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [
+            {
+              "cardinality": "one",
+              "credential_id": "product_definition_version",
+              "edge_name": "version",
+              "operator": "references"
+            }
+          ],
+          "holder_role": "actuary",
+          "verifier_roles": [
+            "product_designer",
+            "filing_specialist",
+            "compliance_officer"
+          ]
+        },
+        "id": "rating_attestation",
+        "lifecycle": {
+          "initial": "issued",
+          "states": [
+            "issued",
+            "superseded",
+            "revoked"
+          ],
+          "transitions": [
+            {
+              "from": "issued",
+              "id": "supersede",
+              "requires": [
+                {
+                  "rule_ref": "successor_attestation_recorded"
+                }
+              ],
+              "tel_primitive": "update",
+              "to": "superseded",
+              "trigger": "manual"
+            },
+            {
+              "from": "issued",
+              "id": "revoke",
+              "tel_primitive": "revoke",
+              "to": "revoked",
+              "trigger": "manual"
+            }
+          ]
+        },
+        "name": "Rating Attestation",
+        "rule_refs": [
+          "rating_attestation_covenant",
+          "coordinated_rate_program_policy",
+          "forward_only_rate_correction",
+          "penny_reconstruction_policy",
+          "rating_content_plane_policy",
+          "multi_state_program_label_policy",
+          "sandbox_never_attested",
+          "rating_source_tracing",
+          "converge_then_lock_priceability",
+          "rate_program_current_for_candidate",
+          "attestation_covenant_articulation",
+          "coordination_guard_articulation",
+          "reconstruction_articulation"
+        ],
+        "schema": {
+          "schema_path": "schemas/rating_attestation.json",
+          "schema_said": "EENIsUsYkfReGnL_EhyJBEPw8HVTFsMPC5Y2ztsRyHIj"
+        },
+        "value_flow": {
+          "implied_credentials": [
+            {
+              "credential_id": "compliance_signoff",
+              "description": "An active rating attestation against a candidate is what releases the compliance officer's sign-off precondition on that same candidate (R91 lock point 4: everyone is done before the compliance officer signs). Withdrawing this attestation removes that release.",
+              "relationship": "implies_obligation"
+            }
+          ]
+        }
+      }
+    ],
+    "imports": [
+      {
+        "expected_issuer_role": "admin",
+        "expected_schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+        "id": "actuary_role",
+        "lifecycle_acceptance": [
+          "active"
+        ],
+        "narrative": "The holder's own Usurance Actuary role credential, granted by usurance-admin via apply-mode onboarding. This is the gate credential and the authorization every command in this template checks (authz method credential, issuer pinned by the usurance-internal EGF). No other role's role credential is imported: counterparty legitimacy on the inbound candidate is expected_issuer_role plus runtime verification that the issuer AID holds the corresponding product_designer role credential."
+      },
+      {
+        "expected_issuer_role": "product_designer",
+        "expected_schema_said": "EA-PmA7eT80wdyl2uJvqDEElHrW1IilabnSzjWysw2x4",
+        "id": "product_definition_version",
+        "lifecycle_acceptance": [
+          "in_review"
+        ],
+        "narrative": "The immutable product-version candidate the actuary attests (R5). Accepted for attestation in in_review only - sign-offs precede approval, so a candidate that has already advanced is no longer an attest target. Later transitions (approved, published, rejected, superseded) are observed as lifecycle events and recorded on the candidate board, because an attestation whose candidate was superseded is visibly attached to a superseded snapshot. No instance is held at instantiation; obtained via the build_and_attest_product_rating workflow's inbound grant."
+      }
+    ]
+  },
+  "d": "EK5XK6xuT1GJJJNldB66y5gnNBmtLQFlliTnmFUo0ZpO",
+  "header": {
+    "description": "The Actuary's slice of building an insurance product: own the rate program as SAID-addressed Insurance Product Definition content, converge with the product designer so every limit option and endorsement on the menu is actually priceable, seal the coordinated rate program as one immutable version, and attest that the rates behind exactly one frozen product-version candidate are actuarially sound and reconstructable to the penny. Pivotal event: the rating stack behind an immutable product-version candidate has been attested. The rate content itself never travels inside the credential - it is ipd shard content pinned by SAID, so a changed number is visibly a different candidate and the attestation on the old one is visibly stale.",
+    "display_name": "Actuary Attests Product Rating",
+    "expression_language": "CEL/1.0",
+    "id": "actuary-attests-product-rating",
+    "version": "1.0"
+  },
+  "projections": [
+    {
+      "description": "Every Insurance Product Definition ingestion for this product and what became of it (R18's rate-program timeline): the coordinate, the jurisdiction, whether it was a Publish or a Sandbox run, the source workbook or circular, the shard count and the rate-program sub-manifest SAID that make a sealed program reconstructable, and - once sealed - its effective date, filing reference, and whether it is the live program or has been superseded. This is the one-click reconstruct view: the coordinate loads the frozen set through the sub-manifest. The parse index SAID is shown as provenance of the ingestion run, not as a commitment to content - it lists filenames, not shard SAIDs. Rows are keyed by `ipd_coordinate`, which is the one field all three source events supply, so every event routes before its handler runs (authoring spec section 6.8). Note on supersession: a seal carries the coordinate of the program it displaces, so the displaced row flips to superseded; the very first seal for a jurisdiction carries an empty reference, which matches no row and is a no-op (vectored below). The aggregate's programs list is authoritative.",
+      "display": {
+        "columns": [
+          {
+            "field": "ipd_coordinate",
+            "header": "Coordinate"
+          },
+          {
+            "field": "state",
+            "header": "State"
+          },
+          {
+            "field": "action",
+            "header": "Intent"
+          },
+          {
+            "field": "status",
+            "header": "Status"
+          },
+          {
+            "field": "shard_count",
+            "header": "Shards"
+          },
+          {
+            "field": "effective_date",
+            "header": "Effective"
+          },
+          {
+            "field": "filing_reference",
+            "header": "Filing"
+          },
+          {
+            "display_template": "{value|aid12}",
+            "field": "program_manifest_said",
+            "header": "Program manifest"
+          },
+          {
+            "display_template": "{value|aid12}",
+            "field": "index_said",
+            "header": "Parse index"
+          },
+          {
+            "field": "workbook_ref",
+            "header": "Source"
+          }
+        ],
+        "default_sort": {
+          "column": "ingested_at",
+          "direction": "desc"
+        },
+        "empty_state": "No rate content ingested yet.",
+        "view_type": "timeline"
+      },
+      "fold": {
+        "rate_program_sealed": [
+          {
+            "op": "update",
+            "set": {
+              "effective_date": "event.effective_date",
+              "filing_reference": "event.filing_reference",
+              "program_manifest_said": "event.program_manifest_said",
+              "sealed_at": "event.sealed_at",
+              "status": "'sealed'"
+            }
+          }
+        ],
+        "rate_program_superseded": [
+          {
+            "op": "update",
+            "set": {
+              "status": "'superseded'"
+            }
+          }
+        ],
+        "rate_workbook_ingested": [
+          {
+            "op": "upsert",
+            "set": {
+              "action": "event.action",
+              "effective_date": "''",
+              "filing_reference": "''",
+              "index_said": "event.index_said",
+              "ingested_at": "event.ingested_at",
+              "ipd_coordinate": "event.ipd_coordinate",
+              "program_manifest_said": "''",
+              "sealed_at": "''",
+              "shard_count": "size(event.shards)",
+              "state": "event.state",
+              "status": "'ingested'",
+              "workbook_ref": "event.workbook_ref"
+            }
+          }
+        ]
+      },
+      "id": "rate_program_timeline",
+      "name": "Rate Program Timeline",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "ipd_coordinate",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "type": "string"
+          },
+          "effective_date": {
+            "type": "string"
+          },
+          "filing_reference": {
+            "type": "string"
+          },
+          "index_said": {
+            "type": "string"
+          },
+          "ingested_at": {
+            "type": "string"
+          },
+          "ipd_coordinate": {
+            "type": "string"
+          },
+          "program_manifest_said": {
+            "type": "string"
+          },
+          "sealed_at": {
+            "type": "string"
+          },
+          "shard_count": {
+            "type": "number"
+          },
+          "state": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "workbook_ref": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "ipd_coordinate",
+          "state",
+          "action",
+          "status",
+          "shard_count",
+          "index_said",
+          "program_manifest_said",
+          "workbook_ref",
+          "ingested_at",
+          "sealed_at",
+          "effective_date",
+          "filing_reference"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "rate_workbook_ingested",
+        "rate_program_sealed",
+        "rate_program_superseded"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "action": "Sandbox",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv09SANDBOXxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-20T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/0.9",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv09xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 draft"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "general_liability/US-UT/0.9": {
+                "action": "Sandbox",
+                "effective_date": "",
+                "filing_reference": "",
+                "index_said": "EIpdIndexUTv09SANDBOXxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-20T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/0.9",
+                "program_manifest_said": "",
+                "sealed_at": "",
+                "shard_count": 1,
+                "state": "US-UT",
+                "status": "ingested",
+                "workbook_ref": "GL-UT-2027-LC-002 draft"
+              },
+              "general_liability/US-UT/1.0": {
+                "action": "Publish",
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "shard_count": 2,
+                "state": "US-UT",
+                "status": "sealed",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              }
+            }
+          },
+          "name": "a sandbox ingestion stays unsealed; the publish ingestion seals into the live program"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "ipd_coordinate": "",
+                "product_id": "usurance-gl-product-liability",
+                "rate_program_version": "",
+                "superseded_at": "2026-07-23T09:00:00Z"
+              },
+              "type": "rate_program_superseded"
+            },
+            {
+              "payload": {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv11PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-11-02T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.1",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv11xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2028-LC-004 (ISO circular adoption)"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "superseded_at": "2026-11-03T09:00:00Z"
+              },
+              "type": "rate_program_superseded"
+            },
+            {
+              "payload": {
+                "effective_date": "2027-01-01",
+                "filing_reference": "USUR-2026-GL-UT-004",
+                "index_said": "EIpdIndexUTv11PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.1",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv11xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.1",
+                "sealed_at": "2026-11-03T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "general_liability/US-UT/1.0": {
+                "action": "Publish",
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "shard_count": 2,
+                "state": "US-UT",
+                "status": "superseded",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "general_liability/US-UT/1.1": {
+                "action": "Publish",
+                "effective_date": "2027-01-01",
+                "filing_reference": "USUR-2026-GL-UT-004",
+                "index_said": "EIpdIndexUTv11PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-11-02T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.1",
+                "program_manifest_said": "ERateProgramManifestUTv11xxxxxxxxxxxxxxxxxxx",
+                "sealed_at": "2026-11-03T09:00:00Z",
+                "shard_count": 2,
+                "state": "US-UT",
+                "status": "sealed",
+                "workbook_ref": "GL-UT-2028-LC-004 (ISO circular adoption)"
+              }
+            }
+          },
+          "name": "every source event routes on ipd_coordinate: the first seal's empty supersession reference matches no row, the second's flips the displaced program"
+        }
+      ]
+    },
+    {
+      "description": "Every candidate this desk has seen and what the actuary did about it: the content pointer, the candidate's own status, the attestation issued against it, and the rate program version that attestation pins. This is the staleness read - an attestation whose candidate went superseded or rejected is still visible, still valid about the snapshot it names, and visibly not about the head. A bounced candidate keeps its finding on the row so the next round answers it.",
+      "display": {
+        "columns": [
+          {
+            "display_template": "{value|aid12}",
+            "field": "version_said",
+            "header": "Candidate"
+          },
+          {
+            "field": "product_version",
+            "header": "Version"
+          },
+          {
+            "field": "change_classification",
+            "header": "Classification"
+          },
+          {
+            "field": "candidate_status",
+            "header": "Candidate"
+          },
+          {
+            "field": "attestation_status",
+            "header": "Attestation"
+          },
+          {
+            "field": "rate_program_version",
+            "header": "Rate program"
+          },
+          {
+            "display_template": "{value|aid12}",
+            "field": "content_said",
+            "header": "Content"
+          },
+          {
+            "field": "bounce_finding",
+            "header": "Finding"
+          },
+          {
+            "display_template": "{value|date}",
+            "field": "attested_at",
+            "header": "Attested"
+          }
+        ],
+        "default_sort": {
+          "column": "observed_at",
+          "direction": "desc"
+        },
+        "empty_state": "No candidates observed yet.",
+        "view_type": "table"
+      },
+      "fold": {
+        "attestation_issued": [
+          {
+            "op": "update",
+            "set": {
+              "attestation_said": "event.attestation_said",
+              "attestation_status": "'issued'",
+              "attested_at": "event.attested_at",
+              "rate_program_version": "event.rate_program_version"
+            }
+          }
+        ],
+        "attestation_revoked": [
+          {
+            "op": "update",
+            "set": {
+              "attestation_status": "'revoked'"
+            }
+          }
+        ],
+        "attestation_superseded": [
+          {
+            "op": "update",
+            "set": {
+              "attestation_status": "'superseded'"
+            }
+          }
+        ],
+        "candidate_approved": [
+          {
+            "op": "update",
+            "set": {
+              "candidate_status": "'approved'"
+            }
+          }
+        ],
+        "candidate_bounced": [
+          {
+            "op": "update",
+            "set": {
+              "bounce_finding": "event.finding"
+            }
+          }
+        ],
+        "candidate_observed": [
+          {
+            "op": "upsert",
+            "set": {
+              "attestation_said": "''",
+              "attestation_status": "'none'",
+              "attested_at": "''",
+              "bounce_finding": "''",
+              "candidate_status": "'in_review'",
+              "change_classification": "event.change_classification",
+              "content_said": "event.content_said",
+              "observed_at": "event.observed_at",
+              "product_version": "event.product_version",
+              "rate_program_version": "''",
+              "version_said": "event.version_said"
+            }
+          }
+        ],
+        "candidate_published": [
+          {
+            "op": "update",
+            "set": {
+              "candidate_status": "'published'"
+            }
+          }
+        ],
+        "candidate_rejected": [
+          {
+            "op": "update",
+            "set": {
+              "candidate_status": "'rejected'"
+            }
+          }
+        ],
+        "candidate_superseded": [
+          {
+            "op": "update",
+            "set": {
+              "candidate_status": "'superseded'"
+            }
+          }
+        ]
+      },
+      "id": "attested_candidate_board",
+      "name": "Attested Candidate Board",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "version_said",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attestation_said": {
+            "type": "string"
+          },
+          "attestation_status": {
+            "type": "string"
+          },
+          "attested_at": {
+            "type": "string"
+          },
+          "bounce_finding": {
+            "type": "string"
+          },
+          "candidate_status": {
+            "type": "string"
+          },
+          "change_classification": {
+            "type": "string"
+          },
+          "content_said": {
+            "type": "string"
+          },
+          "observed_at": {
+            "type": "string"
+          },
+          "product_version": {
+            "type": "string"
+          },
+          "rate_program_version": {
+            "type": "string"
+          },
+          "version_said": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "version_said",
+          "product_version",
+          "content_said",
+          "change_classification",
+          "candidate_status",
+          "attestation_said",
+          "attestation_status",
+          "rate_program_version",
+          "attested_at",
+          "bounce_finding",
+          "observed_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "candidate_observed",
+        "candidate_approved",
+        "candidate_published",
+        "candidate_rejected",
+        "candidate_superseded",
+        "candidate_bounced",
+        "attestation_issued",
+        "attestation_revoked",
+        "attestation_superseded"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "change_classification": "initial",
+                "content_said": "EContentManifest1SAIDxxxxxxxxxxxxxxxxxxxxxxx",
+                "observed_at": "2026-07-25T12:30:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "product_version": "1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "candidate_observed"
+            },
+            {
+              "payload": {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "attested_at": "2026-07-26T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "attestation_issued"
+            },
+            {
+              "payload": {
+                "product_id": "usurance-gl-product-liability",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "candidate_superseded"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx": {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "attestation_status": "issued",
+                "attested_at": "2026-07-26T09:00:00Z",
+                "bounce_finding": "",
+                "candidate_status": "superseded",
+                "change_classification": "initial",
+                "content_said": "EContentManifest1SAIDxxxxxxxxxxxxxxxxxxxxxxx",
+                "observed_at": "2026-07-25T12:30:00Z",
+                "product_version": "1.0",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              }
+            }
+          },
+          "name": "an issued attestation stays visible when its candidate is superseded - staleness surfaced"
+        }
+      ]
+    },
+    {
+      "description": "The config-time seam guards made visible (R13 rule 4, R15 rule 5, R16 rule 5): every menu item the designer has asked the actuary about or the actuary has ruled on, with its verdict and the reason behind it. A row that is pending or unpriceable is a hole that blocks the seal for its jurisdiction and blocks every attestation on the desk - the twelve-policies-at-an-unfiled-limit failure moved forward from a back-end monitor to a gate nothing gets past. A withdrawn row stays visible and blocks nothing: the option was dropped, and the record of the question and how it closed is worth keeping. Threads the designer opened with another role, and general-scope threads, never reach this board - the same filter the aggregate applies, for the same reason.",
+      "display": {
+        "columns": [
+          {
+            "field": "option_ref",
+            "header": "Option"
+          },
+          {
+            "field": "scope",
+            "header": "Lock"
+          },
+          {
+            "field": "guard",
+            "header": "Guard"
+          },
+          {
+            "field": "state",
+            "header": "State"
+          },
+          {
+            "field": "verdict",
+            "header": "Verdict"
+          },
+          {
+            "field": "basis",
+            "header": "Basis"
+          },
+          {
+            "field": "thread_id",
+            "header": "Thread"
+          },
+          {
+            "display_template": "{value|date}",
+            "field": "reviewed_at",
+            "header": "Answered"
+          }
+        ],
+        "default_sort": {
+          "column": "verdict",
+          "direction": "asc"
+        },
+        "empty_state": "No priceability questions raised.",
+        "view_type": "table"
+      },
+      "fold": {
+        "priceability_question_opened": {
+          "expression": "event.counterparty_role != 'actuary' || event.scope == 'general' ? row : { \"option_ref\": event.option_ref, \"state\": event.state, \"scope\": event.scope, \"guard\": 'unassessed', \"verdict\": 'pending', \"basis\": event.subject, \"thread_id\": event.thread_id, \"reviewed_at\": '' }"
+        },
+        "priceability_reviewed": [
+          {
+            "op": "upsert",
+            "set": {
+              "basis": "event.basis",
+              "guard": "event.guard",
+              "option_ref": "event.option_ref",
+              "reviewed_at": "event.reviewed_at",
+              "scope": "event.scope",
+              "state": "event.state",
+              "thread_id": "event.thread_id",
+              "verdict": "event.verdict"
+            }
+          }
+        ]
+      },
+      "id": "priceability_seam_board",
+      "name": "Priceability Seam Board",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "option_ref",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "basis": {
+            "type": "string"
+          },
+          "guard": {
+            "type": "string"
+          },
+          "option_ref": {
+            "type": "string"
+          },
+          "reviewed_at": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "state": {
+            "type": "string"
+          },
+          "thread_id": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "option_ref",
+          "state",
+          "scope",
+          "guard",
+          "verdict",
+          "basis",
+          "thread_id",
+          "reviewed_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "priceability_question_opened",
+        "priceability_reviewed"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "counterparty_role": "actuary",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "subject": "5M occurrence option priceable?",
+                "thread_id": "T-1"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "basis": "no filed ILF row for 5M at hazard group D, prem/ops table v2027.1",
+                "guard": "ilf_row",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "product_id": "usurance-gl-product-liability",
+                "reviewed_at": "2026-07-21T10:00:00Z",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "thread_id": "T-1",
+                "verdict": "unpriceable"
+              },
+              "type": "priceability_reviewed"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "coverage_limits/each_occurrence/5000000": {
+                "basis": "no filed ILF row for 5M at hazard group D, prem/ops table v2027.1",
+                "guard": "ilf_row",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "reviewed_at": "2026-07-21T10:00:00Z",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "thread_id": "T-1",
+                "verdict": "unpriceable"
+              }
+            }
+          },
+          "name": "an unanswered question becomes an unpriceable verdict naming the missing ILF row"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "counterparty_role": "compliance_officer",
+                "option_ref": "eligibility_rules/prior_acts",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "general",
+                "state": "US-UT",
+                "subject": "does the prior-acts wording need a filing?",
+                "thread_id": "T-7"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "counterparty_role": "actuary",
+                "option_ref": "coverage_limits/each_occurrence/2000000",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "subject": "2M occurrence option priceable?",
+                "thread_id": "T-8"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "basis": "designer dropped the 2M option from the menu; nothing left to price",
+                "guard": "ilf_row",
+                "option_ref": "coverage_limits/each_occurrence/2000000",
+                "product_id": "usurance-gl-product-liability",
+                "reviewed_at": "2026-07-21T14:00:00Z",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "thread_id": "T-8",
+                "verdict": "withdrawn"
+              },
+              "type": "priceability_reviewed"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "coverage_limits/each_occurrence/2000000": {
+                "basis": "designer dropped the 2M option from the menu; nothing left to price",
+                "guard": "ilf_row",
+                "option_ref": "coverage_limits/each_occurrence/2000000",
+                "reviewed_at": "2026-07-21T14:00:00Z",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "thread_id": "T-8",
+                "verdict": "withdrawn"
+              }
+            }
+          },
+          "name": "a thread the designer opened with compliance never reaches this board; the actuary's own question closes as withdrawn when the option is dropped"
+        }
+      ]
+    },
+    {
+      "description": "The actuary's home screen for a product in progress: which jurisdictions have a sealed program, which menu items are still unanswered or unpriceable, and which frozen candidates are waiting on a decision. Held as lists rather than counters so the view is idempotent under replay - re-folding the same event cannot drift the numbers. Open options mirror the desk's own filter: only actuary-addressed seam threads land here, and a question closes whether it was answered priceable or withdrawn.",
+      "display": {
+        "empty_state": "No rate program open.",
+        "view_type": "summary"
+      },
+      "fold": {
+        "attestation_issued": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": state.open_options, \"awaiting_attestation\": state.awaiting_attestation.filter(v, v != event.version_said), \"live_program\": state.live_program }"
+        },
+        "candidate_bounced": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": state.open_options, \"awaiting_attestation\": state.awaiting_attestation.filter(v, v != event.version_said), \"live_program\": state.live_program }"
+        },
+        "candidate_observed": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": state.open_options, \"awaiting_attestation\": state.awaiting_attestation.filter(v, v != event.version_said) + [event.version_said], \"live_program\": state.live_program }"
+        },
+        "priceability_question_opened": {
+          "expression": "event.counterparty_role != 'actuary' || event.scope == 'general' ? state : { \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": state.open_options.filter(o, o != event.option_ref) + [event.option_ref], \"awaiting_attestation\": state.awaiting_attestation, \"live_program\": state.live_program }"
+        },
+        "priceability_reviewed": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": event.verdict == 'priceable' || event.verdict == 'withdrawn' ? state.open_options.filter(o, o != event.option_ref) : state.open_options.filter(o, o != event.option_ref) + [event.option_ref], \"awaiting_attestation\": state.awaiting_attestation, \"live_program\": state.live_program }"
+        },
+        "rate_program_opened": [
+          {
+            "op": "set",
+            "target": "product_id",
+            "value": "event.product_id"
+          },
+          {
+            "op": "set",
+            "target": "jurisdictions",
+            "value": "event.states"
+          }
+        ],
+        "rate_program_sealed": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates, \"sealed_jurisdictions\": state.sealed_jurisdictions.filter(s, s != event.state) + [event.state], \"open_options\": state.open_options, \"awaiting_attestation\": state.awaiting_attestation, \"live_program\": event.rate_program_version }"
+        },
+        "rate_workbook_ingested": {
+          "expression": "{ \"product_id\": state.product_id, \"jurisdictions\": state.jurisdictions, \"ingested_coordinates\": state.ingested_coordinates.filter(c, c != event.ipd_coordinate) + [event.ipd_coordinate], \"sealed_jurisdictions\": state.sealed_jurisdictions, \"open_options\": state.open_options, \"awaiting_attestation\": state.awaiting_attestation, \"live_program\": state.live_program }"
+        }
+      },
+      "id": "rating_desk_readiness",
+      "initial_state": {
+        "awaiting_attestation": [],
+        "ingested_coordinates": [],
+        "jurisdictions": [],
+        "live_program": "",
+        "open_options": [],
+        "product_id": "",
+        "sealed_jurisdictions": []
+      },
+      "name": "Rating Desk Readiness",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "shape": "object",
+      "source_events": [
+        "rate_program_opened",
+        "rate_workbook_ingested",
+        "rate_program_sealed",
+        "priceability_question_opened",
+        "priceability_reviewed",
+        "candidate_observed",
+        "attestation_issued",
+        "candidate_bounced"
+      ],
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "awaiting_attestation": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "ingested_coordinates": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "jurisdictions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "live_program": {
+            "type": "string"
+          },
+          "open_options": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "product_id": {
+            "type": "string"
+          },
+          "sealed_jurisdictions": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "product_id",
+          "jurisdictions",
+          "ingested_coordinates",
+          "sealed_jurisdictions",
+          "open_options",
+          "awaiting_attestation",
+          "live_program"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "action": "Publish",
+                "filing_date": "2026-08-01",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ingested_at": "2026-07-22T09:00:00Z",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "shards": [
+                  {
+                    "record_kind": "risk_value_table",
+                    "shard_name": "us-ut/risk_value_table/loss_costs",
+                    "shard_said": "EShardLossCostsUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  },
+                  {
+                    "record_kind": "calc_order",
+                    "shard_name": "us-ut/calc_order/premium_stack",
+                    "shard_said": "EShardCalcOrderUTv10xxxxxxxxxxxxxxxxxxxxxxxx"
+                  }
+                ],
+                "state": "US-UT",
+                "workbook_ref": "GL-UT-2027-LC-002 + RU-003"
+              },
+              "type": "rate_workbook_ingested"
+            },
+            {
+              "payload": {
+                "effective_date": "2026-09-01",
+                "filing_reference": "USUR-2026-GL-UT-001",
+                "index_said": "EIpdIndexUTv10PUBLISHxxxxxxxxxxxxxxxxxxxxxxx",
+                "ipd_coordinate": "general_liability/US-UT/1.0",
+                "product_id": "usurance-gl-product-liability",
+                "program_manifest_said": "ERateProgramManifestUTv10xxxxxxxxxxxxxxxxxxx",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "sealed_at": "2026-07-23T09:00:00Z",
+                "state": "US-UT"
+              },
+              "type": "rate_program_sealed"
+            },
+            {
+              "payload": {
+                "change_classification": "initial",
+                "content_said": "EContentManifest1SAIDxxxxxxxxxxxxxxxxxxxxxxx",
+                "observed_at": "2026-07-25T12:30:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "product_version": "1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "candidate_observed"
+            },
+            {
+              "payload": {
+                "attestation_said": "ERatingAttestation1SAIDxxxxxxxxxxxxxxxxxxxxx",
+                "attested_at": "2026-07-26T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "rate_program_version": "general_liability/US-UT/1.0",
+                "version_said": "EVersion1SAIDxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              },
+              "type": "attestation_issued"
+            }
+          ],
+          "expected": {
+            "awaiting_attestation": [],
+            "ingested_coordinates": [
+              "general_liability/US-UT/1.0"
+            ],
+            "jurisdictions": [
+              "US-UT"
+            ],
+            "live_program": "general_liability/US-UT/1.0",
+            "open_options": [],
+            "product_id": "usurance-gl-product-liability",
+            "sealed_jurisdictions": [
+              "US-UT"
+            ]
+          },
+          "name": "ingest, seal, observe a candidate and attest it: the desk reads ready and nothing is left waiting"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "counterparty_role": "compliance_officer",
+                "option_ref": "eligibility_rules/prior_acts",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "general",
+                "state": "US-UT",
+                "subject": "does the prior-acts wording need a filing?",
+                "thread_id": "T-7"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "counterparty_role": "actuary",
+                "option_ref": "forms_map/notice_bundle",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "general",
+                "state": "US-UT",
+                "subject": "any rating read on the notice bundle?",
+                "thread_id": "T-9"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "counterparty_role": "actuary",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "subject": "5M occurrence option priceable?",
+                "thread_id": "T-1"
+              },
+              "type": "priceability_question_opened"
+            }
+          ],
+          "expected": {
+            "awaiting_attestation": [],
+            "ingested_coordinates": [],
+            "jurisdictions": [
+              "US-UT"
+            ],
+            "live_program": "",
+            "open_options": [
+              "coverage_limits/each_occurrence/5000000"
+            ],
+            "product_id": "usurance-gl-product-liability",
+            "sealed_jurisdictions": []
+          },
+          "name": "only the threads addressed to the actuary open an option; a compliance thread and a general one do not"
+        },
+        {
+          "events": [
+            {
+              "payload": {
+                "line_of_business": "general_liability",
+                "opened_at": "2026-07-18T09:00:00Z",
+                "product_id": "usurance-gl-product-liability",
+                "states": [
+                  "US-UT"
+                ]
+              },
+              "type": "rate_program_opened"
+            },
+            {
+              "payload": {
+                "counterparty_role": "actuary",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "product_id": "usurance-gl-product-liability",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "subject": "5M occurrence option priceable?",
+                "thread_id": "T-1"
+              },
+              "type": "priceability_question_opened"
+            },
+            {
+              "payload": {
+                "basis": "designer dropped the 5M option from the menu; nothing left to price",
+                "guard": "ilf_row",
+                "option_ref": "coverage_limits/each_occurrence/5000000",
+                "product_id": "usurance-gl-product-liability",
+                "reviewed_at": "2026-07-21T14:00:00Z",
+                "scope": "limit_menu",
+                "state": "US-UT",
+                "thread_id": "T-1",
+                "verdict": "withdrawn"
+              },
+              "type": "priceability_reviewed"
+            }
+          ],
+          "expected": {
+            "awaiting_attestation": [],
+            "ingested_coordinates": [],
+            "jurisdictions": [
+              "US-UT"
+            ],
+            "live_program": "",
+            "open_options": [],
+            "product_id": "usurance-gl-product-liability",
+            "sealed_jurisdictions": []
+          },
+          "name": "a withdrawn verdict closes an open option, so dropping the option never needs a false priceable"
+        }
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When the product designer grants a frozen product-version candidate, admit it and put it on the candidate board with its content pointer and change classification. This is the arrival that starts the attest decision: the candidate is immutable from birth, so what is on the board is exactly what will be attested or bounced. Counterparty legitimacy is expected_issuer_role product_designer plus runtime verification that the issuer AID holds the corresponding role credential.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": null,
+            "imported_credential_id": "product_definition_version",
+            "kind": "credential",
+            "schema_said_referenced": "EA-PmA7eT80wdyl2uJvqDEElHrW1IilabnSzjWysw2x4",
+            "verb": "admit"
+          },
+          "kind": "exchange"
+        },
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_observed",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.credential.attributes.product_id, \"version_said\": event.credential.said, \"product_version\": event.credential.attributes.product_version, \"content_said\": event.credential.attributes.content_said, \"change_classification\": event.credential.attributes.change_classification, \"observed_at\": event.datetime }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_spurn",
+        "timeout_seconds": 60
+      },
+      "id": "on_candidate_frozen",
+      "trigger": {
+        "imported_credential_id": "product_definition_version",
+        "ipex_verb": "grant",
+        "type": "credential_received"
+      }
+    },
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When a candidate the desk attested advances to approved, record it. The attestation held: the designer's gate found it active against this exact candidate.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_approved",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.credential.attributes.product_id, \"version_said\": event.credential.said }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_candidate_approved",
+      "trigger": {
+        "imported_credential_id": "product_definition_version",
+        "to_state": "approved",
+        "type": "lifecycle_event"
+      }
+    },
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When a candidate advances to published, record it. From here the rate program named in the attestation is the one new business will be priced on once each state clears and activates, so this is the row that matters when a premium has to be reconstructed two years later.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_published",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.credential.attributes.product_id, \"version_said\": event.credential.said }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_candidate_published",
+      "trigger": {
+        "imported_credential_id": "product_definition_version",
+        "to_state": "published",
+        "type": "lifecycle_event"
+      }
+    },
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When a candidate is rejected, record it. A rejected candidate is never edited - the fix arrives as a successor - so any attestation issued against this one is now attached to a dead snapshot and shows as such on the board.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_rejected",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.credential.attributes.product_id, \"version_said\": event.credential.said }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_candidate_rejected",
+      "trigger": {
+        "imported_credential_id": "product_definition_version",
+        "to_state": "rejected",
+        "type": "lifecycle_event"
+      }
+    },
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When a candidate is superseded, record it. This is content-addressed staleness surfaced on the actuary's own board: the attestation is still valid about the snapshot it names, and that snapshot is no longer the head - the successor needs its own attestation.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "candidate_superseded",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.credential.attributes.product_id, \"version_said\": event.credential.said }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_candidate_superseded",
+      "trigger": {
+        "imported_credential_id": "product_definition_version",
+        "to_state": "superseded",
+        "type": "lifecycle_event"
+      }
+    },
+    {
+      "authz": {
+        "method": "open"
+      },
+      "description": "When the product designer opens a negotiation thread pinned to a specific artifact - a limit option the actuary has to price, an endorsement, a class - record it as an open, unanswered priceability question in the jurisdiction the thread names. An unanswered question blocks the seal and the attestation by rule, so the loop cannot be lost in an inbox (R91 lock point 1, R92). **The desk records only the threads addressed to it.** The designer's thread note is one route for all five counterparty roles and a reaction trigger carries no predicate (authoring spec section 6.6 - trigger matches on route and schema, nothing else), so the guard lives one step later, in the fold: a thread whose `counterparty_role` is not `actuary`, or whose scope is `general` rather than one of the three seam locks, leaves the desk's state untouched. Without that filter a thread the designer opens with compliance would write a pending verdict that blocks this desk's seal in every jurisdiction and blocks the attestation outright, on a question that is not the actuary's to answer.",
+      "emissions": [
+        {
+          "aggregate_id": "rating_desk",
+          "event_type": "priceability_question_opened",
+          "kind": "aggregate_event",
+          "payload_mapping": "{ \"product_id\": event.payload.product_id, \"option_ref\": event.payload.pinned_to, \"state\": event.payload.state, \"scope\": event.payload.scope, \"counterparty_role\": event.payload.counterparty_role, \"subject\": event.payload.subject, \"thread_id\": event.payload.thread_id }"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue",
+        "timeout_seconds": 60
+      },
+      "id": "on_priceability_question",
+      "trigger": {
+        "route": "/usurance/note/negotiation_thread",
+        "type": "exn_received"
+      }
+    }
+  ],
+  "role": {
+    "description": "The owner of the rate program: loss costs and the loss-cost multiplier that turn them into rates, increased-limit factors, the experience and schedule rating plans, endorsement rating methods, minimum premiums, taxes and fees, and the filed order the whole stack is computed in. Never the product structure (the designer's), never the filing (the filing specialist's), never the underwriter's judgment on an individual account. Owns whether a premium can be reconstructed, factor by factor, from the exact filed version set that produced it.",
+    "display_name": "Actuarial",
+    "id": "actuary",
+    "keri_infrastructure": {
+      "acdc_registry": true,
+      "mailbox": true,
+      "watcher_network": false,
+      "witness_pool": false
+    },
+    "kind": "individual"
+  },
+  "rules": [
+    {
+      "description": "Gates attest_rating across the whole desk: no menu item anywhere is still pending or unpriceable. Sealing checks one jurisdiction; attesting a candidate signs for the product, so it checks all of them. A withdrawn question is closed, not answered - the designer dropped the option, so there is nothing left to price and nothing left to block.",
+      "expression": "size(state.priceability.filter(o, o.verdict != 'priceable' && o.verdict != 'withdrawn')) == 0",
+      "id": "all_options_priceable",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "Every menu item on the desk is priceable",
+      "type": "predicate"
+    },
+    {
+      "description": "The Rating Attestation Covenant is articulated formally by the three facts the attest gate holds together - the candidate is frozen and in review, a coordination-clean sealed program covers every jurisdiction, and nothing on the menu is unpriceable - and by the one fact it cannot hold, which is stated rather than assumed.",
+      "id": "attestation_covenant_articulation",
+      "links": [
+        {
+          "rule_id": "rating_attestation_covenant"
+        },
+        {
+          "rule_id": "candidate_in_review"
+        },
+        {
+          "rule_id": "rate_program_current_for_candidate"
+        },
+        {
+          "rule_id": "all_options_priceable"
+        },
+        {
+          "rule_id": "manifest_binding_residual_gap"
+        }
+      ],
+      "title": "Attestation covenant articulation",
+      "type": "binding_link"
+    },
+    {
+      "description": "Gates revoke_attestation and supersede_attestation: the named attestation is on record and still issued. A revoked or already-superseded attestation has no further transitions.",
+      "expression": "state.attestations.exists(a, a.attestation_said == command.attestation_said && a.status == 'issued')",
+      "id": "attestation_is_issued",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The attestation is currently issued",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: every attestation's rate program version resolves to a program on record. Programs are superseded, never deleted, so this holds for the life of the attestation - which is what makes penny reconstruction possible years later.",
+      "expression": "state.attestations.all(a, state.programs.exists(p, p.rate_program_version == a.rate_program_version))",
+      "id": "attestation_pins_recorded_program",
+      "language": "CEL/1.0",
+      "title": "Attestations pin a rate program on record",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant: every attestation is about a candidate the desk actually observed. An attestation naming a candidate that never arrived is a sign-off on something unverifiable.",
+      "expression": "state.attestations.all(a, state.candidates.exists(c, c.version_said == a.version_said))",
+      "id": "attestation_targets_observed_candidate",
+      "language": "CEL/1.0",
+      "title": "Attestations target observed candidates",
+      "type": "validation"
+    },
+    {
+      "description": "Workflow branch: a frozen candidate arrives while a menu item is still pending or unpriceable, so the flow routes to the bounce rather than the attestation. This is the seam guard deciding the path, not the actuary remembering to check.",
+      "expression": "size(state.priceability.filter(o, o.verdict != 'priceable' && o.verdict != 'withdrawn')) > 0",
+      "id": "candidate_blocked_by_seam",
+      "language": "CEL/1.0",
+      "purpose": "workflow_branch_condition",
+      "title": "A seam guard blocks this candidate",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates attest_rating and bounce_candidate: the named candidate is on the board and still in review. Sign-offs precede approval, so a candidate that has already advanced is no longer an attest target - the successor is.",
+      "expression": "state.candidates.exists(c, c.version_said == command.version_said && c.status == 'in_review')",
+      "id": "candidate_in_review",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The candidate is frozen and in review",
+      "type": "predicate"
+    },
+    {
+      "body": "The limit menu and the endorsement catalog are settled with the product designer as a negotiation that converges, not a handoff that arrives (R91 lock point 1). The designer proposes an option, the actuary answers whether there is a filed factor behind it, the menu adjusts, and the lock settles when both agree. Answering 'unpriceable' is a first-class outcome that names the missing row, not a refusal: an option with no increased-limit factor, an endorsement with no filed rating method, or a rated class with no filed minimum is a hole that must close before the candidate freezes, because after it freezes the only remedy is a new candidate. A hole closes two ways and both are recorded honestly: the content arrives and the verdict becomes 'priceable', or the designer drops the option and the verdict becomes 'withdrawn'. Withdrawal is the ordinary outcome of a converging negotiation, and it has its own verdict precisely so that closing a question never requires asserting a filed factor that does not exist - for a role whose standard is that every premium survives a DOI audit, a false 'priceable' is worse than an open question.",
+      "id": "converge_then_lock_priceability",
+      "title": "Priceability is answered in the loop, before the freeze (R91/R13/R15/R16)",
+      "type": "behavioral_expectation"
+    },
+    {
+      "body": "A premium is built from a coordinated set - loss costs, the loss-cost multiplier, increased-limit factors, the schedule and experience plans, minimum premiums, taxes and fees, and the filed calculation order - that were filed together and must therefore be pinned together as one rate program version with one effective date (R18). Mixing components across versions produces a rate that appears in no filing. The program is sealed and attested as a whole set, never table by table: the seal covers exactly the jurisdiction's slots holding the coordinate being sealed plus the hand-staged shards that belong to no ingestion, and it records that set as (shard name, shard SAID) pairs and commits to it with the rate-program sub-manifest SAID. Restage any one shard and the recorded set is no longer the live set, so the coordination guard refuses to attest against it until the program is resealed.",
+      "id": "coordinated_rate_program_policy",
+      "title": "The rate program is coordinated, never mixed (R18)",
+      "type": "business_policy"
+    },
+    {
+      "description": "The coordinated-program policy and the sandbox eligibility gate are enforced by the seal gate: only a Publish ingestion with complete record kinds for the coordinate being sealed can seal, the seal covers that coordinate's lane and commits to it with a sub-manifest SAID, the shard-set equality check refuses a mixture afterwards, and a coordinate can be sealed only once.",
+      "id": "coordination_guard_articulation",
+      "links": [
+        {
+          "rule_id": "coordinated_rate_program_policy"
+        },
+        {
+          "rule_id": "sandbox_never_attested"
+        },
+        {
+          "rule_id": "ingestion_is_publishable"
+        },
+        {
+          "rule_id": "ipd_record_kinds_complete"
+        },
+        {
+          "rule_id": "rate_program_current_for_candidate"
+        },
+        {
+          "rule_id": "unique_rate_program_version"
+        },
+        {
+          "rule_id": "rate_program_submanifest_contract"
+        }
+      ],
+      "title": "Coordination guard articulation",
+      "type": "binding_link"
+    },
+    {
+      "body": "A rate error in a sealed program is never edited. The correction is a new Insurance Product Definition ingestion at a new coordinate, sealed as a new rate program version with its own effective date; the erroneous program stays on record, unaltered, because policies were bound on it and what they were charged must remain reconstructable (R18 rule 5). Where an attestation was already issued against the erroneous program, it is revoked - which every downstream gate re-checks and fails - and the remediation path for already-bound policies is a compliance and filing decision, not an actuarial one.",
+      "id": "forward_only_rate_correction",
+      "title": "Corrections are forward-only (R18 rule 5)",
+      "type": "business_policy"
+    },
+    {
+      "description": "Gates seal_rate_program: the named coordinate was ingested for this jurisdiction with the Publish action. A Sandbox ingestion is purgeable validation content and can never become a rate program, so it can never reach an attestation or a quote.",
+      "expression": "state.ingestions.exists(i, i.ipd_coordinate == command.ipd_coordinate && i.state == command.state && i.action == 'Publish')",
+      "id": "ingestion_is_publishable",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The ingestion being sealed is a Publish run",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates seal_rate_program: the shards this seal will actually cover - the coordinate being sealed, plus the hand-staged shards that belong to no ingestion - span the Insurance Product Definition record kinds a premium cannot be computed without: the coverages the premium is built per, the attribute value-domains the inputs are drawn from, the risk-value tables carrying the rates and factors, and the calculation order that fixes the filed sequence. Scoped to the coordinate on purpose: content left in a slot by some other ingestion is not part of this program and must not satisfy its completeness check. Lookup, logical, and default records are optional; a product may have no derivations.",
+      "expression": "['coverage', 'metadata', 'risk_value_table', 'calc_order'].all(k, state.shards.exists(s, s.state == command.state && (s.ipd_coordinate == command.ipd_coordinate || s.ipd_coordinate == '') && s.record_kind == k))",
+      "id": "ipd_record_kinds_complete",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The jurisdiction's rate content is complete",
+      "type": "predicate"
+    },
+    {
+      "body": "The Insurance Product Definition coordinate is per jurisdiction - (lineOfBusiness, jurisdiction, version) - while a product is a multi-state container, and this credential carries a single informative `rate_program_version` string. That looked like a contract question about the credential's attributes; it is not. Exchange-model spec section 5.2 already answers it: the product is identified by `product_id` + `product_version`, and per-jurisdiction Insurance Product Definition output lands as jurisdiction-scoped shards inside the one manifest. The normative rate content is the rate-program sub-manifest each seal commits to, which carries its own jurisdiction and coordinate; a multi-jurisdiction candidate's manifest pins one sub-manifest per jurisdiction, each one loading its own frozen set. So the label on the credential stays what the schema calls it - informative - and the attest gate keeps doing the load-bearing work: it requires a sealed, coordination-clean program for **every** jurisdiction on the desk, so a multi-state candidate can never be attested off one state's program. No schema re-mint and no spec amendment are needed; what must not happen is elevating the label back to load-bearing.",
+      "id": "multi_state_program_label_policy",
+      "title": "The per-jurisdiction coordinates live in the sub-manifest, not in the label (R18 / Gate-2 flag 2)",
+      "type": "business_policy"
+    },
+    {
+      "description": "Gates attest_rating: this candidate has no attestation still in the issued state. Re-attesting a candidate already signed is either a duplicate or a silent replacement of a sign-off downstream gates are already relying on; the correct move is to revoke the first one deliberately.",
+      "expression": "!state.attestations.exists(a, a.version_said == command.version_said && a.status == 'issued')",
+      "id": "no_live_attestation_for_candidate",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The candidate has no live attestation",
+      "type": "predicate"
+    },
+    {
+      "body": "Every attestation names the exact rate program version its premium reconstruction runs against. Loading that frozen program - the rate-program sub-manifest the seal committed to, and through it every shard SAID it covers - and re-running the calculation must foot to the final premium to the cent (AC-R1). This is why the sub-manifest SAID is recorded on the seal and travels to the candidate's product-content manifest: a program whose component set cannot be enumerated cannot be reconstructed, and a premium that cannot be reconstructed cannot survive a rate exam. The parse index SAID recorded alongside it is provenance for the ingestion run, not the commitment - it lists filenames, not shard SAIDs.",
+      "id": "penny_reconstruction_policy",
+      "title": "Every premium reconstructs to the penny (AC-R1 / R12 rule 2)",
+      "type": "business_policy"
+    },
+    {
+      "description": "The coordination guard, and the heart of the attest gate (R18). Every jurisdiction on the desk has a sealed program whose recorded shard set is still exactly the live content of its lane - every sealed (name, SAID) pair still occupies its slot, and every slot in that program's lane (its own coordinate, plus hand-staged content) is in the sealed set. Restage a shard, re-ingest over one of the program's slots, or hand-stage new rate content the program does not cover, and the equality breaks: nothing can be attested against a mixture that appears in no filing until the program is resealed. Scoped by lane rather than by jurisdiction alone so that content left over from a different coordinate - a superseded parse run, a sandbox preview - neither counts toward the program nor blocks it forever. The named rate_program_version must itself be one of those sealed programs, so the label on the credential resolves to a real frozen set.",
+      "expression": "state.states.all(s, state.programs.exists(p, p.state == s && p.status == 'sealed' && p.shard_set.all(cs, state.shards.exists(c, c.state == p.state && c.shard_name == cs.shard_name && c.shard_said == cs.shard_said)) && state.shards.filter(c, c.state == p.state && (c.ipd_coordinate == p.ipd_coordinate || c.ipd_coordinate == '')).all(c, p.shard_set.exists(cs, cs.shard_name == c.shard_name && cs.shard_said == c.shard_said)))) && state.programs.exists(p, p.rate_program_version == command.rate_program_version && p.status == 'sealed')",
+      "id": "rate_program_current_for_candidate",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "A sealed, coordination-clean rate program covers every jurisdiction",
+      "type": "predicate"
+    },
+    {
+      "body": "The Actuary attests that, for the exact product-version candidate named by this credential's version edge, the rating content pinned in that candidate's product-content manifest is actuarially sound, is the content that was filed or is being filed, and yields a premium that can be reconstructed factor by factor - base premium, increased-limit factor, experience and schedule modifications, endorsement premiums, minimum-premium floor, taxes and fees - from the single coordinated rate program version named in the attributes, footing to the cent. The attestation is about one candidate and one coordinated program; it makes no claim about any other candidate, any other program version, or any mixture of component versions across programs.",
+      "id": "rating_attestation_covenant",
+      "title": "Rating Attestation Covenant",
+      "type": "legal_prose"
+    },
+    {
+      "body": "No rate value ever travels inside this credential. Loss costs, the loss-cost multiplier, increased-limit tables, schedule and experience plans, minimum premiums, taxes and fees, and the calculation step tree are Insurance Product Definition shards - SAID-addressed JSON, retrieved out of band and verified by re-derivation - reached through the attested candidate's product-content manifest and, inside it, the rate-program sub-manifest for each jurisdiction. The credential carries the coordinate and the rate_program_version label only. This is what makes staleness free: a changed rate is a new shard SAID, a new sub-manifest, a new candidate manifest, a new candidate, and an attestation that visibly does not point at it.",
+      "id": "rating_content_plane_policy",
+      "title": "Rate content is SAID-referenced ipd shards, never credential payload",
+      "type": "business_policy"
+    },
+    {
+      "body": "Every rate value is traceable to the source it came from: the ingested workbook or ISO circular reference recorded on the ingestion, the parse report shard the ingestion emitted, and the Insurance Product Definition coordinate that carries the filing date. Numbers are imported as versioned data, never re-keyed - a transcribed rate table is a defect waiting for a rate exam. Where a shard kind the parser does not cover has to be hand-authored, its source reference is mandatory and the same discipline applies: the value must be provable against the filed manual.",
+      "id": "rating_source_tracing",
+      "title": "Rates are imported and sourced, never transcribed (R93 / R98)",
+      "type": "behavioral_expectation"
+    },
+    {
+      "description": "Penny reconstruction and forward-only correction rest on two invariants and one commitment: an attestation always pins a program still on record, a program label is never reused, and each sealed program commits to its shard set through a sub-manifest SAID - so loading the coordinate named on any attestation yields exactly one frozen, enumerable set.",
+      "id": "reconstruction_articulation",
+      "links": [
+        {
+          "rule_id": "penny_reconstruction_policy"
+        },
+        {
+          "rule_id": "forward_only_rate_correction"
+        },
+        {
+          "rule_id": "attestation_pins_recorded_program"
+        },
+        {
+          "rule_id": "unique_rate_program_version"
+        },
+        {
+          "rule_id": "rate_program_submanifest_contract"
+        }
+      ],
+      "title": "Reconstruction articulation",
+      "type": "binding_link"
+    },
+    {
+      "body": "A Sandbox ingestion is for validating a proposed rate program against sample risks before it goes anywhere near a quote (the launch fallback for the rate-impact preview, Gate-2 flag 5). It cannot be sealed, and therefore cannot be attested: `ingestion_is_publishable` admits only a Publish ingestion, and the seal covers only the coordinate being sealed, so Sandbox shards staged at some other coordinate are never swept into a live program. State plainly what that is and is not. It is a **retention and eligibility** gate: the Insurance Product Definition contract makes Publish permanent and undeletable while Sandbox may be deleted or auto-purged (immutability is not undeletability), so only Publish content is durable enough to reconstruct a premium years later, and only Publish content can become a rate program version. It is **not** test-vs-live isolation: sandbox and live ingestions share this desk and its shard slots, so previewing a proposed program does overwrite the slots it re-emits and does break the coordination guard until the live coordinate is re-ingested or the successor is sealed. Real test-vs-live isolation (R96 / OOC-4 / AC-K5) is infrastructure, deferred by exchange-model spec section 9 and dispositioned out of scope by the product-designer bundle - this template must not claim to deliver it.",
+      "id": "sandbox_never_attested",
+      "title": "Sandbox ingestions cannot seal - an eligibility gate, not isolation (R96 deferred)",
+      "type": "business_policy"
+    },
+    {
+      "description": "Aggregate invariant: at most one issued attestation per candidate. Superseded and revoked attestations stay on record; only one can be the live sign-off.",
+      "expression": "state.attestations.all(a, size(state.attestations.filter(o, o.version_said == a.version_said && o.status == 'issued')) <= 1)",
+      "id": "single_issued_attestation_per_candidate",
+      "language": "CEL/1.0",
+      "title": "One live attestation per candidate",
+      "type": "validation"
+    },
+    {
+      "description": "Gates seal_rate_program: nothing in this jurisdiction's scope is still unanswered or unpriceable. A product-wide question - one the designer raised with no jurisdiction attached - blocks every jurisdiction's seal, because an option no one can price anywhere cannot be filed anywhere. Withdrawn questions are closed and do not block.",
+      "expression": "size(state.priceability.filter(o, o.verdict != 'priceable' && o.verdict != 'withdrawn' && (o.state == command.state || o.state == ''))) == 0",
+      "id": "state_priceability_clear",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "No open or unpriceable option in this jurisdiction",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates supersede_attestation: the named successor attestation is on record, still issued, and about a different candidate. The command-bound sibling of the lifecycle transition's own requirement.",
+      "expression": "state.attestations.exists(a, a.attestation_said == command.superseded_by_said && a.status == 'issued' && a.version_said != command.version_said)",
+      "id": "successor_attestation_on_record",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "A successor attestation is on record",
+      "type": "predicate"
+    },
+    {
+      "description": "Gates the supersede lifecycle transition: a different attestation, still issued and about a different candidate, has taken over the sign-off. Bound to {credential, state} - the transitioning credential and the desk - so it reads the successor off the register rather than off a command payload. Without it an attestation could be quietly retired leaving the product with no live rating sign-off at all.",
+      "expression": "state.attestations.exists(prior, prior.attestation_said == credential.said && state.attestations.exists(succ, succ.status == 'issued' && succ.attestation_said != credential.said && succ.version_said != prior.version_said))",
+      "id": "successor_attestation_recorded",
+      "language": "CEL/1.0",
+      "purpose": "lifecycle_transition_requires",
+      "title": "A successor attestation carries the sign-off",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: an Insurance Product Definition coordinate is sealed at most once. Corrections are forward - a new coordinate - never a re-seal under the same label, which would make a reconstructed premium ambiguous.",
+      "expression": "state.programs.all(p, size(state.programs.filter(o, o.rate_program_version == p.rate_program_version)) == 1)",
+      "id": "unique_rate_program_version",
+      "language": "CEL/1.0",
+      "title": "A rate program version is sealed once",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant: one shard per jurisdiction and name - (state, shard_name) is the single key of this collection. Every writer replaces into the slot rather than adding beside it: an ingestion takes over each slot it emits (and clears any leftover from its own coordinate), and `stage_rate_shard` replaces the slot it names. What is left for this invariant to catch is the malformed write - one ingestion emitting the same shard name twice for a jurisdiction, which would make the slot's occupant ambiguous and the next seal's shard set unreconstructable. The coordinate on a shard row is provenance, not key: it records which ingestion (or, empty, which hand-authored staging) put that content in the slot, and it is what the seal filters on.",
+      "expression": "state.shards.all(s, size(state.shards.filter(o, o.state == s.state && o.shard_name == s.shard_name)) == 1)",
+      "id": "unique_shard_per_state_slot",
+      "language": "CEL/1.0",
+      "title": "One shard per jurisdiction and name",
+      "type": "validation"
+    },
+    {
+      "body": "What a seal commits to is a **rate-program sub-manifest**: a SAID-self-identifying JSON document naming the product, the jurisdiction, the Insurance Product Definition coordinate, the effective date, and a shard map of every sealed shard name to its shard SAID - the same open-shard-map shape as the product-content manifest (exchange-model spec section 5.1), one level down. That SAID is what travels to the product designer and what the candidate's product-content manifest pins as this jurisdiction's rate content. It is deliberately **not** the parser's `index.json` SAID: `emit.py` writes that index as a list of *filenames* (spec section 5.2 says so outright), so it does not change when a rate table's contents change, and pinning it would mean a rate could be edited with no change to the manifest, none to `content_said`, and an attestation that still looks current. The index SAID is kept as provenance of the parse run and nothing more. The desk records its own copy of the sealed (name, SAID) pairs in `shard_set`, so what the sub-manifest must contain is reconstructable from the log; that the SAID resolves to exactly that map is verified out of band by re-derivation, the same discipline every other SAID in the content plane is held to.",
+      "id": "rate_program_submanifest_contract",
+      "title": "The seal commits to a rate-program sub-manifest, not to the parse index (spec section 5)",
+      "type": "business_policy"
+    },
+    {
+      "body": "Before attesting, the actuary verifies that the frozen candidate's product-content manifest - fetched by its `content_said` - pins, for every jurisdiction on the desk, the rate-program sub-manifest SAID this desk sealed. **The template cannot enforce this and does not claim to.** A manifest travels as a SAID; its shard map never reaches this aggregate, so no CEL precondition can read it. What the attest gate does enforce is everything on this side of the seam: the candidate is frozen and in review, every jurisdiction has a sealed program whose recorded shard set is still the live set, nothing on the menu is unanswered or unpriceable, and no live attestation already exists. What it cannot enforce is that the designer actually staged this program's sub-manifest SAID into the manifest she froze. That is a real residual gap, registered as finding 12 of backlog/2026-07-25-ipc-corpus-cross-template-reconciliation.md, and it is stated here rather than papered over: the reaction that carries the sealed program to the designer is fire-and-forget, and closing it needs either the manifest's shard map on the freeze notification or a designer-side precondition, neither of which exists yet. Until then the check is a human duty with a named owner, not a guarantee the covenant may lean on.",
+      "id": "manifest_binding_residual_gap",
+      "title": "Verify out of band that the candidate's manifest pins the program you sealed",
+      "type": "behavioral_expectation"
+    }
+  ],
+  "spec_version": "micro-app-template/0.1",
+  "workflows": [
+    {
+      "description": "The actuary's half of building a product's first rate program (exchange spec section 4.3 steps 2-4). Work starts on day one in parallel with the designer, not after her: open the desk, ingest the rating workbook through the parser, answer the limit-menu and endorsement questions as they arrive, seal the coordinated program, and then - when the designer freezes the candidate - either attest it or bounce it with a named finding. The branch is the seam guard: an unpriceable or unanswered menu item routes to the bounce, because a candidate carrying an option no one can price must not be signed.",
+      "id": "build_and_attest_product_rating",
+      "name": "Build and Attest Product Rating",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "open_rate_program",
+          "id": "step_open_desk",
+          "name": "Open the rating desk",
+          "next_steps": [
+            "step_ingest"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "ingest_rate_workbook",
+          "id": "step_ingest",
+          "name": "Ingest the rating workbook",
+          "next_steps": [
+            "step_converge"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "record_priceability_review",
+          "id": "step_converge",
+          "name": "Answer the designer's priceability questions",
+          "next_steps": [
+            "step_seal"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "seal_rate_program",
+          "id": "step_seal",
+          "name": "Seal the coordinated rate program",
+          "next_steps": [
+            "step_await_candidate"
+          ]
+        },
+        {
+          "actor": "counterparty",
+          "expected_inbound": [
+            {
+              "imported_credential_id": "product_definition_version",
+              "ipex_verb": "grant",
+              "on_match": "next_step:step_attest",
+              "trigger_type": "credential_received"
+            }
+          ],
+          "id": "step_await_candidate",
+          "name": "Await the frozen candidate",
+          "time_bound": {
+            "duration": "P30D",
+            "on_expiry": "next_step:step_candidate_stalled"
+          }
+        },
+        {
+          "actor": "self",
+          "branches": [
+            {
+              "next_step": "step_bounce",
+              "rule_ref": "candidate_blocked_by_seam"
+            }
+          ],
+          "command_id": "attest_rating",
+          "id": "step_attest",
+          "name": "Attest the candidate's rating",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "command_id": "bounce_candidate",
+          "id": "step_bounce",
+          "name": "Bounce the candidate with the blocking finding",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "id": "step_candidate_stalled",
+          "name": "No candidate frozen - chase on the negotiation thread",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "actuary",
+        "type": "manual"
+      }
+    },
+    {
+      "description": "The reactive mode from the actuary's seat (R94 from the rating side, R18 forward-only): a circular lands, or a rate correction is needed. Validate it first as a Sandbox ingestion against sample risks - the launch fallback for the rate-impact preview - then re-ingest as Publish at a new coordinate, reseal (which supersedes the prior program, never edits it), and attest the successor candidate when the designer freezes it. The prior attestation is then superseded, keeping the record of what governed the policies bound under it.",
+      "id": "change_rate_program",
+      "name": "Change Rate Program",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "ingest_rate_workbook",
+          "id": "step_sandbox_check",
+          "name": "Validate the proposed program as a Sandbox ingestion",
+          "next_steps": [
+            "step_publish_ingest"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "ingest_rate_workbook",
+          "id": "step_publish_ingest",
+          "name": "Re-ingest as Publish at the new coordinate",
+          "next_steps": [
+            "step_reseal"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "seal_rate_program",
+          "id": "step_reseal",
+          "name": "Seal the successor rate program",
+          "next_steps": [
+            "step_await_successor"
+          ]
+        },
+        {
+          "actor": "counterparty",
+          "expected_inbound": [
+            {
+              "imported_credential_id": "product_definition_version",
+              "ipex_verb": "grant",
+              "on_match": "next_step:step_attest_successor",
+              "trigger_type": "credential_received"
+            }
+          ],
+          "id": "step_await_successor",
+          "name": "Await the successor candidate",
+          "time_bound": {
+            "duration": "P30D",
+            "on_expiry": "next_step:step_change_stalled"
+          }
+        },
+        {
+          "actor": "self",
+          "command_id": "attest_rating",
+          "id": "step_attest_successor",
+          "name": "Attest the successor candidate",
+          "next_steps": [
+            "step_supersede_prior"
+          ]
+        },
+        {
+          "actor": "self",
+          "command_id": "supersede_attestation",
+          "id": "step_supersede_prior",
+          "name": "Supersede the prior attestation",
+          "next_steps": []
+        },
+        {
+          "actor": "self",
+          "id": "step_change_stalled",
+          "name": "No successor candidate - chase on the negotiation thread",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "actuary",
+        "type": "manual"
+      }
+    },
+    {
+      "description": "Withdraw a live attestation when a rate error surfaces after signing (R18 rule 5). The withdrawal is the mechanism, not the remedy: it fails the designer's approve and publish gates at their next firing, and the actual fix travels the change_rate_program path. Remediation for policies already bound on the bad rate is a filing and compliance decision outside this template.",
+      "id": "withdraw_rating_attestation",
+      "name": "Withdraw Rating Attestation",
+      "steps": [
+        {
+          "actor": "self",
+          "command_id": "revoke_attestation",
+          "id": "step_revoke",
+          "name": "Revoke the attestation",
+          "next_steps": []
+        }
+      ],
+      "trigger": {
+        "initiator_role": "actuary",
+        "type": "manual"
+      }
+    }
+  ]
+}
