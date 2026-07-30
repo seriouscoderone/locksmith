@@ -1086,12 +1086,27 @@ def test_propose_exits_the_loop_with_a_grounded_proposal():
 
 
 def test_the_loop_NEVER_confirms_or_dispatches_anything():
-    # 2B must not re-implement approval; a proposal leaves the loop for the existing ceremony
+    # 2B must not re-implement approval; a proposal leaves the loop for the existing ceremony.
+    # Assert on the AST, not the source text: a substring check would match this module's own
+    # explanatory prose, and would MISS an import made under an alias.
+    import ast
+    import inspect
+
     import keri_assistant.loop as loopmod
-    src = __import__("inspect").getsource(loopmod)
-    assert "Confirmer" not in src
-    assert "Dispatcher" not in src
-    assert ".dispatch(" not in src
+    tree = ast.parse(inspect.getsource(loopmod))
+    imported = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            imported |= {a.name for a in n.names}
+            if isinstance(n, ast.ImportFrom) and n.module:
+                imported.add(n.module)
+    called = {n.func.attr for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "Confirmer" not in imported
+    assert "Dispatcher" not in imported
+    assert not any(m.endswith("seams") for m in imported)
+    assert "dispatch" not in called
+    assert "confirm" not in called
 
 
 def test_iteration_budget_exhaustion_is_explicit_not_silent():
@@ -1300,6 +1315,7 @@ Co-Authored-By: Claude Opus 4.8 <noreply@anthropic.com>"
 
 ```python
 """Load-bearing guarantees of the agent loop (design spec 4.0.1 / 4.2 / 9.13)."""
+import ast
 import inspect
 import json
 
@@ -1343,10 +1359,28 @@ def test_a_floor_verb_can_never_become_a_tool():
     assert "rotate" not in build_tool_registry(surf).ids()
 
 
+def _loop_module_ast():
+    return ast.parse(inspect.getsource(loopmod))
+
+
 def test_the_loop_module_cannot_confirm_or_dispatch():
-    src = inspect.getsource(loopmod)
-    for forbidden in ("Confirmer", "Dispatcher", ".dispatch(", ".confirm("):
-        assert forbidden not in src, forbidden
+    """AST, not substring. A `"Dispatcher" not in source` check is wrong in BOTH directions: it
+    fails on a docstring that merely explains the rule, and it passes if someone imports the seam
+    under an alias. Assert on imports and calls."""
+    tree = _loop_module_ast()
+    imported = set()
+    for n in ast.walk(tree):
+        if isinstance(n, (ast.Import, ast.ImportFrom)):
+            imported |= {a.name for a in n.names}          # original name, even when aliased
+            if isinstance(n, ast.ImportFrom) and n.module:
+                imported.add(n.module)
+    called = {n.func.attr for n in ast.walk(tree)
+              if isinstance(n, ast.Call) and isinstance(n.func, ast.Attribute)}
+    assert "Confirmer" not in imported, "the loop must not know about the confirm seam"
+    assert "Dispatcher" not in imported, "the loop must not know about the dispatch seam"
+    assert not any(m.endswith("seams") for m in imported), "no seams import, aliased or otherwise"
+    assert "dispatch" not in called
+    assert "confirm" not in called
 
 
 def test_no_empty_enum_is_ever_emitted_by_the_decide_schema():
@@ -1446,6 +1480,7 @@ Apply each mutation, run the named test file, record the failure, then **revert 
 | M8 | drop the duplicate-id `raise` | `tools.py` | `test_duplicate_tool_ids_raise`, `test_a_compute_tool_may_not_shadow_a_read_tool` |
 | M9 | make `LoopState.advanced` mutate and return `self` | `loopstate.py` | `test_advanced_returns_a_new_state_and_never_mutates` |
 | M10 | accept any `tool_id` in `parse_decision` without the registry check | `decide.py` | `test_call_tool_naming_an_unregistered_tool_is_a_grammar_violation` |
+| M11 | add `from .seams import Dispatcher as _D` to `loop.py` (unused) | `loop.py` | `test_the_loop_module_cannot_confirm_or_dispatch` — proves the AST check catches an ALIASED import, which a substring check would miss |
 
 - [ ] **Step 4: Run the FULL suite**
 
