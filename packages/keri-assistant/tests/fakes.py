@@ -58,3 +58,24 @@ class RecordingToolExecutor:
             return self._results[tool_id]
         return ToolResult(tool_id=tool_id, ok=False, content="",
                           detail=f"no fake result configured for {tool_id!r}")
+
+
+class ScriptedBinding:
+    """Returns a queued raw dict per propose() call, so a whole loop can be scripted.
+
+    Falls back to an `answer` decision once the script is exhausted, so a test that under-scripts
+    terminates instead of spinning to the budget ceiling and reporting a confusing failure.
+    """
+
+    def __init__(self, script, strength: EnforcementStrength = EnforcementStrength.HARD):
+        self._script = list(script)
+        self._strength = strength
+        self.requests: list[ProposalRequest] = []
+
+    def enforcement(self) -> EnforcementStrength:
+        return self._strength
+
+    def propose(self, request: ProposalRequest) -> ProposalResult:
+        self.requests.append(request)
+        raw = self._script.pop(0) if self._script else {"action": "answer", "text": "done"}
+        return ProposalResult(raw=raw, enforcement=self._strength)
