@@ -1,4 +1,4 @@
-from keri_assistant.audit_schema import unconstrained_entity_fields
+from keri_assistant.audit_schema import claimed_credential_refs, unconstrained_entity_fields
 from keri_assistant.grounding import Grounding
 from keri_assistant.surface import build_micro_app_surface
 
@@ -56,3 +56,76 @@ def test_reports_nested_required_fields_by_path():
 def test_query_verbs_are_not_reported():
     surf = build_micro_app_surface({"commands": [], "projections": [{"id": "b", "name": "B"}]})
     assert unconstrained_entity_fields(surf, G) == ()
+
+
+# --- claimed_credential_refs: the higher-confidence filter over the same candidate set ---
+# unconstrained_entity_fields lists EVERY required free string a rule doesn't reach -- most of
+# those are genuinely free text, and a human reviewer can't read a 55-row list to find the one
+# real gap. claimed_credential_refs narrows to fields the TEMPLATE ITSELF claims are credential
+# references, via two independent signals: (A) the field's own description names a SAID/digest/
+# self-addressing identifier; (B) an undescribed field shares its leaf name with an (A) hit
+# elsewhere in the same surface -- the same reference, missing the prose this time.
+
+CLAIM_TEMPLATE = {
+    "commands": [
+        {
+            "id": "issue_record", "name": "issue", "route": "/dom/cmd/issue_record",
+            "authz": {"method": "open"},
+            "payload_schema": {
+                "type": "object", "additionalProperties": False,
+                "required": ["source_id", "region"],
+                "properties": {
+                    "source_id": {"type": "string",
+                                  "description": "SAID of the source record this issuance is based on."},
+                    "region": {"type": "string"},  # free text, no SAID claim, no shared name
+                }}},
+        {
+            "id": "amend_record", "name": "amend", "route": "/dom/cmd/amend_record",
+            "authz": {"method": "open"},
+            "payload_schema": {
+                "type": "object", "additionalProperties": False,
+                "required": ["source_id"],
+                "properties": {
+                    "source_id": {"type": "string"},  # undescribed twin of the A hit above
+                }}},
+    ],
+}
+CLAIM_SURF = build_micro_app_surface(CLAIM_TEMPLATE)
+
+
+def test_a_field_described_as_a_said_is_reported_via_signal_a():
+    found = claimed_credential_refs(CLAIM_SURF, G)
+    assert ("issue_record", "source_id", "described as a SAID") in found
+
+
+def test_an_undescribed_field_sharing_a_claimed_name_is_reported_via_signal_b():
+    found = claimed_credential_refs(CLAIM_SURF, G)
+    assert ("amend_record", "source_id",
+            "shares a name with issue_record.source_id, which is described as a SAID") in found
+
+
+def test_a_field_with_no_claiming_description_and_no_claiming_twin_is_not_reported():
+    # region is free text with no SAID claim anywhere in the surface -- unconstrained_entity_fields
+    # still lists it (that's the whole-list visibility), but the higher-confidence filter is right
+    # to stay silent: nothing in the template claims it is a credential reference.
+    found = claimed_credential_refs(CLAIM_SURF, G)
+    assert not any(f[0] == "issue_record" and f[1] == "region" for f in found)
+    assert ("issue_record", "region") in unconstrained_entity_fields(CLAIM_SURF, G)
+
+
+def test_claimed_credential_refs_never_widens_beyond_unconstrained_entity_fields():
+    pairs = {(v, p) for v, p, _ in claimed_credential_refs(CLAIM_SURF, G)}
+    assert pairs <= set(unconstrained_entity_fields(CLAIM_SURF, G))
+
+
+def test_a_field_already_grounded_by_name_is_not_reported_even_if_described_as_a_said():
+    # a *_said field is already reached by grounded_set_for -- not a gap, regardless of what its
+    # own description says
+    surf = build_micro_app_surface({"commands": [{
+        "id": "attest", "name": "attest", "route": "/dom/cmd/attest", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["subject_said"],
+                           "properties": {"subject_said": {
+                               "type": "string",
+                               "description": "SAID of the subject credential."}}}}]})
+    assert claimed_credential_refs(surf, G) == ()

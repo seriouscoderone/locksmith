@@ -2,7 +2,7 @@
 import json
 import pathlib
 
-from keri_assistant.audit_schema import unconstrained_entity_fields
+from keri_assistant.audit_schema import claimed_credential_refs, unconstrained_entity_fields
 from keri_assistant.decide import ANSWER, CALL_TOOL, build_decide_schema
 from keri_assistant.grounding import Grounding
 from keri_assistant.loop import AgentLoop
@@ -75,3 +75,31 @@ def test_the_application_id_gap_is_REPORTED_on_the_real_regulator_template():
 def test_the_report_is_non_empty_on_the_real_corpus_so_review_has_something_to_read():
     for tmpl in (CARRIER, ACTUARY_T):
         assert unconstrained_entity_fields(build_micro_app_surface(tmpl), G)
+
+
+def test_claimed_credential_refs_reports_the_carrier_defect_via_both_signals():
+    # grant_license.application_id names itself a SAID in its own description (signal A).
+    # spurn_application.application_id carries NO description at all, so a description-only
+    # detector would miss it -- it is caught only because it shares the leaf name "application_id"
+    # with the described one (signal B). Two live instances of the same defect, not one.
+    found = claimed_credential_refs(build_micro_app_surface(CARRIER), G)
+    assert ("grant_license", "application_id", "described as a SAID") in found
+    assert ("spurn_application", "application_id",
+            "shares a name with grant_license.application_id, which is described as a SAID") in found
+
+
+def test_claimed_credential_refs_reports_nothing_on_the_real_actuary_template():
+    # every credential reference in this template (index_said, shard_said, program_manifest_said,
+    # version_said, attestation_said, superseded_by_said, ...) is already named *_said, so it is
+    # already reached by the naming convention and never enters the unconstrained candidate set in
+    # the first place. Zero is the CORRECT result here -- it means the convention already covers
+    # this template, not that the detector missed something.
+    assert claimed_credential_refs(build_micro_app_surface(ACTUARY_T), G) == ()
+
+
+def test_claimed_credential_refs_is_a_subset_of_the_full_unconstrained_report():
+    # it is a filter over the same candidates, never a widening
+    for tmpl in (CARRIER, ACTUARY_T):
+        surf = build_micro_app_surface(tmpl)
+        claimed = {(v, p) for v, p, _ in claimed_credential_refs(surf, G)}
+        assert claimed <= set(unconstrained_entity_fields(surf, G))
