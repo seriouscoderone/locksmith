@@ -568,7 +568,28 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    `/v1/chat/completions` `response_format` + `--jinja` is clean on our *exact* pinned llama.cpp build (it was
    historically buggy, reportedly fixed); and PyInstaller-freeze behavior for whatever ships. The native
    `/completion` + `grammar`/`json_schema` path the POC used is the safer default until confirmed.
-10. **Empty-object payload schema may break the WHOLE grammar (open hazard, 2D).** llama.cpp
+10. **String references to credentials — RESOLVED in principle 2026-07-30: make them ACDCs and chain by
+    edge.** The real `regulator-grants-carrier-license` template declares `grant_license.application_id`
+    as a **required free string** whose own description reads "SAID of the carrier_license_application
+    this grant adjudicates." Both defence layers miss it, because grounding keys on `*_aid`/`*_said`
+    names and both layers share one `grounded_set_for` (deliberately, so they cannot drift — which means
+    a naming miss is a miss in both). Net effect: a model can invent an application reference and a human
+    signs a licence grant against something that does not exist.
+    **A corpus scan settled the mechanism question:** three genuine misses in three different naming
+    shapes — `application_id` (`_id`), `seal_governance_content.declaration_saids` (**plural**, required
+    array of SAIDs), and `attach_source.ref` ("SAID *or* locator"). The plural case is decisive: an author
+    *following* the convention was still missed because "every declaration SAID" pluralises naturally. So
+    naming is structurally the wrong mechanism, and widening it to `_id` would repeat the over-broad
+    never-verb error that silently dropped `revoke_license`.
+    **Owner's decision:** the application becomes a **self-issued ACDC**, referenced from the licence by
+    an **ACDC edge** (`e` → `n`) rather than a string. An ACDC has a SAID by construction, edges are
+    KERI's own primitive for provenance chaining, and grounding then becomes semantic (do I hold this
+    credential?) rather than lexical. That is the LAW's "find the primitive" move; a string field was the
+    generic substitute. **Interim:** `application_id` ships as `{"type": "string"}`, ungrounded and
+    recorded — bounded by the ceremony (a human still signs), and explicitly NOT to be worked around
+    lexically in the library. Full rationale and scope:
+    `~/code/ugard/backlog/2026-07-30-application-as-self-issued-acdc-chained-to-license.md`.
+11. **Empty-object payload schema may break the WHOLE grammar (open hazard, 2D).** llama.cpp
     [#25923](https://github.com/ggml-org/llama.cpp/issues/25923) (open): an empty-object schema emits invalid
     GBNF and takes down the *entire* grammar, not just that branch. Our compiler emits exactly that shape for
     any command declaring `payload_schema: {}` — so **one payload-less command could make every other command
@@ -576,7 +597,7 @@ a signature. Storage and UI are deferred to the phase that introduces it.
     measured). **2D must** compile the real carrier + actuary surfaces against the pinned build and confirm the
     grammar loads; if it bites, choose between omitting the `payload` property when empty vs. emitting a
     permissive-but-non-empty shape, then add a compiler-level regression test. Detail: research §12.5.
-11. **`suppress_reasoning` cannot be honoured the obvious way on Qwen3 (2D).** `--reasoning-format none`
+12. **`suppress_reasoning` cannot be honoured the obvious way on Qwen3 (2D).** `--reasoning-format none`
     **plus** `response_format` is a hard **400**, intentionally
     ([#23775](https://github.com/ggml-org/llama.cpp/issues/23775)); with reasoning templates the schema is
     still enforced from token 0 (`grammar_lazy = false`). `ProposalRequest.suppress_reasoning` is a
