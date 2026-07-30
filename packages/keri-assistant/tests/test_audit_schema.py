@@ -153,6 +153,27 @@ def test_a_required_array_of_strings_named_as_a_plural_said_is_reported_by_both_
     assert ("seal", "declaration_saids", "described as a SAID") in found
 
 
+def test_a_required_array_of_OBJECTS_is_not_reported_even_if_its_description_claims_a_said():
+    # the array fix is narrow ON PURPOSE: `items` a bare string IS a gap (above); `items` an
+    # OBJECT is not, even when the array's own description claims a SAID (mirrors the real
+    # corpus's `shards` field, whose own `shard_said` leaf is already reached by the naming
+    # convention one level down) -- catching this would need walking into array-item objects,
+    # which is deliberately out of scope. Getting this wrong the other way (over-reporting) would
+    # flood the report with every array-of-records field in a template.
+    surf = build_micro_app_surface({"commands": [{
+        "id": "ingest", "name": "ingest", "route": "/dom/cmd/ingest", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["shards"],
+                           "properties": {"shards": {
+                               "type": "array",
+                               "description": "The shards this ingestion emitted, each SAID-addressed.",
+                               "items": {"type": "object", "additionalProperties": False,
+                                        "required": ["shard_said"],
+                                        "properties": {"shard_said": {"type": "string"}}}}}}}]})
+    assert unconstrained_entity_fields(surf, G) == ()
+    assert claimed_credential_refs(surf, G) == ()
+
+
 def test_a_required_array_of_strings_with_an_enum_on_items_is_not_reported():
     # already constrained -- an enum on the array's items closes it exactly as an enum on a scalar
     # string field would
