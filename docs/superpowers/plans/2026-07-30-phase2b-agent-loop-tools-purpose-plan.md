@@ -1332,7 +1332,7 @@ from keri_assistant.surface import build_micro_app_surface
 from keri_assistant.tools import ToolResult, ToolSpec, build_tool_registry
 from tests.fakes import RecordingToolExecutor
 from tests.fakes import RecordingToolExecutor, ScriptedBinding
-from tests.fixtures.loop_fixtures import COUNTERPARTY as CP, G, PARSER, REG, ROLE, SURF
+from tests.fixtures.loop_fixtures import COUNTERPARTY as CP, G, REG, ROLE, SURF
 
 HOSTILE_TEMPLATE = {
     "commands": [
