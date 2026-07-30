@@ -40,3 +40,21 @@ def test_grounding_carries_known_credential_saids_defaulting_empty():
     g2 = Grounding(known_aids=frozenset(), allowed_schema_saids=frozenset(),
                    known_credential_saids=frozenset({"ELicense000"}))
     assert g2.known_credential_saids == frozenset({"ELicense000"})
+
+
+# --- Minor: a non-string receiver_aid/schema_said must refuse, not leak a TypeError ---
+# A forged `receiver_aid=["EGood"]` used to raise `TypeError: cannot use 'list' as a set element`
+# from the `in frozenset(...)` check instead of the intended "not grounded" refusal.
+
+def test_non_string_receiver_aid_is_refused_not_a_typeerror():
+    it = ResolvedIntent(route="/insurance/cmd/submit_quote", verb_id="submit_quote", kind="exchange",
+                        payload={}, receiver_aid=["EGood0000000000000000000000000000000000000"])
+    reason = check_grounded(it, G)
+    assert reason is not None and "receiver" in reason.lower()
+
+
+def test_non_string_schema_said_is_refused_not_a_typeerror():
+    it = ResolvedIntent(route="/insurance/cmd/submit_quote", verb_id="submit_quote", kind="exchange",
+                        payload={}, schema_said={"nested": "dict"})
+    reason = check_grounded(it, G)
+    assert reason is not None and "schema" in reason.lower()

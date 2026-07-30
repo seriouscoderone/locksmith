@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .actionschema import CLARIFY, UNSUPPORTED, grounded_set_for
+from .actionschema import CLARIFY, UNSUPPORTED, grounded_set_for, verb_alternative
 from .grounding import Grounding, check_grounded
 from .intent import ResolvedIntent
 from .surface import CommandSurface
@@ -77,15 +77,41 @@ def parse_proposal(raw: dict, surface: CommandSurface, grounding: Grounding) -> 
     # grammar never authorized — a confused deputy. Checking the hatch consts first means the
     # hatch always wins, regardless of what a template tries to smuggle into the surface.
     if verb_id == CLARIFY:
-        return Proposal(status="clarify", message=str(raw.get("question", "")))
+        question = raw.get("question", "")
+        # `minLength: 1` on the hatch's compiled schema is layer-1 only; re-check here too, or a
+        # non-HARD/lying backend can hand back a clarify with nothing to clarify -- an empty out
+        # is not a truthful out.
+        if not isinstance(question, str) or not question:
+            raise GrammarViolation(f"clarify hatch has an empty/missing question: {raw!r}")
+        return Proposal(status="clarify", message=question)
     if verb_id == UNSUPPORTED:
-        return Proposal(status="unsupported", message=str(raw.get("reason", "")))
+        reason = raw.get("reason", "")
+        if not isinstance(reason, str) or not reason:
+            raise GrammarViolation(f"unsupported hatch has an empty/missing reason: {raw!r}")
+        return Proposal(status="unsupported", message=reason)
 
     verb = surface.by_id(verb_id)
     if verb is None:
         raise GrammarViolation(f"proposal names an unknown verb: {verb_id!r}")
     if verb.kind != "exchange":
         raise GrammarViolation(f"verb {verb_id!r} is not proposable (kind={verb.kind!r})")
+
+    # Belt-and-braces for layer 1's OWN decisions: `verb_alternative` is the exact function that
+    # decided whether this verb is even reachable under `grounding`, and which top-level fields
+    # it required if so. Re-deriving it here (rather than duplicating that logic) means a future
+    # compiler hardening can never silently leave this layer behind — both read one decision. A
+    # `None` branch means the compiled grammar never actually offered this verb (e.g. no grounded
+    # receiver), so a proposal naming it means the grammar was not enforced. A branch missing one
+    # of its required top-level fields (e.g. a bare `{"verb_id": ...}`) is the same failure: the
+    # backend emitted something the grammar could not have produced.
+    branch = verb_alternative(verb, grounding)
+    if branch is None:
+        raise GrammarViolation(
+            f"verb {verb_id!r} was omitted from the compiled schema — grammar was not enforced"
+        )
+    for name in branch["required"]:
+        if name not in raw:
+            raise GrammarViolation(f"proposal omits required field {name!r} for {verb_id!r}")
 
     payload = raw.get("payload", {})
     if not isinstance(payload, dict):

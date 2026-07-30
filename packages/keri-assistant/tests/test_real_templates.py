@@ -15,7 +15,14 @@ DOI = "EDoi000000000000000000000000000000000000000"
 
 
 def _ids(schema):
-    return {a["properties"]["verb_id"]["const"] for a in schema["oneOf"]}
+    """The set of verb_id consts across `oneOf`, raising if two alternatives share one.
+
+    A set comprehension silently COLLAPSES a duplicate const -- the same blind spot as the
+    `_alts` dict helper in test_actionschema.py. See that file's `__`-prefix guard test.
+    """
+    consts = [a["properties"]["verb_id"]["const"] for a in schema["oneOf"]]
+    assert len(consts) == len(set(consts)), f"duplicate verb_id const(s): {consts}"
+    return set(consts)
 
 
 def test_carrier_template_compiles_all_five_commands():
@@ -93,7 +100,11 @@ def test_actuary_commands_are_omitted_when_their_schema_is_not_grounded():
             assert verb.id not in ids
 
 
-def test_authz_credential_method_is_carried_but_never_evaluated():
+def test_authz_credential_method_is_carried_verbatim_as_opaque_data_on_the_verb():
+    # I-3: this checks CARRIAGE only -- that authz survives onto the Verb unmodified -- not that
+    # the compiler never READS/evaluates it (schema_said IS read, legitimately, to pin a const;
+    # see test_proposal_invariants.test_authz_method_and_issuer_are_never_read_only_schema_said_
+    # is_read_to_pin_a_const for the actual never-read invariant, swept and asserted there).
     surf = build_micro_app_surface(ACTUARY)
     gated = [v for v in surf.verbs if v.authz.get("method") == "credential"]
     assert gated, "expected credential-gated commands"

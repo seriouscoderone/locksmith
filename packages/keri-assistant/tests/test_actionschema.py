@@ -1,5 +1,6 @@
 import copy
 
+import jsonschema
 import pytest
 
 from keri_assistant.actionschema import (
@@ -20,7 +21,18 @@ G = Grounding(known_aids=frozenset({BROKER}), allowed_schema_saids=frozenset({QU
 
 
 def _alts(schema):
-    return {a["properties"]["verb_id"]["const"]: a for a in schema["oneOf"]}
+    """Map verb_id const -> its `oneOf` alternative, raising if two alternatives share a const.
+
+    A plain dict comprehension silently COLLAPSES duplicates (the last one wins) -- exactly the
+    failure mode the `__`-prefix guard (`test_verb_id_starting_with_reserved_dunder_prefix_is_
+    skipped`) exists to catch. Every test using this helper inherits the check.
+    """
+    out: dict = {}
+    for alt in schema["oneOf"]:
+        const = alt["properties"]["verb_id"]["const"]
+        assert const not in out, f"duplicate verb_id const in compiled schema: {const!r}"
+        out[const] = alt
+    return out
 
 
 def test_exchange_verbs_and_escape_hatches_are_alternatives():
@@ -369,12 +381,29 @@ REF_TEMPLATE = {
 }
 REFSURF = build_micro_app_surface(REF_TEMPLATE)
 
+# `prefixItems` (Minor, whole-branch review): we only ever recurse into tuple-form `items`, so a
+# `prefixItems` array compiled verbatim -- ungrounded -- while `allOf`/`$ref` right next to it
+# failed closed. Confirmed with a real `holder_aid` inside the first tuple slot: it stayed
+# `{"type": "string"}`, never enum-constrained, so any value would have validated.
+PREFIXITEMS_TEMPLATE = {
+    "commands": [{
+        "id": "prefixitems_holder", "name": "prefixitems holder",
+        "route": "/insurance/cmd/prefixitems_holder", "authz": {"method": "open"},
+        "payload_schema": {
+            "type": "object", "additionalProperties": False, "properties": {},
+            "prefixItems": [{"type": "object", "properties": {"holder_aid": {"type": "string"}}}],
+        },
+    }],
+}
+PREFIXITEMSSURF = build_micro_app_surface(PREFIXITEMS_TEMPLATE)
+
 
 def test_unsupported_composition_constructs_omit_the_verb():
     for surf, verb_id in (
         (ALLOFSURF, "allof_holder"),
         (PATTERNPROPSSURF, "patternprops_holder"),
         (REFSURF, "ref_holder"),
+        (PREFIXITEMSSURF, "prefixitems_holder"),
     ):
         alts = _alts(build_proposal_schema(surf, G))
         assert verb_id not in alts
@@ -452,10 +481,16 @@ DUNDERSURF = build_micro_app_surface(DUNDER_TEMPLATE)
 def test_verb_id_starting_with_reserved_dunder_prefix_is_skipped():
     # a template verb literally named "__clarify__" must not shadow the escape hatch: two
     # satisfiable `oneOf` branches sharing a `verb_id` const would stop it from discriminating,
-    # and Task 4's parse_proposal dispatches on verb_id.
-    alts = _alts(build_proposal_schema(DUNDERSURF, G))
-    assert set(alts) == {CLARIFY, UNSUPPORTED}
-    assert alts[CLARIFY]["properties"]["verb_id"] == {"const": CLARIFY}
+    # and Task 4's parse_proposal dispatches on verb_id. Asserted on the raw LIST of consts (and
+    # the branch count), not a dict built from them -- a dict keyed by const silently collapses
+    # a duplicate (the last alternative wins), which is exactly the failure this guard exists to
+    # catch, so a dict-shaped assertion here could never observe it going missing.
+    schema = build_proposal_schema(DUNDERSURF, G)
+    consts = [alt["properties"]["verb_id"]["const"] for alt in schema["oneOf"]]
+    assert len(schema["oneOf"]) == 2                      # exactly the two hatches, no shadow
+    assert consts.count(CLARIFY) == 1                     # not duplicated by the shadow verb
+    assert consts.count(UNSUPPORTED) == 1
+    assert set(consts) == {CLARIFY, UNSUPPORTED}
 
 
 DUPLICATE_ID_TEMPLATE = {
@@ -519,3 +554,97 @@ def test_no_empty_required_list_anywhere():
     for surf in (SURF, PSURF, NSURF, NOSURF, ASURF, RSURF):
         for grounding in (empty, G, populated):
             assert _find_empty_required(build_proposal_schema(surf, grounding)) == []
+
+
+# --- C-2: an object-shaped node that never says `type: object` must still be forced closed ---
+# The old test for "is this an object" was `type == "object"` or `properties` present or
+# `additionalProperties` present. None of the five shapes below say any of those, yet nothing in
+# JSON Schema stops any of them from ALSO matching an object instance with any extra property —
+# an adversarial review proved (with a `jsonschema` oracle) that each one let an ungrounded
+# `holder_aid` validate through completely untouched. The fix inverts the test: object unless
+# PROVABLY not one (a declared, non-object `type`).
+
+UNTYPED_OBJECT_SHAPED_PAYLOAD_SCHEMAS = [
+    {"description": "grant a license to the named holder"},
+    {"type": ["object", "null"]},
+    {"minProperties": 1},
+    {"title": "P"},
+    {"required": ["amount"]},
+]
+
+# Not a grounded AID under G -- if this validates alongside/instead of a declared field, the
+# schema escaped closure.
+ATTACK_PAYLOAD = {"amount": 1, "holder_aid": "EUngroundedAttacker00000000000000000000000"}
+
+
+def test_untyped_object_shaped_payloads_are_rejected_or_omitted():
+    for shape in UNTYPED_OBJECT_SHAPED_PAYLOAD_SCHEMAS:
+        template = {"commands": [{
+            "id": "sneaky", "name": "sneaky", "route": "/insurance/cmd/sneaky",
+            "authz": {"method": "open"}, "payload_schema": shape,
+        }]}
+        surf = build_micro_app_surface(template)
+        alts = _alts(build_proposal_schema(surf, G))
+        if "sneaky" not in alts:
+            continue  # omitted entirely -> safe
+        payload_schema = alts["sneaky"]["properties"]["payload"]
+        assert not jsonschema.Draft202012Validator(payload_schema).is_valid(ATTACK_PAYLOAD), shape
+
+
+def test_union_type_including_object_ends_up_narrowed_not_open():
+    # {"type": ["object", "null"]} specifically -- must not pass through open just because
+    # "object" isn't the ONLY member of the type list.
+    template = {"commands": [{
+        "id": "sneaky", "name": "sneaky", "route": "/insurance/cmd/sneaky",
+        "authz": {"method": "open"}, "payload_schema": {"type": ["object", "null"]},
+    }]}
+    surf = build_micro_app_surface(template)
+    alt = _alts(build_proposal_schema(surf, G))["sneaky"]
+    payload_schema = alt["properties"]["payload"]
+    assert payload_schema["additionalProperties"] is False
+    assert not jsonschema.Draft202012Validator(payload_schema).is_valid(ATTACK_PAYLOAD)
+
+
+# --- I-2: no deepcopy -- compiled schemas used to alias the template's mutable leaves ---
+
+MUTATION_TEMPLATE = {
+    "commands": [{
+        "id": "grant_license", "name": "grant license", "route": "/insurance/cmd/grant_license",
+        "authz": {"method": "open"},
+        "payload_schema": {
+            "type": "object", "additionalProperties": False, "required": ["jurisdiction"],
+            "properties": {"jurisdiction": {"type": "string", "enum": ["CA", "NY", "TX"]}},
+        },
+    }],
+}
+MUTSURF = build_micro_app_surface(MUTATION_TEMPLATE)
+
+
+def test_compiled_schema_does_not_alias_the_templates_mutable_leaves():
+    # `jurisdiction` isn't an entity field, so `_ground_node` never rebuilds its subschema -- the
+    # old code returned it (and its `enum` LIST) as the exact same object the template holds.
+    # Mutating the compiled schema's leaf used to permanently rewrite the template AND
+    # `Verb.payload_schema`, widening what a later compilation in the same process would ground.
+    # Narrower than `test_compiling_does_not_mutate_input_and_is_idempotent`: that test proves
+    # COMPILING doesn't mutate the input; this one proves the compiled OUTPUT can be mutated
+    # afterward without reaching back into the source.
+    before = copy.deepcopy(MUTATION_TEMPLATE)
+    compiled = _alts(build_proposal_schema(MUTSURF, G))["grant_license"]
+    enum = compiled["properties"]["payload"]["properties"]["jurisdiction"]["enum"]
+    enum.append("EInjectedAttacker00000000000000000000000000")   # mutate the compiled leaf
+
+    assert MUTATION_TEMPLATE == before   # the source template is untouched
+
+    recompiled = _alts(build_proposal_schema(MUTSURF, G))["grant_license"]
+    assert recompiled["properties"]["payload"]["properties"]["jurisdiction"]["enum"] == [
+        "CA", "NY", "TX"
+    ]
+
+
+def test_typed_non_object_leaf_is_still_left_alone():
+    # the inverted test must not start force-closing genuine scalars: a leaf with an explicit,
+    # non-object `type` is provably not an object and must pass through untouched.
+    alt = _alts(build_proposal_schema(PSURF, G))["grant_license"]
+    jurisdiction = alt["properties"]["payload"]["properties"]["jurisdiction"]
+    assert jurisdiction == {"type": "string"}
+    assert "additionalProperties" not in jurisdiction and "properties" not in jurisdiction

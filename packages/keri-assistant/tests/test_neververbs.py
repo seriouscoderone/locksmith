@@ -66,3 +66,16 @@ def test_override_is_additive_and_cannot_weaken_the_framework_floor():
     assert is_never_verb("/vault/seed_display", frozenset()) is True
     # and adding still works
     assert is_never_verb("/insurance/cmd/revoke_license", frozenset({"license"})) is True
+
+
+@pytest.mark.parametrize("route", [
+    "/keri/cmd/rot",
+    "/x/dip",
+    "/y/drt",
+])
+def test_bare_keri_short_codes_are_individually_blocked(route):
+    # "rot"/"dip"/"drt" are the real KERI event-type codes (plain rotation, delegated inception,
+    # delegated rotation) -- distinct tokens from the longhand "rotate"/"delegate" above, and each
+    # is load-bearing on its own: removing any ONE of them from NEVER_VERB_TOKENS left the whole
+    # suite green before this test existed, because nothing else exercised a bare short code.
+    assert is_never_verb(route) is True

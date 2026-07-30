@@ -19,8 +19,16 @@ class Grounding:
 
 
 def check_grounded(intent: ResolvedIntent, grounding: Grounding) -> str | None:
-    if intent.receiver_aid is not None and intent.receiver_aid not in grounding.known_aids:
-        return f"receiver AID {intent.receiver_aid!r} is not a known counterparty"
-    if intent.schema_said is not None and intent.schema_said not in grounding.allowed_schema_saids:
-        return f"schema SAID {intent.schema_said!r} is not grounded"
+    # `isinstance(..., str)` first: a non-string (e.g. a forged `receiver_aid=["EGood"]`) is
+    # ungrounded on its face, and testing `in` a frozenset with an unhashable value (a list, a
+    # dict) raises TypeError instead of failing closed with the intended GrammarViolation --
+    # `_check_payload_grounded` in proposal.py already guards this way; this is the same belt for
+    # the top-level fields.
+    if intent.receiver_aid is not None:
+        if not isinstance(intent.receiver_aid, str) or intent.receiver_aid not in grounding.known_aids:
+            return f"receiver AID {intent.receiver_aid!r} is not a known counterparty"
+    if intent.schema_said is not None:
+        if (not isinstance(intent.schema_said, str)
+                or intent.schema_said not in grounding.allowed_schema_saids):
+            return f"schema SAID {intent.schema_said!r} is not grounded"
     return None

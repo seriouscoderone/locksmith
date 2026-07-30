@@ -1,4 +1,6 @@
 """Load-bearing guarantees of the grounded proposal schema (design spec 4.1/7/8.1)."""
+import copy
+
 import pytest
 from keri_assistant.actionschema import CLARIFY, UNSUPPORTED, build_proposal_schema
 from keri_assistant.enforcement import EnforcementStrength, SoftEnforcementError, require_hard
@@ -30,7 +32,14 @@ G_ANY = Grounding(known_aids=frozenset({"EAid00000000000000000000000000000000000
 
 
 def _ids(schema):
-    return {a["properties"]["verb_id"]["const"] for a in schema["oneOf"]}
+    """The set of verb_id consts across `oneOf`, raising if two alternatives share one.
+
+    A set comprehension silently COLLAPSES a duplicate const -- the same blind spot as the
+    `_alts` dict helper in test_actionschema.py. See that file's `__`-prefix guard test.
+    """
+    consts = [a["properties"]["verb_id"]["const"] for a in schema["oneOf"]]
+    assert len(consts) == len(set(consts)), f"duplicate verb_id const(s): {consts}"
+    return set(consts)
 
 
 def test_floor_operations_cannot_appear_as_proposal_alternatives():
@@ -72,12 +81,27 @@ def test_authority_bearing_proposals_refuse_soft_enforcement():
         require_hard(EnforcementStrength.SOFT)      # refused
 
 
-def test_authz_is_never_interpreted_by_the_schema_compiler():
-    # two templates identical except for authz method must compile to the same schema
-    import copy
+def test_authz_method_and_issuer_are_never_read_only_schema_said_is_read_to_pin_a_const():
+    # I-3 (adversarial review): the compiler DOES read authz["schema_said"] (surface.py) to pin a
+    # verb's `schema_said` const and omit the verb when that SAID isn't grounded -- reading a
+    # DECLARED identifier to pin/ground it is not the same as evaluating authority, so that
+    # behaviour is legitimate and deliberately NOT what this test claims. What IS invariant:
+    # authz's `method`, `issuer`, and any other condition are NEVER read.
+    #
+    # The previous version of this test ("authz is never interpreted") mutated only
+    # commands[3]'s authz method+issuer -- the one command whose authz happened to carry no
+    # `schema_said` either way, so the one field that WOULD distinguish "read" from "not read"
+    # was never exercised, and the assertion held regardless of whether schema_said was read.
+    # Swept across EVERY command instead, preserving each one's own schema_said (if any) so this
+    # keeps testing only the part that's actually invariant.
     a = copy.deepcopy(HOSTILE_TEMPLATE)
     b = copy.deepcopy(HOSTILE_TEMPLATE)
-    b["commands"][3]["authz"] = {"method": "credential", "issuer": "EWhoever"}
+    for cmd in b["commands"]:
+        said = cmd["authz"].get("schema_said")
+        cmd["authz"] = {"method": "credential", "issuer": "EWhoever",
+                        "conditions": {"whatever": "goes"}}
+        if said is not None:
+            cmd["authz"]["schema_said"] = said   # preserved -- pinning IS observable, by design
     sa = build_proposal_schema(build_micro_app_surface(a), G_ANY)
     sb = build_proposal_schema(build_micro_app_surface(b), G_ANY)
     assert sa == sb

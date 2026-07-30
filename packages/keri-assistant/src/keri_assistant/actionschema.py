@@ -9,6 +9,8 @@ are first-class alternatives so the grammar always has a truthful out. See desig
 """
 from __future__ import annotations
 
+import copy
+
 from .grounding import Grounding
 from .neververbs import is_never_verb
 from .surface import CommandSurface, Verb
@@ -23,7 +25,14 @@ MAX_TEXT = 200
 # containing verb is omitted). Closing this for real needs a decision about composition semantics
 # (does an `allOf` branch's `required` bind at the branch or the parent? do multiple `oneOf`/
 # `anyOf` branches' `properties` merge before or after grounding?) that hasn't been made yet.
-_UNSUPPORTED_CONSTRUCTS = ("$ref", "$defs", "patternProperties", "oneOf", "anyOf", "allOf")
+#
+# `prefixItems` (the 2020-12 spelling of tuple-form `items`) belongs here for the same reason:
+# we only ever recurse into `items`, so a `prefixItems` array passed through UNGROUNDED while
+# `allOf`/`$ref` failed closed right next to it — an inconsistent policy that is worse than
+# either choice. Fail closed until it gets the same tuple-form handling `items` already has.
+_UNSUPPORTED_CONSTRUCTS = (
+    "$ref", "$defs", "patternProperties", "oneOf", "anyOf", "allOf", "prefixItems",
+)
 
 
 def grounded_set_for(prop_name: str, grounding: Grounding) -> frozenset[str] | None:
@@ -79,8 +88,18 @@ def _ground_node(schema: dict, grounding: Grounding, pinned_schema_said: str | N
 
     node = dict(schema)  # never mutate the caller's dict — copy every level we touch
 
-    is_object = (
-        node.get("type") == "object" or "properties" in node or "additionalProperties" in node
+    # Treat a node as an object UNLESS it provably is not one. An adversarial review proved (with
+    # a `jsonschema` oracle) that the previous test — object only if `type: object`, or
+    # `properties`/`additionalProperties` present — let an ungrounded entity value validate
+    # through UNTOUCHED whenever a node omitted all three (`{"description": "..."}`,
+    # `{"minProperties": 1}`, `{"title": "P"}`, `{"required": ["amount"]}`, ...): nothing in JSON
+    # Schema stops such a node from also being an object with any extra properties. A declared
+    # `type` that is (or includes, in union form) "object" is still an object; a declared type
+    # that is anything else definitely is not; the absence of `type` is NOT proof of non-object,
+    # so it defaults to "could be" -> force closed rather than guess.
+    declared = node.get("type")
+    is_object = declared is None or declared == "object" or (
+        isinstance(declared, list) and "object" in declared
     )
     if is_object:
         # Force the payload closed. An object left open (`additionalProperties: true`, or a
@@ -148,13 +167,26 @@ def _ground_node(schema: dict, grounding: Grounding, pinned_schema_said: str | N
 def _ground_payload(
     payload_schema: dict, grounding: Grounding, pinned_schema_said: str | None = None
 ) -> dict | None:
-    """Copy the payload schema, enum-constraining entity-naming fields. None => unsatisfiable."""
-    schema = dict(payload_schema) or {"type": "object"}
+    """Copy the payload schema, enum-constraining entity-naming fields. None => unsatisfiable.
+
+    Deep-copies up front: `_ground_node` only shallow-copies each dict LEVEL it recurses through
+    (`properties`/`items`), so a leaf's own list/dict VALUES (an `enum`, a nested keyword we never
+    walk) would otherwise still be the SAME objects as the template's. Mutating a compiled
+    schema's leaf in place (or a caller simply holding onto it) would then permanently rewrite
+    `Verb.payload_schema` and the source template, widening what every LATER compilation in the
+    process grounds. A deep copy here means nothing downstream can alias the template at all.
+    """
+    schema = copy.deepcopy(payload_schema) or {"type": "object"}
     return _ground_node(schema, grounding, pinned_schema_said)
 
 
-def _verb_alternative(verb: Verb, grounding: Grounding) -> dict | None:
-    """One `oneOf` branch, or None when this verb cannot be satisfied under this grounding."""
+def verb_alternative(verb: Verb, grounding: Grounding) -> dict | None:
+    """One `oneOf` branch, or None when this verb cannot be satisfied under this grounding.
+
+    PUBLIC: `proposal.parse_proposal` re-derives the same branch (or its absence) as
+    belt-and-braces, so a future compiler change can never silently leave layer 2 (the
+    re-validation) behind layer 1 (the compiled grammar) — both read this one decision.
+    """
     props: dict = {"verb_id": {"const": verb.id}}
     required = ["verb_id"]
 
@@ -215,7 +247,7 @@ def build_proposal_schema(surface: CommandSurface, grounding: Grounding) -> dict
             # dispatches on `verb_id`, so this is a template defect, not something to paper over.
             raise ValueError(f"duplicate verb id: {verb.id!r}")
         seen_ids.add(verb.id)
-        alternative = _verb_alternative(verb, grounding)
+        alternative = verb_alternative(verb, grounding)
         if alternative is not None:
             alternatives.append(alternative)
 
