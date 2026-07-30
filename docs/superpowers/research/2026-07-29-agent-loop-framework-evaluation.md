@@ -16,8 +16,12 @@ whether it can reach this mechanism, not reimplement it.
 
 - `llama-server`'s native `/completion` endpoint accepts a `grammar` field (raw GBNF) and a
   `json_schema` field (JSON-Schema, server-converted to GBNF) — both documented, both
-  confirmed working, no known open bugs.
+  confirmed working.
   [tools/server/README.md](https://github.com/ggml-org/llama.cpp/blob/master/tools/server/README.md)
+  **Correction (2026-07-30, see §12):** this section originally said "no known open bugs."
+  That was wrong — a deeper source-level review found **six open grammar bugs**, one of which
+  (empty-object schema → invalid GBNF, breaking the *whole* grammar) our compiler can trigger.
+  Read §12 before writing the real binding.
 - The OpenAI-compatible `/v1/chat/completions` endpoint accepts `response_format: {type:
   "json_schema"|"json_object", ...}` which the server converts to a grammar server-side —
   this is the exact "post JSON-Schema, server compiles to GBNF, masks logits" mechanism the
@@ -641,3 +645,135 @@ spike as an alternative if the team would rather not own the loop.**
   PyPI metadata where checked (Strands, Pydantic-AI meta-package) but did not do a full `pip install
   --dry-run` size audit for every framework; recommend that as a concrete next step before a final
   decision, especially for whichever of LangGraph/Strands survives to a spike.
+
+---
+
+## 12. Addendum (2026-07-30): source-level re-verification of the llama.cpp grammar path
+
+**Provenance:** contributed by a parallel research session that read llama.cpp `master` **source**,
+not just docs, and searched the issue tracker. It supersedes parts of §0 and §4 and is recorded here
+because several findings are load-bearing for Phase 2D — and one of them is a hazard the Phase-2A
+compiler can trigger today. Its own unverified items are preserved as such at the end.
+
+### 12.1 The hard guarantee is real — mechanism confirmed in source
+
+`src/llama-grammar.cpp` `llama_grammar_apply_impl()` sets `logit = -INFINITY` (L1378/1381/1390) on
+every non-conforming candidate; `common/sampling.cpp` L602-634 applies the grammar sampler either
+before the chain or as accept-or-resample. A token failing the grammar **cannot** be emitted. This
+confirms the `EnforcementStrength.HARD` premise the whole design rests on.
+
+Endpoints (confirmed in `tools/server/server-common.cpp` ~L939-953): `/completion` takes `grammar`
+and `json_schema`; `/v1/chat/completions` takes `response_format` in `{"type":"json_object"}`,
+`{"type":"json_object","schema":{…}}`, and OpenAI-nested `{"type":"json_schema","json_schema":{…}}`.
+
+### 12.2 Our `oneOf` + `const` + dynamic-`enum` shape is the CHEAP case
+
+Directly relevant to Task 2's design, and it **revises §0's large-enum performance worry**: `oneOf`,
+`anyOf`, `allOf`, `const`, `enum`, `$ref`, `$defs` are all implemented
+(`common/json-schema-to-grammar.cpp` L847-931), and an `enum` compiles to a **flat literal
+alternation** — no repetition blowup. Grounded-enum compilation is the cheap path, not the expensive
+one. Guidance: **inline `$defs` ourselves; avoid `maxLength`/`minItems`/`maxItems`.**
+
+### 12.3 Two findings that change how the binding must be written
+
+**(a) `strict` is a no-op.** For `{"type":"json_schema",…}` the server reads
+`response_format.json_schema.schema` and **discards `name` and `strict`**. Enforcement is
+unconditional whenever a schema is present. Never treat `strict: true` as meaning anything.
+
+**(b) It historically failed OPEN, and fail-closed is recent + build-dependent.** `master`
+now has `common/sampling.cpp` L262-263: `if (!grmr && !grammar_str.empty()) throw
+std::runtime_error("failed to parse grammar")` → HTTP 400 `"Failed to initialize samplers"`.
+But **older builds returned 200 OK with completely unconstrained output** —
+[#19051](https://github.com/ggml-org/llama.cpp/issues/19051) (closed *not planned*),
+[#21228](https://github.com/ggml-org/llama.cpp/issues/21228). The nominal fix PR
+[#19349](https://github.com/ggml-org/llama.cpp/pull/19349) is **still open**; fail-closed arrived
+via unrelated refactoring.
+
+> **This retroactively justifies Task 4's grounding re-validation.** That check was written as
+> "belt-and-braces… under a HARD binding this cannot fail." It is stronger than that: there exist
+> real llama.cpp builds where the grammar silently does not apply and the server still answers 200.
+> The re-validation is the *only* thing standing between a silently-unconstrained sampler and a
+> dispatched authority-bearing intent. Do not weaken or remove it.
+
+**Action for 2D:** pin an exact llama.cpp build and add a test asserting the **400** on a
+deliberately malformed grammar. The contract is "hard, or a loud 400" — never "silently degraded."
+
+### 12.4 Open grammar bugs as of 2026-07-29 (all still open)
+
+| Issue | Bug | Bears on us |
+|---|---|---|
+| [#25923](https://github.com/ggml-org/llama.cpp/issues/25923) | **empty-object schema → invalid GBNF, and it breaks the WHOLE grammar, not just that one branch** | **YES — see 12.5** |
+| [#21228](https://github.com/ggml-org/llama.cpp/issues/21228) | `MAX_REPETITION_THRESHOLD 2000` (`llama-grammar.cpp` L13); `$ref`/`$defs` blow it up (Pydantic always emits `$ref`) | avoid `$ref`; we already inline |
+| [#25746](https://github.com/ggml-org/llama.cpp/issues/25746) | `maxLength >= 2000` on a nested string → un-parseable GBNF | our `MAX_TEXT = 200` is safely under |
+| [#25967](https://github.com/ggml-org/llama.cpp/issues/25967) | large tool lists → duplicate `::=` rule names → 400 | watch as surfaces grow |
+| [#18988](https://github.com/ggml-org/llama.cpp/issues/18988) / [#19086](https://github.com/ggml-org/llama.cpp/issues/19086) | stack overflow via nested repetition; recursion limit unenforced | keep payload schemas shallow |
+| [#25284](https://github.com/ggml-org/llama.cpp/issues/25284) | regex `pattern` partial — must be `^…$`; no lookaround; NULL-deref on malformed | don't rely on `pattern` |
+
+Perf: grammar **disables backend/GPU sampling** (`sampling.cpp` L403 logs "backend sampling is not
+compatible with grammar, disabling") and compiles per request. `sampling.cpp` L510 literally reads
+`// TODO: measure grammar performance` — there is no upstream instrumentation, so **we must measure.**
+
+### 12.5 HAZARD our current compiler can trigger (#25923) — 2D verify-item
+
+`actionschema._ground_payload` returns `{"type": "object"}` when a command declares
+`payload_schema: {}`, and passes through `{"type":"object","properties":{},"additionalProperties":true}`
+(exactly what the `create_application` fixture and every `payload_schema: {}` command produce).
+Those are **empty-object schemas**, and per #25923 an empty-object schema can emit invalid GBNF that
+takes down the *entire* grammar — so one payload-less command could make every other command
+unproposable.
+
+Deliberately **not** fixed in 2A: it is unobservable offline (2A ships no model), and the correct
+workaround shape is unknown until measured against a pinned build. Guessing now would be worse than
+recording it.
+
+**2D must:** compile the real carrier + actuary surfaces to GBNF against the pinned build and confirm
+the grammar loads. If #25923 bites, candidate fixes — omit the `payload` property entirely when the
+schema is empty, or emit a permissive-but-non-empty shape — decide with evidence, then add a
+compiler-level regression test.
+
+### 12.6 Qwen3 conflict with `ProposalRequest.suppress_reasoning=True` — 2D verify-item
+
+`--reasoning-format none` **plus** `response_format` is a hard **400** on Qwen3 — intentional per
+maintainer ([#23775](https://github.com/ggml-org/llama.cpp/issues/23775)). With reasoning templates,
+`common/chat.cpp` wraps the schema *after* the thinking block via a PEG generator and sets
+`grammar_lazy = false` when a `response_format` is present (schema enforced from token 0).
+
+Task 3's `ProposalRequest.suppress_reasoning: bool = True` is a **platform-neutral intent**, so no 2A
+code is wrong. But the obvious llama.cpp translation of that intent is exactly the combination that
+400s. The concrete binding must honour "suppress reasoning" some other way (e.g. accept the thinking
+block and discard it, since the schema is still enforced from token 0), **not** by setting
+`--reasoning-format none` alongside a schema.
+
+### 12.7 Borrow verdicts hardened (§4 confirmed, with better evidence)
+
+- **XGrammar: llama.cpp has NOT adopted it.** Code search for `xgrammar` in `ggml-org/llama.cpp`
+  returns **0 files** — upgrading §4's "absence of evidence" to a verified negative. llama.cpp uses
+  its native GBNF engine; the only alternate backend is **LLGuidance**, opt-in at build time
+  (`-DLLAMA_LLGUIDANCE=ON`, **default OFF**, CMakeLists L129) and routed **only** for grammars
+  starting with `%llguidance`. Standard prebuilt binaries = native GBNF. XGrammar itself is
+  in-process only (`fill_next_token_bitmask` on live logits). **Adopt neither.**
+- **Outlines: confirmed disqualified.** v1.3.2 (2026-07-20), actively maintained, but
+  `src/outlines/models/` has **no remote llama-server model** — `llamacpp.py` is in-process
+  (`from llama_cpp import Llama`). Pointing `models.OpenAI` at llama-server's `/v1` would only format
+  `response_format` and force `additionalProperties:false` — ~20 lines we write anyway, plus an
+  `openai` SDK dep. Docs concede "limited control" for server models.
+- **llama-cpp-agent: dead + wrong dependency shape.** Last release `0.2.35` (**2024-06-29**); last
+  code commit 2025-02-17; only 2026 activity is a README edit. It *can* speak HTTP
+  (`providers/llama_cpp_server.py` posts `grammar` to `/completion`) but generates GBNF
+  **client-side with its own 2024-era generator**, so we'd inherit its grammar bugs instead of
+  llama.cpp's maintained converter. **Disqualifier:** `llama-cpp-python>=0.2.60` is a hard,
+  non-optional dep and `providers/__init__.py` eagerly imports it, so importing even the HTTP
+  provider drags a compiled native `libllama` into a PyInstaller bundle — precisely the coupling the
+  sidecar design removes. No HITL/planning module anywhere in its 104-file tree.
+
+**Net: the hand-rolled-loop decision stands, on better evidence than when it was made.** The one
+thing worth reconsidering later is LLGuidance as a *build flag*, not a Python dependency.
+
+### 12.8 Preserved as unverified (do not promote to fact)
+
+- PyInstaller behaviour of llama-cpp-agent: no published data; inferred from its dependency graph.
+- Grammar throughput for Qwen3 4B under a complex `oneOf`: **no upstream benchmarks exist**
+  (`// TODO: measure grammar performance`). We must measure it ourselves.
+- Whether fail-closed holds at *every* grammar-construction site: only the sampler-init site was
+  confirmed. #25923's "breaks the whole tool-call grammar" hints other sites differ. **Test on the
+  pinned build.**

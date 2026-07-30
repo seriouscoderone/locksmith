@@ -568,6 +568,23 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    `/v1/chat/completions` `response_format` + `--jinja` is clean on our *exact* pinned llama.cpp build (it was
    historically buggy, reportedly fixed); and PyInstaller-freeze behavior for whatever ships. The native
    `/completion` + `grammar`/`json_schema` path the POC used is the safer default until confirmed.
+10. **Empty-object payload schema may break the WHOLE grammar (open hazard, 2D).** llama.cpp
+    [#25923](https://github.com/ggml-org/llama.cpp/issues/25923) (open): an empty-object schema emits invalid
+    GBNF and takes down the *entire* grammar, not just that branch. Our compiler emits exactly that shape for
+    any command declaring `payload_schema: {}` — so **one payload-less command could make every other command
+    unproposable**. Deliberately not fixed in 2A (unobservable offline; the right workaround is unknown until
+    measured). **2D must** compile the real carrier + actuary surfaces against the pinned build and confirm the
+    grammar loads; if it bites, choose between omitting the `payload` property when empty vs. emitting a
+    permissive-but-non-empty shape, then add a compiler-level regression test. Detail: research §12.5.
+11. **`suppress_reasoning` cannot be honoured the obvious way on Qwen3 (2D).** `--reasoning-format none`
+    **plus** `response_format` is a hard **400**, intentionally
+    ([#23775](https://github.com/ggml-org/llama.cpp/issues/23775)); with reasoning templates the schema is
+    still enforced from token 0 (`grammar_lazy = false`). `ProposalRequest.suppress_reasoning` is a
+    platform-neutral *intent*, so no library code is wrong — but the concrete binding must honour it by
+    accepting and discarding the thinking block, **not** by disabling reasoning alongside a schema. Also:
+    `strict` in `response_format` is a **no-op** (server discards it), and older builds **failed open** —
+    200 OK with unconstrained output — which is why the Task-4 grounding re-validation is load-bearing rather
+    than merely defensive, and why 2D must pin a build and assert the 400. Detail: research §12.3/§12.6.
 
 ---
 
