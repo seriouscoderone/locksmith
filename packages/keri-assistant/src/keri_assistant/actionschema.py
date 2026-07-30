@@ -38,29 +38,81 @@ def grounded_set_for(prop_name: str, grounding: Grounding) -> frozenset[str] | N
     return None
 
 
+def _grounded_subschema(subschema, grounding: Grounding):
+    """Ground one `properties`/`items` member found by structural position, not by name.
+
+    A subschema found this way is walked for entity fields nested *inside* it — it is never
+    itself enum-constrained by its own name (only members of ITS `properties`/`items` can match
+    `grounded_set_for`). Non-dict schema forms (e.g. a bare `true`/`false` schema) pass through
+    unchanged — there is nothing to walk.
+    """
+    if not isinstance(subschema, dict):
+        return subschema
+    return _ground_node(subschema, grounding)
+
+
+def _ground_node(schema: dict, grounding: Grounding) -> dict | None:
+    """Copy `schema`, enum-constraining entity-naming fields at any depth under `properties`/
+    `items`. None => unsatisfiable: a REQUIRED entity field, at this level or nested inside it,
+    has nothing grounded.
+
+    Recurses through exactly two constructs, matching the corpus: `properties` (each value is a
+    subschema) and `items` (a single subschema, or the JSON-Schema tuple form — a list of
+    subschemas). `allOf`/`oneOf`/`anyOf`/`patternProperties`/`$ref` are a documented, deliberate
+    gap — see `test_allOf_declared_entity_fields_are_a_KNOWN_gap_not_grounded`.
+    """
+    node = dict(schema)  # never mutate the caller's dict — copy every level we touch
+
+    if "properties" in node:
+        properties = dict(node["properties"])
+        required = list(node.get("required", []))
+        for prop_name in list(properties):
+            subschema = properties[prop_name]
+            allowed = grounded_set_for(prop_name, grounding)
+            if allowed is not None:
+                # entity-naming leaf: enum-constrain or drop outright, never recurse into it.
+                if allowed:
+                    properties[prop_name] = {"enum": sorted(allowed)}
+                    continue
+                if prop_name in required:
+                    return None  # required entity field with nothing grounded -> unsatisfiable
+                del properties[prop_name]  # optional and ungroundable -> not emittable at all
+                continue
+            # not an entity field itself — but it may contain one, so walk its shape.
+            grounded_sub = _grounded_subschema(subschema, grounding)
+            if grounded_sub is None:
+                if prop_name in required:
+                    return None  # a nested required entity field is ungroundable -> unsatisfiable
+                del properties[prop_name]  # optional -> the whole ungroundable shape drops
+                continue
+            properties[prop_name] = grounded_sub
+        node["properties"] = properties
+        if required:
+            node["required"] = [r for r in required if r in properties]
+
+    if "items" in node:
+        items = node["items"]
+        if isinstance(items, list):  # tuple form: positional per-item subschemas
+            grounded_items = []
+            for item_schema in items:
+                grounded_item = _grounded_subschema(item_schema, grounding)
+                if grounded_item is None:
+                    return None  # one tuple slot unsatisfiable -> the whole array is
+                grounded_items.append(grounded_item)
+            node["items"] = grounded_items
+        else:  # single subschema applies to every array element
+            grounded_items = _grounded_subschema(items, grounding)
+            if grounded_items is None:
+                return None  # every element must satisfy this -> the array can never be satisfied
+            node["items"] = grounded_items
+
+    return node
+
+
 def _ground_payload(payload_schema: dict, grounding: Grounding) -> dict | None:
     """Copy the payload schema, enum-constraining entity-naming fields. None => unsatisfiable."""
     schema = dict(payload_schema) or {"type": "object"}
-    properties = dict(schema.get("properties", {}))
-    required = list(schema.get("required", []))
-    if not properties:
-        return schema
-
-    for prop_name in list(properties):
-        allowed = grounded_set_for(prop_name, grounding)
-        if allowed is None:
-            continue  # not an entity field — leave the author's schema alone
-        if allowed:
-            properties[prop_name] = {"enum": sorted(allowed)}
-        elif prop_name in required:
-            return None  # required entity field with nothing grounded -> omit the whole verb
-        else:
-            del properties[prop_name]  # optional and ungroundable -> not emittable at all
-
-    schema["properties"] = properties
-    if required:
-        schema["required"] = [r for r in required if r in properties]
-    return schema
+    return _ground_node(schema, grounding)
 
 
 def _verb_alternative(verb: Verb, grounding: Grounding) -> dict | None:
