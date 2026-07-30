@@ -45,8 +45,18 @@ sidecar (Phase 2) and push-to-talk voice + the `ai-identicon` presence widget (P
 - **The LLM/matcher is never the *authority*** (which is different from never *acting*). "The harness's job
   is to make the LLM useful without ever trusting it to be the authority." On authority-bearing work the
   assistant only *proposes*; a human **Confirm = a signature** authorizes; a trusted executor signs.
-  Never-verbs (`rotate / delegate / revoke / recover / seed / passcode display / IPEX admit-into-vault`) are
-  **structurally absent** from the surface — not even confirmable.
+- **Never-verbs are a narrow, two-tier floor — not the security boundary.** The **framework floor** covers
+  operations on the user's **own key material and secrets** (`rotate`, `delegate` own authority, `recover`,
+  `seed` / `passcode` display) and is **structurally absent** from the surface — no template may opt in, not
+  even as a confirmable proposal, because those must be "the human's own hands on the primitive." An
+  **application/user tier** may add restrictions on top (additive, deployment- or user-scoped). Everything
+  else — including domain verbs whose *names* resemble KERI operations (`revoke_license`,
+  `suspend_license`, an `admit`-bearing command) — **is proposable behind the ceremony.** Rationale and the
+  evidence that forced this, in §9.5.
+- **Grounding reaches inside the payload, not just its top level.** Any payload field that names a
+  world entity — by convention `*_aid` / `*_said` — must be `enum`-constrained to the grounded set exactly
+  like `receiver_aid` is. Without this, a model can emit a hallucinated `holder_aid` inside an otherwise
+  valid `grant_license` and pass the schema, the grammar, and the top-level grounding check.
 - **Confirm sits at the unit of human intent, never at the protocol message.** One thing the user meant →
   one approval → N KERI operations underneath (a command's declared `emissions`). Asking the user to
   approve each protocol message is a design defect, not extra safety.
@@ -200,9 +210,9 @@ recorded here so the substrate stays explicit, **not** because the model chooses
 
 1. **IPEX routes** (built-in credential subset): `apply / offer / agree / grant / admit / spurn` — the
    standardized, bilateral, non-normative-but-canonical credential issuance & presentation handshake.
-   *(⚠️ Which of these the assistant may **propose** vs. which are human-only is unresolved: the backlog
-   lists **IPEX `admit`** — accepting a credential into the vault — as a **never-verb**. This spec does not
-   decide it; see the reconciliation verify-item in §9. Until reconciled, treat `admit` as human-only.)*
+   *(Resolved 2026-07-29: **all six are proposable** behind the ceremony when a template declares a command
+   that emits them. `admit` in particular must be — the grantee's own assistant has to be able to help admit
+   the credential it was granted, and holding a credential confers no authority by itself. See §9.5.)*
 2. **Custom micro-app command routes** (`/<eco>/cmd/<verb>_<noun>`) — the framework's declared non-credential
    coordination.
 3. **`qry` reads** — for read/lookup intents (and `projections[]` over local state).
@@ -411,8 +421,12 @@ loop autonomously (§4.2) — that is the design's intent, not a loophole in it.
 - The assistant **never computes authz** and never holds keys, signs, or serializes an event.
 - Authority-bearing output is **inert** until a human authorizes it; **Confirm = a signature** happens in the
   trusted `Dispatcher`, never in the model.
-- **Never-verbs are absent from the surface** (structural, enforced at surface compilation — not a runtime
-  check that could be bypassed).
+- **The never-verb floor is absent from the surface** (structural, enforced at surface compilation — not a
+  runtime check that could be bypassed), and no template can opt into it. The floor is deliberately narrow
+  (own key material and secrets); it is **defense in depth, not the boundary** — see §9.5 for why over-broad
+  filtering was actively harmful.
+- **Grounding is enforced at every depth of the proposal** — top-level parameters *and* payload fields that
+  name world entities. A hallucinated identifier anywhere in an approved action is a correctness failure.
 - **Approval granularity is the unit of human intent** — a declared command, or a plan bound by its SAID.
   A batch approval is only valid while each step still matches what was approved; divergence halts (§4.3).
 - **`proposed-by` / `authorized-by`** are recorded as distinct facts on every dispatched action. The
@@ -518,12 +532,25 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    repo, **sibling to `ai-identicon`** (§2). Only the final package/repo name and the actual repo creation
    remain, deferred to implementation (needs owner's go).
 4. **Phase-2 grounding/RAG mechanics.** Retrieval strategy + cite-by-SAID — deferred to the Phase-2 spec.
-5. **Never-verb list vs. the action space (reconciliation).** The backlog's never-verb list was authored for
-   the earlier *wallet-shell* framing and marks **IPEX `admit`** never-reachable. Now that the model selects
-   *declared commands* rather than protocol verbs (§4.0), the question narrows usefully: it is no longer "may
-   the model emit `admit`?" but "**may a template declare an admit-bearing command as proposable?**" Decide
-   per verb, and update the backlog's list to match. Touches signed-off prior art → explicit decision, not a
-   silent change. Currently implemented as: `admit` excluded (`NEVER_VERB_TOKENS` in `neververbs.py`).
+5. **Never-verb scope — RESOLVED 2026-07-29: loosened to a narrow framework floor, two-tier.**
+   **What forced it:** compiling the real `regulator-grants-carrier-license` template showed
+   `/insurance/cmd/revoke_license` being **silently dropped** — the token `revoke` matched the never-verb set,
+   so a state insurance regulator's assistant lost 1 of its 5 core commands, with no error. The filter had
+   conflated *"revoke my own credential/keys"* (rightly never) with a domain command the template author
+   deliberately declared with `authz`.
+   **Resolution** (owner's call, this date): the framework floor keeps only operations on the user's **own key
+   material and secrets** — `rotate`/`rot`, `delegate`/`dip`/`drt`, `recover`, `seed`, `passcode`; it **drops**
+   `revoke`/`rev` and `admit`. An **application/user tier** may add restrictions additively later (the token
+   set is caller-overridable so that lock-down is non-breaking). Direction was explicitly "loosen now, be more
+   open, lock down later at framework or user/application level."
+   **Accepted trade-off, recorded honestly:** rebecca-poc's reassuring result — every fabricated action was
+   grammar-bounded to reads/navigation — is now weaker. A fabricated or injected action can be a domain
+   *write*. The ceremony still catches it (it always was the boundary, per the panel's own correction), but the
+   blast radius of an **un-noticed** approval grows, which promotes "the preview must make the effect legible"
+   (§4.3) from nice-to-have to load-bearing.
+   **Follow-on (open):** the rigorous form is to classify by a command's declared **`emissions`** (block a KEL
+   establishment event or a secret disclosure; allow a TEL `rev` on a credential the user issued) rather than
+   by route-name tokens. Needs emissions typing/normalization first — for the template-area agents.
 6. **Harness identity: generic runtime vs. declared micro-app (decided, overrulable).** The harness is a
    **generic runtime** operating whichever micro-apps are active — its per-session scope is the union of their
    declared surfaces, so it serves any domain unchanged. It needs an identity only for **provenance**
