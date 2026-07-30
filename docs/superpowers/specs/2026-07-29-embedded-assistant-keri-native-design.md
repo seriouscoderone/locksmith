@@ -448,6 +448,21 @@ subsections below record what shipped; **Phase 2 (§8.1)** is the next arc.
 
 ### 8.1 Phase 2 — the capable agent (next arc)
 
+**Phase 2 is FIVE plans, not one** — it spans separable subsystems, and usefully **four of the five need no
+live model**, so most of it is offline-testable:
+
+| Plan | Subsystem | Depends on | Live model? |
+|---|---|---|---|
+| **2A** | grounded proposal-schema compiler + `AssistantBinding` contract | Phase 1 | no |
+| **2B** | agent loop + `ToolRegistry` (autonomous read/compute tools), two-pass decide/shape | 2A | no (fake binding) |
+| **2C** | `Plan` + plan-SAID approval + step-binding executor (halt on divergence) | 2B | no |
+| **2D** | real llama.cpp `AssistantBinding` + `llama-server` sidecar supervisor + eval gate (incl. measuring §9.8's tool-suppression claim) | 2A, 2B | **yes** |
+| **2E** | grounded Q&A / RAG with cite-by-SAID + action-vs-question router | 2B | partly |
+
+**2A is written and committed:** `docs/superpowers/plans/2026-07-29-phase2a-grounded-proposal-schema-plan.md`
+(5 TDD tasks, complete code, offline). 2B–2E are not yet written. The bullets below are the scope those five
+plans divide up.
+
 Built on Phase 1's unchanged seams. **Mostly integration, not construction** — the honest build-vs-borrow
 finding is that constrained decoding, model serving, prompt templating, retrieval, and output validation are
 all commodity and must be *borrowed*; what is genuinely ours is small (see §11's evaluation artifact):
