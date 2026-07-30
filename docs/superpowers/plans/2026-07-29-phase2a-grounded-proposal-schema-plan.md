@@ -1150,6 +1150,22 @@ def test_golden_proposal_schema():
         Grounding(known_aids=frozenset({BROKER}), allowed_schema_saids=frozenset({QUOTE})),
     )
     # Order is significant (surface order, then the two escape hatches) — pin it as emitted.
+    #
+    # AMENDED 2026-07-30 — the controller recomputed this literal against the fixed compiler
+    # (ccea1be6 + 83450b24) so no implementer is ever put in the position of "adjust a
+    # security-relevant golden pin until it goes green". Three deliberate differences from the
+    # original pin, each a fix, NOT a regression:
+    #   1. `create_application` is ABSENT. Its fixture payload declares `additionalProperties:
+    #      true`; an open payload accepts arbitrary keys, so an ungrounded `holder_aid` validated
+    #      through it (proved with a jsonschema oracle). Open payloads now fail closed — the verb
+    #      is omitted rather than emitted with an escape hatch of its own. The omission is pinned
+    #      as a named property by `test_shipped_open_payload_fixture_create_application_is_omitted`
+    #      in test_actionschema.py; this pin just reflects it.
+    #   2. `question` and `reason` gained `"minLength": 1` — an empty string is not a truthful
+    #      "out", so a zero-length clarification must not satisfy the grammar.
+    #   3. Everything else is byte-identical to the original pin.
+    # If this assertion fails, the compiler changed. Do NOT paste over the literal: diff the
+    # emitted schema against this and establish which side is wrong first.
     assert json.dumps(schema, sort_keys=True) == json.dumps({
         "oneOf": [
             {"type": "object", "additionalProperties": False,
@@ -1161,18 +1177,13 @@ def test_golden_proposal_schema():
                                         "properties": {"amount": {"type": "number"}},
                                         "required": ["amount"]}}},
             {"type": "object", "additionalProperties": False,
-             "required": ["verb_id", "payload"],
-             "properties": {"verb_id": {"const": "create_application"},
-                            "payload": {"type": "object", "additionalProperties": True,
-                                        "properties": {}}}},
-            {"type": "object", "additionalProperties": False,
              "required": ["verb_id", "question"],
              "properties": {"verb_id": {"const": "__clarify__"},
-                            "question": {"type": "string", "maxLength": 200}}},
+                            "question": {"type": "string", "minLength": 1, "maxLength": 200}}},
             {"type": "object", "additionalProperties": False,
              "required": ["verb_id", "reason"],
              "properties": {"verb_id": {"const": "__unsupported__"},
-                            "reason": {"type": "string", "maxLength": 200}}},
+                            "reason": {"type": "string", "minLength": 1, "maxLength": 200}}},
         ]
     }, sort_keys=True)
 ```
