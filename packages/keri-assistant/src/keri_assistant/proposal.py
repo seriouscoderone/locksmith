@@ -29,10 +29,11 @@ def _check_payload_grounded(payload: dict, grounding: Grounding) -> str | None:
     MUST RECURSE. Amended 2026-07-30 after an adversarial review: the original version iterated
     only `payload.items()`, which mirrored a matching depth-1 blind spot in the compiler. The
     compiler now grounds entity fields nested under `properties`/`items` at any depth
-    (commits ccea1be6 + 83450b24), and a real template — actuary `ingest_rate_workbook`, whose
-    `shards[].shard_said` the template itself calls "the commitment" — exercises that path. A
-    top-level-only check here would leave the *second* layer of defence holed exactly where the
-    first one was, so a nested hallucinated identifier would pass BOTH.
+    (commits ccea1be6 + 83450b24), and templates in the real corpus do nest an entity-named field
+    inside an array of objects — in one case the nested SAIDs are the payload's actual cryptographic
+    commitment while the flat sibling field commits to nothing. A top-level-only check here would
+    leave the *second* layer of defence holed in exactly the same place as the first, so a nested
+    hallucinated identifier would pass BOTH.
     """
     def walk(node: object, path: str) -> str | None:
         if isinstance(node, dict):

@@ -144,9 +144,9 @@ workbench tools serve that responsibility.
 
 Purpose is deliberately SOFT and must never be described or relied on as a defence: a prompt
 injection can redirect it. It earns its place for three other reasons: it decides which tools load at
-all, it makes divergence legible at the ceremony (an actuary's assistant proposing a licence
-revocation is visibly wrong to the human), and being directed rather than aimless is a stated product
-requirement.
+all, it makes divergence legible at the ceremony (a proposal unrelated to the role's stated
+responsibility is visibly wrong to the human reviewing it), and being directed rather than aimless is
+a stated product requirement.
 """
 from __future__ import annotations
 
@@ -360,9 +360,11 @@ Two sources, one registry:
 * READ tools come from the micro-app template's `projections[]` (compiled to `kind="query"` verbs).
   Reading framework state is a framework act, so it is declared.
 * COMPUTE tools are WORKBENCH tools, registered by the host. Per ugard's 2026-07-29 workbench
-  amendment they are the framework's peer, not one of its layers: `ipd-parse`/`ipd-gen` are invoked
-  by the person, gated by nothing, and the protocol never witnesses them. Declaring them in a
-  micro-app template would put workbench work inside the membrane — a category error.
+  amendment they are the framework's peer, not one of its layers: a workbench tool (a domain
+  parser/generator, a validator, an engine) is invoked by the person, gated by nothing, and the
+  protocol never witnesses that it ran. The boundary test is "does this need to be provable later,
+  to someone who wasn't there?" Declaring such tools in a micro-app template would put workbench
+  work inside the membrane — a category error. They are bespoke to the deploying host.
 
 `kind == "exchange"` verbs are deliberately NOT tools. Authority-bearing work can only become a
 proposal, never an autonomous call.
@@ -1525,20 +1527,25 @@ Expected: FAIL — `ModuleNotFoundError: No module named 'keri_assistant.audit_s
 ```python
 """Report payload fields the grounding cannot reach — visibility, not enforcement.
 
-Phase 2A's review found `grant_license.application_id`: required, a free string, and described by
-the template itself as "SAID of the carrier_license_application this grant adjudicates". A model can
-invent one and a human signs a grant against an application that does not exist. A corpus scan found
-three such misses in three naming shapes — `application_id` (`_id`), `declaration_saids` (PLURAL),
-and `attach_source.ref` ("SAID or locator"). The plural is decisive: an author FOLLOWING the
-convention was still missed, so naming is structurally the wrong mechanism.
+Phase 2A's review found a required payload field that was a plain string, yet whose own description
+declared it to be the SAID of another credential. A model can invent such a value and a human then
+signs an authority-bearing action referencing something that does not exist. A scan of the real corpus
+found three such misses in three different naming shapes: a `<noun>_id` suffix, a **plural** `_saids`,
+and a field named `ref` documented as "SAID *or* locator". The plural is the decisive one — an author
+who was FOLLOWING the `*_said` convention was still missed, because the natural plural escapes it. So
+naming is structurally the wrong mechanism, not merely an imperfect one.
 
-Widening the `*_aid`/`*_said` convention to `_id` was rejected — `product_id` and `thread_id` are
-ordinary opaque identifiers, and constraining them would repeat the over-broad never-verb error that
-silently dropped a regulator's `revoke_license`. The owner's actual fix is to make such references
-ACDCs chained by edge (ugard backlog/2026-07-30-application-as-self-issued-acdc-chained-to-license).
+Widening the `*_aid`/`*_said` convention to `_id` was rejected: `_id` suffixes are overwhelmingly
+ordinary opaque identifiers, so constraining them all would repeat the over-broad never-verb error
+that silently deleted a legitimate command from a surface. The settled fix is upstream — such a
+reference becomes a self-issued ACDC chained by an ACDC **edge**, so it has a SAID by construction and
+grounding becomes semantic (do I hold this credential?) rather than lexical. Rationale and scope: the
+ugard backlog item dated 2026-07-30 on self-issued-ACDC references chained by edge.
 
 So this module does NOT guess. It lists required free-string fields no rule constrains, so template
-review and an eval gate can see the gap instead of it being silently absent.
+review and an eval gate can see the gap instead of it being silently absent. A field named `ref` that
+may legitimately hold either a SAID or a locator cannot be enum-constrained by any mechanism; that is
+a template-design problem, and reporting it is the correct response.
 """
 from __future__ import annotations
 
