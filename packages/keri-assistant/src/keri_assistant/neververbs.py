@@ -22,7 +22,10 @@ _SPLIT = re.compile(r"[^a-z0-9]+")
 
 
 def is_never_verb(route: str, tokens: frozenset[str] = NEVER_VERB_TOKENS) -> bool:
-    """True if `route` names a floor operation. `tokens` is overridable so an application/user
-    tier can add restrictions additively without changing the framework floor."""
+    """True if `route` names a floor operation.
+
+    `tokens` is ADDITIVE: an application/user tier may add restrictions, but cannot remove the
+    framework floor — passing a set that omits a floor token does not re-enable that token.
+    """
     found = {t for t in _SPLIT.split(route.lower()) if t}
-    return bool(found & tokens)
+    return bool(found & (NEVER_VERB_TOKENS | tokens))

@@ -58,3 +58,11 @@ def test_token_set_is_caller_overridable_for_a_later_application_tier():
     extra = NEVER_VERB_TOKENS | {"license"}
     assert is_never_verb("/insurance/cmd/revoke_license", extra) is True   # app-tier restriction
     assert is_never_verb("/insurance/cmd/revoke_license") is False         # default floor unchanged
+
+
+def test_override_is_additive_and_cannot_weaken_the_framework_floor():
+    # a caller passing a non-superset must NOT be able to re-enable a floor operation
+    assert is_never_verb("/keri/cmd/rotate_key", frozenset({"license"})) is True
+    assert is_never_verb("/vault/seed_display", frozenset()) is True
+    # and adding still works
+    assert is_never_verb("/insurance/cmd/revoke_license", frozenset({"license"})) is True
