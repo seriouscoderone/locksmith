@@ -860,6 +860,27 @@ def test_ungrounded_aid_INSIDE_the_payload_is_caught_too():
     assert "holder_aid" in str(exc.value)
 
 
+def test_ungrounded_aid_NESTED_deep_inside_the_payload_is_caught():
+    # amended 2026-07-30: the compiler grounds entity fields at any depth under properties/items,
+    # so this second layer must too — otherwise both layers share one blind spot. The real actuary
+    # template nests `shards[].shard_said`, which its own docs call "the commitment".
+    surf = build_micro_app_surface({"commands": [{
+        "id": "ingest", "name": "ingest", "route": "/insurance/cmd/ingest",
+        "authz": {"method": "open"},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["shards"],
+                           "properties": {"shards": {"type": "array", "items": {
+                               "type": "object", "additionalProperties": False,
+                               "properties": {"shard_said": {"type": "string"}}}}}}}]})
+    g = Grounding(known_aids=frozenset({BROKER}), allowed_schema_saids=frozenset({QUOTE}),
+                  known_credential_saids=frozenset({"EShard000000000000000000000000000000000000"}))
+    with pytest.raises(GrammarViolation) as exc:
+        parse_proposal({"verb_id": "ingest",
+                        "payload": {"shards": [{"shard_said": "EHallucinatedShard00000000000000000000000"}]}},
+                       surf, g)
+    assert "shard_said" in str(exc.value)
+
+
 def test_grounded_aid_inside_the_payload_passes():
     surf = build_micro_app_surface({"commands": [{
         "id": "grant_license", "name": "grant license", "route": "/insurance/cmd/grant_license",
@@ -907,19 +928,40 @@ class GrammarViolation(RuntimeError):
 
 
 def _check_payload_grounded(payload: dict, grounding: Grounding) -> str | None:
-    """Belt-and-braces for entity-naming payload fields (`*_aid` / `*_said`).
+    """Belt-and-braces for entity-naming payload fields (`*_aid` / `*_said`), at ANY depth.
 
     `actionschema` already enum-constrains these, so under a HARD binding this cannot fail —
     a failure means the binding did not really enforce the grammar. Reuses `grounded_set_for`
     so the constraint and this check can never drift apart.
+
+    MUST RECURSE. Amended 2026-07-30 after an adversarial review: the original version iterated
+    only `payload.items()`, which mirrored a matching depth-1 blind spot in the compiler. The
+    compiler now grounds entity fields nested under `properties`/`items` at any depth
+    (commits ccea1be6 + 83450b24), and a real template — actuary `ingest_rate_workbook`, whose
+    `shards[].shard_said` the template itself calls "the commitment" — exercises that path. A
+    top-level-only check here would leave the *second* layer of defence holed exactly where the
+    first one was, so a nested hallucinated identifier would pass BOTH.
     """
-    for key, value in payload.items():
-        allowed = grounded_set_for(key, grounding)
-        if allowed is None:
-            continue
-        if not isinstance(value, str) or value not in allowed:
-            return f"payload field {key!r} holds ungrounded value {value!r}"
-    return None
+    def walk(node: object, path: str) -> str | None:
+        if isinstance(node, dict):
+            for key, value in node.items():
+                allowed = grounded_set_for(key, grounding)
+                where = f"{path}.{key}" if path else key
+                if allowed is not None:
+                    if not isinstance(value, str) or value not in allowed:
+                        return f"payload field {where!r} holds ungrounded value {value!r}"
+                    continue  # a grounded scalar needs no further descent
+                reason = walk(value, where)
+                if reason is not None:
+                    return reason
+        elif isinstance(node, list):
+            for index, item in enumerate(node):
+                reason = walk(item, f"{path}[{index}]")
+                if reason is not None:
+                    return reason
+        return None
+
+    return walk(payload, "")
 
 
 @dataclass(frozen=True)
