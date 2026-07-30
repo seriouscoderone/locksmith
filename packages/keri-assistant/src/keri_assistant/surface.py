@@ -9,7 +9,7 @@ from __future__ import annotations
 import re
 from dataclasses import dataclass, field
 
-from .neververbs import is_never_verb
+from .neververbs import NEVER_VERB_TOKENS, is_never_verb
 
 _WORDS = re.compile(r"[a-z0-9]+")
 
@@ -48,12 +48,14 @@ class CommandSurface:
         return frozenset(v.route for v in self.verbs)
 
 
-def build_micro_app_surface(template: dict) -> CommandSurface:
+def build_micro_app_surface(
+    template: dict, *, never_verb_tokens: frozenset[str] = NEVER_VERB_TOKENS
+) -> CommandSurface:
     verbs: list[Verb] = []
 
     for cmd in template.get("commands", []):
         route = cmd["route"]
-        if is_never_verb(route):
+        if is_never_verb(route, never_verb_tokens):
             continue  # structural exclusion — never even a proposable verb
         authz = dict(cmd.get("authz", {}))
         verbs.append(Verb(
@@ -69,7 +71,7 @@ def build_micro_app_surface(template: dict) -> CommandSurface:
 
     for proj in template.get("projections", []):
         route = f"/qry/{proj['id']}"
-        if is_never_verb(route):
+        if is_never_verb(route, never_verb_tokens):
             continue
         verbs.append(Verb(
             id=proj["id"],

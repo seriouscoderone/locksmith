@@ -31,3 +31,12 @@ def test_ungrounded_schema_is_refused():
 def test_none_fields_are_not_checked():
     it = ResolvedIntent(route="/qry/issued_credentials", verb_id="issued_credentials", kind="query", payload={})
     assert check_grounded(it, G) is None
+
+
+def test_grounding_carries_known_credential_saids_defaulting_empty():
+    from keri_assistant.grounding import Grounding
+    g = Grounding(known_aids=frozenset(), allowed_schema_saids=frozenset())
+    assert g.known_credential_saids == frozenset()
+    g2 = Grounding(known_aids=frozenset(), allowed_schema_saids=frozenset(),
+                   known_credential_saids=frozenset({"ELicense000"}))
+    assert g2.known_credential_saids == frozenset({"ELicense000"})

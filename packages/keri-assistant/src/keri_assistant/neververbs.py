@@ -1,24 +1,28 @@
 """Never-verbs: routes that must be structurally absent from any assistant surface.
 
-KEL establishment + secret display + (provisionally) IPEX admit. See design spec
-Global Constraints and §9.5. This is a STRUCTURAL exclusion, not a runtime authz check.
+KEL establishment + secret display. See design spec Global Constraints and §9.5. This
+is a STRUCTURAL exclusion, not a runtime authz check.
 """
 from __future__ import annotations
 
 import re
 
 NEVER_VERB_TOKENS: frozenset[str] = frozenset({
+    # The framework floor: operations on the USER'S OWN key material and secrets. No template may
+    # opt in — these must be the human's own hands on the primitive. Deliberately NARROW: domain
+    # verbs that merely resemble KERI operations (revoke_license, an admit-bearing command) are
+    # legitimate and proposable behind the ceremony. See design spec §9.5.
     "rotate", "rot",
     "delegate", "dip", "drt",
-    "revoke", "rev",
     "recover",
     "seed", "passcode",
-    "admit",  # spec §9.5 — human-only until reconciled with the KERI-protocol action space
 })
 
 _SPLIT = re.compile(r"[^a-z0-9]+")
 
 
-def is_never_verb(route: str) -> bool:
-    tokens = {t for t in _SPLIT.split(route.lower()) if t}
-    return bool(tokens & NEVER_VERB_TOKENS)
+def is_never_verb(route: str, tokens: frozenset[str] = NEVER_VERB_TOKENS) -> bool:
+    """True if `route` names a floor operation. `tokens` is overridable so an application/user
+    tier can add restrictions additively without changing the framework floor."""
+    found = {t for t in _SPLIT.split(route.lower()) if t}
+    return bool(found & tokens)

@@ -15,6 +15,7 @@ from .intent import ResolvedIntent
 class Grounding:
     known_aids: frozenset[str]
     allowed_schema_saids: frozenset[str]
+    known_credential_saids: frozenset[str] = frozenset()
 
 
 def check_grounded(intent: ResolvedIntent, grounding: Grounding) -> str | None:
