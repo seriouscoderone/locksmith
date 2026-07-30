@@ -1,5 +1,7 @@
 from keri_assistant.intent import ResolvedIntent
 from keri_assistant.seams import Preview, DispatchResult, AuditEvent
+from keri_assistant.binding import ProposalRequest, ProposalResult
+from keri_assistant.enforcement import EnforcementStrength
 
 
 class FakeConfirmer:
@@ -28,3 +30,17 @@ class RecordingAudit:
 
     def record(self, event: AuditEvent) -> None:
         self.events.append(event)
+
+
+class FakeBinding:
+    def __init__(self, raw: dict, strength: EnforcementStrength = EnforcementStrength.HARD):
+        self._raw = raw
+        self._strength = strength
+        self.requests: list[ProposalRequest] = []
+
+    def enforcement(self) -> EnforcementStrength:
+        return self._strength
+
+    def propose(self, request: ProposalRequest) -> ProposalResult:
+        self.requests.append(request)
+        return ProposalResult(raw=self._raw, enforcement=self._strength)
