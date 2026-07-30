@@ -103,3 +103,31 @@ def test_claimed_credential_refs_is_a_subset_of_the_full_unconstrained_report():
         surf = build_micro_app_surface(tmpl)
         claimed = {(v, p) for v, p, _ in claimed_credential_refs(surf, G)}
         assert claimed <= set(unconstrained_entity_fields(surf, G))
+
+
+def _all_property_names(schema) -> set[str]:
+    """Every property name at any depth, walking `properties` and `items` -- deep enough to
+    actually back the claim below rather than just checking each command's top level."""
+    if not isinstance(schema, dict):
+        return set()
+    names: set[str] = set()
+    for name, sub in (schema.get("properties") or {}).items():
+        names.add(name)
+        names |= _all_property_names(sub)
+    if isinstance(schema.get("items"), dict):
+        names |= _all_property_names(schema["items"])
+    return names
+
+
+def test_neither_vendored_template_contains_a_plural_saids_field():
+    # the module docstring names a required array-of-strings field with a plural `_saids` suffix
+    # (e.g. `declaration_saids`) as the DECISIVE naming-convention miss from a scan of the WIDER
+    # corpus. That shape is real, but it is NOT present in either template vendored into this repo
+    # -- it is covered only by the synthetic fixture in test_audit_schema.py. This test pins that
+    # fact so the docstring's honesty claim can't silently drift from what the real corpus actually
+    # contains.
+    for tmpl in (CARRIER, ACTUARY_T):
+        for cmd in tmpl.get("commands", []):
+            names = _all_property_names(cmd.get("payload_schema", {}))
+            plural = {n for n in names if n.lower().endswith("_saids")}
+            assert not plural, f"{cmd['id']} has plural _saids field(s) {plural} -- update the docstring"

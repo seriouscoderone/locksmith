@@ -129,3 +129,38 @@ def test_a_field_already_grounded_by_name_is_not_reported_even_if_described_as_a
                                "type": "string",
                                "description": "SAID of the subject credential."}}}}]})
     assert claimed_credential_refs(surf, G) == ()
+
+
+# --- a required ARRAY of plain strings must be reached too, not just scalar strings ---
+# The module docstring names a plural `_saids` field as the DECISIVE naming-convention miss
+# precisely because `*_said` matches a scalar field name, not an array one -- and an array is the
+# natural shape for such a plural. A detector that only reported `type: "string"` leaves would be
+# structurally blind to exactly the shape its own docstring calls decisive. Covered synthetically
+# here because neither vendored template happens to contain a plural `_saids` field -- see
+# test_loop_real_templates.py for the explicit assertion pinning that fact against the real corpus.
+
+def test_a_required_array_of_strings_named_as_a_plural_said_is_reported_by_both_functions():
+    surf = build_micro_app_surface({"commands": [{
+        "id": "seal", "name": "seal", "route": "/dom/cmd/seal", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["declaration_saids"],
+                           "properties": {"declaration_saids": {
+                               "type": "array",
+                               "description": "Every declaration SAID the sub-manifest commits to.",
+                               "items": {"type": "string"}}}}}]})
+    assert ("seal", "declaration_saids") in unconstrained_entity_fields(surf, G)
+    found = claimed_credential_refs(surf, G)
+    assert ("seal", "declaration_saids", "described as a SAID") in found
+
+
+def test_a_required_array_of_strings_with_an_enum_on_items_is_not_reported():
+    # already constrained -- an enum on the array's items closes it exactly as an enum on a scalar
+    # string field would
+    surf = build_micro_app_surface({"commands": [{
+        "id": "classify", "name": "classify", "route": "/dom/cmd/classify", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["kinds"],
+                           "properties": {"kinds": {
+                               "type": "array",
+                               "items": {"type": "string", "enum": ["a", "b"]}}}}}]})
+    assert unconstrained_entity_fields(surf, G) == ()

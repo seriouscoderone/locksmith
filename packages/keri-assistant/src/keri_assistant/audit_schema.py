@@ -2,11 +2,21 @@
 
 Phase 2A's review found a required payload field that was a plain string, yet whose own description
 declared it to be the SAID of another credential. A model can invent such a value and a human then
-signs an authority-bearing action referencing something that does not exist. A scan of the real corpus
-found three such misses in three different naming shapes: a `<noun>_id` suffix, a **plural** `_saids`,
-and a field named `ref` documented as "SAID *or* locator". The plural is the decisive one — an author
-who was FOLLOWING the `*_said` convention was still missed, because the natural plural escapes it. So
-naming is structurally the wrong mechanism, not merely an imperfect one.
+signs an authority-bearing action referencing something that does not exist. A scan of the WIDER
+corpus (not limited to the two templates vendored into this repo) found three such misses in three
+different naming shapes: a `<noun>_id` suffix, a **plural** `_saids` (a REQUIRED ARRAY of strings,
+e.g. `declaration_saids`), and a field named `ref` documented as "SAID *or* locator". The plural is
+the decisive one — an author who was FOLLOWING the `*_said` convention was still missed, because
+`*_said` matches a scalar field name, not an array one, and an array is exactly the natural shape for
+such a plural. So naming is structurally the wrong mechanism, not merely an imperfect one.
+
+Honesty about what the VENDORED corpus actually demonstrates: the `<noun>_id` shape
+(`application_id`) and the `ref` shape (`workbook_ref`, `source_ref`, `option_ref`) both show up in
+`tests/fixtures/real/` and are asserted there (`test_loop_real_templates.py`). The plural `_saids`
+shape does NOT appear in either vendored template (see that same file's test pinning this fact), so
+it is demonstrated only by a synthetic fixture in `test_audit_schema.py`. Do not read "decisive" as a
+claim that the real corpus exercises it; it is a claim about a scan of the wider corpus this module
+was designed against.
 
 Widening the `*_aid`/`*_said` convention to `_id` was rejected: `_id` suffixes are overwhelmingly
 ordinary opaque identifiers, so constraining them all would repeat the over-broad never-verb error
@@ -19,11 +29,13 @@ self-issued ACDC chained by an ACDC **edge**, so it has a SAID by construction a
 semantic (do I hold this credential?) rather than lexical. Rationale and scope: the ugard backlog item
 dated 2026-07-30 on self-issued-ACDC references chained by edge.
 
-So `unconstrained_entity_fields` does NOT guess. It lists every required free-string field no rule
-constrains, so the gap is visible rather than silently absent. But on the real corpus that list runs
-to dozens of rows — timestamps, dates, prose, ordinary identifiers — of which only a handful are
-genuine credential references. Nobody reads a 55-row list to find the one live defect, so a plain
-listing delivers the form of visibility without the substance.
+So `unconstrained_entity_fields` does NOT guess. It lists every required field no rule constrains
+that is a plain string OR a required array of plain strings — the latter reached explicitly so the
+plural `_saids` shape above is not just documented but actually caught — so the gap is visible rather
+than silently absent. But on the real corpus that list runs to dozens of rows — timestamps, dates,
+prose, ordinary identifiers — of which only a handful are genuine credential references. Nobody reads
+a 55-row list to find the one live defect, so a plain listing delivers the form of visibility without
+the substance.
 
 `claimed_credential_refs` narrows that same list to the evidence the template ALREADY carries — this
 is literally how the original `application_id` defect was found: by reading the field's own
@@ -54,6 +66,11 @@ from .surface import CommandSurface
 _SAID_CLAIM = re.compile(r"\bSAID\b|self-addressing|\bdigest\b", re.IGNORECASE)
 
 
+def _open_string(sub) -> bool:
+    """A `type: "string"` schema with no `enum` closing it -- the leaf shape this module reports."""
+    return isinstance(sub, dict) and sub.get("type") == "string" and "enum" not in sub
+
+
 def _walk(node: dict, grounding: Grounding, prefix: str) -> list[tuple[str, dict]]:
     if not isinstance(node, dict):
         return []
@@ -67,7 +84,15 @@ def _walk(node: dict, grounding: Grounding, prefix: str) -> list[tuple[str, dict
             continue  # a rule already reaches this field
         if isinstance(sub, dict) and (sub.get("properties") or sub.get("type") == "object"):
             found.extend(_walk(sub, grounding, f"{path}."))
-        elif isinstance(sub, dict) and sub.get("type") == "string" and "enum" not in sub:
+        elif _open_string(sub):
+            found.append((path, sub))
+        elif isinstance(sub, dict) and sub.get("type") == "array" and _open_string(sub.get("items")):
+            # a required ARRAY of plain strings is exactly as forgeable as a single one -- one bad
+            # element is enough to sign over a nonexistent reference -- and is the natural shape
+            # for the plural `_saids` naming the module docstring calls the decisive miss (`*_said`
+            # matches a scalar name, not an array one). Reported at the field's own path, not per
+            # element: the defect is "this field accepts any string", a property of the whole
+            # array, not of an index into it.
             found.append((path, sub))
     return found
 
