@@ -1,0 +1,21 @@
+# The subagent-driven-development workspace.
+#
+# The `sdd-workspace` script creates this file containing a bare `*`, treating the whole directory as
+# scratch. We deliberately override that: the LEDGER and the per-task REPORTS are the durable record of
+# how a phase was executed — every finding, every deferral with its reason, every process error. Phase
+# 2A's ledger was lost when its worktree was deleted, which is the whole argument for tracking these.
+#
+# Tracked:  progress.md (the ledger) and *-report.md (what each implementer actually did and found)
+# Ignored:  *.diff      — generated review packages; reconstructible with `git diff <base>..<head>`
+#           *-brief.md  — generated from the plan by `task-brief`; the plan itself is already tracked
+#
+# If a future SDD workspace appears with a bare `*`, replace it with this file.
+#
+# Note the `!*/` line: git does not descend into a directory excluded by `*`, so without it the
+# file-level negations below are never even evaluated and everything stays ignored.
+
+*
+!*/
+!.gitignore
+!progress.md
+!*-report.md

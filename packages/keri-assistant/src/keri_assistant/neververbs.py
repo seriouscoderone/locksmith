@@ -9,9 +9,11 @@ import re
 
 NEVER_VERB_TOKENS: frozenset[str] = frozenset({
     # The framework floor: operations on the USER'S OWN key material and secrets. No template may
-    # opt in — these must be the human's own hands on the primitive. Deliberately NARROW: domain
-    # verbs that merely resemble KERI operations (revoke_license, an admit-bearing command) are
-    # legitimate and proposable behind the ceremony. See design spec §9.5.
+    # opt in — these must be the human's own hands on the primitive. Deliberately NARROW: a domain
+    # verb whose NAME merely resembles a KERI operation (a `<verb>_<domain-object>` command, or one
+    # whose route carries an IPEX route segment) is legitimate and proposable behind the ceremony.
+    # Widening this set by token name silently deletes such commands from the surface, with no
+    # error — that regression is what forced the floor to be narrowed. See design spec §9.5.
     "rotate", "rot",
     "delegate", "dip", "drt",
     "recover",

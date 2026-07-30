@@ -16,6 +16,15 @@ def test_never_verb_command_is_excluded():
     assert "/keri/cmd/rotate_key" not in surf.routes()
 
 
+def test_never_verb_projection_is_structurally_excluded():
+    # A1: the projections[] loop carries its OWN never-verb guard, not just commands[]'s -- the
+    # look-alike above uses a *command* with a `/keri/cmd/rotate_key` route, which the commands[]
+    # guard catches for an unrelated reason and would still pass even if this guard were deleted.
+    surf = build_micro_app_surface({"commands": [], "projections": [{"id": "rotate"},
+                                                                     {"id": "passcode"}]})
+    assert surf.verbs == ()
+
+
 def test_command_verb_fields():
     surf = build_micro_app_surface(SAMPLE_TEMPLATE)
     v = surf.by_id("submit_quote")
