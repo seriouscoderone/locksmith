@@ -605,6 +605,46 @@ def test_union_type_including_object_ends_up_narrowed_not_open():
     assert not jsonschema.Draft202012Validator(payload_schema).is_valid(ATTACK_PAYLOAD)
 
 
+# --- C-2 refinement: an untyped `enum`/`const` leaf is a value constraint, not an object ---
+# The is-object inversion above is correct for `{"description": ...}`/`{"required": [...]}`/etc,
+# but over-applies to a plain value-constraint leaf with no declared `type` -- it used to gain a
+# spurious `"properties": {}, "additionalProperties": false` alongside its `enum`/`const`. That's
+# a validator no-op (object keywords are ignored on a non-object instance, which is why nothing
+# failed), but the compiled schema feeds a backend that turns JSON-Schema into a GBNF grammar,
+# which has open bugs on unusual shapes (ggml-org/llama.cpp#25923: an empty-object schema emits
+# invalid GBNF and breaks the WHOLE grammar) -- so a novel hybrid shape for zero semantic benefit
+# is a bad trade. `{"description": ...}`-style nodes must still fail closed; only `enum`/`const`
+# nodes get the exemption.
+
+def test_untyped_enum_and_const_leaves_pass_through_unpolluted():
+    template = {"commands": [{
+        "id": "sneaky", "name": "sneaky", "route": "/insurance/cmd/sneaky",
+        "authz": {"method": "open"},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "properties": {"tier": {"enum": ["gold", "silver"]},
+                                          "fee_model": {"const": "fixed"}}},
+    }]}
+    surf = build_micro_app_surface(template)
+    alt = _alts(build_proposal_schema(surf, G))["sneaky"]
+    props = alt["properties"]["payload"]["properties"]
+    assert props["tier"] == {"enum": ["gold", "silver"]}      # untouched -- no forced closure
+    assert props["fee_model"] == {"const": "fixed"}
+
+
+def test_untyped_description_only_node_still_fails_closed():
+    # the enum/const exemption must NOT widen to other untyped shapes -- this one has neither
+    # keyword, so it stays exactly what C-2 already pinned: forced closed to an empty object.
+    template = {"commands": [{
+        "id": "sneaky", "name": "sneaky", "route": "/insurance/cmd/sneaky",
+        "authz": {"method": "open"}, "payload_schema": {"description": "grant to the holder"},
+    }]}
+    surf = build_micro_app_surface(template)
+    alt = _alts(build_proposal_schema(surf, G))["sneaky"]
+    payload_schema = alt["properties"]["payload"]
+    assert not jsonschema.Draft202012Validator(payload_schema).is_valid(ATTACK_PAYLOAD)
+    assert payload_schema["additionalProperties"] is False
+
+
 # --- I-2: no deepcopy -- compiled schemas used to alias the template's mutable leaves ---
 
 MUTATION_TEMPLATE = {

@@ -88,6 +88,21 @@ def _ground_node(schema: dict, grounding: Grounding, pinned_schema_said: str | N
 
     node = dict(schema)  # never mutate the caller's dict — copy every level we touch
 
+    # A value constraint (`enum`/`const`), not an object -- leave it untouched. Placed AFTER the
+    # unsupported-construct check (so fail-closed still wins over it), but BEFORE the is-object
+    # test below: that test alone would treat an untyped `enum`/`const` leaf as "could be an
+    # object" and force it closed, producing a hybrid `{"enum": [...], "properties": {},
+    # "additionalProperties": false}` node. That's a no-op for a validator (object keywords on a
+    # non-object instance are simply ignored, which is why nothing failed), but our consumer is a
+    # backend that compiles JSON-Schema into GBNF, which has open bugs on unusual shapes (e.g.
+    # ggml-org/llama.cpp#25923: an empty-object schema emits invalid GBNF and breaks the WHOLE
+    # grammar, not just this branch) — emitting a novel hybrid shape for no semantic benefit is a
+    # bad trade. Grounded entity fields are unaffected: `grounded_set_for` matches those by NAME
+    # in the parent's `properties` loop and overwrites them with a fresh `{"enum": [...]}` without
+    # ever routing the field's own original subschema through `_ground_node`.
+    if "enum" in node or "const" in node:
+        return node
+
     # Treat a node as an object UNLESS it provably is not one. An adversarial review proved (with
     # a `jsonschema` oracle) that the previous test — object only if `type: object`, or
     # `properties`/`additionalProperties` present — let an ungrounded entity value validate
