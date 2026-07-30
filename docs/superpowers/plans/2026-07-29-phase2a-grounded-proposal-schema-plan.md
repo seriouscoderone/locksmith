@@ -477,8 +477,11 @@ UNSUPPORTED = "__unsupported__"
 MAX_TEXT = 200
 
 
-def _grounded_set_for(prop_name: str, grounding: Grounding) -> frozenset[str] | None:
+def grounded_set_for(prop_name: str, grounding: Grounding) -> frozenset[str] | None:
     """Which grounded set constrains this payload property, by naming convention.
+
+    PUBLIC: `proposal.parse_proposal` reuses this so the schema constraint and the belt-and-braces
+    re-validation can never drift apart.
 
     Convention (not annotation) is deliberate and temporary: the template spec has no field-level
     entity annotation yet, so `*_aid` / `*_said` naming is what we have. Fragile but closes a real
@@ -503,7 +506,7 @@ def _ground_payload(payload_schema: dict, grounding: Grounding) -> dict | None:
         return schema
 
     for prop_name in list(properties):
-        allowed = _grounded_set_for(prop_name, grounding)
+        allowed = grounded_set_for(prop_name, grounding)
         if allowed is None:
             continue  # not an entity field — leave the author's schema alone
         if allowed:
@@ -759,7 +762,7 @@ git commit -m "feat(keri-assistant): AssistantBinding contract (neutral intents 
 - Test: `packages/keri-assistant/tests/test_proposal.py`
 
 **Interfaces:**
-- Consumes: `CLARIFY`/`UNSUPPORTED` (Task 2), `ResolvedIntent`, `CommandSurface`, `Grounding`/`check_grounded`.
+- Consumes: `CLARIFY`/`UNSUPPORTED`/**`grounded_set_for`** (Task 2), `ResolvedIntent`, `CommandSurface`, `Grounding`/`check_grounded`.
 - Produces:
   - `Proposal(status: str, intent: ResolvedIntent | None = None, message: str = "")` — frozen; `status ∈ {"intent","clarify","unsupported"}`.
   - `GrammarViolation(RuntimeError)` — the backend emitted something the schema forbade.
@@ -840,6 +843,38 @@ def test_ungrounded_receiver_means_the_grammar_was_not_enforced():
         parse_proposal({"verb_id": "submit_quote", "schema_said": QUOTE, "payload": {},
                         "receiver_aid": "EStranger0000000000000000000000000000000000"}, SURF, G)
     assert "grounded" in str(exc.value).lower()
+
+
+def test_ungrounded_aid_INSIDE_the_payload_is_caught_too():
+    # the compiled grammar makes this impossible; if it happens the binding lied about
+    # enforcement, so refuse loudly rather than dispatch a licence to a hallucinated holder
+    surf = build_micro_app_surface({"commands": [{
+        "id": "grant_license", "name": "grant license", "route": "/insurance/cmd/grant_license",
+        "counterparty_role": "carrier", "authz": {"method": "open"},
+        "payload_schema": {"type": "object", "required": ["holder_aid"],
+                           "properties": {"holder_aid": {"type": "string"}}}}]})
+    with pytest.raises(GrammarViolation) as exc:
+        parse_proposal({"verb_id": "grant_license", "receiver_aid": BROKER,
+                        "payload": {"holder_aid": "EHallucinated0000000000000000000000000000"}},
+                       surf, G)
+    assert "holder_aid" in str(exc.value)
+
+
+def test_grounded_aid_inside_the_payload_passes():
+    surf = build_micro_app_surface({"commands": [{
+        "id": "grant_license", "name": "grant license", "route": "/insurance/cmd/grant_license",
+        "counterparty_role": "carrier", "authz": {"method": "open"},
+        "payload_schema": {"type": "object", "required": ["holder_aid"],
+                           "properties": {"holder_aid": {"type": "string"}}}}]})
+    p = parse_proposal({"verb_id": "grant_license", "receiver_aid": BROKER,
+                        "payload": {"holder_aid": BROKER}}, surf, G)
+    assert p.status == "intent"
+```
+
+The test file needs `build_micro_app_surface` in its imports — extend the existing surface import line:
+
+```python
+from keri_assistant.surface import build_micro_app_surface
 ```
 
 - [ ] **Step 2: Run test to verify it fails**
@@ -861,7 +896,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .actionschema import CLARIFY, UNSUPPORTED
+from .actionschema import CLARIFY, UNSUPPORTED, grounded_set_for
 from .grounding import Grounding, check_grounded
 from .intent import ResolvedIntent
 from .surface import CommandSurface
@@ -869,6 +904,22 @@ from .surface import CommandSurface
 
 class GrammarViolation(RuntimeError):
     """The backend emitted something the proposal schema forbade."""
+
+
+def _check_payload_grounded(payload: dict, grounding: Grounding) -> str | None:
+    """Belt-and-braces for entity-naming payload fields (`*_aid` / `*_said`).
+
+    `actionschema` already enum-constrains these, so under a HARD binding this cannot fail —
+    a failure means the binding did not really enforce the grammar. Reuses `grounded_set_for`
+    so the constraint and this check can never drift apart.
+    """
+    for key, value in payload.items():
+        allowed = grounded_set_for(key, grounding)
+        if allowed is None:
+            continue
+        if not isinstance(value, str) or value not in allowed:
+            return f"payload field {key!r} holds ungrounded value {value!r}"
+    return None
 
 
 @dataclass(frozen=True)
@@ -909,7 +960,7 @@ def parse_proposal(raw: dict, surface: CommandSurface, grounding: Grounding) -> 
         schema_said=verb.schema_said,   # pinned by the verb, not chosen by the model
     )
 
-    reason = check_grounded(intent, grounding)
+    reason = check_grounded(intent, grounding) or _check_payload_grounded(payload, grounding)
     if reason is not None:
         raise GrammarViolation(f"proposal is not grounded ({reason}) — grammar was not enforced")
 
