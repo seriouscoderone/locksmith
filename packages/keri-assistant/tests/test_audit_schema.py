@@ -174,6 +174,35 @@ def test_a_required_array_of_OBJECTS_is_not_reported_even_if_its_description_cla
     assert claimed_credential_refs(surf, G) == ()
 
 
+# --- I4: `\bSAID\b` must not fire on the ordinary English word "said" ---
+# `re.IGNORECASE` made the acronym pattern match legalese prose ("the said applicant", "the
+# premium said to be owed"), which is standard phrasing in a regulatory corpus. Signal B then
+# amplifies each such false positive across every same-named sibling field.
+
+def test_the_ordinary_english_word_said_is_not_mistaken_for_the_acronym():
+    surf = build_micro_app_surface({"commands": [{
+        "id": "issue_record", "name": "issue", "route": "/dom/cmd/issue_record", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["applicant_note"],
+                           "properties": {"applicant_note": {
+                               "type": "string",
+                               "description": "The said applicant filed the request."}}}}]})
+    found = claimed_credential_refs(surf, G)
+    assert not any(f[0] == "issue_record" and f[1] == "applicant_note" for f in found)
+
+
+def test_the_all_caps_said_acronym_is_still_reported():
+    surf = build_micro_app_surface({"commands": [{
+        "id": "issue_record", "name": "issue", "route": "/dom/cmd/issue_record", "authz": {},
+        "payload_schema": {"type": "object", "additionalProperties": False,
+                           "required": ["prior_ref"],
+                           "properties": {"prior_ref": {
+                               "type": "string",
+                               "description": "SAID of the prior record."}}}}]})
+    found = claimed_credential_refs(surf, G)
+    assert ("issue_record", "prior_ref", "described as a SAID") in found
+
+
 def test_a_required_array_of_strings_with_an_enum_on_items_is_not_reported():
     # already constrained -- an enum on the array's items closes it exactly as an enum on a scalar
     # string field would

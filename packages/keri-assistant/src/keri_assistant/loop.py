@@ -46,7 +46,10 @@ class AgentLoop:
         self._binding = binding
         self._surface = surface
         self._grounding = grounding
-        self._registry = registry
+        # Filtering is idempotent, so a caller who already filtered is unaffected; a caller who
+        # forgot `role=` on `build_tool_registry` gets narrowed here instead of silently offering
+        # the full workbench alongside a role's narrow standing instruction.
+        self._registry = registry.filtered_for(role)
         self._executor = executor
         self._role = role
         self._budget = budget
@@ -87,6 +90,14 @@ class AgentLoop:
 
             # CALL_TOOL — autonomous, no confirmation, ever.
             spec = self._registry.by_id(decision.tool_id)  # parse_decision guaranteed this exists
-            args = self._ask(state, spec.input_schema)
+            if spec.input_schema.get("properties"):
+                args = self._ask(state, spec.input_schema)
+            else:
+                # No properties to shape (every read tool's schema, per `tools._NO_ARGS`) — asking
+                # anyway would hand the backend an empty-object schema as the WHOLE request schema,
+                # not one branch of a larger oneOf. That is exactly the shape actionschema.py warns
+                # breaks grammar compilation entirely (llama.cpp #25923), and it is a wasted decode
+                # regardless: the model would only ever be asked to emit `{}`.
+                args = {}
             result = self._executor.execute(spec.id, args)
             state = state.advanced(observation=observation_for(result), tool_call=True)

@@ -19,6 +19,7 @@ human in the way" and "runs after a human's signature" must not be confusable at
 """
 from __future__ import annotations
 
+import copy
 from dataclasses import dataclass, field
 from typing import Protocol, runtime_checkable
 
@@ -77,7 +78,11 @@ class ToolRegistry:
 
 def read_tools_from_surface(surface: CommandSurface) -> tuple[ToolSpec, ...]:
     return tuple(
-        ToolSpec(id=v.id, kind="read", description=f"read: {v.id}", input_schema=dict(_NO_ARGS))
+        # deepcopy: `dict(_NO_ARGS)` is only a shallow copy, so every read tool's `input_schema`
+        # and the module constant would share the SAME `properties` dict -- mutating one rewrites
+        # all of them process-wide. `actionschema` deep-copies for exactly this reason.
+        ToolSpec(id=v.id, kind="read", description=f"read: {v.id}",
+                 input_schema=copy.deepcopy(_NO_ARGS))
         for v in surface.verbs
         if v.kind == "query"
     )
@@ -90,8 +95,21 @@ def build_tool_registry(
     role: RoleContext | None = None,
 ) -> ToolRegistry:
     specs = read_tools_from_surface(surface) + tuple(compute)
+    # `commands[]` and `projections[]` are compiled independently (surface.py) and appended into
+    # one tuple with no cross-list id check, so a template that reuses an id across both lists
+    # would otherwise slip an exchange verb into the autonomous tool registry -- exactly the
+    # authority-bearing-work-becomes-a-tool hole this module's own docstring says cannot happen.
+    exchange_ids = {v.id for v in surface.verbs if v.kind == "exchange"}
     seen: set[str] = set()
     for s in specs:
+        if s.id in exchange_ids:
+            raise ValueError(
+                f"tool id {s.id!r} names an exchange verb; an exchange verb cannot be a tool"
+            )
+        if s.id.startswith("__"):
+            # reserved for escape hatches (actionschema.CLARIFY/UNSUPPORTED) -- a template verb or
+            # host-registered compute tool cannot claim this namespace.
+            raise ValueError(f"tool id {s.id!r} uses the reserved '__' escape-hatch namespace")
         if s.id in seen:
             raise ValueError(f"duplicate tool id: {s.id!r}")
         seen.add(s.id)

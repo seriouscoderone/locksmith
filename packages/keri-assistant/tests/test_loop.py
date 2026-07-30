@@ -59,6 +59,23 @@ def test_observations_are_source_marked():
     assert out.state.observations[0].startswith("[tool:doc-parse]")
 
 
+def test_a_read_tool_skips_the_argument_ask_and_receives_an_empty_dict():
+    # I1: read tools carry `_NO_ARGS` -- an empty-object schema -- as their WHOLE input_schema, not
+    # one branch of a larger oneOf. Asking the model to shape it anyway is both a wasted decode
+    # (the only possible answer is `{}`) and, per actionschema.py's own warning, a schema shape
+    # that can break grammar compilation entirely (llama.cpp #25923). "board" is the projection-
+    # derived read tool from loop_fixtures.SURF.
+    ex = RecordingToolExecutor({"board": ToolResult(tool_id="board", ok=True, content="3 open")})
+    loop, b, _ = _loop([
+        {"action": CALL_TOOL, "tool_id": "board"},   # decide
+        {"action": ANSWER, "text": "3 open"},        # decide again -- no args-shaping ask between
+    ], executor=ex)
+    out = loop.run("what's on the board")
+    assert out.status == "answer"
+    assert len(b.requests) == 2, "a read tool must not spend a backend call shaping empty args"
+    assert ex.calls == [("board", {})]
+
+
 def test_a_failing_tool_is_reported_and_the_loop_keeps_going():
     ex = RecordingToolExecutor({"doc-parse": ToolResult(tool_id="doc-parse", ok=False,
                                                         content="", detail="file missing")})
@@ -165,8 +182,18 @@ def test_a_soft_binding_is_refused_for_the_shape_pass():
 
 
 def test_a_soft_binding_is_FINE_for_reads_and_answers():
-    # only authority-bearing work needs the hard guarantee; helpfulness must not require it
-    b = ScriptedBinding([{"action": ANSWER, "text": "ok"}], strength=EnforcementStrength.SOFT)
+    # only authority-bearing work needs the hard guarantee; helpfulness must not require it -- and
+    # that must be shown for the TOOL CALL too, not just the eventual answer. A3: this test's own
+    # name promised "reads", but the original script never called a tool, so that half was unpinned.
+    ex = RecordingToolExecutor({"doc-parse": ToolResult(tool_id="doc-parse", ok=True,
+                                                        content="42 rows")})
+    b = ScriptedBinding([
+        {"action": CALL_TOOL, "tool_id": "doc-parse"},
+        {"path": "/tmp/x.xlsx"},
+        {"action": ANSWER, "text": "ok"},
+    ], strength=EnforcementStrength.SOFT)
     loop = AgentLoop(binding=b, surface=SURF, grounding=G, registry=REG,
-                     executor=RecordingToolExecutor(), role=ROLE)
-    assert loop.run("hi").status == "answer"
+                     executor=ex, role=ROLE)
+    out = loop.run("hi")
+    assert out.status == "answer"
+    assert ex.calls == [("doc-parse", {"path": "/tmp/x.xlsx"})]

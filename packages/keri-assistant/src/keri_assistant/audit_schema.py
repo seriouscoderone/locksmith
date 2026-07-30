@@ -11,10 +11,13 @@ the decisive one — an author who was FOLLOWING the `*_said` convention was sti
 such a plural. So naming is structurally the wrong mechanism, not merely an imperfect one.
 
 Honesty about what the VENDORED corpus actually demonstrates: the `<noun>_id` shape
-(`application_id`) and the `ref` shape (`workbook_ref`, `source_ref`, `option_ref`) both show up in
-`tests/fixtures/real/` and are asserted there (`test_loop_real_templates.py`). The plural `_saids`
-shape does NOT appear in either vendored template (see that same file's test pinning this fact), so
-it is demonstrated only by a synthetic fixture in `test_audit_schema.py`. Do not read "decisive" as a
+(`application_id`) shows up in `tests/fixtures/real/` and IS asserted there
+(`test_loop_real_templates.py`). The `ref` shape (`workbook_ref`, `source_ref`, `option_ref`) also
+shows up in the corpus, but no test asserts any `_ref` row, and none of those fields is actually a
+credential reference — their own descriptions are plain locators ("the rating workbook, the ISO
+circular adopted, the filed manual reference"), not SAID/digest claims. The plural `_saids` shape
+does NOT appear in either vendored template (see that same file's test pinning this fact), so it is
+demonstrated only by a synthetic fixture in `test_audit_schema.py`. Do not read "decisive" as a
 claim that the real corpus exercises it; it is a claim about a scan of the wider corpus this module
 was designed against.
 
@@ -63,7 +66,13 @@ from .actionschema import grounded_set_for
 from .grounding import Grounding
 from .surface import CommandSurface
 
-_SAID_CLAIM = re.compile(r"\bSAID\b|self-addressing|\bdigest\b", re.IGNORECASE)
+# Case-SENSITIVE for the bare acronym: `re.IGNORECASE` made `\bSAID\b` match the ordinary English
+# word "said" in prose ("the said applicant", "the premium said to be owed") -- standard legalese
+# in a regulatory corpus, and signal B (shared-leaf-name matching, below) then amplifies each such
+# false positive across every same-named sibling field. The phrase patterns stay case-insensitive:
+# they don't collide with ordinary English the way the bare acronym does.
+_SAID_ACRONYM_CLAIM = re.compile(r"\bSAID\b")
+_SAID_PHRASE_CLAIM = re.compile(r"self-addressing|\bdigest\b", re.IGNORECASE)
 
 
 def _open_string(sub) -> bool:
@@ -110,7 +119,8 @@ def _candidates(surface: CommandSurface, grounding: Grounding) -> list[tuple[str
 
 
 def _claims_a_said(schema: dict) -> bool:
-    return bool(_SAID_CLAIM.search(schema.get("description") or ""))
+    text = schema.get("description") or ""
+    return bool(_SAID_ACRONYM_CLAIM.search(text) or _SAID_PHRASE_CLAIM.search(text))
 
 
 def unconstrained_entity_fields(

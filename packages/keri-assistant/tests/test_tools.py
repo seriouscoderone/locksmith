@@ -103,6 +103,43 @@ def test_a_compute_tool_may_not_shadow_a_read_tool():
         build_tool_registry(SURF, compute=(clash,))
 
 
+def test_an_exchange_verb_id_colliding_with_a_query_verb_id_raises():
+    # C1: commands[] and projections[] compile independently with no cross-list id check, so a
+    # template that reuses an id across both lists would otherwise slip an authority-bearing
+    # exchange verb into the autonomous tool registry -- exactly what tools.py's own docstring
+    # says can never happen.
+    template = {
+        "commands": [{"id": "grant", "name": "grant", "route": "/ipex/grant",
+                      "payload_schema": {"type": "object", "additionalProperties": False,
+                                         "properties": {}},
+                      "authz": {"method": "open"}}],
+        "projections": [{"id": "grant", "name": "Grant"}],
+    }
+    surf = build_micro_app_surface(template)
+    with pytest.raises(ValueError, match="exchange verb"):
+        build_tool_registry(surf)
+
+
+def test_a_projection_named_with_the_reserved_escape_hatch_prefix_raises():
+    surf = build_micro_app_surface({"commands": [], "projections": [{"id": "__clarify__"}]})
+    with pytest.raises(ValueError, match="reserved"):
+        build_tool_registry(surf)
+
+
+def test_the_normal_disjoint_case_still_builds():
+    # a template with no colliding or reserved ids builds exactly as before the C1 fix.
+    reg = build_tool_registry(SURF, compute=(PARSER,))
+    assert set(reg.ids()) == {"open_items", "closed_items", "doc-parse"}
+
+
+def test_never_verb_projection_never_becomes_a_read_tool():
+    # A1: surface.py's projections[] loop carries its own never-verb guard, independently of the
+    # commands[] guard -- pin it so a future edit that deletes it is caught here, not silently.
+    surf = build_micro_app_surface({"commands": [], "projections": [{"id": "rotate"},
+                                                                     {"id": "passcode"}]})
+    assert build_tool_registry(surf).ids() == ()
+
+
 def test_recording_executor_satisfies_the_protocol_and_records():
     ex = RecordingToolExecutor({"doc-parse": ToolResult(tool_id="doc-parse", ok=True, content="42 rows")})
     assert isinstance(ex, ToolExecutor)
