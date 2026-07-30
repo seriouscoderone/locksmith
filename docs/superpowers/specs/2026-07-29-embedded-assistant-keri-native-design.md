@@ -201,6 +201,53 @@ The model never composes protocol. It selects a **declared command** and fills i
 what makes one approval cover an `iss` + `grant` pair, and what lets a new domain extend the assistant by
 declaring templates rather than teaching it new protocol.
 
+### 4.0.1 Which position is this assistant designing for? (asked and answered, 2026-07-30)
+
+ugard's `2026-07-29` workbench amendment names two structurally different positions an embedded LLM can
+occupy — **role-operating** (inside the framework, bounded by a role's template scope, the UC-10 safety
+argument) and **workbench** (beside it, helping a person work, "no template scope exists to bound it") — and
+instructs that *"any future assistant work should say which position it is designing for before reasoning
+about its boundary."* This section is that statement.
+
+**Answer: neither column, because the dichotomy partitions the wrong thing.** "Position" is treated there as
+a property of the *agent*. It is a property of the **act**. One assistant, in one turn, does both: running
+`ipd-parse` over a workbook is a workbench act (unwitnessed, produces nothing anyone must trust), while
+proposing `attest_rating` is a framework act (crosses the membrane, becomes a fact). §4.2's consequence
+partition already implements exactly this, and Phase 1's `CommandSurface` already compiles it —
+`kind="query"` runs autonomously, `kind="exchange"` can only become a proposal. The code was right; the
+two-column table is what needs the correction.
+
+**What the amendment over-corrected.** It is right that a workbench LLM cannot borrow UC-10's *authority*
+argument. But role confers two separable things, and discarding the first took the second with it:
+
+| Layer | Mechanism | Enforcement | What it is for |
+|---|---|---|---|
+| **Purpose** — role identity | the role declaration → the standing instruction, and *which* surfaces and workbench tools load at all | **none (soft)** | orientation; makes divergence legible at the ceremony; makes the assistant feel directed rather than aimless |
+| **Capability** — compiled action space | grounded grammar, never-verb floor, `kind` partition (Phase 2A) | **hard at the membrane**, none in the workbench | bounds what may be *proposed* |
+| **Authority** — ceremony, then KERI | the human's signature; then the recipient's own independent verification | **hard, and sovereign** | the actual control |
+
+**Purpose is not a security control** — an injection can redirect it, and it must never be described as
+defence. It earns its place for three other reasons: it decides which surfaces/tools are loaded at all; it
+makes divergence *visible* (an actuary's assistant proposing a licence revocation is obviously wrong to the
+human at the ceremony); and being *directed* is a stated product requirement, not a nicety. Owner's framing,
+which is the load-bearing one: an actuary must provide rate tables and has `ipd` CLI access, so **whatever it
+is asked to do is about rate tables** — it must know it is reaching for a goal somewhere in the micro-app.
+
+**The asymmetry is principled, not lazy.** The system being protected is the **micro-app system**, not
+everything. Workbench acts need no hard constraint because they produce nothing anyone must trust; hard
+constraint therefore belongs exactly at the membrane and nowhere else.
+
+**And the protection compounds.** A fabricated reference does not merely fail our grammar — it fails at the
+**counterparty verifying independently** against KEL/TEL. KERI's sovereign-verifier model means our
+constraint is defence-in-depth over a substrate that is already adversarial-by-design, which is also why the
+`application_id` gap (§9.10) is bounded rather than catastrophic. As more micro-apps come online, more of the
+protection is inherent rather than ours to build.
+
+**On "two-tiered LLM."** Two *decode modes on one model*, not two models — plus the deterministic matcher the
+07-17 panel argued for independently. Three tiers, all already in the design: (1) Phase 1's deterministic
+matcher for fixed intents, no model at all; (2) §4.2's **decide** pass, lightly constrained — the "free" tier;
+(3) §4.2's **shape** pass, hard grammar — the "fully constrained" tier.
+
 ### 4.1 The grounded action space (domain-level)
 
 **An action is a declared command from the active surface, with every parameter drawn from the grounded set.**
@@ -554,7 +601,14 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    **Follow-on (open):** the rigorous form is to classify by a command's declared **`emissions`** (block a KEL
    establishment event or a secret disclosure; allow a TEL `rev` on a credential the user issued) rather than
    by route-name tokens. Needs emissions typing/normalization first — for the template-area agents.
-6. **Harness identity: generic runtime vs. declared micro-app (decided, overrulable).** The harness is a
+6. **Harness identity — AMENDED 2026-07-30, see §4.0.1.** The framing below stands on mechanism but was
+   *described* wrongly: it presented the template-derived surface as though it bounded **permission**, which
+   silently borrowed the role-operating column's safety argument. For this assistant the compiled surface
+   bounds **capability** (what it knows how to help with), while **authority** comes only from the ceremony
+   and then the recipient's own verification. The 07-17 panel's "an actor without a declared scope is not
+   KERI-native" concern is answered not by giving the assistant a template but by noting it never holds
+   authority to scope: it proposes, the signature disposes. Read §4.0.1 before reasoning about this boundary.
+   Original text follows. The harness is a
    **generic runtime** operating whichever micro-apps are active — its per-session scope is the union of their
    declared surfaces, so it serves any domain unchanged. It needs an identity only for **provenance**
    (`proposed-by`); its authority is always the human's signature. The 2026-07-17 panel leaned toward the
@@ -562,6 +616,21 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    preferred so each new domain extends the assistant by declaring templates, not by modifying the harness.
 7. **Agent-loop framework: build vs. borrow — DECIDED: hand-roll** (§4.2 "Loop runtime"). Evidence in §11's
    evaluation artifact. Strands Agents recorded as the documented fallback with its trigger conditions.
+   **Re-tested 2026-07-30 after the scope grew** (role identity, purpose-filtered tools, three-tier decode).
+   Decision **holds, and firms up**: role identity is a standing instruction plus a tool subset (every
+   framework does this trivially — no advantage either way), purpose-filtered tool loading is already covered
+   by "borrow Strands' `TOOL_SPEC` *convention*, not its dependency tree," and the three-tier decode is
+   something **no surveyed framework does** — they assume one decode per step, which is precisely why
+   smolagents was disqualified. Re-survey deliberately skipped (owner's call): the evaluation was one day old
+   and had just been hardened with source-level verification (§12).
+   **The Strands trigger HAS fired, and was resolved rather than ignored.** One of its two documented triggers
+   was "if we find ourselves building durable session persistence" — and the owner confirmed on 2026-07-30
+   that an approved plan **must** survive an app restart (see item 13). It still does not flip the decision,
+   for a specific reason: **our resume semantics are the inverse of framework session persistence.** A
+   framework restores saved state and continues; for us that is the bug, because restoring an *unverified*
+   plan is exactly the divergence hole 2C exists to close. We must **re-verify the plan's SAID on resume and
+   halt on drift** — a stronger requirement, and a far simpler one (persist one signed plan plus an execution
+   cursor, not arbitrary graph state). "Session restored" reading as "safe" is an active hazard here.
 8. **Validate the tool-suppression claim (open).** The two-pass decide/shape split (§4.2) is adopted on
    *reported* evidence we have not reproduced. Measure it directly in the Phase-2 eval gate: compare
    single-pass (decide+shape in one constrained decode) vs. two-pass on the same corpus, tracking
@@ -609,6 +678,16 @@ a signature. Storage and UI are deferred to the phase that introduces it.
     `strict` in `response_format` is a **no-op** (server discards it), and older builds **failed open** —
     200 OK with unconstrained output — which is why the Task-4 grounding re-validation is load-bearing rather
     than merely defensive, and why 2D must pin a build and assert the 400. Detail: research §12.3/§12.6.
+13. **Durable plan persistence — REQUIRED (owner, 2026-07-30). Lands in 2C, constrains 2B.** An approved plan
+    must survive closing and reopening the wallet, explicitly "in the name of being HELPFUL" — re-asking a
+    human to authorize what they already authorized is both hostile and dangerous (the re-approval can drift).
+    Note the split: **2B's loop state need not persist** (if the wallet closes mid-investigation, re-running
+    reads is cheap and safe); **2C's signed plan must**, because the human's authorization is a durable fact.
+    **Constraint this places on 2B:** the loop's state must be an **explicit serializable value**, never state
+    hidden in closures or generator frames. Costs nothing now, lets 2C persist it, and keeps a later framework
+    swap a *substitution behind the seam* rather than a rewrite (ugard's walking-skeleton governing rule:
+    substitute an implementation behind a seam, never bypass the seam). Resume must re-verify the plan SAID
+    before executing another step — never trust restored state.
 
 ---
 
