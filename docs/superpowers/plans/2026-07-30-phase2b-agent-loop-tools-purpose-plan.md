@@ -1131,8 +1131,9 @@ def test_tool_call_budget_exhaustion_is_explicit():
 def test_the_standing_instruction_carries_the_role_purpose():
     loop, b, ex = _loop([{"action": ANSWER, "text": "ok"}])
     loop.run("go")
-    assert "Clerk" in b.requests[0].instruction
-    assert "file records" in b.requests[0].instruction
+    # must match the ROLE fixture in tests/fixtures/loop_fixtures.py, not a literal from elsewhere
+    assert "Reporter" in b.requests[0].instruction
+    assert "submit reports" in b.requests[0].instruction
 
 
 def test_decide_pass_is_handed_the_decide_schema_not_the_proposal_schema():
