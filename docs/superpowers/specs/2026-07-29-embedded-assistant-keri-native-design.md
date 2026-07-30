@@ -563,9 +563,10 @@ a signature. Storage and UI are deferred to the phase that introduces it.
 
 ## 11. Cross-links
 
-- **Phase-2 framework evaluation (build-vs-borrow evidence):** `.superpowers/framework-evaluation.md` in this
-  worktree — LangGraph / Pydantic-AI / llama-cpp-agent / constrained-decoding-first options assessed against
-  §9.7's constraints. Read before writing the Phase-2 plan.
+- **Phase-2 framework evaluation (build-vs-borrow evidence, 39 cited sources):**
+  `docs/superpowers/research/2026-07-29-agent-loop-framework-evaluation.md` — nine options assessed against
+  §9.7's constraints, plus §0 "what llama-server actually does" (the fact the rest hangs on). Read before
+  writing the Phase-2 plan.
 - **Prior art to borrow *findings* from, not code:** `~/code/rebecca-poc` — the throwaway POC. Transferable:
   the `oneOf` + `const` + dynamic-`enum` schema pattern, escape-hatch-as-command (`clarify`/`unsupported` are
   first-class alternatives so the grammar always has a truthful out), static-prefix/dynamic-turn prompt split
