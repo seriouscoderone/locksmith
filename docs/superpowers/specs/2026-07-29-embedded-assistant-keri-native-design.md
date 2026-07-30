@@ -528,9 +528,12 @@ a signature. Storage and UI are deferred to the phase that introduces it.
 2. **keripy `xip` transaction support.** How far does stock keripy support multi-party exchange transactions
    over a shared `x` vs. bilateral IPEX only? Governs how literally §6's "workflow = transaction" can be
    implemented (stock-keripy-only per `CLAUDE.md`).
-3. **Library packaging (decided) — final name + repo creation.** Standalone pure-Python package, its own
-   repo, **sibling to `ai-identicon`** (§2). Only the final package/repo name and the actual repo creation
-   remain, deferred to implementation (needs owner's go).
+3. **Library packaging — name SETTLED 2026-07-30: `keri-assistant`.** Standalone pure-Python package,
+   its own repo, **sibling to `ai-identicon`** (§2). The name is now fixed (owner's call) and already
+   matches what shipped: `packages/keri-assistant/` with the import package `keri_assistant`. It lives
+   in-tree for now, which is working — it imports neither `locksmith` nor `keri`/keripy and has no
+   runtime dependencies, so extraction is a move, not a refactor. **Only the actual repo creation
+   remains, and it still needs the owner's explicit go** (creating a repo is outward-facing).
 4. **Phase-2 grounding/RAG mechanics.** Retrieval strategy + cite-by-SAID — deferred to the Phase-2 spec.
 5. **Never-verb scope — RESOLVED 2026-07-29: loosened to a narrow framework floor, two-tier.**
    **What forced it:** compiling the real `regulator-grants-carrier-license` template showed
