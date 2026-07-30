@@ -688,6 +688,36 @@ a signature. Storage and UI are deferred to the phase that introduces it.
     swap a *substitution behind the seam* rather than a rewrite (ugard's walking-skeleton governing rule:
     substitute an implementation behind a seam, never bypass the seam). Resume must re-verify the plan SAID
     before executing another step — never trust restored state.
+14. **Validate model-produced TOOL ARGUMENTS — scheduled for 2C (owner, 2026-07-30).** Phase 2B's
+    whole-branch review found that tool arguments are the one place the library hands unvalidated model
+    output onward: the loop passes `binding.propose(...).raw` straight to `executor.execute()`. Every
+    other model→system crossing has belt-and-braces re-validation (`parse_decision`, `parse_proposal` +
+    `_check_payload_grounded`); this one has none, and `require_hard` deliberately does not cover it
+    (correctly — §4.0.1 says workbench acts need no hard constraint, and helpfulness must keep working
+    on a SOFT binding). Demonstrated on a SOFT binding: a key absent from `properties` survived
+    `additionalProperties: false`, a field declared `string` arrived as a list, and an ungrounded
+    `*_aid` rode in as a tool argument (`grounded_set_for` is never applied to tool input schemas);
+    `raw` is not even checked to be a dict. **Not an authority-guarantee violation** — no signature is
+    spent — but it is the layer that will grow (file paths, retrieval queries, engine inputs), so it
+    gets a parse layer before it does. **2C:** add `parse_tool_args(raw, spec)` beside `parse_decision`,
+    raising `GrammarViolation` like its siblings — require a dict, require the `required` keys, reject
+    keys absent from `properties` when `additionalProperties is False`, check declared scalar types on
+    leaves. ~15 lines, pure stdlib.
+15. **Loop budget semantics — REWORK in 2C; the design call comes first (owner, 2026-07-30).** Two
+    defects, one root cause. **(a)** `LoopBudget.max_iterations` is **unreachable as shipped**:
+    `iteration` increments only on the tool-call path (`ANSWER`/`PROPOSE` return immediately), so
+    `iteration == tool_calls` for any run, and the defaults `max_iterations=8` / `max_tool_calls=6`
+    mean the iteration budget can never fire. Its test passes only because it *inverts* the shipped
+    relationship — so it gives confidence in a limit that never fires in production. **(b)** Both
+    checks sit at the loop top, so hitting `max_tool_calls` exits **after** gathering the Nth
+    observation and **before** the model can use it: the work is paid for and discarded, with no
+    answer. §4.2 calls reads/compute "autonomous, unlimited", so a cap is a sane divergence — but a cap
+    that throws away what it just bought is not.
+    **The decision that must precede the code:** does an "iteration" count *backend calls* or *loop
+    cycles*? Two passes per cycle means those differ by 2×, and coding it blind is precisely how the
+    unreachable limit arose. Once decided: count every `_ask`, and check the tool budget **before
+    offering `call_tool`** — when `tool_calls == max_tool_calls`, compile the decide schema without the
+    `call_tool` alternative, so the model must answer or propose from what it already has.
 
 ---
 
