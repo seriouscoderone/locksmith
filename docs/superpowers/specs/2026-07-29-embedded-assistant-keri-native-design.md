@@ -267,6 +267,37 @@ approved tool manifest is therefore **compiled from the same declared templates 
 consequence — so loading a new micro-app automatically extends what the assistant can help with, with no
 harness change.
 
+**Two passes, not one — the "constraint tax" / tool-suppression hazard.** Do **not** ask a single
+grammar-constrained decode to *both* decide whether/which action to take *and* emit perfectly-shaped
+arguments. Reported evidence (Li, Zhang & Lv, arXiv 2606.25605, 2026-06-24 — cited in the framework
+evaluation, **not independently verified; validate with our own eval harness**) is that this makes small models
+silently stop calling tools at all: output stays schema-compliant while the action is suppressed. That failure
+is invisible to a schema check, which makes it exactly the kind of thing our eval gate must measure.
+
+Therefore the loop separates:
+
+1. **Decide** — lightly-constrained (or unconstrained) reasoning about *what to do next*: call a tool, propose,
+   plan, or answer.
+2. **Shape** — a *hard* grammar-constrained decode of that decision's arguments, with the grounded `enum`s
+   (§4.3 of the Phase-2 scope). Only this pass carries the ungrounded-value-impossible guarantee.
+
+The guarantee is unaffected — nothing authority-bearing can carry an ungrounded parameter, because pass 2 is
+where parameters are produced — while pass 1 stays free enough to actually decide to act.
+
+**Loop runtime (decided).** A **hand-rolled loop** over `httpx` → the pinned `llama-server`, using its native
+`grammar`/`json_schema` fields. Evaluated against LangGraph, Pydantic-AI, llama-cpp-agent, Strands, smolagents,
+Semantic Kernel, AutoGen, Atomic Agents, and Outlines/XGrammar-as-decoder (see §11's evaluation artifact); no
+framework earned its dependency weight for this constraint set — a single always-local provider, hard
+constraint as the *primary* correctness mechanism, and a sign-the-plan-SAID checkpoint none of them has a
+primitive for. Two disqualifications worth remembering: **Outlines'** llama.cpp backend is **in-process only**
+(breaks the crash-isolated sidecar), and **Atomic Agents**/Instructor is **validate-and-retry** (soft
+enforcement, ruled out for authority-bearing proposals). **Documented fallback:** **Strands Agents** is the one
+framework that genuinely fits (HTTP llama.cpp provider, structurally-enforced interrupts with *durable*
+cross-restart persistence, data-driven runtime tool registration) at the cost of bundling
+`boto3`/`botocore`/`opentelemetry`/`mcp`; revisit it if we find ourselves building durable session persistence
+or the loop outgrows its hand-rolled shape. **LangGraph** is a capable runner-up but has open PyInstaller
+freezing issues — relevant because we ship frozen.
+
 **Injection posture (honest).** A loop *amplifies* prompt-injection exposure: every read pulls potentially
 untrusted content (credential attribute values, counterparty-supplied fields, inbound IPEX messages) into
 context, and more reads means more surface. The mitigations are unchanged and still hold — the proposer cannot
@@ -484,10 +515,17 @@ a signature. Storage and UI are deferred to the phase that introduces it.
    (`proposed-by`); its authority is always the human's signature. The 2026-07-17 panel leaned toward the
    assistant being a *declared role with its own template*; that remains overrulable, but a generic runtime is
    preferred so each new domain extends the assistant by declaring templates, not by modifying the harness.
-7. **Agent-loop framework: build vs. borrow.** Evaluated separately (§11). Constraints that decide it: fully
-   offline local model over a **sidecar** (not in-process), an un-bypassable human-approval interrupt bindable
-   to a **plan SAID**, a tool manifest registered **at runtime from templates**, hard grammar-level constrained
-   decoding with dynamically computed enums, and PyInstaller-freezable dependency weight.
+7. **Agent-loop framework: build vs. borrow — DECIDED: hand-roll** (§4.2 "Loop runtime"). Evidence in §11's
+   evaluation artifact. Strands Agents recorded as the documented fallback with its trigger conditions.
+8. **Validate the tool-suppression claim (open).** The two-pass decide/shape split (§4.2) is adopted on
+   *reported* evidence we have not reproduced. Measure it directly in the Phase-2 eval gate: compare
+   single-pass (decide+shape in one constrained decode) vs. two-pass on the same corpus, tracking
+   tool-call *rate* alongside accuracy — a schema-valid but action-suppressed run must be a visible failure,
+   not a silent pass. If the effect does not reproduce on our model/build, simplify back to one pass.
+9. **Unverified environment claims to check during Phase 2** (from the evaluation): whether
+   `/v1/chat/completions` `response_format` + `--jinja` is clean on our *exact* pinned llama.cpp build (it was
+   historically buggy, reportedly fixed); and PyInstaller-freeze behavior for whatever ships. The native
+   `/completion` + `grammar`/`json_schema` path the POC used is the safer default until confirmed.
 
 ---
 
