@@ -1,4 +1,4 @@
-# Six plugin entry-point tests fail from a worktree
+# Plugin entry-point tests fail from a worktree — six under tests/plugins, eight more under tests/integration
 
 **Status:** open · **Raised:** 2026-07-28 · **Priority:** low (test-environment defect, not a product defect) — but it makes "is the suite green?" unanswerable from a worktree
 
@@ -71,3 +71,41 @@ among them.
   problem, fixed for the peer integration fixture)
 - Memory: `project_plugin_origin_strategy` ("MUST `pip install -e .` after
   changing entry point groups"), `reference_test_env_importlib`
+
+## Eight more, under tests/integration (found 2026-07-29)
+
+The count above is incomplete: the same discovery failure takes out eight
+integration tests as well, which went unnoticed because `tests/integration/` is
+routinely excluded for cost (see `2026-07-28-ci-runs-no-tests-at-all.md` — CI
+would not have caught them either). Confirmed identical on the pristine base
+`348d2bcf` from a worktree, so none is a regression:
+
+```
+FAILED tests/integration/test_carrier_gate_e2e.py::test_admitting_carrier_license_activates_carrier_plugin
+FAILED tests/integration/test_carrier_gate_e2e.py::test_escrowed_license_with_unresolvable_edge_does_not_activate
+FAILED tests/integration/test_carrier_gate_e2e.py::test_wrong_issuer_license_does_not_activate
+FAILED tests/integration/test_carrier_gate_e2e.py::test_revoking_application_edge_target_leaves_gate_satisfied
+FAILED tests/integration/test_exchange_roundtrip_e2e.py::test_return_grant_auto_admits_carrier_to_licensed_surface
+FAILED tests/integration/test_exchange_roundtrip_e2e.py::test_revoked_license_deactivates_surface_and_shows_revoked
+FAILED tests/integration/test_multi_role_e2e.py::test_two_roles_coexist_and_revoke_removes_exactly_one
+FAILED tests/integration/test_onboarding_e2e.py::test_onboarding_e2e_persona_pick_to_licensed_surface
+```
+
+Same shape — discovery returns nothing:
+
+```
+    assert ep is not None, "carrier entry point must be discoverable"
+E   AssertionError: carrier entry point must be discoverable
+```
+
+So the worktree baseline is **14** known failures, not six, and the fix for the
+six should clear all fourteen. Worth re-checking from the main checkout to
+confirm they pass there (the six are known to).
+
+**Why this matters beyond bookkeeping.** An undercounted baseline hides real
+regressions. On 2026-07-29 a genuine regression in
+`test_exchange_roundtrip_e2e.py::test_first_contact_registers_unknown_carrier_and_delivers_grant`
+was caught only by explicitly diffing failure lists against the base — a
+"6 known failures" baseline plus a habitually skipped directory would have let
+it through. Until the fourteen are fixed, the only sound check from a worktree
+is a base-vs-branch diff of the FAILED list, not a count.
