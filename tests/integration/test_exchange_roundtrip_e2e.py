@@ -105,6 +105,7 @@ from locksmith.db.basing import LocksmithBaser
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.publishing import PublishPeerRoleDoer
 from locksmith.peer.records import PeerModeSettings
+from locksmith.peer.sending import SendOutcome
 from locksmith.peer.shim import PeerExchangerShim
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
@@ -155,9 +156,21 @@ class CapturePoster:
     sources, then the grant exn last). Concatenating ``serder.raw +
     attachment`` per send — exactly what ``keri_serviceaid``'s own
     ``PostmanDeliverer`` puts on the wire — reconstructs the byte stream a
-    real TCP peer would receive. ``deliver()`` returns no doers and
-    ``last_outcome=None`` drives the grant doer's documented mailbox-channel
-    fallback."""
+    real TCP peer would receive. ``deliver()`` returns no doers because the
+    bytes are already captured — this test hand-delivers ``stream`` into the
+    DOI-side parser below, which is what stands in for the TCP hop.
+
+    ``last_outcome`` therefore reports ``PEER``: this stub MODELS a completed
+    peer delivery (the captured bytes do reach the recipient), so claiming any
+    other channel would misdescribe it. It used to report ``None``, which the
+    grant doer rendered as ``channel="mailbox"`` — harmless while that only
+    picked a cosmetic badge, but the deliverability policy
+    (``posting.undeliverable``) now reads the channel to decide whether a send
+    reached anybody, and a first-contact carrier has no mailbox ends, so an
+    unset outcome made a successful delivery look like silent loss
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+    In production ``PeerAwarePoster.deliver()`` sets ``last_outcome`` on every
+    path that transmits; the only ``None`` path sends nothing at all."""
 
     instances: list = []
 
@@ -165,7 +178,7 @@ class CapturePoster:
         self.kwa = kwa
         self.sent: list = []
         self.stream = bytearray()
-        self.last_outcome = None
+        self.last_outcome = SendOutcome.PEER
         CapturePoster.instances.append(self)
 
     def send(self, serder=None, attachment=None, **kwa):

@@ -111,3 +111,76 @@ def test_setup_file_logging_does_not_remove_console_handler(tmp_path, monkeypatc
     lg = help.ogler.getLogger(__name__)
     console_handlers = [h for h in lg.handlers if h is help.ogler.baseConsoleHandler]
     assert len(console_handlers) == 1
+
+
+def test_log_path_comes_from_the_brand(tmp_path, monkeypatch):
+    """The diagnostic log is per-brand: the directory comes from
+    branding.app_data_dir() and the filename from the brand id, so a
+    Usurance install's trail never lands in (or overwrites) Locksmith's."""
+    from locksmith.core import branding
+    from locksmith.update import file_logging
+
+    monkeypatch.setattr(file_logging, "_app_data_dir", lambda: tmp_path)
+    cfg = tmp_path / "brand.json"
+    cfg.write_text('{"id": "usurance", "display_name": "Usurance"}')
+    monkeypatch.setenv("LOCKSMITH_BRAND_CONFIG", str(cfg))
+    branding._reset_cache_for_tests()
+    try:
+        log_path = file_logging.setup_file_logging()
+    finally:
+        monkeypatch.delenv("LOCKSMITH_BRAND_CONFIG", raising=False)
+        branding._reset_cache_for_tests()
+
+    assert log_path.name == "usurance.log"
+
+
+def test_default_wiring_reads_the_brand_app_data_dir():
+    """setup_file_logging's directory seam must BE branding.app_data_dir —
+    otherwise the per-brand path exists but the log doesn't use it."""
+    from locksmith.core import branding
+    from locksmith.update import file_logging
+
+    assert file_logging._app_data_dir is branding.app_data_dir
+
+
+def test_peer_diagnostic_lines_land_in_the_file(tmp_path, monkeypatch):
+    """The reason this file exists post-live-test: peer.send.* lines from an
+    installed/Finder-launched build must be diagnosable after the fact
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md
+    item 3). The peer modules were imported long before setup ran — the
+    attach-to-existing path must cover their loggers."""
+    from locksmith.update import file_logging
+
+    monkeypatch.setattr(file_logging, "_app_data_dir", lambda: tmp_path)
+    # Ensure the logger exists BEFORE setup, like a real import order can.
+    import locksmith.peer.sending  # noqa: F401 — creates the ogler logger
+
+    log_path = file_logging.setup_file_logging()
+    help.ogler.level = logging.INFO
+
+    lg = help.ogler.getLogger("locksmith.peer.sending")
+    lg.setLevel(logging.INFO)
+    lg.warning(
+        "peer.send.peer_failed recipient=Etest endpoint=tcp://10.0.0.9:5622 "
+        "err=timed out sentinel_peer_diag")
+    for handler in lg.handlers:
+        handler.flush()
+
+    assert "sentinel_peer_diag" in log_path.read_text(encoding="utf-8")
+
+
+def test_rotation_cap_is_a_few_megabytes(tmp_path, monkeypatch):
+    """Pinned so a future edit doesn't silently balloon the on-disk
+    footprint (or shrink it below diagnosability): 2 MiB per file, 3
+    backups — ≤8 MiB worst case."""
+    from logging.handlers import RotatingFileHandler
+
+    from locksmith.update import file_logging
+
+    monkeypatch.setattr(file_logging, "_app_data_dir", lambda: tmp_path)
+    file_logging.setup_file_logging()
+
+    handler = getattr(help.ogler, file_logging._HANDLER_ATTR)
+    assert isinstance(handler, RotatingFileHandler)
+    assert handler.maxBytes == 2 * 1024 * 1024
+    assert handler.backupCount == 3

@@ -556,3 +556,140 @@ def test_grant_doer_tolerates_vault_without_db(monkeypatch):
             "channel": "peer",
         },
     )
+
+
+def test_grant_doer_goes_loud_when_fallback_has_nowhere_to_deliver(monkeypatch):
+    """The silent-loss case from the first live two-machine test
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md):
+    the peer dial failed (channel=peer→mailbox) AND the recipient has no
+    mailbox/agent/witness ends — the fallback delivered nowhere. The doer
+    must emit send_failed with an operator-readable reason instead of
+    send_complete, so the grant dialog shows a failure instead of implying
+    success."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    # The transport fell back...
+    class FallbackPoster:
+        def __init__(self, **kwa):
+            self.last_outcome = SimpleNamespace(value="peer→mailbox")
+
+        def send(self, serder, attachment=None):
+            pass
+
+        def deliver(self):
+            return []
+
+    monkeypatch.setattr(bridge, "PeerAwarePoster", FallbackPoster)
+
+    # ...and the recipient has no ends the mailbox path could route through.
+    s.hab.endsFor.return_value = {}
+    # Pairing label present → the failure copy names the peer.
+    s.app.vault.db.peerAllowlist.get.return_value = SimpleNamespace(
+        aid="Erecp", label="requester-vm", endpoint_url="tcp://10.211.55.7:5622")
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_failed",
+        {
+            "error": "couldn't reach requester-vm's wallet — it may be "
+                     "behind a firewall or NAT",
+            "success": False,
+            "credential_said": "Ecred",
+            "recipient": "Erecp",
+            "grant_said": "Egrant",
+            "channel": "peer→mailbox",
+            "undeliverable": True,
+        },
+    )
+
+
+def test_grant_doer_fallback_with_a_real_mailbox_route_stays_a_success(monkeypatch):
+    """An honest fallback is not a failure: when the recipient DOES have a
+    located mailbox end, peer→mailbox means the grant is queued somewhere
+    the recipient can fetch from — keep the existing send_complete +
+    channel contract (the dialog renders 'peer unreachable, sent via
+    mailbox')."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    class FallbackPoster:
+        def __init__(self, **kwa):
+            self.last_outcome = SimpleNamespace(value="peer→mailbox")
+
+        def send(self, serder, attachment=None):
+            pass
+
+        def deliver(self):
+            return []
+
+    monkeypatch.setattr(bridge, "PeerAwarePoster", FallbackPoster)
+
+    # endsFor reports a located mailbox end for the recipient.
+    s.hab.endsFor.return_value = {
+        "mailbox": {"BMBX": {"http": "http://mailbox.example:5632/"}},
+    }
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_complete",
+        {
+            "success": True,
+            "credential_said": "Ecred",
+            "recipient": "Erecp",
+            "grant_said": "Egrant",
+            "channel": "peer→mailbox",
+        },
+    )
+
+
+def test_grant_doer_names_a_loopback_advertisement_distinctly(monkeypatch):
+    """The second live two-machine test's exact signature: the recipient
+    advertised 127.0.0.1 (its app opened before the network was up), so the
+    admin's send dialed its OWN loopback. "Open a port" is the wrong advice
+    here — the copy must name the bad advertisement instead
+    (backlog/2026-07-29-address-change-never-republished.md item 3; the
+    re-publish fix itself is a separate queued task)."""
+    calls = []
+    s = _grant_doer_setup(monkeypatch, calls=calls)
+
+    class FallbackPoster:
+        def __init__(self, **kwa):
+            self.last_outcome = SimpleNamespace(value="peer→mailbox")
+
+        def send(self, serder, attachment=None):
+            pass
+
+        def deliver(self):
+            return []
+
+    monkeypatch.setattr(bridge, "PeerAwarePoster", FallbackPoster)
+    s.hab.endsFor.return_value = {}
+    s.app.vault.db.peerAllowlist.get.return_value = SimpleNamespace(
+        aid="Erecp", label="coworker-laptop",
+        endpoint_url="tcp://127.0.0.1:5622")
+    monkeypatch.setattr(bridge, "unreachable_advertisement",
+                        lambda keridb, recp: "127.0.0.1")
+
+    list(s.doer.grantDo(lambda: 0.0))
+
+    s.signal_bridge.emit_doer_event.assert_called_once_with(
+        "SendGrantDoer",
+        "send_failed",
+        {
+            "error": "couldn't reach coworker-laptop's wallet — it is "
+                     "advertising 127.0.0.1, an address reachable only on "
+                     "its own machine",
+            "success": False,
+            "credential_said": "Ecred",
+            "recipient": "Erecp",
+            "grant_said": "Egrant",
+            "channel": "peer→mailbox",
+            "undeliverable": True,
+            "advertised_host": "127.0.0.1",
+        },
+    )

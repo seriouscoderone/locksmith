@@ -12,15 +12,144 @@ locksmith.core.ipexing can swap implementations with no other change.
 """
 from __future__ import annotations
 
+from urllib.parse import urlparse
+
 from hio.base import doing
 from hio.help import decking
-from keri import help
+from keri import help, kering
 from keri.app import forwarding
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.sending import SendOutcome, peer_send
 
 logger = help.ogler.getLogger(__name__)
+
+#: The roles keripy's StreamPoster routes the mailbox path through, in its
+#: own preference order (forwarding.StreamPoster._chunk): direct-send roles
+#: first, store-and-forward via a witness last.
+_FALLBACK_ROLES = (
+    kering.Roles.controller,
+    kering.Roles.agent,
+    kering.Roles.mailbox,
+    kering.Roles.witness,
+)
+
+
+def mailbox_route_exists(hab, recp: str) -> bool:
+    """True iff keripy's StreamPoster has anywhere to deliver for ``recp``.
+
+    Mirrors ``forwarding.StreamPoster._chunk``'s routing walk over
+    ``hab.endsFor(recp)``: controller/agent/mailbox ends first, else the
+    recipient's witnesses. A role only counts with at least one located URL —
+    an authorization with no ``/loc/scheme`` still routes nowhere. Peer-role
+    ends deliberately don't count: they are the direct channel, and this
+    predicate exists to say whether the mailbox FALLBACK can deliver.
+
+    When this is False, the inner StreamPoster's deliver() logs "No end
+    roles" and returns no doers — the fallback "delivery" is a silent no-op.
+    That is the condition the loud-failure policy below exists to surface
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+    """
+    try:
+        ends = hab.endsFor(recp)
+        for role in _FALLBACK_ROLES:
+            for _eid, locs in (ends.get(role) or {}).items():
+                if any(url for url in locs.values()):
+                    return True
+    except Exception:  # noqa: BLE001 — an errored walk would have errored
+        # StreamPoster's own routing too; treat as "nowhere to deliver".
+        return False
+    return False
+
+
+def undeliverable(channel: str, hab, recp: str) -> bool:
+    """True when a send's outcome means the message reached nobody.
+
+    ``channel`` is the ``SendOutcome`` value string the delivery tail already
+    reports (``last_outcome``). A confirmed peer delivery is always
+    deliverable; a mailbox/fallback outcome is honest only if the recipient
+    actually has somewhere the mailbox path can route — otherwise reporting
+    success is a lie (the first live two-machine test lost a grant exactly
+    this way).
+    """
+    if channel == SendOutcome.PEER.value:
+        return False
+    return not mailbox_route_exists(hab, recp)
+
+
+def unreachable_advertisement(keridb, recp: str) -> str | None:
+    """The host ``recp`` advertises, when that host is reachable by nobody.
+
+    Returns the offending host (loopback or unspecified) or None. Resolved
+    through ``peer/resolution.py`` — the freshest AUTHORIZED route, never
+    ``db.locs`` directly.
+
+    This is the signature of the second live two-machine test: the peer's app
+    opened before its network was up, auto-detect fell back to loopback, and it
+    published that; the admin's send then dialed its own loopback
+    (backlog/2026-07-29-address-change-never-republished.md). Diagnostic only —
+    it names a condition after a send has already failed, and does NOT repair
+    the stale announcement (that fix belongs on the publishing side). Kept
+    separate from ``undeliverable`` because the two want different operator
+    actions: "open a port" versus "your network wasn't up when the app
+    started".
+    """
+    from locksmith.peer.netaddr import _UNUSABLE_HOSTS
+    from locksmith.peer.resolution import resolve_peer_endpoint
+
+    try:
+        url = resolve_peer_endpoint(keridb, recp)
+    except Exception:  # noqa: BLE001 — diagnosis must never break a send
+        return None
+    if not url:
+        return None
+    host = urlparse(url).hostname or ""
+    if host.startswith("127.") or host in _UNUSABLE_HOSTS or host == "::1":
+        return host
+    return None
+
+
+def undeliverable_reason(label: str, advertised_host: str | None) -> str:
+    """Operator-readable copy for a send that reached nobody.
+
+    Two distinct actions, so two distinct messages: an advertised
+    loopback/unspecified address means the peer's app came up before its
+    network did (nothing to open, they need to restart with the network up),
+    while any other unreachable address is the firewall/NAT case. Both live
+    two-machine failures rendered as one indistinguishable silence before
+    this existed.
+    """
+    if advertised_host:
+        return (f"couldn't reach {label}'s wallet — it is advertising "
+                f"{advertised_host}, an address reachable only on its own "
+                f"machine")
+    return (f"couldn't reach {label}'s wallet — it may be behind a firewall "
+            f"or NAT")
+
+
+def recipient_label(baser, aid: str, org=None) -> str:
+    """Operator-readable name for ``aid`` in delivery-failure surfaces.
+
+    Pairing label first (what the user typed at Add Peer / first-contact
+    registration), then the contact alias (keripy Organizer), then a
+    shortened AID — never the full 44-char prefix in a banner.
+    """
+    try:
+        record = PeerAllowlist(baser).get(aid)
+    except Exception:  # noqa: BLE001 — label lookup must never break a send
+        record = None
+    label = getattr(record, "label", "")
+    if isinstance(label, str) and label:
+        return label
+    if org is not None:
+        try:
+            contact = org.get(aid)
+        except Exception:  # noqa: BLE001
+            contact = None
+        alias = (contact or {}).get("alias", "")
+        if isinstance(alias, str) and alias:
+            return alias
+    return f"{aid[:12]}…"
 
 
 class PeerAwarePoster:
@@ -73,7 +202,17 @@ class PeerAwarePoster:
              Otherwise return the inner StreamPoster's mailbox doers.
         """
         allowlist = PeerAllowlist(self.baser)
-        record = allowlist.get(self.recp)
+        # Re-resolve the recipient's current authorized route before deciding
+        # anything: the record's endpoint_url is a pairing-time cache, and a
+        # peer that moved has already landed its newer signed /loc/scheme in
+        # the KERI db via BADA. Refreshing here (and again inside peer_send —
+        # idempotent) is what keeps an address change from being permanent
+        # (backlog/2026-07-29-peer-record-endpoint-never-refreshes.md).
+        keridb = getattr(self.hby, "db", None)
+        if keridb is not None:
+            record = allowlist.refresh_route(keridb, self.recp)
+        else:
+            record = allowlist.get(self.recp)
         if record is None or not record.endpoint_url:
             logger.info(
                 f"peer.outbound.no_record recipient={self.recp} → mailbox"
@@ -90,6 +229,7 @@ class PeerAwarePoster:
             recipient_aid=self.recp,
             exn_bytes=body,
             mailbox_send=lambda aid, bs: True,  # noop; we'll route below
+            keridb=keridb,
         )
 
         if outcome is SendOutcome.PEER:

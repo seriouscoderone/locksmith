@@ -71,7 +71,13 @@ from keri_serviceaid.providers import (
 
 from locksmith.core.remoting import message_version
 from locksmith.peer.exposure import is_aid_peer_exposed as _is_aid_peer_exposed_by_pre
-from locksmith.peer.posting import PeerAwarePoster
+from locksmith.peer.posting import (
+    PeerAwarePoster,
+    recipient_label,
+    undeliverable,
+    undeliverable_reason,
+    unreachable_advertisement,
+)
 from locksmith.peer.resolution import peer_role_eids
 
 logger = help.ogler.getLogger(__name__)
@@ -419,6 +425,37 @@ class ServiceaidGrantDoer(doing.DoDoer):
             channel = (
                 postman.last_outcome.value if postman.last_outcome else "mailbox"
             )
+
+            # Loud-failure policy (never lie about delivery): a non-peer
+            # outcome is only a success if the mailbox fallback actually had
+            # somewhere to route. The first live two-machine test lost a
+            # grant to exactly this gap — peer dial failed, recipient had no
+            # mailbox ends, operator saw "sent"
+            # (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md).
+            if undeliverable(channel, hab, self.recipient):
+                label = recipient_label(
+                    self.app.vault.db, self.recipient,
+                    org=getattr(self.app.vault, "org", None))
+                advertised = unreachable_advertisement(hab.db, self.recipient)
+                logger.warning(
+                    f"peer.send.undeliverable recipient={self.recipient} "
+                    f"channel={channel} grant={grant_said} "
+                    f"advertised={advertised or '-'}"
+                )
+                data = {
+                    'error': undeliverable_reason(label, advertised),
+                    'success': False,
+                    'credential_said': self.credential_said,
+                    'recipient': self.recipient,
+                    'grant_said': grant_said,
+                    'channel': channel,
+                    'undeliverable': True,
+                }
+                if advertised:
+                    data['advertised_host'] = advertised
+                sink.on_event("SendGrantDoer", "send_failed", data)
+                return
+
             logger.info(
                 f"Grant message {grant_said} sent successfully to "
                 f"{self.recipient} channel={channel}"

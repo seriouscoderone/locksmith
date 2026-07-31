@@ -231,6 +231,7 @@ class Vault(doing.DoDoer):
         self.peer_health_doer = PeerHealthMonitorDoer(
             allowlist=PeerAllowlist(self.db),
             db=self.db,
+            keridb=self.hby.db,
         )
 
         # Assemble all doers

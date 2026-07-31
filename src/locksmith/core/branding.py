@@ -159,6 +159,29 @@ def app_title(vault_name: str | None) -> str:
     return f"{name} | {vault_name}" if vault_name else name
 
 
+def app_data_dir() -> Path:
+    """Per-OS application data directory for the ACTIVE brand.
+
+    Brand-scoped so a white-labeled install never writes into (or reads) a
+    sibling product's directory. The reference brand resolves to exactly the
+    locations every shipped Locksmith build already uses
+    (``~/Library/Application Support/Locksmith``,
+    ``%LOCALAPPDATA%\\Locksmith``, ``~/.local/share/locksmith``), so this is
+    additive rather than a migration.
+
+    Pure path computation — callers create the directory when they need it.
+    """
+    import platform as _platform
+
+    b = brand()
+    sysname = _platform.system()
+    if sysname == "Darwin":
+        return Path.home() / "Library" / "Application Support" / b.display_name
+    if sysname == "Windows":  # pragma: no cover - selected per OS
+        return Path(os.environ.get("LOCALAPPDATA", str(Path.home()))) / b.display_name
+    return Path.home() / ".local" / "share" / (b.id or b.display_name.lower())
+
+
 def egf_local_dir() -> Path | None:
     """The `egf/` dir bundled alongside the resolved brand source, or None.
 
