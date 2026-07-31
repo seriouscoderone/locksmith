@@ -123,6 +123,7 @@ from locksmith.core import branding
 import locksmith.core.serviceaid_bridge as serviceaid_bridge
 from locksmith.core.egf_seeding import make_hoa_resolver
 from locksmith.core.signals import DoerSignalBridge
+from locksmith.peer.sending import SendOutcome
 from locksmith.ui.onboarding.request_flow import RequestFlow
 from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
 
@@ -252,15 +253,34 @@ class VaultHarness(doing.DoDoer):
 
 class TransportStubPoster:
     """The mocked-transport seam (delivery is project #2's scope): records
-    sends, delivers nothing. ``last_outcome=None`` drives the grant doer's
-    documented "mailbox" channel fallback."""
+    sends, moves no bytes.
+
+    ``last_outcome`` reports ``PEER`` because this seam stands in for a
+    transport hop that SUCCEEDED — the point of mocking it here is that this
+    test is about persona-pick-to-licensed-surface orchestration, not about
+    how bytes travel. It used to report ``None``, which the grant doer renders
+    as ``channel="mailbox"``; that was inert while the channel only picked a
+    cosmetic badge, but the deliverability policy
+    (``peer.posting.undeliverable``) now reads it to decide whether a send
+    reached anybody, and this test's recipient has no mailbox ends — so an
+    unset outcome made the modeled-successful grant emit ``send_failed``
+    ("couldn't reach …'s wallet") and the framing assertion below failed.
+    Same correction, same reason, as ``CapturePoster`` in
+    ``test_exchange_roundtrip_e2e`` (commit d942bddb); this seam was missed
+    because that branch verified five suites rather than the full run.
+
+    Production is unaffected: ``PeerAwarePoster.deliver()`` sets
+    ``last_outcome`` on every path that transmits, and the sole ``None`` path
+    sends nothing. The ``None`` -> "mailbox" default stays as-is on purpose —
+    "unknown is not a confirmed peer delivery" is the safe direction
+    (backlog/2026-07-29-grant-send-reports-success-while-undeliverable.md)."""
 
     instances: list = []
 
     def __init__(self, **kwa):
         self.kwa = kwa
         self.sent = []
-        self.last_outcome = None
+        self.last_outcome = SendOutcome.PEER
         TransportStubPoster.instances.append(self)
 
     def send(self, serder=None, attachment=None, **kwa):
