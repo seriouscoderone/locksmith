@@ -151,7 +151,7 @@ from tests.integration.test_carrier_gate_e2e import (  # noqa: F401 (haberies)
 CARRIER_ALIAS = "carrier"
 
 # A valid submit_application payload per the REAL bundled micro-app's
-# payload_schema (tests/fixtures/carrier_egf_bundle/EBTP1zVb....json). ``submitted_at`` is
+# payload_schema (tests/fixtures/carrier_egf_bundle/ED1ePv....json). ``submitted_at`` is
 # deliberately omitted: it is required + format date-time, and the REAL flow
 # autofills it (RequestFlow._autofill_date_time_fields) exactly as the page
 # would — asserting the autofill path end to end.

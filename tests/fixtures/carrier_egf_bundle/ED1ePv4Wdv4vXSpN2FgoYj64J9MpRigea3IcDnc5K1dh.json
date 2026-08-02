@@ -254,17 +254,10 @@
         {
           "exchange": {
             "exported_credential_id": "carrier_license_application",
-            "imported_credential_id": null,
             "kind": "credential",
-            "schema_said_referenced": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc",
-            "verb": "grant"
+            "schema_said_referenced": "EBSxJSWpGHcTyBYOreTj1NKBudwU5xHPA8pw003XCTDc"
           },
           "kind": "exchange"
-        },
-        {
-          "exported_credential_id": "carrier_license_application",
-          "kind": "lifecycle_advance",
-          "to_state": "issued"
         },
         {
           "aggregate_id": "license_registry",
@@ -274,6 +267,7 @@
         }
       ],
       "id": "submit_application",
+      "mints_credential_id": "carrier_license_application",
       "name": "Submit license application",
       "payload_schema": {
         "additionalProperties": false,
@@ -397,9 +391,11 @@
             {
               "from": "issued",
               "id": "supersede",
-              "tel_primitive": "update",
               "to": "superseded",
-              "trigger": "manual"
+              "trigger": "manual",
+              "via_command": [
+                "submit_application"
+              ]
             }
           ]
         },
@@ -423,7 +419,7 @@
       }
     ]
   },
-  "d": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+  "d": "ED1ePv4Wdv4vXSpN2FgoYj64J9MpRigea3IcDnc5K1dh",
   "header": {
     "description": "The carrier's side of license application: a startup insurance carrier submits an application to a state regulator and processes the resulting grant or revocation. Pivotal event: an application has been submitted and adjudicated.",
     "display_name": "Carrier Applies for License",

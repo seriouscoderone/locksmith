@@ -1,5 +1,5 @@
 {
-  "d": "ECf6PHHpOWWZ3ifPemqpJ6Dx0wE4HA50ucqtGhNNMUsV",
+  "d": "EARxFbS-9RCa3rBgHE_HR8xUwHkFsrDdpz7kRmt_4-Ry",
   "spec_version": "egf-doc/0.1",
   "version": "0.1.1",
   "ecosystem": {
@@ -20,7 +20,7 @@
       "description": "Licensed risk-bearing entity seeking authority to underwrite named lines of business in a jurisdiction. Self-issues a carrier_license_application ACDC and presents it to the licensing state Department of Insurance; on approval, holds the resulting carrier_license credential.",
       "onboarding": {
         "grant_credential_id": "carrier_license",
-        "request_micro_app_said": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+        "request_micro_app_said": "ED1ePv4Wdv4vXSpN2FgoYj64J9MpRigea3IcDnc5K1dh",
         "request_command_id": "submit_application"
       }
     },
@@ -82,12 +82,12 @@
   ],
   "micro_apps": [
     {
-      "said": "EBTP1zVbY_KjEBlafARtCwJPyD-cKPFknUL08AazZJDP",
+      "said": "ED1ePv4Wdv4vXSpN2FgoYj64J9MpRigea3IcDnc5K1dh",
       "id": "carrier-applies-for-license",
       "role_id": "carrier"
     },
     {
-      "said": "ENqd2iGFI4gFnV7IOhTosN5yMudPfZpe-0uQv1u8zB3D",
+      "said": "EBdYh1CCUAGUUAk4U9UQUG9sMFr6KRSM-CxC71MCMQTZ",
       "id": "regulator-grants-carrier-license",
       "role_id": "regulator"
     }

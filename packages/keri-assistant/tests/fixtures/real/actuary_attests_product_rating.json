@@ -1487,10 +1487,8 @@
         {
           "exchange": {
             "exported_credential_id": "rating_attestation",
-            "imported_credential_id": null,
             "kind": "credential",
-            "schema_said_referenced": "EENIsUsYkfReGnL_EhyJBEPw8HVTFsMPC5Y2ztsRyHIj",
-            "verb": "grant"
+            "schema_said_referenced": "EENIsUsYkfReGnL_EhyJBEPw8HVTFsMPC5Y2ztsRyHIj"
           },
           "kind": "exchange"
         },
@@ -1502,6 +1500,7 @@
         }
       ],
       "id": "attest_rating",
+      "mints_credential_id": "rating_attestation",
       "name": "Attest product rating",
       "payload_schema": {
         "additionalProperties": false,
@@ -1657,11 +1656,6 @@
       "description": "Withdraw an issued attestation (R18 rule 5). A rate error found after signing is corrected forward - a new ingestion, a new sealed program, a new candidate - and this revocation is what makes the correction bite: the designer's approve and publish gates re-check the attestation at firing and fail, and every downstream verifier sees the same revocation for itself. Surfaced, never silent.",
       "emissions": [
         {
-          "exported_credential_id": "rating_attestation",
-          "kind": "lifecycle_advance",
-          "to_state": "revoked"
-        },
-        {
           "aggregate_id": "rating_desk",
           "event_type": "attestation_revoked",
           "kind": "aggregate_event",
@@ -1728,11 +1722,6 @@
       "counterparty_role": null,
       "description": "Mark an attestation superseded once a successor candidate has been attested. A superseded attestation is not wrong and is never deleted - it remains the record of what was attested about the candidate policies may have been bound under; it simply stops being the live sign-off for new business (the R2 discipline applied to the sign-off layer).",
       "emissions": [
-        {
-          "exported_credential_id": "rating_attestation",
-          "kind": "lifecycle_advance",
-          "to_state": "superseded"
-        },
         {
           "aggregate_id": "rating_desk",
           "event_type": "attestation_superseded",
@@ -1809,7 +1798,6 @@
               "operator": "references"
             }
           ],
-          "holder_role": "actuary",
           "verifier_roles": [
             "product_designer",
             "filing_specialist",
@@ -1833,16 +1821,20 @@
                   "rule_ref": "successor_attestation_recorded"
                 }
               ],
-              "tel_primitive": "update",
               "to": "superseded",
-              "trigger": "manual"
+              "trigger": "manual",
+              "via_command": [
+                "supersede_attestation"
+              ]
             },
             {
               "from": "issued",
               "id": "revoke",
-              "tel_primitive": "revoke",
               "to": "revoked",
-              "trigger": "manual"
+              "trigger": "manual",
+              "via_command": [
+                "revoke_attestation"
+              ]
             }
           ]
         },
@@ -1898,7 +1890,7 @@
       }
     ]
   },
-  "d": "EK5XK6xuT1GJJJNldB66y5gnNBmtLQFlliTnmFUo0ZpO",
+  "d": "EP8bBnlGDsw0Mp45wO9hrqB0IRePQk_6VypOpXqHJt5w",
   "header": {
     "description": "The Actuary's slice of building an insurance product: own the rate program as SAID-addressed Insurance Product Definition content, converge with the product designer so every limit option and endorsement on the menu is actually priceable, seal the coordinated rate program as one immutable version, and attest that the rates behind exactly one frozen product-version candidate are actuarially sound and reconstructable to the penny. Pivotal event: the rating stack behind an immutable product-version candidate has been attested. The rate content itself never travels inside the credential - it is ipd shard content pinned by SAID, so a changed number is visibly a different candidate and the attestation on the old one is visibly stale.",
     "display_name": "Actuary Attests Product Rating",
