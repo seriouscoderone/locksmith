@@ -1890,7 +1890,7 @@
       }
     ]
   },
-  "d": "EP8bBnlGDsw0Mp45wO9hrqB0IRePQk_6VypOpXqHJt5w",
+  "d": "EDJYc355TvNgVF2E8gwxzSZW_gLXow9SR7Bx_KVDNX__",
   "header": {
     "description": "The Actuary's slice of building an insurance product: own the rate program as SAID-addressed Insurance Product Definition content, converge with the product designer so every limit option and endorsement on the menu is actually priceable, seal the coordinated rate program as one immutable version, and attest that the rates behind exactly one frozen product-version candidate are actuarially sound and reconstructable to the penny. Pivotal event: the rating stack behind an immutable product-version candidate has been attested. The rate content itself never travels inside the credential - it is ipd shard content pinned by SAID, so a changed number is visibly a different candidate and the attestation on the old one is visibly stale.",
     "display_name": "Actuary Attests Product Rating",
@@ -3111,11 +3111,9 @@
       "emissions": [
         {
           "exchange": {
-            "exported_credential_id": null,
             "imported_credential_id": "product_definition_version",
             "kind": "credential",
-            "schema_said_referenced": "EA-PmA7eT80wdyl2uJvqDEElHrW1IilabnSzjWysw2x4",
-            "verb": "admit"
+            "schema_said_referenced": "EA-PmA7eT80wdyl2uJvqDEElHrW1IilabnSzjWysw2x4"
           },
           "kind": "exchange"
         },
