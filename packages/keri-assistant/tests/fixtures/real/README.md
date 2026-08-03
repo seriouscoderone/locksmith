@@ -3,9 +3,15 @@
 **No longer verbatim.** Both files started as copies of two templates from `ugard/docs/micro-apps/`,
 vendored so tests never depend on a sibling repo path. On 2026-08-02 (plan Task 18, commit `cd5eb105`)
 both were migrated in place to track this repo's own template model: `tel_primitive`, `lifecycle_advance`
-and the outbound `verb` were removed; `via_command`, `mints_credential_id` and `refuse` were added. Their
-header still declares `spec_version: micro-app-template/0.1` — that field was not bumped during the
-migration, so it no longer describes what the files actually carry.
+and the outbound `verb` were removed; `via_command`, `mints_credential_id` and `refuse` were added. Both
+files still declare the **top-level** `spec_version: micro-app-template/0.1` — the migration did not bump
+it, so it no longer describes what the files actually carry.
+
+*Corrected 2026-08-02 (fix round 2): this paragraph said "their **header** still declares
+`spec_version`". It does not. `spec_version` is a top-level field; `header` carries a different,
+similarly-named `version` (the bundle's own authoring version — `1.2` here and `1.0` in
+`actuary_attests_product_rating.json`), which the migration also left alone. Two fields, two meanings,
+and pointing at the wrong one sends whoever fixes it editing the wrong line.*
 
 **Do not refresh these by re-copying from `ugard/docs/micro-apps/`.** That corpus is being deleted and
 re-authored (see ugard's `backlog/2026-07-31-delete-and-reauthor-the-ipc-corpus.md`); it will look
