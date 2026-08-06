@@ -50,7 +50,7 @@ class CuoPlugin(VaultPlugin):
         # later activate re-registers a dead C++ object and raises. Revoke -> re-grant
         # is a real arc, so the page is rebuilt whenever the previous one is gone.
         if self._page is None or not _is_alive(self._page):
-            self._page = CuoMandatePage()
+            self._page = CuoMandatePage(app=self._app)
         return {"cuo": self._page}        # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:

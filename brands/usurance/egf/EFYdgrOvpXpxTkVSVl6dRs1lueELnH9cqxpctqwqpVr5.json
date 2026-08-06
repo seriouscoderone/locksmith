@@ -1,0 +1,119 @@
+{
+  "$id": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usurance Product Mandate",
+  "description": "An UNTARGETED ACDC: the Chief Underwriting Officer's signed declaration that a product shall exist for one line of business in one jurisdiction, covering the coverages named here, within the window named here. Addressed to nobody and requesting nothing -- 'an undirected verifiable attestation or observation by the Issuer... addressed to whom it may concern' (ACDC spec, Untargeted Attribute Section). A targeted request would make this a point-to-point work order and put the CUO in the business of knowing who the actuaries are; untargeted means the CUO does nothing at all to enable consumers, who find this by watching the CUO's KEL. Two consequences a verifier must know, both quoted from the spec rather than paraphrased. First, an ACDC is a container for authentic data 'only (not authentic data as an authorization or entitlement to a specified party)', so nothing can read authority off this container. Second, for an `I2I` edge 'to be valid, the ACDC node pointed to by this Edge MUST be a Targeted ACDC' and an edge whose far node 'does not have an Issuee' has `NI2I` appended to its effective operator list by a MUST -- so this node is reachable by `NI2I` and by nothing else, which is exactly what the rate-program attestation's `mandate` edge declares. Carries `ri`: this mandate is registry-backed and revocable (Amendment C \u00a714.1). A mandate can be withdrawn -- the CUO can cancel an initiative, and a consumer must be able to learn that from registry state without asking her -- so the lifecycle has two states, `declared` and `withdrawn`, and the `withdraw_mandate` command drives the transition.",
+  "credentialType": "UsuranceProductMandate",
+  "version": "1.0.0",
+  "type": "object",
+  "properties": {
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "ACDC SAID. This is the mandate's identity, and the only identity it has -- see the deliberate absence of any `*_id` attribute below.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID -- the declaring Chief Underwriting Officer. This is the ISSUER field, not an Issuee; an untargeted ACDC still has an issuer, which is what makes its authorship verifiable.",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Registry identifier (TEL) whose state says whether this mandate is still current. Present because a mandate is withdrawable: the CUO can cancel an initiative, and a consumer must be able to learn that without asking her. Registry naming follows the shipped convention, one management TEL per credential type keyed by its schema SAID; the per-credential iss/rev entries under it are automatic (register finding 79).",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID -- simultaneously this ACDC's type identity and its immutable validation rules.",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attribute block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "EOXA0r3f2JfuCqphTLUHTQkc1MWlMLu2OPNUeqApLcYQ",
+          "description": "Attributes of the mandate. NO `i`: untargeted by construction, and the envelope agrees by omitting holder_role.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time. This IS the declaration time; a `declared_at` attribute would restate a mandatory envelope field.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "line_of_business": {
+              "description": "The single line of business this mandate opens. Singular, not an array, and that is the Q4 answer rather than an omission: a line is an independently-mandated scope, so a second line is a second mandate -- one instance of this one schema -- never a second element of an array an edge cannot point at. Vocabulary is shared verbatim with the carrier license application's `lines_of_business` so the corpus speaks one language; the cost of the enum is that a new line of business is a new schema SAID, which is the honest price of a closed regulatory vocabulary.",
+              "type": "string",
+              "enum": [
+                "property",
+                "casualty",
+                "life",
+                "health",
+                "auto",
+                "workers_compensation",
+                "marine",
+                "aviation"
+              ]
+            },
+            "jurisdiction": {
+              "description": "ISO 3166-2 subdivision code this mandate opens (e.g., 'US-UT'). Singular for the same reason as `line_of_business`: adding a state is declaring a second mandate, which is exactly the command the superseded bundle could not express because its authorized states were an array on one credential. Identifier kind 4 -- a foreign coordinate carried as scope DATA, never as this ACDC's identity.",
+              "type": "string",
+              "pattern": "^US-[A-Z]{2}$"
+            },
+            "coverages": {
+              "description": "The coverages the CUO declares this product shall cover, in the CUO's own language. THE CUO DECLARES THESE. `ipd-parse` discovers coverages from value-column titles only because it parses a legacy workbook that declares nothing -- a property of the ingest tool's constraints, not of insurance, and the ecosystem above it must not adopt the parser's internal model. This stays an array rather than becoming per-coverage credentials because nothing is authorized per coverage: no party holds a credential for one, and the declared-against-carried check in the rate-program attestation is a consistency check on content, not an admissibility gate on authority. If a future requirement ever authorizes rating per coverage, this becomes a genuine array-element-discrimination defect and the fix is per-coverage credentials, not a relaxed rule. The pattern enforces canonical casing without enumerating a vocabulary the CUO owns -- unenforced casing would make the downstream set comparison silently miss on 'bi' against 'BI'. NOTE FOR A FUTURE EDITOR: this field appears in ZERO expressions in this template, and that is by design, not neglect. Its consumer is the rate-program attestation's declared-against-carried rule in the next bundle, reached through that bundle's edge to this mandate. Do not delete it as unused.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^[A-Z0-9][A-Z0-9-]*$"
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            },
+            "window_opens": {
+              "description": "First date the mandate is in force. ISO-8601 dates sort lexicographically, which is what lets the ordering constraint be a plain string comparison.",
+              "type": "string",
+              "format": "date"
+            },
+            "window_closes": {
+              "description": "Last date the mandate is in force. Closing the window is how a mandate ends -- there is no revocation and no registry, so nothing needs to be revoked and 'in force now' is a dated query against these two values.",
+              "type": "string",
+              "format": "date"
+            },
+            "thesis": {
+              "description": "One sentence of business intent, in the CUO's own words. Prose, deliberately unpatterned. This is the part of a mandate no tool can derive and no parser can discover; it is why a human holds this role.",
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "dt",
+            "line_of_business",
+            "jurisdiction",
+            "coverages",
+            "window_opens",
+            "window_closes",
+            "thesis"
+          ]
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a"
+  ]
+}
