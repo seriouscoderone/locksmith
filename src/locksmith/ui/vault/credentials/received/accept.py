@@ -208,8 +208,18 @@ class AcceptCredentialDialog(LocksmithDialog):
             if not hab:
                 raise ValueError(f"No local identifier found for recipient: {recp}")
 
-            # Use Admitter to parse the message into the database
-            admitter = ipexing.Admitter(self.app.hby, hab, self.app.rgy)
+            # Use Admitter to parse the message into the database. Pass the
+            # vault's OWN exchanger: Admitter's fallback (exc=None) builds a
+            # fresh Notifier(self.hby), which opens a SECOND LMDB environment
+            # at the same `.keri/not/<vault>` path the open vault's own
+            # notifier already holds (wired at vault-open, e.g. the toolbar's
+            # NotificationsButton.activate()) -- a guaranteed
+            # "environment ... is already open in this process" failure on
+            # every use of this dialog against an open vault. Reusing
+            # `app.vault.exc` is the same fix `AdmitDoer`/`ipexing.py`'s own
+            # send-mode `Admitter(app=...)` construction already applies.
+            admitter = ipexing.Admitter(self.app.hby, hab, self.app.rgy,
+                                        exc=self.app.vault.exc)
             admitter.parse(ims)
 
             # Verify grant message is in database
