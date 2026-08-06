@@ -108,12 +108,77 @@ def test_two_gates_coexist_and_revoke_deactivates_exactly_one(monkeypatch):
 
 # --- Side-panel icons (HOA #4 demo follow-up) --------------------------------
 
-def test_role_menu_entries_have_nonnull_icons(qapp, default_brand_resources):
-    """Each role plugin supplies a real side-panel icon (not a blank QIcon)."""
-    for cls in (ActuaryPlugin, ProductDesignerPlugin):
-        p = cls()
-        p.initialize(object())
-        assert not p.get_menu_entry().icon_obj.isNull()
+def _composed_role_plugin_classes():
+    """Every gated plugin the brand can compose, read from the LIVE entry-point
+    group rather than named here.
+
+    A hardcoded tuple is how this check silently stopped covering `cuo`: the
+    plugin was added to four other enumerations and missed here, and a
+    non-resolving icon degrades SILENTLY to the generic glyph (menu.py:50-51),
+    so nothing would have reported it. Deriving the list means the next role
+    plugin is covered the day it is registered.
+    """
+    from importlib.metadata import entry_points
+
+    found = []
+    for ep in entry_points(group="locksmith.plugins.composed"):
+        cls = ep.load()
+        if getattr(cls, "required_credential", None) is not None:
+            found.append(pytest.param(cls, id=ep.name))
+    return found
+
+
+def test_the_composed_registry_actually_yields_gated_plugins():
+    """Guards the guard: an empty parametrize list collects zero tests and
+    reports green while asserting nothing."""
+    assert len(_composed_role_plugin_classes()) >= 3
+
+
+def _declared_icon_paths(cls):
+    """The `:/assets/...` resource paths a plugin's get_menu_entry() names.
+
+    Read from the source rather than the QIcon, because by the time the icon
+    reaches `MenuButton.icon_obj` a non-resolving path has already been
+    silently swapped for the fallback glyph and the original is unrecoverable.
+    """
+    import inspect
+    import re
+
+    return re.findall(r'":(/assets/[^"]+)"',
+                      inspect.getsource(cls.get_menu_entry))
+
+
+@pytest.mark.parametrize("cls", _composed_role_plugin_classes())
+def test_role_menu_entry_icons_actually_resolve(qapp, default_brand_resources, cls):
+    """Each role plugin's declared icon must actually RESOLVE in the bundle.
+
+    The previous assertion here — `not icon_obj.isNull()` — was VACUOUS:
+    MenuButton substitutes the generic plugin glyph for any null icon
+    (menu.py:50-51), so `icon_obj` is never null however broken the path is.
+    Measured: pointing a plugin at a non-existent `gavel.svg` still passed. A
+    wrong icon is therefore invisible at runtime AND in tests, which is why
+    this checks the resource path itself.
+
+    `default_brand_resources` is required: resources_rc.py no longer exists —
+    compiled assets live in the gitignored release/assets.rcc that brand_apply
+    builds, and registration is per-test because Qt resource overlap is
+    first-registered-wins (a global default would shadow brand-override tests).
+    """
+    from PySide6.QtCore import QFile
+
+    paths = _declared_icon_paths(cls)
+    if not paths:
+        # Legitimate and supported: menu.py:44-47 documents that a plugin may
+        # register an entry with a bare QIcon() and take the generic glyph on
+        # purpose (the `carrier` plugin does). The contract is only that a
+        # DECLARED path must resolve — not that every plugin must declare one.
+        pytest.skip(f"{cls.__name__} declares no icon; the fallback is intended")
+    for path in paths:
+        assert QFile(f":{path}").exists(), (
+            f"{cls.__name__} declares ':{path}', which does not resolve — "
+            "MenuButton would silently fall back to the generic glyph. The "
+            "name must exist in assets/material-icons/ AND be listed in "
+            "resources.qrc.")
 
 
 def test_menubutton_falls_back_to_default_plugin_icon(qapp, default_brand_resources):
