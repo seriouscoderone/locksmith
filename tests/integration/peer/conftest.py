@@ -21,6 +21,7 @@ import sys
 import tempfile
 import time
 import uuid
+from contextlib import contextmanager
 from pathlib import Path
 
 import pytest
@@ -384,37 +385,45 @@ def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     # The next interaction will fail loudly if the dialog is still modal.
 
 
-@pytest.fixture
-def two_wallets():
-    # pytest's tmp_path lives under /private/var/folders/... which on
-    # macOS easily exceeds the 104-char UDS path limit when we put a
-    # .locksmith-control.sock inside it. Allocate our own short prefix.
-    root = Path(tempfile.mkdtemp(prefix="lspeer-", dir="/tmp"))
-    home_a = root / "a"
-    home_b = root / "b"
-    home_a.mkdir()
-    home_b.mkdir()
-    _install_plugins(home_a)
-    _install_plugins(home_b)
+@contextmanager
+def _spawn_wallets(names: list[str], prefix: str = "lspeer-"):
+    """Spawn one Locksmith wallet subprocess per name, each with its own isolated
+    HOME + devctl socket. Generalizes what used to be `two_wallets`'s own inline
+    two-copy spawn loop, so a THIRD (or Nth) named wallet is one more list entry,
+    not a third copy-pasted block — `four_wallets`
+    (`tests/integration/roles/conftest.py`) is this same generator called with three
+    names, not a fork of this one.
 
-    log_a = root / "a.log"
-    log_b = root / "b.log"
-
-    proc_a = _start_wallet(home_a, log_a)
-    proc_b = _start_wallet(home_b, log_b)
-
-    sock_a = home_a / ".locksmith-control.sock"
-    sock_b = home_b / ".locksmith-control.sock"
+    A context manager, not a fixture itself: yields ``{name: {"home", "log", "sock",
+    "proc"}, ...}`` once every socket is live, and on exit terminates every process
+    and (unless ``LOCKSMITH_KEEP_TEST_HOMES`` is set) removes the shared tmpdir —
+    exactly `two_wallets`'s prior try/finally shape, now parameterized over names.
+    """
+    # pytest's tmp_path lives under /private/var/folders/... which on macOS easily
+    # exceeds the 104-char UDS path limit when we put a .locksmith-control.sock
+    # inside it. Allocate our own short prefix.
+    root = Path(tempfile.mkdtemp(prefix=prefix, dir="/tmp"))
+    wallets: dict[str, dict] = {}
+    procs: list[subprocess.Popen] = []
     try:
-        _wait_for_socket(sock_a)
-        _wait_for_socket(sock_b)
-        yield {
-            "a": {"home": home_a, "log": log_a, "sock": sock_a, "proc": proc_a},
-            "b": {"home": home_b, "log": log_b, "sock": sock_b, "proc": proc_b},
-            "devctl": _devctl,
-        }
+        for name in names:
+            home = root / name
+            home.mkdir()
+            _install_plugins(home)
+            log = root / f"{name}.log"
+            proc = _start_wallet(home, log)
+            procs.append(proc)
+            wallets[name] = {
+                "home": home, "log": log,
+                "sock": home / ".locksmith-control.sock", "proc": proc,
+            }
+
+        for w in wallets.values():
+            _wait_for_socket(w["sock"])
+
+        yield wallets
     finally:
-        for proc in (proc_a, proc_b):
+        for proc in procs:
             proc.terminate()
             try:
                 proc.wait(timeout=5)
@@ -422,8 +431,14 @@ def two_wallets():
                 proc.kill()
         # Failures here are usually diagnosed from the wallets' logs, and pytest
         # truncates them out of assertion messages. Set LOCKSMITH_KEEP_TEST_HOMES
-        # to keep both HOMEs (and a.log / b.log) for inspection.
+        # to keep every HOME (and <name>.log) for inspection.
         if os.environ.get("LOCKSMITH_KEEP_TEST_HOMES"):
-            print(f"\n[two_wallets] logs kept at {root}")
+            print(f"\n[wallets:{','.join(names)}] logs kept at {root}")
         else:
             shutil.rmtree(root, ignore_errors=True)
+
+
+@pytest.fixture
+def two_wallets():
+    with _spawn_wallets(["a", "b"], prefix="lspeer-") as wallets:
+        yield {**wallets, "devctl": _devctl}

@@ -19,7 +19,8 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (           # noqa: F401
-    _devctl as devctl, free_port, open_test_vault_via_ui, create_aid_via_ui, two_wallets,
+    _devctl as devctl, _spawn_wallets, free_port, open_test_vault_via_ui,
+    create_aid_via_ui, two_wallets,
 )
 
 _UI_TESTER = pathlib.Path.home() / ".locksmith" / "plugins" / "ui_tester"
@@ -39,6 +40,41 @@ def _require_ui_tester():
     if os.environ.get("CI"):
         pytest.fail(_MISSING, pytrace=False)
     pytest.skip(_MISSING, allow_module_level=True)
+
+
+@pytest.fixture
+def four_wallets():
+    """Three REAL, separately-driven Locksmith application processes — cuo, actuary,
+    designer — the roles this plan built a UI surface for. Generalizes `two_wallets`'s
+    (`tests/integration/peer/conftest.py`) spawn loop via the shared `_spawn_wallets`
+    context manager rather than copy-pasting it a third/fourth time.
+
+    Named `four_wallets`, not `three_wallets`, because the ARC it drives
+    (`test_four_app_arc_via_ui.py`) is the parent design's four-ROLE milestone —
+    admin, cuo, actuary, designer. There is deliberately no `"admin"` key here: a
+    real fourth Locksmith process CAN issue and Grant a credential through its own
+    real UI (`IssueCredentialDialog`/`GrantCredentialDialog` both carry stable
+    devctl objectNames already, e.g. `issueCredentialDialog.issueButton`,
+    `grantCredentialDialog.grantButton` — this plan never had to add them), but the
+    RECEIVING side of that live grant cannot be driven the same way: an incoming
+    grant surfaces only on the recipient's Notifications page, and
+    `notifications/list.py::_show_accept_grant_dialog` admits it via `QDialog.exec()`
+    — a MODAL call that blocks the same Qt-main-thread stack the devctl server
+    dispatches commands on. `open_vault_holding_cuo_role`'s own module docstring
+    (point 2, above) already measured this exact deadlock for a different dialog
+    pair and chose the file-based Accept flow instead for exactly this reason; a
+    real admin process granting live over IPEX hits the identical wall on the
+    recipient's side, with no file-based alternative available for a LIVE grant (the
+    file-based flow admits a `.cesr` the caller already has on disk, not a message
+    that just arrived over a socket). So admin's three role grants are driven
+    through the SAME in-process issuance recipe `open_vault_holding_cuo_role` /
+    `open_vault_holding_actuary_role` / `deliver_rate_program_to_designer` already
+    use and this plan already proved (Tasks 4/5/6) — not a fourth spawned process.
+    See `test_four_app_arc_via_ui.py`'s own module docstring for exactly how each
+    leg of the arc is driven and which one substitution this makes.
+    """
+    with _spawn_wallets(["cuo", "actuary", "designer"], prefix="lsroles-") as wallets:
+        yield {**wallets, "devctl": devctl}
 
 
 # ---------------------------------------------------------------------------
@@ -725,6 +761,91 @@ def declare_mandate_via_ui(devctl, sock) -> None:
     r = devctl(sock, "wait_for", target="cuoMandatePage.declaredBanner",
                condition="visible", timeout_ms=10000)
     assert r.get("ok"), r
+
+
+def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
+    """The actuary loads a REAL `ipd-parse` output tree against the mandate it is
+    ALREADY watching, and attests. Extracted from Task 5's own test body
+    (`test_actuary_observes_and_attests_via_ui.py`) so Task 8's four-app arc can
+    drive the SAME closing leg rather than re-deriving it — that test now calls
+    this too, so there is exactly one copy of the load-and-attest recipe. See
+    `parse_dir`'s own docstring for why the fixture tree is a genuine `ipd-parse`
+    run, never a synthetic stand-in.
+
+    Preconditions (both already true after `open_vault_holding_actuary_role` +
+    `watch_cuo_mandate_via_peer`): `sock` is on `actuaryPage`, and exactly one
+    mandate has landed in `actuaryPage.observedMandates` by watching — this
+    function does not itself grant the actuary role or perform the watch.
+
+    Two devctl API corrections against the plan brief's illustrative snippet,
+    confirmed against the INSTALLED `locksmith_ui_tester.server` (not the README,
+    which is stale): `get_list_items` returns `{"items": [{"text": ..., "data":
+    ...}, ...]}`, not a bare list of strings, so the clicked item's text is
+    `items[0]["text"]`; `is_visible` on a target that does not exist returns
+    `{"ok": True, "visible": False, "exists": False}`, never `{"ok": False}` —
+    the field to assert is `"visible"`, not `"ok"`.
+    """
+    r = devctl(sock, "wait_for", target="actuaryPage.observedMandates",
+               condition="visible", timeout_ms=3000)
+    assert r.get("ok"), r
+
+    # The list widget is visible as soon as the page is (it is part of the
+    # persistent layout, not gated on having items) — the watch itself is a
+    # poll (ActuaryPage's own QTimer, 1s tock), so give it a few cycles rather
+    # than trusting a single read the instant "visible" returns.
+    #
+    # `wait_for`'s own `timeout_ms` is a SERVER-side poll budget; devctl's
+    # client socket (tests/integration/peer/conftest.py::_devctl) has an
+    # independent, hardcoded 5.0s recv() timeout. Asking the server to poll
+    # longer than that races a real TimeoutError on the client side before
+    # the server ever gets to answer -- so every wait_for below stays under
+    # it, and anything that may genuinely take longer is retried from the
+    # test side instead, the same idiom conftest.py's own "Underwriting"/
+    # "Actuarial" menu-entry waits use.
+    deadline = time.time() + 15.0
+    items = []
+    while time.time() < deadline:
+        r = devctl(sock, "get_list_items", target="actuaryPage.observedMandates")
+        assert r.get("ok"), r
+        items = r["items"]
+        if len(items) == 1:
+            break
+        time.sleep(0.5)
+    assert len(items) == 1, f"observedMandates never settled to exactly one item: {items}"
+
+    r = devctl(sock, "click_list_item", target="actuaryPage.observedMandates",
+               text=items[0]["text"])
+    assert r.get("ok"), r
+
+    # a real ipd-parse output directory, not a synthetic stand-in
+    r = devctl(sock, "type", target="actuaryPage.parseDir", text=str(parse_dir))
+    assert r.get("ok"), r
+    r = devctl(sock, "click", target="actuaryPage.loadParse")
+    assert r.get("ok"), r
+
+    # the manifest SAID and workbook digest are shown as EVIDENCE; no rate table
+    r = devctl(sock, "get_text", target="actuaryPage.manifestSaid")
+    assert r.get("ok") and r["text"].startswith("E"), r
+    r = devctl(sock, "get_text", target="actuaryPage.workbookDigest")
+    assert r.get("ok") and r["text"].startswith("E"), r
+    assert devctl(sock, "is_visible",
+                  target="actuaryPage.rateTable")["visible"] is False, \
+        "no rate table may be rendered in any HOA surface"
+
+    r = devctl(sock, "click", target="actuaryPage.attest")
+    assert r.get("ok"), r
+
+    # See the observedMandates comment above for why this polls in short
+    # (client-timeout-safe) hops instead of one long wait_for.
+    deadline = time.time() + 15.0
+    banner_visible = False
+    while time.time() < deadline:
+        r = devctl(sock, "wait_for", target="actuaryPage.attestedBanner",
+                   condition="visible", timeout_ms=3000)
+        if r.get("ok"):
+            banner_visible = True
+            break
+    assert banner_visible, f"attestedBanner never became visible: {r}"
 
 
 def open_vault_holding_actuary_role(
