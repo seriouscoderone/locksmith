@@ -16,7 +16,7 @@ authors = [
 
 dependencies = [
     "click>=8.1",
-    "keri @ git+https://github.com/WebOfTrust/keripy.git",
+    "keri @ git+https://github.com/seriouscoderone/keripy.git@1c127b5938c5c2901dfd3cc9c62174c16ba6f860",
     "fido2>=1.1",
     "boto3>=1.34",
     "requests>=2.32",

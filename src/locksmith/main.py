@@ -229,6 +229,15 @@ if __name__ == "__main__":
     except Exception:
         logger.exception("startup.identity failed")
 
+    # Which keri is actually loaded? The dev venv is editable-installed against a local
+    # keripy checkout, so this frequently is NOT the pinned commit — and a demo run on
+    # the wrong tree is indistinguishable from a correct one without this line.
+    try:
+        import keri
+        logger.info("startup.keri source=%s version=%s", keri.__file__, keri.__version__)
+    except Exception:
+        logger.exception("startup.keri failed")
+
     # Show the splash BEFORE the (slow) window construction so it covers the
     # launch gap on every platform, then process events once to paint it now.
     splash = _make_splash()
