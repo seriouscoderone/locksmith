@@ -14,7 +14,7 @@ from typing import Any
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget
 
-from locksmith.plugins.base import VaultPlugin
+from locksmith.plugins.base import VaultPlugin, _is_alive
 from locksmith.plugins.credential_gate import RequiredCredential
 from locksmith.plugins.product_designer.page import ProductDesignerPlaceholderPage
 from locksmith.plugins.actuary.plugin import USURANCE_ADMIN_AID
@@ -37,7 +37,7 @@ class ProductDesignerPlugin(VaultPlugin):
 
     def initialize(self, app: Any) -> None:
         self._app = app
-        self._page = ProductDesignerPlaceholderPage()
+        self._page = None            # built lazily; a destroyed page must not be reused
 
     def on_vault_opened(self, vault: Any) -> None:
         # No plugin-local state to open; gate evaluation/reveal is driven
@@ -48,6 +48,12 @@ class ProductDesignerPlugin(VaultPlugin):
         pass
 
     def get_pages(self) -> dict[str, QWidget]:
+        # RevealBundledSurface.deactivate -> VaultPage.unregister_page DESTROYS this
+        # widget (setParent(None) + deleteLater). Handing the same instance back on a
+        # later activate re-registers a dead C++ object and raises. Revoke -> re-grant
+        # is a real arc, so the page is rebuilt whenever the previous one is gone.
+        if self._page is None or not _is_alive(self._page):
+            self._page = ProductDesignerPlaceholderPage()
         return {"product_designer": self._page}   # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:

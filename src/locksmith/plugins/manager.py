@@ -370,18 +370,30 @@ class PluginManager:
             active = plugin.plugin_id in self._active_roles
             if satisfied and not active:
                 cred = self._matching_credential(held, req)
-                self._activation_strategy.activate(plugin, cred, host)
-                self._active_roles.add(plugin.plugin_id)
-                self.on_role_credential_activated(plugin, cred)
-            elif active and not satisfied:
-                self._activation_strategy.deactivate(plugin, host)
-                self._active_roles.discard(plugin.plugin_id)
-                signals = getattr(vault, "signals", None)
-                if signals is not None:
-                    signals.emit_doer_event(
-                        "RoleGate", "role_revoked",
-                        {"plugin_id": plugin.plugin_id, "schema_said": req.schema_said},
+                try:
+                    self._activation_strategy.activate(plugin, cred, host)
+                except Exception:                      # a surface defect must not wedge the gate loop
+                    logger.exception(
+                        "plugin.role_gate.activate_failed id=%s", plugin.plugin_id,
                     )
+                else:
+                    self._active_roles.add(plugin.plugin_id)
+                    self.on_role_credential_activated(plugin, cred)
+            elif active and not satisfied:
+                try:
+                    self._activation_strategy.deactivate(plugin, host)
+                except Exception:                      # a surface defect must not wedge the gate loop
+                    logger.exception(
+                        "plugin.role_gate.deactivate_failed id=%s", plugin.plugin_id,
+                    )
+                else:
+                    self._active_roles.discard(plugin.plugin_id)
+                    signals = getattr(vault, "signals", None)
+                    if signals is not None:
+                        signals.emit_doer_event(
+                            "RoleGate", "role_revoked",
+                            {"plugin_id": plugin.plugin_id, "schema_said": req.schema_said},
+                        )
 
     def on_role_credential_activated(self, plugin: Any, credential: Any) -> None:
         """Named seam fired once when a role credential activates a plugin.

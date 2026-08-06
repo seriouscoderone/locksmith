@@ -24,7 +24,7 @@ from typing import Any
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget
 
-from locksmith.plugins.base import VaultPlugin
+from locksmith.plugins.base import VaultPlugin, _is_alive
 from locksmith.plugins.carrier.page import CarrierPlaceholderPage
 from locksmith.plugins.credential_gate import RequiredCredential
 from locksmith.ui.vault.menu import MenuButton
@@ -48,7 +48,7 @@ class CarrierPlugin(VaultPlugin):
 
     def initialize(self, app: Any) -> None:
         self._app = app
-        self._page = CarrierPlaceholderPage()
+        self._page = None            # built lazily; a destroyed page must not be reused
 
     def on_vault_opened(self, vault: Any) -> None:
         # No plugin-local state to open; gate evaluation/reveal is driven
@@ -59,6 +59,16 @@ class CarrierPlugin(VaultPlugin):
         pass
 
     def get_pages(self) -> dict[str, QWidget]:
+        # RevealBundledSurface.deactivate -> VaultPage.unregister_page DESTROYS this
+        # widget (setParent(None) + deleteLater). Handing the same instance back on a
+        # later activate re-registers a dead C++ object and raises. Revoke -> re-grant
+        # is a real arc, so the page is rebuilt whenever the previous one is gone.
+        # NOTE: this plugin was not in the C2c task-2 brief's file list, but it is a
+        # gated composed plugin with the identical cached-page bug -- caught by
+        # test_surface_reactivation.py's live entry-point parametrize (id="carrier"),
+        # which failed pre-fix with the same RuntimeError as actuary/product_designer.
+        if self._page is None or not _is_alive(self._page):
+            self._page = CarrierPlaceholderPage()
         return {"carrier": self._page}
 
     def get_menu_entry(self) -> MenuButton:

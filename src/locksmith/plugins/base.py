@@ -25,6 +25,23 @@ if TYPE_CHECKING:
     from locksmith.plugins.credential_gate import RequiredCredential
 
 
+def _is_alive(widget) -> bool:
+    """False once Qt has destroyed the C++ side of `widget`.
+
+    PySide6 keeps the Python wrapper alive after deleteLater(), so identity and
+    `is not None` both lie; touching any C++ attribute is the only honest test.
+    Shared by every role-plugin's get_pages() so a withdrawn surface (revoked
+    credential -> RevealBundledSurface.deactivate -> VaultPage.unregister_page,
+    which destroys the widget) can be rebuilt rather than handed back dead on
+    the next reveal.
+    """
+    try:
+        widget.isVisible()
+    except RuntimeError:
+        return False
+    return True
+
+
 class PluginCore(ABC):
     """Shared minimum every plugin must implement."""
 
