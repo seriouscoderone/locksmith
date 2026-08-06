@@ -1,0 +1,125 @@
+{
+  "d": "EEtxdiMWf1YSSPK_IgaceYbfB-HfAx9oN1lLa_Jyf3qg",
+  "spec_version": "egf-doc/0.1",
+  "version": "0.2.0",
+  "ecosystem": {
+    "id": "usurance-internal",
+    "display_name": "Usurance internal roles",
+    "openness": "closed",
+    "description": "Usurance's internal-role ecosystem: usurance-admin grants and revokes employee role credentials."
+  },
+  "governance": {
+    "phase": "production",
+    "transition_plan": "No phase transition expected; key rotation is handled by KERI key state, not document transition."
+  },
+  "roles": [
+    {
+      "id": "cuo",
+      "display_name": "Chief Underwriting Officer",
+      "kind": "individual",
+      "description": "The executive accountable for the underwriting result, who decides whether a product exists at all. In this micro-app the CUO does exactly one thing: opens scope, by declaring that a product shall exist for one line of business in one jurisdiction. She does not assemble coverages, author rate tables, or file anything -- that is the designer's, the actuary's and the filing specialist's work. She is also not a work-order dispatcher: she does not know who the actuaries are and does nothing to reach them.",
+      "onboarding": {
+        "grant_credential_id": "cuo_role"
+      }
+    },
+    {
+      "id": "actuary",
+      "display_name": "Actuary",
+      "kind": "individual",
+      "description": "The credentialed professional who builds a rate program and puts their name to it. Their real work happens in Excel and in `ipd-parse` -- unwitnessed, ungated, and deliberately outside this framework -- and this micro-app is only the moment that work becomes a fact someone else can check. They do not decide whether a product exists (the CUO's mandate does) and they do not assemble it (the designer does); they attest that a specific set of bytes is their professional work for a specific mandate.",
+      "onboarding": {
+        "grant_credential_id": "actuary_role"
+      }
+    },
+    {
+      "id": "product_designer",
+      "display_name": "Insurance Product Designer",
+      "kind": "individual",
+      "description": "The role that turns attested pieces into a product. The designer does not decide whether a product should exist (the CUO's mandate does) and does not build the rates (the actuary does); they ASSEMBLE — accepting attested rate programs into a bundle that is, once assembled, the first artifact in this slice that can be called a product at all. Publishing it is somebody else's job and is out of scope.",
+      "onboarding": {
+        "grant_credential_id": "product_designer_role"
+      }
+    }
+  ],
+  "credentials": [
+    {
+      "id": "cuo_role",
+      "name": "Chief Underwriting Officer Role",
+      "schema_said": "EIE7Wb01SJeYU4HNbzP2En2XyGZSkRtIElXX7MOLlSTH",
+      "issuer_role": "admin",
+      "holder_role": "cuo",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": false
+    },
+    {
+      "id": "actuary_role",
+      "name": "Actuary Role",
+      "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+      "issuer_role": "admin",
+      "holder_role": "actuary",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": false
+    },
+    {
+      "id": "product_designer_role",
+      "name": "Insurance Product Designer Role",
+      "schema_said": "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-",
+      "issuer_role": "admin",
+      "holder_role": "product_designer",
+      "disclosure_mode": "full",
+      "chained_from": null,
+      "self_issued": false
+    }
+  ],
+  "authorities": [
+    {
+      "role_id": "admin",
+      "display_name": "Usurance Admin",
+      "context": {},
+      "aid": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+      "phase": "production",
+      "phase_note": "The genuine operational AID (usurance-custody vault).",
+      "expected_transition": null,
+      "credentials": [
+        "cuo_role",
+        "actuary_role",
+        "product_designer_role"
+      ],
+      "endpoints": [
+        {
+          "mode": "direct",
+          "scheme": "tcp",
+          "oobi_ref": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO"
+        }
+      ]
+    }
+  ],
+  "accepted_schema_saids": [
+    "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5",
+    "EIE7Wb01SJeYU4HNbzP2En2XyGZSkRtIElXX7MOLlSTH",
+    "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP",
+    "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+    "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-",
+    "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-"
+  ],
+  "micro_apps": [
+    {
+      "said": "EJi9PpHr0vjM5hyddlU11b-Vc3s8psnZAyGRML0I0CE7",
+      "id": "cuo-declares-product-mandate",
+      "role_id": "cuo"
+    },
+    {
+      "said": "EM6SQZywimnXpAKyVedx9yJlDWO3PVZ3MEAxGS4zGsr-",
+      "id": "actuary-attests-rate-program",
+      "role_id": "actuary"
+    },
+    {
+      "said": "EAyoE8eqqO_enBoSDa5tNDTLnQCvOWuYwJrdco2rM6yk",
+      "id": "designer-assembles-product-bundle",
+      "role_id": "product_designer"
+    }
+  ],
+  "context_dimensions": []
+}

@@ -1,0 +1,920 @@
+{
+  "aggregates": [
+    {
+      "boundary": {
+        "inception_event_type": "ledger_inception",
+        "instance_key": "'mandate_ledger'"
+      },
+      "description": "Every mandate this CUO has declared, and nothing else. log_scope is `private` DELIBERATELY, and the reasoning is the carrier registry's verbatim: every fact in here is already provable from a log somebody anchors -- each mandate's issuance is anchored in this CUO's own KEL. Witnessing this view would anchor a duplicate of facts already anchored, buying no verifiability. The witnessing that matters for this design is on the KEL, not on this log, which is why role.keri_infrastructure.witness_pool is true while this is private. There is no `status` column: a mandate has one state, and 'in force now' is a dated query against window_opens/window_closes, never a stamped literal.",
+      "events": {
+        "mandate_declared": {
+          "description": "This CUO declared and anchored a product mandate. The mandate's SAID is NOT a declared property: it is `event.credential_said` off the envelope, which the fold reads directly. Nor is there a `declared_at` -- the fold reads `event.datetime`, and the ACDC's mandatory `dt` is the same fact. Every property here is `required` because every one is read by the fold.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "coverages": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "jurisdiction": {
+                "type": "string"
+              },
+              "line_of_business": {
+                "type": "string"
+              },
+              "thesis": {
+                "type": "string"
+              },
+              "window_closes": {
+                "format": "date",
+                "type": "string"
+              },
+              "window_opens": {
+                "format": "date",
+                "type": "string"
+              }
+            },
+            "required": [
+              "line_of_business",
+              "jurisdiction",
+              "coverages",
+              "window_opens",
+              "window_closes",
+              "thesis"
+            ],
+            "type": "object"
+          }
+        },
+        "mandate_withdrawn": {
+          "description": "The CUO withdrew a mandate. Carries only the subject selector and the reason; every other fact about the mandate is already in `mandates`.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "withdrawal_reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "withdrawal_reason"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "fold": {
+        "mandate_declared": [
+          {
+            "op": "append",
+            "target": "mandates",
+            "value": "{ \"mandate_said\": event.credential_said, \"line_of_business\": event.line_of_business, \"jurisdiction\": event.jurisdiction, \"coverages\": event.coverages, \"window_opens\": event.window_opens, \"window_closes\": event.window_closes, \"thesis\": event.thesis, \"declared_at\": event.datetime }"
+          }
+        ],
+        "mandate_withdrawn": [
+          {
+            "op": "append",
+            "target": "withdrawn_saids",
+            "value": "event.credential_said"
+          }
+        ]
+      },
+      "id": "mandate_ledger",
+      "initial_state": {
+        "mandates": [],
+        "withdrawn_saids": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "mandate_windows_stay_ordered"
+        },
+        {
+          "rule_ref": "mandate_scopes_do_not_overlap"
+        },
+        {
+          "rule_ref": "mandate_withdrawn_once"
+        }
+      ],
+      "log_scope": "private",
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "mandates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "coverages": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "declared_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "line_of_business": {
+                  "type": "string"
+                },
+                "mandate_said": {
+                  "type": "string"
+                },
+                "thesis": {
+                  "type": "string"
+                },
+                "window_closes": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "window_opens": {
+                  "format": "date",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mandate_said",
+                "line_of_business",
+                "jurisdiction",
+                "coverages",
+                "window_opens",
+                "window_closes",
+                "thesis",
+                "declared_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "withdrawn_saids": {
+            "description": "SAIDs of mandates the CUO has withdrawn. Append-only: the mandate stays in `mandates` because it was genuinely declared, and this list is what says it should no longer be acted on.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mandates",
+          "withdrawn_saids"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expected": {
+            "mandates": [
+              {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "declared_at": "2026-11-02T00:00:00Z",
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "mandate_said": "EMandate1SAID",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              }
+            ],
+            "withdrawn_saids": []
+          },
+          "name": "declaring a mandate records it, with the SAID and the declaration time both read off the envelope"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate2SAID",
+            "datetime": "2026-11-03T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "GL"
+              ],
+              "jurisdiction": "US-UT",
+              "line_of_business": "casualty",
+              "thesis": "Inverted window -- the log must refuse to record it.",
+              "window_closes": "2027-01-01",
+              "window_opens": "2027-12-31"
+            },
+            "type": "mandate_declared"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expect_rejected_by": "mandate_windows_stay_ordered",
+          "name": "a mandate whose window closes before it opens is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate3SAID",
+            "datetime": "2026-11-04T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "BI",
+                "PD"
+              ],
+              "jurisdiction": "US-UT",
+              "line_of_business": "auto",
+              "thesis": "Overlaps the Utah auto mandate already declared.",
+              "window_closes": "2028-05-31",
+              "window_opens": "2027-06-01"
+            },
+            "type": "mandate_declared"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expect_rejected_by": "mandate_scopes_do_not_overlap",
+          "name": "a second mandate for the same line and jurisdiction with an overlapping window is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate1SAID",
+            "datetime": "2026-11-02T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "BI",
+                "PD",
+                "COMP",
+                "COLL"
+              ],
+              "jurisdiction": "US-UT",
+              "line_of_business": "auto",
+              "thesis": "Enter Utah personal auto to build density around the existing book.",
+              "window_closes": "2027-12-31",
+              "window_opens": "2027-01-01"
+            },
+            "type": "mandate_declared"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expect_rejected_by": "mandate_scopes_do_not_overlap",
+          "name": "re-appending a mandate already in the ledger is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate4SAID",
+            "datetime": "2026-11-05T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "BI",
+                "PD",
+                "COMP",
+                "COLL"
+              ],
+              "jurisdiction": "US-ID",
+              "line_of_business": "auto",
+              "thesis": "Extend the auto footprint into Idaho on the same window.",
+              "window_closes": "2027-12-31",
+              "window_opens": "2027-01-01"
+            },
+            "type": "mandate_declared"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "the same line in a different jurisdiction is accepted -- the scope guard is per (line, jurisdiction), which is how a second state gets added"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate2SAID",
+            "datetime": "2026-11-10T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "BI",
+                "PD"
+              ],
+              "jurisdiction": "US-UT",
+              "line_of_business": "auto",
+              "thesis": "Re-enter Utah personal auto on the revised loss picture.",
+              "window_closes": "2027-12-31",
+              "window_opens": "2027-01-01"
+            },
+            "type": "mandate_declared"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            },
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-09T00:00:00Z",
+              "payload": {
+                "withdrawal_reason": "Reserving capital for the Idaho book instead."
+              },
+              "type": "mandate_withdrawn"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "a withdrawn mandate is marked, not removed, and stops blocking its scope -- the same scope and window re-declared is accepted only because the invariant now excludes withdrawn mandates"
+        },
+        {
+          "append": {
+            "credential_said": "EMandate1SAID",
+            "datetime": "2026-11-10T00:00:00Z",
+            "payload": {
+              "withdrawal_reason": "Duplicate withdrawal."
+            },
+            "type": "mandate_withdrawn"
+          },
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            },
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-09T00:00:00Z",
+              "payload": {
+                "withdrawal_reason": "Reserving capital for the Idaho book instead."
+              },
+              "type": "mandate_withdrawn"
+            }
+          ],
+          "expect_rejected_by": "mandate_withdrawn_once",
+          "name": "withdrawing the same mandate twice is rejected by the fold-time twin of its precondition"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIE7Wb01SJeYU4HNbzP2En2XyGZSkRtIElXX7MOLlSTH"
+      },
+      "counterparty_role": null,
+      "description": "Declare that a product shall exist for this line of business in this jurisdiction, covering these coverages, within this window. This command MINTS the mandate attestation; from that one declaration the loader derives the anchoring act. `counterparty_role` is null and there is no exchange emission, because nothing is sent -- the anchor IS the publication, and a consumer finds it by watching this KEL. There is no `declared_at` field: the issuance datetime is the declaration time, and the fold reads `event.datetime`.",
+      "emissions": [
+        {
+          "aggregate_id": "mandate_ledger",
+          "event_type": "mandate_declared",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "declare_product_mandate",
+      "mints_credential_id": "product_mandate",
+      "name": "Declare a product mandate",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "coverages": {
+            "description": "The coverages the CUO declares, in her own language. The parser discovers coverages only because it reads a workbook that declares nothing; that is the ingest tool's constraint, not the domain's.",
+            "items": {
+              "pattern": "^[A-Z0-9][A-Z0-9-]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "jurisdiction": {
+            "description": "ISO 3166-2 subdivision code, e.g. 'US-UT'.",
+            "pattern": "^US-[A-Z]{2}$",
+            "type": "string"
+          },
+          "line_of_business": {
+            "description": "The single line this mandate opens. Vocabulary shared verbatim with the carrier license application so the corpus speaks one language.",
+            "enum": [
+              "property",
+              "casualty",
+              "life",
+              "health",
+              "auto",
+              "workers_compensation",
+              "marine",
+              "aviation"
+            ],
+            "type": "string"
+          },
+          "thesis": {
+            "description": "One sentence of business intent, in the CUO's own words.",
+            "minLength": 1,
+            "type": "string"
+          },
+          "window_closes": {
+            "format": "date",
+            "type": "string"
+          },
+          "window_opens": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "line_of_business",
+          "jurisdiction",
+          "coverages",
+          "window_opens",
+          "window_closes",
+          "thesis"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/declare_product_mandate",
+      "state_preconditions": [
+        {
+          "rule_ref": "mandate_window_opens_before_it_closes"
+        },
+        {
+          "rule_ref": "no_overlapping_mandate_for_this_scope"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "actuary",
+      "description": "Withdraw a mandate the CUO is no longer pursuing. This is a genuine state-to-state transition on an ACDC this CUO issued, so it declares `credential_said` -- the required subject selector naming WHICH mandate instance the `upd` acts on. Withdrawal does not deny that the mandate was declared; it withdraws the CUO's recommendation that anyone act on it. An actuary watching this KEL learns of it by observing the `upd`'s `ts`, which is the inbound mirror of a lifecycle change; no notification restates it.",
+      "emissions": [
+        {
+          "aggregate_id": "mandate_ledger",
+          "event_type": "mandate_withdrawn",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "withdraw_mandate",
+      "name": "Withdraw product mandate",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "credential_said": {
+            "description": "SAID of the mandate instance being withdrawn. Required subject selector for the derived `upd`.",
+            "type": "string"
+          },
+          "withdrawal_reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_said",
+          "withdrawal_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/withdraw_mandate",
+      "state_preconditions": [
+        {
+          "rule_ref": "mandate_is_not_already_withdrawn"
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "The CUO's signed declaration that a product shall exist. The export diagnostic answers I ATTEST, not I issue: `holder_role` is deliberately ABSENT because the mandate confers nothing on anybody and is addressed to whom it may concern. The actuary is its READER, not its Issuee. Two consequences a verifier must know: nothing can read authority off this container, and only an NI2I edge may point at it -- which is exactly what bundle (2)'s `mandate` edge declares. It carries `ri` and has two lifecycle states, `declared` and `withdrawn` (Amendment C §14.1): the CUO can withdraw a mandate she is no longer pursuing, and a consumer learns that from registry state without asking her.",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [],
+          "verifier_roles": [
+            "actuary",
+            "product_designer"
+          ]
+        },
+        "id": "product_mandate",
+        "lifecycle": {
+          "initial": "declared",
+          "states": [
+            "declared",
+            "withdrawn"
+          ],
+          "transitions": [
+            {
+              "from": "declared",
+              "id": "withdraw",
+              "to": "withdrawn",
+              "via_command": [
+                "withdraw_mandate"
+              ]
+            }
+          ]
+        },
+        "name": "Product Mandate",
+        "rule_refs": [
+          "mandate_authority_is_admin_rooted",
+          "declared_coverages_are_the_underwriter_s_decision",
+          "a_mandate_is_immutable_and_ends_by_its_window"
+        ],
+        "schema": {
+          "schema_path": "schemas/product_mandate.json",
+          "schema_said": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
+        }
+      }
+    ],
+    "imports": [
+      {
+        "expected_issuer_role": "admin",
+        "expected_schema_said": "EIE7Wb01SJeYU4HNbzP2En2XyGZSkRtIElXX7MOLlSTH",
+        "id": "cuo_role",
+        "lifecycle_acceptance": [
+          "active"
+        ],
+        "narrative": "The import diagnostic answers I HOLD: this credential names the CUO as Issuee, so it is authority she can prove she possesses -- not evidence she merely verifies. It is the HOA gate credential, deliberately content-free: authority derives from holding it, never from attribute payload. It is the ONLY import. No product definition, no filing clearance, no readiness acknowledgement -- the superseded bundle imported all three, and filing and approval are out of scope for this slice. `schema_path` points at a byte-identical vendored copy of usurance-admin's own schema (sha256 verified against the superseded bundle's copy); byte-identical means SAID-identical, which is content alignment per authoring spec 7.1. Granted by usurance-admin, exported by no template in this suite -- a sanctioned permanent import orphan. NOTE for the EGF work: this schema is NOT yet in docs/usurance/egf/ accepted_schema_saids and there is no `cuo` role or `cuo_role` credential in the EGF document; until Plan C adds them, this vendored file is the only copy in the repo.",
+        "schema_path": "schemas/cuo_role.json"
+      }
+    ]
+  },
+  "d": "EJi9PpHr0vjM5hyddlU11b-Vc3s8psnZAyGRML0I0CE7",
+  "header": {
+    "description": "The Chief Underwriting Officer's slice of building an insurance product, and the first fact in the chain: a product mandate has been declared for this line, this jurisdiction, these coverages, this window. One command, one fact, and an UNTARGETED attestation -- addressed to nobody, requesting nothing, not a work order. Its existence in the CUO's own KEL is the whole signal: consumers find it by watching, and the CUO does nothing at all to enable them. Pivotal event: a product mandate has been declared. Not 'approved' and not 'launched' -- the CUO is opening scope, not signing off on a finished thing.",
+    "display_name": "Declare a Product Mandate",
+    "expression_language": "CEL/1.0",
+    "id": "cuo-declares-product-mandate",
+    "version": "1.0"
+  },
+  "projections": [
+    {
+      "description": "The mandates this CUO has declared, and the window each is in force for. This is the CUO's whole surface after the button: without it the HOA has a form and no list. There is deliberately NO 'in force' column -- that is a function of the read date, and a stamped one would be a lifecycle spelled as a column. The reader sees both window dates and evaluates as of whenever they are looking.",
+      "display": {
+        "columns": [
+          {
+            "field": "line_of_business",
+            "header": "Line"
+          },
+          {
+            "field": "jurisdiction",
+            "header": "Jurisdiction"
+          },
+          {
+            "field": "coverages",
+            "header": "Coverages"
+          },
+          {
+            "field": "window_opens",
+            "header": "Opens"
+          },
+          {
+            "field": "window_closes",
+            "header": "Closes"
+          },
+          {
+            "field": "thesis",
+            "header": "Thesis"
+          }
+        ],
+        "default_sort": {
+          "column": "declared_at",
+          "direction": "desc"
+        },
+        "empty_state": "No mandates declared yet.",
+        "view_type": "table"
+      },
+      "fold": {
+        "mandate_declared": [
+          {
+            "op": "upsert",
+            "set": {
+              "coverages": "event.coverages",
+              "declared_at": "event.datetime",
+              "jurisdiction": "event.jurisdiction",
+              "line_of_business": "event.line_of_business",
+              "mandate_said": "event.credential_said",
+              "thesis": "event.thesis",
+              "window_closes": "event.window_closes",
+              "window_opens": "event.window_opens"
+            }
+          }
+        ]
+      },
+      "id": "my_product_mandates",
+      "name": "My Mandates",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "credential_said",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "coverages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "declared_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "jurisdiction": {
+            "type": "string"
+          },
+          "line_of_business": {
+            "type": "string"
+          },
+          "mandate_said": {
+            "type": "string"
+          },
+          "thesis": {
+            "type": "string"
+          },
+          "window_closes": {
+            "format": "date",
+            "type": "string"
+          },
+          "window_opens": {
+            "format": "date",
+            "type": "string"
+          }
+        },
+        "required": [
+          "mandate_said",
+          "line_of_business",
+          "jurisdiction",
+          "coverages",
+          "window_opens",
+          "window_closes",
+          "thesis",
+          "declared_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "mandate_declared"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_said": "EMandate1SAID",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            },
+            {
+              "credential_said": "EMandate4SAID",
+              "datetime": "2026-11-05T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "jurisdiction": "US-ID",
+                "line_of_business": "auto",
+                "thesis": "Extend the auto footprint into Idaho on the same window.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "type": "mandate_declared"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "EMandate1SAID": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "declared_at": "2026-11-02T00:00:00Z",
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "mandate_said": "EMandate1SAID",
+                "thesis": "Enter Utah personal auto to build density around the existing book.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              },
+              "EMandate4SAID": {
+                "coverages": [
+                  "BI",
+                  "PD",
+                  "COMP",
+                  "COLL"
+                ],
+                "declared_at": "2026-11-05T00:00:00Z",
+                "jurisdiction": "US-ID",
+                "line_of_business": "auto",
+                "mandate_said": "EMandate4SAID",
+                "thesis": "Extend the auto footprint into Idaho on the same window.",
+                "window_closes": "2027-12-31",
+                "window_opens": "2027-01-01"
+              }
+            }
+          },
+          "name": "each declared mandate becomes one row, keyed by its own SAID"
+        }
+      ]
+    }
+  ],
+  "reactions": [],
+  "role": {
+    "description": "The executive accountable for the underwriting result, who decides whether a product exists at all. In this micro-app the CUO does exactly one thing: opens scope, by declaring that a product shall exist for one line of business in one jurisdiction. She does not assemble coverages, author rate tables, or file anything -- that is the designer's, the actuary's and the filing specialist's work. She is also not a work-order dispatcher: she does not know who the actuaries are and does nothing to reach them.",
+    "display_name": "Chief Underwriting Officer",
+    "id": "cuo",
+    "keri_infrastructure": {
+      "acdc_registry": false,
+      "mailbox": true,
+      "watcher_network": false,
+      "witness_pool": true
+    },
+    "kind": "individual"
+  },
+  "rules": [
+    {
+      "body": "A product mandate is authoritative only where the AID that anchored it held an active `cuo_role` credential issued by the Usurance administration authority named in the ecosystem governance framework at the time of anchoring. A consumer of a mandate MUST establish that fact for itself and MUST NOT infer it from the mandate's shape, its schema, or the fact that it arrived. An attestation is a container for authentic data, never an authorization: nothing can be read off this container about who was entitled to write it.\n\nWhere this is enforced, precisely, because the honest answer is 'in three places and not yet all of them':\n\n1. On the declaring side, `commands[].authz` pins the credential schema SAID and the issuing AID, so the CUO's own surface reveals and the command authorizes only on the credential. That is the KERI-native spelling and it is why this requirement is NOT a CEL predicate.\n2. On the consuming side, the check belongs to the shared verification library, which does not exist yet. `expected_issuer_role` is declared in eight bundles across this corpus and executed nowhere -- it appears in concierge source only inside a docstring. Until that library lands, nothing stops an arbitrary AID from anchoring a mandate-shaped attestation and a watching application acting on it.\n3. Revocation is a TEL state change on `cuo_role`'s own registry, read at verification time. It is not this mandate's concern: a mandate anchored while the role was held stays a true record of a past act, and a consumer asking whether to act now asks about the role's standing now.\n\nThis rule is deliberately prose rather than an expression. No test vector can pin it -- vectors execute fold handlers and aggregate invariants, and authorization is neither.",
+      "id": "mandate_authority_is_admin_rooted",
+      "title": "A mandate is only a mandate if its declarer holds the role",
+      "type": "legal_prose"
+    },
+    {
+      "body": "The coverages named in a mandate are the Chief Underwriting Officer's decision, stated in her own language. They are not derived from, reconciled against, or constrained by any parsing tool's output.\n\nThis matters because the temptation runs the other way. `ipd-parse` *discovers* coverages from a legacy workbook's value-column titles, and it does so only because the workbook declares nothing -- that is a property of the ingest tool's constraints, not of insurance. The parser is deliberately domain-agnostic and accepts whatever language the client's spreadsheet happens to use; a low-level library's internal model must not dictate upward. In the domain, an underwriting officer decides what is covered.\n\nThe consequence is what makes the mandate checkable rather than decorative: because the CUO declares the coverages independently, the rate-program attestation in bundle (2) can compare declared coverages against the coverages its attested tables actually carry, and a genuine mismatch is detectable. If the mandate merely echoed the parse, that comparison would be a tautology.",
+      "id": "declared_coverages_are_the_underwriter_s_decision",
+      "title": "The coverages are declared, not discovered",
+      "type": "behavioral_expectation"
+    },
+    {
+      "body": "A product mandate's declared attributes are immutable once anchored -- the line, jurisdiction, coverages, window and thesis never change. Amendment C §14.1 adds one axis of change on top of that: `ri` and a `withdrawn` TEL state, reached only by `withdraw_mandate`, that lets the CUO retract her recommendation without denying the mandate was declared. A mandate also still ceases to be in force when its window closes on its own, independent of withdrawal, and 'in force' is therefore a dated question asked of `window_opens` and `window_closes` against the date of the asking -- never a status stored on a row.\n\nA mandate stated wrongly is corrected by declaring a new one, not by amending this one. A scope change -- a further jurisdiction, a further line -- is likewise a new mandate: that is why `line_of_business` and `jurisdiction` are singular attributes rather than arrays, and it is the one command the superseded bundle could not express, because its authorized states were an array on a single credential and an edge cannot point at an array element.\n\nCurrency (declared vs. withdrawn) is now a TEL state transition, per Amendment C §14.1 -- but lineage between mandates is still not modeled: withdrawing and re-declaring produces two unrelated mandates, not a linked pair, exactly as the accepting test vector in `mandate_ledger.test_vectors` demonstrates. Should a later revision need mandate lineage, the correct move remains a self-referential `supersedes` edge with `operator: references`, and adding it changes the schema SAID, which is the point.",
+      "id": "a_mandate_is_immutable_and_ends_by_its_window",
+      "title": "A mandate's content is immutable; withdrawal changes only its currency",
+      "type": "legal_prose"
+    },
+    {
+      "description": "Pre-mint gate, and the pairing with `mandate_windows_stay_ordered` is deliberate rather than duplication. This one is checked BEFORE the ACDC is anchored, which is the only point at which refusing costs nothing; the invariant is the log's own guard and fires after the anchor. The corpus spells the same concept in both positions for the same reason (see the carrier bundle's `no_active_license_for_jurisdiction` beside `no_duplicate_active_license_per_jurisdiction`). ISO-8601 dates sort lexicographically, so a string comparison is the whole check. Note that ACDC cannot enforce a constraint between two values inside one container, so nothing re-checks this after issuance -- it is an authoring-time check by construction, not by omission.",
+      "expression": "command.window_opens < command.window_closes",
+      "id": "mandate_window_opens_before_it_closes",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The window opens before it closes",
+      "type": "predicate"
+    },
+    {
+      "description": "Pre-mint gate: blocks a second mandate for a (line, jurisdiction) scope this CUO already has an in-window mandate for. Two overlapping mandates for one scope leave a watching actuary with two mandates to edge to and no ground for choosing, which is the concrete harm. Overlap is the standard interval test -- each range starts on or before the other ends. A further jurisdiction or a further line is NOT an overlap and is accepted, which is how scope is added.",
+      "expression": "size(state.mandates.filter(o, o.line_of_business == command.line_of_business && o.jurisdiction == command.jurisdiction && o.window_opens <= command.window_closes && command.window_opens <= o.window_closes)) == 0",
+      "id": "no_overlapping_mandate_for_this_scope",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "No overlapping mandate for this line and jurisdiction",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: the ledger refuses to record a mandate whose window closes before it opens. Evaluated against the CANDIDATE state, so the proposed mandate is already folded in and `all` covers it -- there is no need to reach for `event` and no way for the new row to escape the check.",
+      "expression": "state.mandates.all(m, m.window_opens < m.window_closes)",
+      "id": "mandate_windows_stay_ordered",
+      "language": "CEL/1.0",
+      "title": "Every recorded mandate has an ordered window",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant: at most one mandate is in force for any (line, jurisdiction) at any date. Written self-inclusively -- every mandate overlaps itself, so the count is exactly 1 when nothing else overlaps -- which is the idiom the candidate-state binding requires and the one the carrier registry uses. Withdrawn mandates are excluded from both sides of the comparison -- a scope the CUO has abandoned must not block a replacement, and a withdrawn mandate must not count itself.",
+      "expression": "state.mandates.filter(x, !(x.mandate_said in state.withdrawn_saids)).all(m, size(state.mandates.filter(o, !(o.mandate_said in state.withdrawn_saids) && o.line_of_business == m.line_of_business && o.jurisdiction == m.jurisdiction && o.window_opens <= m.window_closes && m.window_opens <= o.window_closes)) == 1)",
+      "id": "mandate_scopes_do_not_overlap",
+      "language": "CEL/1.0",
+      "title": "No two recorded mandates overlap on one scope",
+      "type": "validation"
+    },
+    {
+      "description": "Withdrawing twice would append a second `mandate_withdrawn` for one mandate and make `withdrawn_saids` a multiset, which every reader would then have to de-duplicate. The TEL would also carry two `rev` events for one credential. Rejecting the second attempt keeps the aggregate and the TEL in agreement.",
+      "expression": "!(command.credential_said in state.withdrawn_saids)",
+      "id": "mandate_is_not_already_withdrawn",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "A mandate can only be withdrawn once",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant, and the fold-time twin of `mandate_is_not_already_withdrawn` -- the pair spells the same concept in both positions for the same reason as `mandate_window_opens_before_it_closes` beside `mandate_windows_stay_ordered`: the precondition is checked BEFORE the withdrawal is anchored, which is the only point at which refusing costs nothing, and this invariant is the log's own guard, and the position a test vector can pin (`try_append` evaluates `state`/`event`, never `command`, so only this position is vector-testable). Written self-inclusively -- every recorded withdrawal matches itself, so the count is exactly 1 when nothing else duplicates it, the same idiom `mandate_observed_once` uses in the sibling bundle.",
+      "expression": "state.withdrawn_saids.all(s, size(state.withdrawn_saids.filter(o, o == s)) == 1)",
+      "id": "mandate_withdrawn_once",
+      "language": "CEL/1.0",
+      "title": "A mandate is recorded as withdrawn at most once",
+      "type": "validation"
+    }
+  ],
+  "spec_version": "micro-app-template/0.2",
+  "workflows": []
+}

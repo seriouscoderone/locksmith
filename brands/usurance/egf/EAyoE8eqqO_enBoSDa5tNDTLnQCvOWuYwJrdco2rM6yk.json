@@ -1,0 +1,1031 @@
+{
+  "aggregates": [
+    {
+      "boundary": {
+        "inception_event_type": "desk_inception",
+        "instance_key": "'assembly_desk'"
+      },
+      "description": "The designer's desk: rate programs received, and bundles assembled from them. log_scope is `private` DELIBERATELY — every fact here is already provable from a log somebody anchors: an attestation's issuance is anchored in the actuary's KEL, a bundle's in this designer's own. Witnessing this view would anchor a duplicate and buy no verifiability. No `status` column and no 'is this bundle publishable' flag: completeness is out of scope, and a flag claiming it would be a decision this template explicitly does not make.",
+      "events": {
+        "bundle_assembled": {
+          "description": "This designer assembled and anchored a product bundle. The bundle's own SAID is `event.credential_said`; `mandate_said` and `rate_program_saids` are declared because they name OTHER credentials, which the envelope cannot supply.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "bundle_name": {
+                "type": "string"
+              },
+              "mandate_said": {
+                "type": "string"
+              },
+              "rate_program_saids": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              }
+            },
+            "required": [
+              "bundle_name",
+              "mandate_said",
+              "rate_program_saids"
+            ],
+            "type": "object"
+          }
+        },
+        "bundle_withdrawn": {
+          "description": "This designer withdrew a product bundle. Carries only the subject selector and the reason; every other fact about the bundle is already in `bundles`.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "withdrawal_reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "withdrawal_reason"
+            ],
+            "type": "object"
+          }
+        },
+        "rate_program_received": {
+          "description": "An attested rate program arrived. `attestation_said` is `event.credential_said` and the mandate is `event.credential_edges.mandate` — both envelope, neither declared here. The three declared properties are read conform-by-name from the inbound ACDC's attributes. Note `filing_date` is deliberately NOT carried: the desk never reads it, and an unread copy of a counterparty's attribute is the decoration this model exists to avoid.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "Publish",
+                  "Sandbox"
+                ],
+                "type": "string"
+              },
+              "manifest_said": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "manifest_said",
+              "version",
+              "action"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "fold": {
+        "bundle_assembled": [
+          {
+            "op": "append",
+            "target": "bundles",
+            "value": "{ \"bundle_said\": event.credential_said, \"bundle_name\": event.bundle_name, \"mandate_said\": event.mandate_said, \"rate_program_saids\": event.rate_program_saids, \"assembled_at\": event.datetime }"
+          }
+        ],
+        "bundle_withdrawn": [
+          {
+            "op": "append",
+            "target": "withdrawn_saids",
+            "value": "event.credential_said"
+          }
+        ],
+        "rate_program_received": [
+          {
+            "op": "append",
+            "target": "programs",
+            "value": "{ \"attestation_said\": event.credential_said, \"mandate_said\": event.credential_edges.mandate, \"manifest_said\": event.manifest_said, \"version\": event.version, \"action\": event.action, \"received_at\": event.datetime }"
+          }
+        ]
+      },
+      "id": "assembly_desk",
+      "initial_state": {
+        "bundles": [],
+        "programs": [],
+        "withdrawn_saids": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "rate_program_received_once"
+        },
+        {
+          "rule_ref": "bundle_names_only_received_programs"
+        },
+        {
+          "rule_ref": "bundle_programs_share_one_mandate"
+        },
+        {
+          "rule_ref": "bundle_withdrawn_once"
+        }
+      ],
+      "log_scope": "private",
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "bundles": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "assembled_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "bundle_name": {
+                  "type": "string"
+                },
+                "bundle_said": {
+                  "type": "string"
+                },
+                "mandate_said": {
+                  "type": "string"
+                },
+                "rate_program_saids": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                }
+              },
+              "required": [
+                "bundle_said",
+                "bundle_name",
+                "mandate_said",
+                "rate_program_saids",
+                "assembled_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "programs": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "enum": [
+                    "Publish",
+                    "Sandbox"
+                  ],
+                  "type": "string"
+                },
+                "attestation_said": {
+                  "type": "string"
+                },
+                "mandate_said": {
+                  "type": "string"
+                },
+                "manifest_said": {
+                  "type": "string"
+                },
+                "received_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "attestation_said",
+                "mandate_said",
+                "manifest_said",
+                "version",
+                "action",
+                "received_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "withdrawn_saids": {
+            "description": "SAIDs of bundles the designer has withdrawn. Append-only: the bundle stays in `bundles` because it was genuinely assembled, and this list is what says it should no longer be treated as the live product.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "programs",
+          "bundles",
+          "withdrawn_saids"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            }
+          ],
+          "expected": {
+            "bundles": [],
+            "programs": [
+              {
+                "action": "Sandbox",
+                "attestation_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "received_at": "2026-11-15T00:00:00Z",
+                "version": "1.0"
+              }
+            ],
+            "withdrawn_saids": []
+          },
+          "name": "receiving a rate program records it with the mandate read off the envelope's resolved edge"
+        },
+        {
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-16T00:00:00Z",
+              "payload": {
+                "action": "Publish",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.1"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-18T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                  "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            }
+          ],
+          "expected": {
+            "bundles": [
+              {
+                "assembled_at": "2026-11-18T00:00:00Z",
+                "bundle_name": "Utah personal auto",
+                "bundle_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                  "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              }
+            ],
+            "programs": [
+              {
+                "action": "Sandbox",
+                "attestation_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "received_at": "2026-11-15T00:00:00Z",
+                "version": "1.0"
+              },
+              {
+                "action": "Publish",
+                "attestation_said": "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "received_at": "2026-11-16T00:00:00Z",
+                "version": "1.1"
+              }
+            ],
+            "withdrawn_saids": []
+          },
+          "name": "two programs under one mandate assemble into one bundle"
+        },
+        {
+          "append": {
+            "credential_edges": {
+              "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+            },
+            "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-15T00:00:00Z",
+            "payload": {
+              "action": "Sandbox",
+              "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+              "version": "1.0"
+            },
+            "type": "rate_program_received"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            }
+          ],
+          "expect_rejected_by": "rate_program_received_once",
+          "name": "receiving the same rate program twice is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+            "datetime": "2026-11-18T00:00:00Z",
+            "payload": {
+              "bundle_name": "Utah personal auto",
+              "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "rate_program_saids": [
+                "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "ENeverReceived1SAIDplaceholderXXXXXXXXXXXX"
+              ]
+            },
+            "type": "bundle_assembled"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            }
+          ],
+          "expect_rejected_by": "bundle_names_only_received_programs",
+          "name": "a bundle naming a program this desk never received is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+            "datetime": "2026-11-18T00:00:00Z",
+            "payload": {
+              "bundle_name": "Mixed scopes",
+              "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "rate_program_saids": [
+                "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "EAttestGL1SAIDplaceholderXXXXXXXXXXXXXXXXXXX"
+              ]
+            },
+            "type": "bundle_assembled"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_edges": {
+                "mandate": "EMandateGeneralLiability1SAIDplaceholderXXXX"
+              },
+              "credential_said": "EAttestGL1SAIDplaceholderXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-17T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            }
+          ],
+          "expect_rejected_by": "bundle_programs_share_one_mandate",
+          "name": "a bundle mixing programs written under different mandates is rejected — you cannot assemble one product from two scopes"
+        },
+        {
+          "append": {
+            "credential_said": "EBundleUtahAuto2SAIDplaceholderXXXXXXXXXXXX",
+            "datetime": "2026-11-19T00:00:00Z",
+            "payload": {
+              "bundle_name": "Utah personal auto",
+              "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "rate_program_saids": [
+                "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+              ]
+            },
+            "type": "bundle_assembled"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-16T00:00:00Z",
+              "payload": {
+                "action": "Publish",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.1"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-18T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "assembling a second, larger bundle over the same mandate is accepted — a different set of programs is a different product, not an edit"
+        },
+        {
+          "append": {
+            "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+            "datetime": "2026-11-25T00:00:00Z",
+            "payload": {
+              "withdrawal_reason": "Rate program filing was withdrawn; the bundle no longer reflects a live product."
+            },
+            "type": "bundle_withdrawn"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-18T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "withdrawing a bundle is marked, not removed -- the bundle stays in `bundles` and only `withdrawn_saids` records the retraction"
+        },
+        {
+          "append": {
+            "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+            "datetime": "2026-11-26T00:00:00Z",
+            "payload": {
+              "withdrawal_reason": "Duplicate withdrawal."
+            },
+            "type": "bundle_withdrawn"
+          },
+          "events": [
+            {
+              "credential_edges": {
+                "mandate": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX"
+              },
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-15T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_received"
+            },
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-18T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            },
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-25T00:00:00Z",
+              "payload": {
+                "withdrawal_reason": "Rate program filing was withdrawn; the bundle no longer reflects a live product."
+              },
+              "type": "bundle_withdrawn"
+            }
+          ],
+          "expect_rejected_by": "bundle_withdrawn_once",
+          "name": "withdrawing the same bundle twice is rejected by the fold-time twin of its precondition"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-"
+      },
+      "counterparty_role": null,
+      "description": "Accept attested rate programs into a bundle for one mandate, producing the bundle. The payload carries the COMPLETE set of programs for this assembly, not one addition, and that is a consequence of immutability rather than a UI choice: a bundle's SAID covers its content, so 'adding' a program cannot mutate an existing bundle — it assembles a new one whose identity differs. The command keeps the design's name because the designer's intent is still 'accept this program', but read it as assemble-including rather than append-to. `counterparty_role` is null: nothing is sent. Like the mandate, the anchor IS the publication of the fact, and a downstream publisher or auditor finds it by watching this log.",
+      "emissions": [
+        {
+          "aggregate_id": "assembly_desk",
+          "event_type": "bundle_assembled",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "add_rate_program_to_bundle",
+      "mints_credential_id": "product_bundle",
+      "name": "Assemble a product bundle",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "bundle_name": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "mandate_said": {
+            "description": "SAID of the mandate this bundle is scoped to. Becomes the edge's `n`.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "rate_program_saids": {
+            "description": "The complete set of attested rate programs in this assembly.",
+            "items": {
+              "maxLength": 44,
+              "minLength": 44,
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          }
+        },
+        "required": [
+          "bundle_name",
+          "mandate_said",
+          "rate_program_saids"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/add_rate_program_to_bundle",
+      "state_preconditions": [
+        {
+          "rule_ref": "every_named_program_is_on_this_desk"
+        },
+        {
+          "rule_ref": "named_programs_share_the_bundles_mandate"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "cuo",
+      "description": "Withdraw a bundle the designer no longer stands behind. This is a genuine state-to-state transition on an ACDC this designer issued, so it declares `credential_said` -- the required subject selector naming WHICH bundle instance the `upd` acts on. Withdrawal does not deny that the bundle was assembled; it withdraws the designer's recommendation that anyone treat it as the live product. A CUO watching this KEL learns of it by observing the `upd`'s `ts`, which is the inbound mirror of a lifecycle change; no notification restates it.",
+      "emissions": [
+        {
+          "aggregate_id": "assembly_desk",
+          "event_type": "bundle_withdrawn",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "withdraw_bundle",
+      "name": "Withdraw product bundle",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "credential_said": {
+            "description": "SAID of the bundle instance being withdrawn. Required subject selector for the derived `upd`.",
+            "type": "string"
+          },
+          "withdrawal_reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_said",
+          "withdrawal_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/withdraw_bundle",
+      "state_preconditions": [
+        {
+          "rule_ref": "bundle_is_not_already_withdrawn"
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "The assembled product. I ATTEST, not I issue: `holder_role` absent, because assembly confers nothing on anybody — a reader relies on it, nobody is granted it. **Its own SAID is the product's identity**, which is why no `product_id` exists anywhere in this slice. One required NI2I edge to the mandate; the assembled programs are carried as SAID references rather than as edges, for the reason set out at length in the schema (an Edge-group's members are labeled, with no array form, and an open-label group silently disables the linter's edge checks). Carries `ri` and has two lifecycle states, `assembled` and `withdrawn` (Amendment C §14.1): the designer can withdraw a bundle, and a consumer learns that from registry state without asking her -- a different set of programs is still a different bundle with its own identity, never an edit of this one.",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [
+            {
+              "cardinality": "one",
+              "credential_id": "product_mandate",
+              "edge_name": "mandate",
+              "operator": "references"
+            }
+          ],
+          "verifier_roles": [
+            "cuo",
+            "actuary"
+          ]
+        },
+        "id": "product_bundle",
+        "lifecycle": {
+          "initial": "assembled",
+          "states": [
+            "assembled",
+            "withdrawn"
+          ],
+          "transitions": [
+            {
+              "from": "assembled",
+              "id": "withdraw",
+              "to": "withdrawn",
+              "via_command": [
+                "withdraw_bundle"
+              ]
+            }
+          ]
+        },
+        "name": "Product Bundle",
+        "rule_refs": [
+          "assembly_authority_is_admin_rooted",
+          "the_bundle_said_is_the_products_identity",
+          "assembly_is_not_publication"
+        ],
+        "schema": {
+          "schema_path": "schemas/product_bundle.json",
+          "schema_said": "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-"
+        }
+      }
+    ],
+    "imports": [
+      {
+        "expected_issuer_role": "admin",
+        "expected_schema_said": "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-",
+        "id": "product_designer_role",
+        "lifecycle_acceptance": [
+          "active"
+        ],
+        "narrative": "The import diagnostic answers I HOLD: targeted at this designer, so it is authority they can prove they possess, and it is the ONLY source of authority for assembly. Live already — this SAID is in the EGF's `accepted_schema_saids` and the vendored copy is byte-identical to the EGF file (sha256 69894bf7…).",
+        "schema_path": "schemas/product_designer_role.json"
+      },
+      {
+        "expected_issuer_role": "actuary",
+        "expected_schema_said": "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP",
+        "id": "rate_program_attestation",
+        "lifecycle_acceptance": [
+          "attested"
+        ],
+        "narrative": "I RELY ON: untargeted, so this designer is not its subject and can read no authorization from it — they verify it. The material being assembled. `schema_said` is a placeholder under ruling B3; the vendored copy is `cp`-identical to bundle ②'s (sha256 9dc651df…).",
+        "schema_path": "schemas/rate_program_attestation.json"
+      },
+      {
+        "expected_issuer_role": "cuo",
+        "expected_schema_said": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5",
+        "id": "product_mandate",
+        "lifecycle_acceptance": [
+          "declared"
+        ],
+        "narrative": "I RELY ON, and imported for a structural reason rather than to read its attributes: the bundle's one required edge targets it, so the template must declare the credential for `envelope.edges[].credential_id` to resolve. The scope the whole product is for. Vendored `cp`-identical to bundle ①'s (sha256 35861db2…).",
+        "schema_path": "schemas/product_mandate.json"
+      }
+    ]
+  },
+  "d": "EAyoE8eqqO_enBoSDa5tNDTLnQCvOWuYwJrdco2rM6yk",
+  "header": {
+    "description": "The designer's slice, and the moment the product comes into being: attested rate programs written under one mandate are gathered into a bundle whose own SAID is the product's identity. Pivotal event: a product bundle has been assembled — explicitly NOT published, and explicitly not complete. Nothing here decides when a bundle is finished, which is deliberate: this template holds the seam open and is expected to be replaced by a better one, so replacing it exercises template upgrading as routine engineering practice.",
+    "display_name": "Assemble a Product Bundle",
+    "expression_language": "CEL/1.0",
+    "id": "designer-assembles-product-bundle",
+    "version": "1.0"
+  },
+  "projections": [
+    {
+      "description": "What is in each bundle: which mandate, how many rate programs, and when it was assembled. The design asks this view to show 'which mandate, which manifests, from which actuary, under which coverages' — the first two are here; **the actuary and the coverages are deliberately absent, and their absence is the honest answer.** The issuing actuary is `event.credential_issuer` on the *attestation*, which lands on `programs`, not on a bundle row; and the coverages live in the mandate, which this desk references but never reads the attributes of. Showing either would mean copying a counterparty's fact into a bundle row where it could go stale. A later version that needs them should join at read time or observe the mandate directly, which is what `keri_infrastructure.watcher_network: true` is for. No 'publishable' column: completeness is out of scope.",
+      "display": {
+        "columns": [
+          {
+            "field": "bundle_name",
+            "header": "Bundle"
+          },
+          {
+            "field": "mandate_said",
+            "header": "Under mandate"
+          },
+          {
+            "field": "rate_program_saids",
+            "header": "Rate programs"
+          },
+          {
+            "field": "assembled_at",
+            "header": "Assembled"
+          }
+        ],
+        "default_sort": {
+          "column": "assembled_at",
+          "direction": "desc"
+        },
+        "empty_state": "No bundles assembled yet.",
+        "view_type": "table"
+      },
+      "fold": {
+        "bundle_assembled": [
+          {
+            "op": "upsert",
+            "set": {
+              "assembled_at": "event.datetime",
+              "bundle_name": "event.bundle_name",
+              "bundle_said": "event.credential_said",
+              "mandate_said": "event.mandate_said",
+              "rate_program_saids": "event.rate_program_saids"
+            }
+          }
+        ]
+      },
+      "id": "bundle_contents",
+      "name": "Bundle Contents",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "credential_said",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "assembled_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "bundle_name": {
+            "type": "string"
+          },
+          "bundle_said": {
+            "type": "string"
+          },
+          "mandate_said": {
+            "type": "string"
+          },
+          "rate_program_saids": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "bundle_said",
+          "bundle_name",
+          "mandate_said",
+          "rate_program_saids",
+          "assembled_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "bundle_assembled"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+              "datetime": "2026-11-18T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            },
+            {
+              "credential_said": "EBundleUtahAuto2SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-19T00:00:00Z",
+              "payload": {
+                "bundle_name": "Utah personal auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                  "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "type": "bundle_assembled"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX": {
+                "assembled_at": "2026-11-18T00:00:00Z",
+                "bundle_name": "Utah personal auto",
+                "bundle_said": "EBundleUtahAuto1SAIDplaceholderXXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              },
+              "EBundleUtahAuto2SAIDplaceholderXXXXXXXXXXXX": {
+                "assembled_at": "2026-11-19T00:00:00Z",
+                "bundle_name": "Utah personal auto",
+                "bundle_said": "EBundleUtahAuto2SAIDplaceholderXXXXXXXXXXXX",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "rate_program_saids": [
+                  "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                  "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX"
+                ]
+              }
+            }
+          },
+          "name": "each assembly becomes one row, keyed by the bundle's own SAID"
+        }
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-"
+      },
+      "description": "Records an attested rate program the designer has received, with the mandate it was written under. THE MANDATE COMES OFF THE ENVELOPE, not off an attribute: the attestation does not carry its mandate as a field — it carries an EDGE — and a `credential_received` reaction reads resolved edges as `event.credential_edges.<name>`. That is the one construct in this triangle that reads the protocol's own graph rather than a payload, and it is what makes the shared-mandate invariant possible without the actuary copying the mandate SAID into their attributes. Same trigger-kind caveat as bundle ②: the actuary's hand-off is a real IPEX grant here rather than a `pro`/`bar` retrieval, so `credential_received` is accurate — but the grant is derived from `counterparty_role`, which is executed by nothing today (measured: zero occurrences in concierge-api's src/), so in practice this fires only once that plumbing lands.",
+      "emissions": [
+        {
+          "aggregate_id": "assembly_desk",
+          "event_type": "rate_program_received",
+          "kind": "aggregate_event"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue"
+      },
+      "id": "on_rate_program_received",
+      "trigger": {
+        "imported_credential_id": "rate_program_attestation",
+        "ipex_verb": "grant",
+        "type": "credential_received"
+      }
+    }
+  ],
+  "role": {
+    "description": "The role that turns attested pieces into a product. The designer does not decide whether a product should exist (the CUO's mandate does) and does not build the rates (the actuary does); they ASSEMBLE — accepting attested rate programs into a bundle that is, once assembled, the first artifact in this slice that can be called a product at all. Publishing it is somebody else's job and is out of scope.",
+    "display_name": "Insurance Product Designer",
+    "id": "product_designer",
+    "keri_infrastructure": {
+      "acdc_registry": false,
+      "mailbox": true,
+      "watcher_network": true,
+      "witness_pool": true
+    },
+    "kind": "individual"
+  },
+  "rules": [
+    {
+      "body": "A product bundle is authoritative only where the AID that anchored it held an active `product_designer_role` credential issued by the Usurance administration authority named in the ecosystem governance framework at the time of anchoring.\n\nNeither the mandate edge nor the referenced rate programs supply that authority. The edge is NI2I, which the ACDC specification makes the only legal operator against an untargeted far node, and an ACDC is a container for authentic data 'only (not authentic data as an authorization or entitlement to a specified party)'. Reading authorization off the chain would make the designer appear authorized by the CUO or by the actuary; in fact all three act on their own role credentials, and the chain records provenance rather than delegation. This is the same claim the CUO's and actuary's bundles make, and the three together are what make the triangle a set of independent professionals rather than a hierarchy.\n\nEnforcement: the declaring side is gated by `authz` on the command and the reaction. The consuming side — anyone checking that the AID behind a bundle really holds `product_designer_role` — is the shared verification library's job and is executed by nothing today. No test vector can pin this rule.",
+      "id": "assembly_authority_is_admin_rooted",
+      "title": "The designer's authority is their role, never the mandate",
+      "type": "legal_prose"
+    },
+    {
+      "body": "The product this bundle constitutes is identified by the bundle ACDC's own SAID and by nothing else. There is no product number, no product code and no `product_id` anywhere in this slice, upstream or here, and that absence is load-bearing rather than an omission awaiting a field.\n\nTwo consequences follow, and both are deliberate.\n\n**A different set of rate programs is a different product.** Assembling a third program does not modify a two-program bundle; it produces a new bundle with a new SAID, and the old one remains a true record of what was assembled when. There is no edit and no version counter -- a different set of programs is still a different bundle with a different SAID. Amendment C §14.1 adds one axis of change on top of that: `ri` and a `withdrawn` TEL state, reached only by `withdraw_bundle`, that lets the designer retract a bundle without denying it was assembled.\n\n**Nothing can name a product before it exists.** The CUO's mandate opens a scope, the actuary's attestation prices part of it, and neither can refer to a product because there is not yet one to refer to. Minting an identifier earlier would have created a name for a thing that did not exist — a habit borrowed from systems where the database row comes first. Here the content comes first and the name is derived from it.\n\nThe honest limit: the identity is a digest, so it identifies a *set of references*, not the referenced content. Two bundles naming the same programs under the same mandate with the same name are the same product; a bundle whose referenced attestations have become unavailable still has an identity and no longer has retrievable content. Who stores and serves the referenced attestations is an ecosystem obligation, not a protocol guarantee.",
+      "id": "the_bundle_said_is_the_products_identity",
+      "title": "The bundle's SAID is the product's identity",
+      "type": "legal_prose"
+    },
+    {
+      "body": "Assembling a bundle makes no claim that the product is complete, filed, approved, priced correctly, or fit to sell. It records that these programs, under this mandate, were gathered by this designer at this time.\n\nNothing in this template decides when a bundle is finished. There is no completeness rule, no readiness flag, no publish command and no column asserting that a bundle is publishable — and a reader must not infer any of those from the existence of a bundle. Whether a bundle should become a live product is a governance decision this role does not make and this slice does not model.\n\nThis is stated as an expectation rather than left implicit because the gap is exactly where a reader is most likely to over-read the artifact. A bundle is the beginning of a product's existence, not the end of its approval.",
+      "id": "assembly_is_not_publication",
+      "title": "Assembly is not publication, and nothing here decides completeness",
+      "type": "behavioral_expectation"
+    },
+    {
+      "description": "Pre-mint gate: the designer cannot assemble a bundle naming a rate program this desk never received. Paired with the `bundle_names_only_received_programs` invariant on purpose — this runs before the ACDC is anchored, the invariant is where a vector can pin it. **This is the only thing standing behind `rate_program_saids`,** because those references are attribute strings the protocol does not resolve (see ruling B17 and the schema's own note). Contrast the mandate, which IS an edge and therefore cannot dangle.",
+      "expression": "command.rate_program_saids.all(s, state.programs.exists(p, p.attestation_said == s))",
+      "id": "every_named_program_is_on_this_desk",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "Every named rate program has been received",
+      "type": "predicate"
+    },
+    {
+      "description": "Pre-mint gate for the design's rule 3: you cannot assemble one product from programs written for different mandates. Each program's mandate came off the envelope's resolved edge when it was received, so this compares the protocol's own graph against the bundle's declared scope — something no protocol check can do for us, because `validate_edge` never compares a near node's attribute against a far node's edge.",
+      "expression": "command.rate_program_saids.all(s, state.programs.exists(p, p.attestation_said == s && p.mandate_said == command.mandate_said))",
+      "id": "named_programs_share_the_bundles_mandate",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "Every named program was written under this bundle's mandate",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant for replay: the attestation arrives from outside this role, so a re-delivered IPEX grant or a resuming watcher replaying is the documented failure mode, and the fold is `append`. Self-inclusive idiom — every program matches itself, so the count is 1 when nothing duplicates it. Not extended to `bundles`, deliberately: a bundle is minted by this role's own command and each assembly produces a distinct SAID, so a duplicate there would be a runtime double-emit rather than an inbound replay.",
+      "expression": "state.programs.all(p, size(state.programs.filter(o, o.attestation_said == p.attestation_said)) == 1)",
+      "id": "rate_program_received_once",
+      "language": "CEL/1.0",
+      "title": "A rate program is recorded on this desk exactly once",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant, and the local substitute for a protocol guarantee this shape cannot have. Because the programs are attribute references rather than edges (ruling B17), a bundle naming a non-existent attestation is *constructable* — `validate_edge` protects the mandate edge and nothing protects these. This invariant is what makes it detectable at authoring time, at the same enforcement level as the actuary's coverage check and no stronger.",
+      "expression": "state.bundles.all(b, b.rate_program_saids.all(s, state.programs.exists(p, p.attestation_said == s)))",
+      "id": "bundle_names_only_received_programs",
+      "language": "CEL/1.0",
+      "title": "No bundle names a rate program this desk never received",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant: the design's rule 3, and the substantive check of this bundle. Written as an implication over the matching program (`!=` OR equal mandate) so it stays silent about programs this desk never received — that case belongs to `bundle_names_only_received_programs`, and one invariant reporting another's failure would make a rejection vector pin the wrong rule. Authoring-time by construction: the mandate each program was written under is an edge on *that* ACDC, and no protocol check compares a near node's attribute against a far node's edge.",
+      "expression": "state.bundles.all(b, b.rate_program_saids.all(s, state.programs.all(p, p.attestation_said != s || p.mandate_said == b.mandate_said)))",
+      "id": "bundle_programs_share_one_mandate",
+      "language": "CEL/1.0",
+      "title": "All programs in a bundle share the bundle's mandate",
+      "type": "validation"
+    },
+    {
+      "description": "Withdrawing twice would append a second `bundle_withdrawn` for one bundle and make `withdrawn_saids` a multiset, which every reader would then have to de-duplicate. The TEL would also carry two `rev` events for one credential. Rejecting the second attempt keeps the desk and the TEL in agreement.",
+      "expression": "!(command.credential_said in state.withdrawn_saids)",
+      "id": "bundle_is_not_already_withdrawn",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "A bundle can only be withdrawn once",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant, and the fold-time twin of `bundle_is_not_already_withdrawn` -- the pair spells the same concept in both positions for the same reason `every_named_program_is_on_this_desk` is paired with `bundle_names_only_received_programs`: the precondition is checked BEFORE the withdrawal is anchored, which is the only point at which refusing costs nothing, and this invariant is the log's own guard, and the position a test vector can pin (`try_append` evaluates `state`/`event`, never `command`, so only this position is vector-testable). Written self-inclusively -- every recorded withdrawal matches itself, so the count is exactly 1 when nothing else duplicates it, the same idiom `rate_program_received_once` uses.",
+      "expression": "state.withdrawn_saids.all(s, size(state.withdrawn_saids.filter(o, o == s)) == 1)",
+      "id": "bundle_withdrawn_once",
+      "language": "CEL/1.0",
+      "title": "A bundle is recorded as withdrawn at most once",
+      "type": "validation"
+    }
+  ],
+  "spec_version": "micro-app-template/0.2",
+  "workflows": []
+}

@@ -6,6 +6,7 @@ import pathlib
 
 from locksmith.plugins.actuary.plugin import (ACTUARY_ROLE_SCHEMA_SAID,
                                               USURANCE_ADMIN_AID)
+from locksmith.plugins.cuo.plugin import CUO_ROLE_SCHEMA_SAID
 from locksmith.plugins.product_designer.plugin import PD_ROLE_SCHEMA_SAID
 
 BUNDLE = pathlib.Path("brands/usurance/egf")
@@ -31,9 +32,10 @@ def test_schema_pins_match_egf_catalog():
     by_id = {c["id"]: c["schema_said"] for c in egf["credentials"]}
     assert ACTUARY_ROLE_SCHEMA_SAID == by_id["actuary_role"]
     assert PD_ROLE_SCHEMA_SAID == by_id["product_designer_role"]
+    assert CUO_ROLE_SCHEMA_SAID == by_id["cuo_role"]
 
 
 def test_accepted_schema_saids_cover_both_roles():
     egf = _egf()
-    assert {ACTUARY_ROLE_SCHEMA_SAID, PD_ROLE_SCHEMA_SAID} \
+    assert {ACTUARY_ROLE_SCHEMA_SAID, PD_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID} \
         <= set(egf["accepted_schema_saids"])

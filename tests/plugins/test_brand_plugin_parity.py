@@ -35,7 +35,7 @@ _REPO_ROOT = Path(__file__).resolve().parents[2]
 #: usurance:  peeled (no kerifoundation) + the three composed surfaces it lists.
 EXPECTED: dict[str, set[str]] = {
     "locksmith": {"kerifoundation"},
-    "usurance": {"hoa_shell", "actuary", "product_designer"},
+    "usurance": {"hoa_shell", "actuary", "product_designer", "cuo"},
 }
 
 
@@ -111,4 +111,4 @@ def test_locksmith_is_unaffected_by_the_composed_group(
 
     loaded = set(mgr.loaded_ids())
     assert "kerifoundation" in loaded
-    assert not (loaded & {"carrier", "hoa_shell", "actuary", "product_designer"})
+    assert not (loaded & {"carrier", "hoa_shell", "actuary", "product_designer", "cuo"})

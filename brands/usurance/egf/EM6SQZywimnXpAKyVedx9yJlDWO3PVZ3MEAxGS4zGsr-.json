@@ -1,0 +1,1239 @@
+{
+  "aggregates": [
+    {
+      "boundary": {
+        "inception_event_type": "desk_inception",
+        "instance_key": "'rate_program_desk'"
+      },
+      "description": "The actuary's own desk: the mandates it has observed, and the rate programs it has attested. log_scope is `private` DELIBERATELY -- every fact here is already provable from a log somebody anchors: a mandate's issuance is anchored in the CUO's KEL, an attestation's in this actuary's own. Witnessing this view would anchor a duplicate of facts already anchored and buy no verifiability. The witnessing that matters is on the KELs, which is why `role.keri_infrastructure.witness_pool` is true while this is private. There is no `status` column anywhere: an attestation has one state, and which rate program a product uses is the DESIGNER's assembly decision, not a lifecycle flag on this desk.",
+      "events": {
+        "mandate_observed": {
+          "description": "A product mandate was observed and verified. Properties are read conform-by-name from the inbound ACDC's attributes (`event.credential.attributes.<prop>`); the mandate's own SAID is `event.credential_said` off the envelope, not a declared property, and `observed_at` is `event.datetime`.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "coverages": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "jurisdiction": {
+                "type": "string"
+              },
+              "line_of_business": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "line_of_business",
+              "jurisdiction",
+              "coverages"
+            ],
+            "type": "object"
+          }
+        },
+        "rate_program_attested": {
+          "description": "This actuary attested and anchored a rate program. The attestation's own SAID is `event.credential_said`; `mandate_said` IS a declared property because it names a DIFFERENT credential — the far node of the edge — and the envelope carries only this event's own credential.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "action": {
+                "enum": [
+                  "Publish",
+                  "Sandbox"
+                ],
+                "type": "string"
+              },
+              "carried_coverages": {
+                "items": {
+                  "type": "string"
+                },
+                "type": "array"
+              },
+              "filing_date": {
+                "format": "date",
+                "type": "string"
+              },
+              "mandate_said": {
+                "type": "string"
+              },
+              "manifest_said": {
+                "type": "string"
+              },
+              "version": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "mandate_said",
+              "manifest_said",
+              "version",
+              "filing_date",
+              "action",
+              "carried_coverages"
+            ],
+            "type": "object"
+          }
+        },
+        "rate_program_withdrawn": {
+          "description": "This actuary withdrew a rate-program attestation. Carries only the subject selector and the reason; every other fact about the attestation is already in `attestations`.",
+          "payload_schema": {
+            "additionalProperties": false,
+            "properties": {
+              "withdrawal_reason": {
+                "minLength": 1,
+                "type": "string"
+              }
+            },
+            "required": [
+              "withdrawal_reason"
+            ],
+            "type": "object"
+          }
+        }
+      },
+      "fold": {
+        "mandate_observed": [
+          {
+            "op": "append",
+            "target": "mandates",
+            "value": "{ \"mandate_said\": event.credential_said, \"line_of_business\": event.line_of_business, \"jurisdiction\": event.jurisdiction, \"declared_coverages\": event.coverages, \"observed_at\": event.datetime }"
+          }
+        ],
+        "rate_program_attested": [
+          {
+            "op": "append",
+            "target": "attestations",
+            "value": "{ \"attestation_said\": event.credential_said, \"mandate_said\": event.mandate_said, \"manifest_said\": event.manifest_said, \"version\": event.version, \"filing_date\": event.filing_date, \"action\": event.action, \"carried_coverages\": event.carried_coverages, \"attested_at\": event.datetime }"
+          }
+        ],
+        "rate_program_withdrawn": [
+          {
+            "op": "append",
+            "target": "withdrawn_saids",
+            "value": "event.credential_said"
+          }
+        ]
+      },
+      "id": "rate_program_desk",
+      "initial_state": {
+        "attestations": [],
+        "mandates": [],
+        "withdrawn_saids": []
+      },
+      "invariants": [
+        {
+          "rule_ref": "mandate_observed_once"
+        },
+        {
+          "rule_ref": "attestation_names_an_observed_mandate"
+        },
+        {
+          "rule_ref": "carried_coverages_within_declared"
+        },
+        {
+          "rule_ref": "rate_program_withdrawn_once"
+        }
+      ],
+      "log_scope": "private",
+      "state_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "attestations": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "action": {
+                  "enum": [
+                    "Publish",
+                    "Sandbox"
+                  ],
+                  "type": "string"
+                },
+                "attestation_said": {
+                  "type": "string"
+                },
+                "attested_at": {
+                  "format": "date-time",
+                  "type": "string"
+                },
+                "carried_coverages": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "filing_date": {
+                  "format": "date",
+                  "type": "string"
+                },
+                "mandate_said": {
+                  "type": "string"
+                },
+                "manifest_said": {
+                  "type": "string"
+                },
+                "version": {
+                  "type": "string"
+                }
+              },
+              "required": [
+                "attestation_said",
+                "mandate_said",
+                "manifest_said",
+                "version",
+                "filing_date",
+                "action",
+                "carried_coverages",
+                "attested_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "mandates": {
+            "items": {
+              "additionalProperties": false,
+              "properties": {
+                "declared_coverages": {
+                  "items": {
+                    "type": "string"
+                  },
+                  "type": "array"
+                },
+                "jurisdiction": {
+                  "type": "string"
+                },
+                "line_of_business": {
+                  "type": "string"
+                },
+                "mandate_said": {
+                  "type": "string"
+                },
+                "observed_at": {
+                  "format": "date-time",
+                  "type": "string"
+                }
+              },
+              "required": [
+                "mandate_said",
+                "line_of_business",
+                "jurisdiction",
+                "declared_coverages",
+                "observed_at"
+              ],
+              "type": "object"
+            },
+            "type": "array"
+          },
+          "withdrawn_saids": {
+            "description": "SAIDs of attestations the actuary has withdrawn. Append-only: the attestation stays in `attestations` because it was genuinely made, and this list is what says it should no longer be relied on.",
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          }
+        },
+        "required": [
+          "mandates",
+          "attestations",
+          "withdrawn_saids"
+        ],
+        "type": "object"
+      },
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            }
+          ],
+          "expected": {
+            "attestations": [],
+            "mandates": [
+              {
+                "declared_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "observed_at": "2026-11-02T00:00:00Z"
+              }
+            ],
+            "withdrawn_saids": []
+          },
+          "name": "observing a mandate records what it declared, off the envelope"
+        },
+        {
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            },
+            {
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-10T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "carried_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_attested"
+            }
+          ],
+          "expected": {
+            "attestations": [
+              {
+                "action": "Sandbox",
+                "attestation_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "attested_at": "2026-11-10T00:00:00Z",
+                "carried_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              }
+            ],
+            "mandates": [
+              {
+                "declared_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "observed_at": "2026-11-02T00:00:00Z"
+              }
+            ],
+            "withdrawn_saids": []
+          },
+          "name": "attesting a program records it against the mandate it edges to, with the real fixture's discovered coverages"
+        },
+        {
+          "append": {
+            "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+            "datetime": "2026-11-02T00:00:00Z",
+            "payload": {
+              "coverages": [
+                "ACPE",
+                "ACQ-EXP",
+                "BI",
+                "COLL",
+                "COMP",
+                "LOAN",
+                "MED",
+                "OPS-EXP",
+                "PD",
+                "RENT",
+                "TOW",
+                "UMBI",
+                "UMPD"
+              ],
+              "jurisdiction": "US-UT",
+              "line_of_business": "auto"
+            },
+            "type": "mandate_observed"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            }
+          ],
+          "expect_rejected_by": "mandate_observed_once",
+          "name": "observing the same mandate twice is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EAttest2SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-11T00:00:00Z",
+            "payload": {
+              "action": "Sandbox",
+              "carried_coverages": [
+                "ACPE",
+                "ACQ-EXP",
+                "BI",
+                "COLL",
+                "COMP",
+                "LOAN",
+                "MED",
+                "OPS-EXP",
+                "PD",
+                "RENT",
+                "TOW",
+                "UMBI",
+                "UMPD"
+              ],
+              "filing_date": "2026-11-10",
+              "mandate_said": "EMandateNeverSeen1SAIDplaceholderXXXXXXXXXXX",
+              "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+              "version": "1.0"
+            },
+            "type": "rate_program_attested"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            }
+          ],
+          "expect_rejected_by": "attestation_names_an_observed_mandate",
+          "name": "attesting against a mandate this desk never observed is rejected"
+        },
+        {
+          "append": {
+            "credential_said": "EAttest3SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-12T00:00:00Z",
+            "payload": {
+              "action": "Sandbox",
+              "carried_coverages": [
+                "ACPE",
+                "ACQ-EXP",
+                "BI",
+                "COLL",
+                "COMP",
+                "LOAN",
+                "MED",
+                "OPS-EXP",
+                "PD",
+                "RENT",
+                "TOW",
+                "UMBI",
+                "UMPD"
+              ],
+              "filing_date": "2026-11-10",
+              "mandate_said": "EMandateGeneralLiability1SAIDplaceholderXXXX",
+              "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+              "version": "1.0"
+            },
+            "type": "rate_program_attested"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateGeneralLiability1SAIDplaceholderXXXX",
+              "datetime": "2026-11-06T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "GL",
+                  "GLPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "casualty"
+              },
+              "type": "mandate_observed"
+            }
+          ],
+          "expect_rejected_by": "carried_coverages_within_declared",
+          "name": "an AUTO workbook attested against a general-liability mandate is rejected — the mismatch the real fixture makes free"
+        },
+        {
+          "append": {
+            "credential_said": "EAttest4SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-13T00:00:00Z",
+            "payload": {
+              "action": "Sandbox",
+              "carried_coverages": [
+                "BI",
+                "PD"
+              ],
+              "filing_date": "2026-11-10",
+              "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+              "version": "1.0"
+            },
+            "type": "rate_program_attested"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "a subset of the declared coverages is accepted — a program need not price everything the mandate opened"
+        },
+        {
+          "append": {
+            "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-20T00:00:00Z",
+            "payload": {
+              "withdrawal_reason": "Superseded by a revised filing under the same mandate."
+            },
+            "type": "rate_program_withdrawn"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            },
+            {
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-10T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "carried_coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_attested"
+            }
+          ],
+          "expect_accepted": true,
+          "name": "withdrawing an attestation is marked, not removed -- the attestation stays in `attestations` and only `withdrawn_saids` records the retraction"
+        },
+        {
+          "append": {
+            "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+            "datetime": "2026-11-21T00:00:00Z",
+            "payload": {
+              "withdrawal_reason": "Duplicate withdrawal."
+            },
+            "type": "rate_program_withdrawn"
+          },
+          "events": [
+            {
+              "credential_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+              "datetime": "2026-11-02T00:00:00Z",
+              "payload": {
+                "coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "jurisdiction": "US-UT",
+                "line_of_business": "auto"
+              },
+              "type": "mandate_observed"
+            },
+            {
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-10T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "carried_coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_attested"
+            },
+            {
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-20T00:00:00Z",
+              "payload": {
+                "withdrawal_reason": "Superseded by a revised filing under the same mandate."
+              },
+              "type": "rate_program_withdrawn"
+            }
+          ],
+          "expect_rejected_by": "rate_program_withdrawn_once",
+          "name": "withdrawing the same attestation twice is rejected by the fold-time twin of its precondition"
+        }
+      ]
+    }
+  ],
+  "commands": [
+    {
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "counterparty_role": "product_designer",
+      "description": "Put the actuary's name to one parsed rate program, under one mandate. This command MINTS the attestation. `counterparty_role` names the designer because the hand-off is part of the design -- note openly that the derived IPEX grant is specified and executed by nothing today (`counterparty_role` appears zero times in concierge-api's src/, measured 2026-08-04), so this declares the contract, not current runtime behaviour. `carried_coverages` is INPUT to the consistency check and is deliberately NOT an attestation attribute: the ACDC already commits to `manifest_said`, the coverages are derivable from what that digest covers, and a second copy inside the ACDC could disagree with the manifest it claims to describe. There is no `attested_at`: the issuance datetime is the attestation time and the fold reads `event.datetime`.",
+      "emissions": [
+        {
+          "exchange": {
+            "exported_credential_id": "rate_program_attestation",
+            "kind": "credential",
+            "schema_said_referenced": "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP"
+          },
+          "kind": "exchange"
+        },
+        {
+          "aggregate_id": "rate_program_desk",
+          "event_type": "rate_program_attested",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "attest_rate_program",
+      "mints_credential_id": "rate_program_attestation",
+      "name": "Attest a rate program",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "Publish",
+              "Sandbox"
+            ],
+            "type": "string"
+          },
+          "carried_coverages": {
+            "description": "The coverages the parsed tables actually carry, as discovered by `ipd-parse` from value-column titles. The parser's own vocabulary, carried as provenance; the casing pattern matches the mandate's so the set comparison cannot miss on 'bi' against 'BI'.",
+            "items": {
+              "pattern": "^[A-Z0-9][A-Z0-9-]*$",
+              "type": "string"
+            },
+            "minItems": 1,
+            "type": "array",
+            "uniqueItems": true
+          },
+          "filing_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "mandate_said": {
+            "description": "SAID of the product_mandate this program is for. Becomes the edge's `n`. Not a synthetic key -- it is the far node's own identity.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "manifest_said": {
+            "description": "SAID over the rate-program manifest, from `ipd.manifest.manifest_said()`. Covers every parsed file by name and digest plus the workbook's own bytes.",
+            "maxLength": 44,
+            "minLength": 44,
+            "type": "string"
+          },
+          "version": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "mandate_said",
+          "manifest_said",
+          "version",
+          "filing_date",
+          "action",
+          "carried_coverages"
+        ],
+        "type": "object"
+      },
+      "route": "/usurance/cmd/attest_rate_program",
+      "state_preconditions": [
+        {
+          "rule_ref": "mandate_is_on_this_desk"
+        },
+        {
+          "rule_ref": "carried_coverages_are_within_the_declared_set"
+        }
+      ]
+    },
+    {
+      "counterparty_role": "product_designer",
+      "description": "Withdraw a rate-program attestation the actuary no longer stands behind. This is a genuine state-to-state transition on an ACDC this actuary issued, so it declares `credential_said` -- the required subject selector naming WHICH attestation instance the `upd` acts on. Withdrawal does not deny that the attestation was made; it withdraws the actuary's recommendation that a designer rely on it. A designer watching this KEL learns of it by observing the `upd`'s `ts`, which is the inbound mirror of a lifecycle change; no notification restates it.",
+      "emissions": [
+        {
+          "aggregate_id": "rate_program_desk",
+          "event_type": "rate_program_withdrawn",
+          "kind": "aggregate_event"
+        }
+      ],
+      "id": "withdraw_rate_program",
+      "name": "Withdraw rate program attestation",
+      "payload_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "credential_said": {
+            "description": "SAID of the attestation instance being withdrawn. Required subject selector for the derived `upd`.",
+            "type": "string"
+          },
+          "withdrawal_reason": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "credential_said",
+          "withdrawal_reason"
+        ],
+        "type": "object"
+      },
+      "route": "/insurance/cmd/withdraw_rate_program",
+      "state_preconditions": [
+        {
+          "rule_ref": "rate_program_is_not_already_withdrawn"
+        }
+      ]
+    }
+  ],
+  "credentials": {
+    "exports": [
+      {
+        "description": "The actuary's signed statement that a specific set of bytes is their professional rate program for a specific mandate. The export diagnostic answers I ATTEST, not I issue: `holder_role` is deliberately ABSENT because this confers nothing on anybody. The designer is its READER; the IPEX grant that carries it to them is delivery, not targeting. One required edge to the mandate, `references`/NI2I -- provenance, never authority. Carries `ri` and has two lifecycle states, `attested` and `withdrawn` (Amendment C §14.1): the actuary can withdraw an attestation, and a consumer learns that from registry state without asking her.",
+        "envelope": {
+          "disclosure_mode": "full",
+          "edges": [
+            {
+              "cardinality": "one",
+              "credential_id": "product_mandate",
+              "edge_name": "mandate",
+              "operator": "references"
+            }
+          ],
+          "verifier_roles": [
+            "product_designer",
+            "cuo"
+          ]
+        },
+        "id": "rate_program_attestation",
+        "lifecycle": {
+          "initial": "attested",
+          "states": [
+            "attested",
+            "withdrawn"
+          ],
+          "transitions": [
+            {
+              "from": "attested",
+              "id": "withdraw",
+              "to": "withdrawn",
+              "via_command": [
+                "withdraw_rate_program"
+              ]
+            }
+          ]
+        },
+        "name": "Rate Program Attestation",
+        "rule_refs": [
+          "attestation_authority_is_admin_rooted",
+          "the_manifest_commits_to_the_workbook_itself",
+          "a_revision_is_a_new_attestation"
+        ],
+        "schema": {
+          "schema_path": "schemas/rate_program_attestation.json",
+          "schema_said": "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP"
+        }
+      }
+    ],
+    "imports": [
+      {
+        "expected_issuer_role": "admin",
+        "expected_schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY",
+        "id": "actuary_role",
+        "lifecycle_acceptance": [
+          "active"
+        ],
+        "narrative": "The import diagnostic answers I HOLD: this credential names the actuary as Issuee, so it is authority they can prove they possess. It is the HOA gate credential and it is the ONLY source of this role's authority -- emphatically not the mandate, which is referenced and confers nothing. Already live: this SAID is in `docs/usurance/egf/` `accepted_schema_saids`, and the vendored copy is byte-identical to the EGF file (sha256 31db445b…), which is why its SAID is real here while the mandate's is still a placeholder.",
+        "schema_path": "schemas/actuary_role.json"
+      },
+      {
+        "expected_issuer_role": "cuo",
+        "expected_schema_said": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5",
+        "id": "product_mandate",
+        "lifecycle_acceptance": [
+          "declared"
+        ],
+        "narrative": "The import diagnostic answers I RELY ON, not I hold -- and the distinction is the whole authority model here. The mandate is UNTARGETED: it names no Issuee at all, so the actuary is not its subject and can read no authorization off it. It is evidence they verify. Conflating the two is exactly the confusion behind the corpus's 82%-of-commands authorization finding. `schema_said` is a 44-character placeholder because ruling B3 defers the whole set's SAIDs to one cascade; the vendored copy is `cp`-identical to bundle ①'s (sha256 35861db2…) and task 5 step 1b re-copies the minted version over it. HOW it arrives is not something this template can express honestly -- see `author_intent_notes` on the reaction.",
+        "schema_path": "schemas/product_mandate.json"
+      }
+    ]
+  },
+  "d": "EM6SQZywimnXpAKyVedx9yJlDWO3PVZ3MEAxGS4zGsr-",
+  "header": {
+    "description": "The actuary's slice, and the membrane of this whole slice: having seen a product mandate by watching the CUO's log, the actuary does the workbench work -- Excel, then `ipd-parse` -- and then attests that one specific set of parsed bytes is their professional rate program for that mandate. Pivotal event: a rate program has been attested. Exactly one thing crosses the boundary between workbench and protocol, and it is a digest: `manifest_said`, which covers the parse output AND the source workbook's own bytes. No rate table is rendered in any surface here; Excel is the rate UI and this template is deliberately uninterested in it.",
+    "display_name": "Attest a Rate Program",
+    "expression_language": "CEL/1.0",
+    "id": "actuary-attests-rate-program",
+    "version": "1.0"
+  },
+  "projections": [
+    {
+      "description": "The rate programs this actuary has attested, and the mandate each was produced under. `manifest_said` is on the row on purpose: it is the value a designer or an auditor re-derives, so the person who attested it should be able to read it without opening the ACDC. There is deliberately no 'current' or 'in use' column — which program a product uses is the designer's assembly decision, and a column here claiming it would be a lifecycle spelled as a status this desk cannot know.",
+      "display": {
+        "columns": [
+          {
+            "field": "version",
+            "header": "Version"
+          },
+          {
+            "field": "action",
+            "header": "Retention"
+          },
+          {
+            "field": "filing_date",
+            "header": "Filing date"
+          },
+          {
+            "field": "carried_coverages",
+            "header": "Coverages carried"
+          },
+          {
+            "field": "manifest_said",
+            "header": "Manifest SAID"
+          },
+          {
+            "field": "mandate_said",
+            "header": "Under mandate"
+          }
+        ],
+        "default_sort": {
+          "column": "attested_at",
+          "direction": "desc"
+        },
+        "empty_state": "No rate programs attested yet.",
+        "view_type": "table"
+      },
+      "fold": {
+        "rate_program_attested": [
+          {
+            "op": "upsert",
+            "set": {
+              "action": "event.action",
+              "attestation_said": "event.credential_said",
+              "attested_at": "event.datetime",
+              "carried_coverages": "event.carried_coverages",
+              "filing_date": "event.filing_date",
+              "mandate_said": "event.mandate_said",
+              "manifest_said": "event.manifest_said",
+              "version": "event.version"
+            }
+          }
+        ]
+      },
+      "id": "my_rate_programs",
+      "name": "My Rate Programs",
+      "on_unknown_event": "ignore",
+      "ordering": "source_seq",
+      "primary_key": "credential_said",
+      "row_schema": {
+        "additionalProperties": false,
+        "properties": {
+          "action": {
+            "enum": [
+              "Publish",
+              "Sandbox"
+            ],
+            "type": "string"
+          },
+          "attestation_said": {
+            "type": "string"
+          },
+          "attested_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "carried_coverages": {
+            "items": {
+              "type": "string"
+            },
+            "type": "array"
+          },
+          "filing_date": {
+            "format": "date",
+            "type": "string"
+          },
+          "mandate_said": {
+            "type": "string"
+          },
+          "manifest_said": {
+            "type": "string"
+          },
+          "version": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "attestation_said",
+          "mandate_said",
+          "manifest_said",
+          "version",
+          "filing_date",
+          "action",
+          "carried_coverages",
+          "attested_at"
+        ],
+        "type": "object"
+      },
+      "shape": "collection",
+      "source_events": [
+        "rate_program_attested"
+      ],
+      "test_vectors": [
+        {
+          "events": [
+            {
+              "credential_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-10T00:00:00Z",
+              "payload": {
+                "action": "Sandbox",
+                "carried_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "type": "rate_program_attested"
+            },
+            {
+              "credential_said": "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+              "datetime": "2026-11-14T00:00:00Z",
+              "payload": {
+                "action": "Publish",
+                "carried_coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.1"
+              },
+              "type": "rate_program_attested"
+            }
+          ],
+          "expected": {
+            "rows": {
+              "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX": {
+                "action": "Sandbox",
+                "attestation_said": "EAttest1SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "attested_at": "2026-11-10T00:00:00Z",
+                "carried_coverages": [
+                  "ACPE",
+                  "ACQ-EXP",
+                  "BI",
+                  "COLL",
+                  "COMP",
+                  "LOAN",
+                  "MED",
+                  "OPS-EXP",
+                  "PD",
+                  "RENT",
+                  "TOW",
+                  "UMBI",
+                  "UMPD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.0"
+              },
+              "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX": {
+                "action": "Publish",
+                "attestation_said": "EAttest5SAIDplaceholderXXXXXXXXXXXXXXXXXXXX",
+                "attested_at": "2026-11-14T00:00:00Z",
+                "carried_coverages": [
+                  "BI",
+                  "PD"
+                ],
+                "filing_date": "2026-11-10",
+                "mandate_said": "EMandateUtahAuto1SAIDplaceholderXXXXXXXXXXXX",
+                "manifest_said": "EManifestRateProgram1SAIDplaceholderXXXXXXXX",
+                "version": "1.1"
+              }
+            }
+          },
+          "name": "each attested program becomes one row, keyed by its own SAID"
+        }
+      ]
+    }
+  ],
+  "reactions": [
+    {
+      "authz": {
+        "issuer": "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO",
+        "method": "credential",
+        "schema_said": "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
+      },
+      "description": "Records a product mandate the actuary has observed, so the desk can check a later attestation against what was actually declared. TRIGGER KIND IS AN APPROXIMATION, stated rather than hidden: nothing GRANTS this mandate. It is an untargeted attestation the actuary finds by watching the CUO's KEL and retrieves by `pro`/`bar`, which is protocol machinery (keripy's `ProdResponder`, built in plan A) that no reaction trigger kind can name -- a `pro` is not an `exn`, not a lifecycle event and not scheduled. `credential_received` is the closest of the four and is what the corpus uses for observing a counterparty's ACDC. Design §3.4 already registers the underlying gap: trigger kinds carry no trust semantics, and nothing requires a message-triggered reaction to verify against the log. The verification that makes this safe -- body re-derives to the sealed SAID, schema in the EGF, issuer holds `cuo_role` -- is plan C's shared library, not this declaration.",
+      "emissions": [
+        {
+          "aggregate_id": "rate_program_desk",
+          "event_type": "mandate_observed",
+          "kind": "aggregate_event"
+        }
+      ],
+      "failure_policy": {
+        "on_validation_failure": "log_and_continue"
+      },
+      "id": "on_mandate_observed",
+      "trigger": {
+        "imported_credential_id": "product_mandate",
+        "type": "credential_received"
+      }
+    }
+  ],
+  "role": {
+    "description": "The credentialed professional who builds a rate program and puts their name to it. Their real work happens in Excel and in `ipd-parse` -- unwitnessed, ungated, and deliberately outside this framework -- and this micro-app is only the moment that work becomes a fact someone else can check. They do not decide whether a product exists (the CUO's mandate does) and they do not assemble it (the designer does); they attest that a specific set of bytes is their professional work for a specific mandate.",
+    "display_name": "Actuary",
+    "id": "actuary",
+    "keri_infrastructure": {
+      "acdc_registry": false,
+      "mailbox": true,
+      "watcher_network": true,
+      "witness_pool": true
+    },
+    "kind": "individual"
+  },
+  "rules": [
+    {
+      "body": "A rate-program attestation is authoritative only where the AID that anchored it held an active `actuary_role` credential issued by the Usurance administration authority named in the ecosystem governance framework at the time of anchoring.\n\nThe mandate edge does **not** supply that authority and must never be read as doing so. The edge is `NI2I` (`references` at the template layer), which the ACDC specification makes the only legal operator against an untargeted far node — and an ACDC is a container for authentic data 'only (not authentic data as an authorization or entitlement to a specified party)'. Reading authorization off this edge would invert the model: it would make the actuary appear authorized *by* the CUO, when in fact the CUO addressed nobody and the actuary acts on their own professional credential. That inversion is invisible on inspection, which is why it is written down here.\n\nEnforcement, stated honestly: the declaring side is gated by `commands[].authz` and `reactions[].authz`, both pinning the credential schema and the issuing AID. The consuming side — a designer checking that the AID behind an incoming attestation really holds `actuary_role` — is the shared verification library's job and is executed by nothing today. No test vector can pin this rule: the vector runner executes fold handlers and aggregate invariants, and authorization is neither.",
+      "id": "attestation_authority_is_admin_rooted",
+      "title": "The actuary's authority is their role, never the mandate",
+      "type": "legal_prose"
+    },
+    {
+      "body": "`manifest_said` MUST be a digest over a manifest that carries every parsed file by name **and digest**, plus the digest of the source workbook itself. A digest over a file listing is not sufficient and is worse than no commitment at all, because it reads as proof.\n\nThis is a paid-for lesson, not a precaution. An earlier design committed to `index_said`, a SAID over the parser's `index.json` — which lists relative filenames and commits to no shard content. Anyone could have swapped every byte inside those files and the commitment would still have verified. The workbook digest closes the matching hole one level up: without it the attestation covers only parse *output*, so a different workbook parsed to the same shard names would satisfy it, and 'the Excel I opened is the one that was attested' would be unprovable.\n\nA consumer verifies by RE-DERIVING, never by trusting: run `ipd.manifest.build_manifest()` over the parse directory and the workbook and compare `manifest_said()`. A consumer who has not re-derived has verified nothing.\n\nAnd the content plane is the ecosystem's problem, not the protocol's. This SAID proves integrity and provides **no retrieval**. The shards and the workbook live in the actuary's own store; anchoring a digest stores nothing. If that content is lost, the attestation still proves that *something* was committed to and can never again prove *what*. Whoever operates this ecosystem must say who stores it, who serves it, and what happens when they stop.",
+      "id": "the_manifest_commits_to_the_workbook_itself",
+      "title": "The membrane must cover the content, not a listing of it",
+      "type": "legal_prose"
+    },
+    {
+      "body": "An attestation's declared attributes are immutable once anchored -- the manifest digest, version, filing date and action never change. Amendment C §14.1 adds one axis of change on top of that: `ri` and a `withdrawn` TEL state, reached only by `withdraw_rate_program`, that lets the actuary retract an attestation without denying it was made. A corrected or updated rate program is still a **new attestation** over new bytes, with its own `manifest_said` and its own edge to the same mandate -- withdrawal is not how a revision is expressed.\n\nSeveral attestations under one mandate therefore coexist by design, and that is deliberate rather than tolerated: the designer may accept more than one rate program, so **which program a product uses is an assembly decision on the designer's side, not a standing on the actuary's**. Withdrawing an attestation is now a TEL state transition (Amendment C §14.1), but it is the only one modeled here -- there is still no `supersedes` edge and no domain event standing in for a credential's own lifecycle.\n\nThe limit, written down rather than discovered later: nothing here links successive rate programs to each other, so lineage between them is not a verifiable claim in this version. If it is ever needed, the correct move is a self-referential `supersedes` edge with `operator: references`, matching the existing `product_definition_version` precedent — and adding it changes this schema's SAID, which is the point.",
+      "id": "a_revision_is_a_new_attestation",
+      "title": "A rate program is not revised; a new one is attested",
+      "type": "legal_prose"
+    },
+    {
+      "description": "Pre-mint gate: the actuary cannot attest under a mandate this desk has never recorded. Paired with the `attestation_names_an_observed_mandate` invariant deliberately, not redundantly — this one runs BEFORE the ACDC is anchored, which is the only point at which refusing is free, and the invariant is the position a test vector can pin. The corpus spells the same concept in both positions for the same reason. Note this is a check against the actuary's own observation, not against the CUO's log: it guarantees the desk saw a mandate, never that the mandate is currently in force.",
+      "expression": "state.mandates.exists(m, m.mandate_said == command.mandate_said)",
+      "id": "mandate_is_on_this_desk",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "The mandate has been observed by this desk",
+      "type": "predicate"
+    },
+    {
+      "description": "Pre-mint gate for the declared-against-carried check. The coverages the attested tables carry must all appear in the coverages the mandate declared; a subset is fine, since a program need not price everything a mandate opened. The reverse — pricing something the CUO never declared — is the defect.",
+      "expression": "state.mandates.exists(m, m.mandate_said == command.mandate_said && command.carried_coverages.all(c, m.declared_coverages.exists(d, d == c)))",
+      "id": "carried_coverages_are_within_the_declared_set",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "Carried coverages are within what the mandate declared",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant: the desk refuses to record the same mandate twice. This exists for replay, which is a real failure mode rather than a hypothetical: the mandate arrives from OUTSIDE this role, and a watcher resuming after a crash re-delivers what it already saw. The fold is `append`, which is not idempotent by itself, and an unguarded duplicate list is a slow leak whose symptom would be a growing desk rather than a wrong answer.\n\nWritten self-inclusively — every mandate matches itself, so the count is exactly 1 when nothing else duplicates it — which is the idiom the candidate-state binding requires.\n\nDeliberately NOT extended to `attestations`: an attestation is minted by this role's own command, so a duplicate there would require this application to double-emit, which is a runtime concern rather than an inbound one, and each issuance produces a distinct SAID anyway.",
+      "expression": "state.mandates.all(m, size(state.mandates.filter(o, o.mandate_said == m.mandate_said)) == 1)",
+      "id": "mandate_observed_once",
+      "language": "CEL/1.0",
+      "title": "A mandate is recorded on this desk exactly once",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant: the desk refuses to record an attestation whose `mandate_said` matches no observed mandate. Evaluated against the CANDIDATE state, so the proposed attestation is already folded in and `all` covers it. This is the local half of a property the PROTOCOL enforces properly: a required edge means an attestation naming a non-existent far node fails `validate_edge` step 1 and every validator rejects it. The invariant adds only that this desk knew about the mandate — it is a pure gate over the role's own state, which nobody else needs to verify.",
+      "expression": "state.attestations.all(a, state.mandates.exists(m, m.mandate_said == a.mandate_said))",
+      "id": "attestation_names_an_observed_mandate",
+      "language": "CEL/1.0",
+      "title": "Every recorded attestation names a mandate this desk observed",
+      "type": "validation"
+    },
+    {
+      "description": "Aggregate invariant, and the design's substantive check. Written as an implication over the matching mandate (`!=` OR subset) so it says nothing about attestations whose mandate is unknown — that case belongs to `attestation_names_an_observed_mandate`, and one invariant reporting another's failure would make a rejection vector pin the wrong rule.\n\nThis is an AUTHORING-TIME check by construction, not by omission: ACDC enforces constraints over existence and identity, and `validate_edge` never compares a near-node attribute against a far-node one, so 'declared ⊇ carried' cannot be a protocol guarantee. A rate program anchored by some other tool with out-of-scope coverages would satisfy the schema and the edge.",
+      "expression": "state.attestations.all(a, state.mandates.all(m, m.mandate_said != a.mandate_said || a.carried_coverages.all(c, m.declared_coverages.exists(d, d == c))))",
+      "id": "carried_coverages_within_declared",
+      "language": "CEL/1.0",
+      "title": "No attestation carries a coverage its mandate did not declare",
+      "type": "validation"
+    },
+    {
+      "description": "Withdrawing twice would append a second `rate_program_withdrawn` for one attestation and make `withdrawn_saids` a multiset, which every reader would then have to de-duplicate. The TEL would also carry two `rev` events for one credential. Rejecting the second attempt keeps the desk and the TEL in agreement.",
+      "expression": "!(command.credential_said in state.withdrawn_saids)",
+      "id": "rate_program_is_not_already_withdrawn",
+      "language": "CEL/1.0",
+      "purpose": "state_precondition",
+      "title": "An attestation can only be withdrawn once",
+      "type": "predicate"
+    },
+    {
+      "description": "Aggregate invariant, and the fold-time twin of `rate_program_is_not_already_withdrawn` -- the pair spells the same concept in both positions for the same reason `mandate_is_on_this_desk` is paired with `attestation_names_an_observed_mandate`: the precondition is checked BEFORE the withdrawal is anchored, which is the only point at which refusing costs nothing, and this invariant is the log's own guard, and the position a test vector can pin (`try_append` evaluates `state`/`event`, never `command`, so only this position is vector-testable). Written self-inclusively -- every recorded withdrawal matches itself, so the count is exactly 1 when nothing else duplicates it, the same idiom `mandate_observed_once` uses.",
+      "expression": "state.withdrawn_saids.all(s, size(state.withdrawn_saids.filter(o, o == s)) == 1)",
+      "id": "rate_program_withdrawn_once",
+      "language": "CEL/1.0",
+      "title": "An attestation is recorded as withdrawn at most once",
+      "type": "validation"
+    }
+  ],
+  "spec_version": "micro-app-template/0.2",
+  "workflows": []
+}

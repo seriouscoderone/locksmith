@@ -116,6 +116,7 @@ carrier = "locksmith.plugins.carrier.plugin:CarrierPlugin"
 hoa_shell = "locksmith.plugins.hoa_shell.plugin:HoaShellPlugin"
 actuary = "locksmith.plugins.actuary.plugin:ActuaryPlugin"
 product_designer = "locksmith.plugins.product_designer.plugin:ProductDesignerPlugin"
+cuo = "locksmith.plugins.cuo.plugin:CuoPlugin"
 
 
 [tool.setuptools.packages.find]

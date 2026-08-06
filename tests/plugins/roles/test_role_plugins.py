@@ -6,6 +6,7 @@ import pytest
 from locksmith.plugins.actuary.plugin import (ACTUARY_ROLE_SCHEMA_SAID,
                                               USURANCE_ADMIN_AID,
                                               ActuaryPlugin)
+from locksmith.plugins.cuo.plugin import CUO_ROLE_SCHEMA_SAID, CuoPlugin
 from locksmith.plugins.product_designer.plugin import (
     PD_ROLE_SCHEMA_SAID, ProductDesignerPlugin)
 
@@ -13,6 +14,7 @@ from locksmith.plugins.product_designer.plugin import (
 @pytest.mark.parametrize("cls,pid,schema", [
     (ActuaryPlugin, "actuary", ACTUARY_ROLE_SCHEMA_SAID),
     (ProductDesignerPlugin, "product_designer", PD_ROLE_SCHEMA_SAID),
+    (CuoPlugin, "cuo", CUO_ROLE_SCHEMA_SAID),
 ])
 def test_role_plugin_declares_its_own_gate(cls, pid, schema):
     p = cls()
@@ -25,6 +27,8 @@ def test_role_plugin_declares_its_own_gate(cls, pid, schema):
 
 def test_gates_are_distinct():
     assert ACTUARY_ROLE_SCHEMA_SAID != PD_ROLE_SCHEMA_SAID
+    assert ACTUARY_ROLE_SCHEMA_SAID != CUO_ROLE_SCHEMA_SAID
+    assert PD_ROLE_SCHEMA_SAID != CUO_ROLE_SCHEMA_SAID
 
 
 def test_admin_aid_shape():
@@ -36,6 +40,7 @@ def test_admin_aid_shape():
 @pytest.mark.parametrize("cls,pid,label", [
     (ActuaryPlugin, "actuary", "Actuarial"),
     (ProductDesignerPlugin, "product_designer", "Insurance Product Design"),
+    (CuoPlugin, "cuo", "Underwriting"),
 ])
 def test_page_key_equals_plugin_id_and_menu_label(qapp, cls, pid, label):
     p = cls()
@@ -61,10 +66,10 @@ def test_entry_points_registered():
     )
 
     composed = {ep.name for ep in md.entry_points(group=COMPOSED_ENTRY_POINT_GROUP)}
-    assert {"actuary", "product_designer"} <= composed
+    assert {"actuary", "product_designer", "cuo"} <= composed
 
     default_on = {ep.name for ep in md.entry_points(group=ENTRY_POINT_GROUP)}
-    assert not ({"actuary", "product_designer"} & default_on)
+    assert not ({"actuary", "product_designer", "cuo"} & default_on)
 
 
 def test_two_gates_coexist_and_revoke_deactivates_exactly_one(monkeypatch):
