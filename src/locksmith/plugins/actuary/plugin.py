@@ -3,9 +3,10 @@
 
 Bundled with the usurance brand ([plugins] bundled); its surface is revealed
 by the credential gate when the vault holds a valid, active, chain-verified
-actuary_role credential issued by usurance-admin. Placeholder surface —
-this proves multi-role coexistence, not actuarial function. Domain content
-lives here (a brand-bundled role plugin), never in framework code.
+actuary_role credential issued by usurance-admin. The real surface (observe a
+watched mandate, attest a rate program) lives in `ActuaryPage` — see its module
+docstring. Domain content lives here (a brand-bundled role plugin), never in
+framework code.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import QWidget
 
 from locksmith.plugins.base import VaultPlugin, _is_alive
 from locksmith.plugins.credential_gate import RequiredCredential
-from locksmith.plugins.actuary.page import ActuaryPlaceholderPage
+from locksmith.plugins.actuary.page import ActuaryPage
 from locksmith.ui.vault.menu import MenuButton
 
 # Pins verified against the bundled usurance-internal EGF by
@@ -53,7 +54,7 @@ class ActuaryPlugin(VaultPlugin):
         # later activate re-registers a dead C++ object and raises. Revoke -> re-grant
         # is a real arc, so the page is rebuilt whenever the previous one is gone.
         if self._page is None or not _is_alive(self._page):
-            self._page = ActuaryPlaceholderPage()
+            self._page = ActuaryPage(app=self._app)
         return {"actuary": self._page}   # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:

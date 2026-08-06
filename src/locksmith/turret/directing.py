@@ -551,12 +551,24 @@ class Reactant(doing.DoDoer):
 
         # keripy v2 still emits KERI 1.0 attachment counters on streams.
         # Keep this parser on v1 until keripy supports mixed versions per frame.
+        #
+        # vry=self.verifier: without it a bare ACDC message (ilk is None, the
+        # SerderACDC branch of Parser.msgProcess) has nowhere to route -- vry
+        # defaults to None, `vry.processACDC(**exts)` raises AttributeError, and
+        # Parser turns that into "No verifier to process so dropped ACDC=..." --
+        # silently, the same failure mode the sibling `tvy=None` comment already
+        # documents for TEL events. self.verifier is already threaded in for the
+        # per-connection Tevery two lines above; it was just never also given to
+        # the Parser. Found driving a real credential-over-peer-transport delivery
+        # (actuarial HOA C2c Task 5): an untargeted credential's own ACDC message
+        # is exactly this shape, so every peer connection dropped it before this.
         self.parser = parsing.Parser(ims=self.remoter.rxbs,
                                      framed=True,
                                      kvy=self.kevery,
                                      tvy=self.tevery,
                                      exc=self.exchanger,
                                      rvy=rvy,
+                                     vry=self.verifier,
                                      version=kering.Vrsn_1_0)
 
         super(Reactant, self).__init__(doers=doers, **kwa)

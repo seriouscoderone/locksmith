@@ -1,0 +1,148 @@
+{
+  "$id": "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usurance Rate Program Attestation",
+  "description": "An UNTARGETED ACDC, and the membrane of this whole slice: the actuary's signed statement that a specific set of bytes -- one parsed rate program, identified by a digest that covers both the parse output and the source workbook -- is their professional work for one declared mandate. Everything before this is workbench: the actuary drafts in Excel and runs `ipd-parse`, unwitnessed and nobody's business. This attestation is where that crosses into a fact provable to someone who was not there, and exactly one thing crosses: a SAID over the workbench's output. UNTARGETED because it asserts authorship rather than conferring anything -- the designer READS it, and an IPEX grant that transmits it is delivery, not targeting. Two consequences a verifier must know, quoted rather than paraphrased: an ACDC is a container for authentic data 'only (not authentic data as an authorization or entitlement to a specified party)', so nothing reads authority off this container -- the actuary's authority is the `actuary_role` credential admin granted, never this edge; and because the mandate it points at is itself untargeted, 'to be valid, the ACDC node pointed to by this Edge MUST be a Targeted ACDC' rules out I2I and DI2I, leaving NI2I as the only legal operator. Carries `ri`: this attestation is registry-backed and revocable (Amendment C \u00a714.1). An actuary can withdraw an attestation -- a revised rate program is still a NEW attestation rather than a transition on this one, but the original can be marked no-longer-current -- so the lifecycle has two states, `attested` and `withdrawn`, and the `withdraw_rate_program` command drives the transition.",
+  "credentialType": "UsuranceRateProgramAttestation",
+  "version": "1.0.0",
+  "type": "object",
+  "properties": {
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "ACDC SAID. This is the attestation's identity, and its only one.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID -- the attesting actuary. The ISSUER field, not an Issuee; an untargeted ACDC still has an issuer, which is what makes its authorship verifiable.",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Registry identifier (TEL) whose state says whether this rate-program attestation is still current. Present because an attestation is withdrawable: the actuary can retract it, and a consumer must be able to learn that without asking her. Registry naming follows the shipped convention, one management TEL per credential type keyed by its schema SAID; the per-credential iss/rev entries under it are automatic (register finding 79).",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID -- simultaneously this ACDC's type identity and its immutable validation rules.",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attribute block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "EGRZdjMemwvnIgKOyAUxeIefFDsym_X80y1zwAEPDqxl",
+          "description": "Attributes of the attestation. NO `i`: untargeted by construction, and the envelope agrees by omitting holder_role.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time. This IS the attestation time; an `attested_at` attribute would restate a mandatory envelope field.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "manifest_said": {
+              "description": "THE MEMBRANE. A SAID over the rate-program manifest: every file the parse emitted, by name and digest, PLUS the source workbook's own digest. The workbook digest is what makes 'the Excel I opened is the one that was attested' checkable rather than merely implied -- without it the commitment covers only parse output, and a consumer could re-run a different workbook to the same shard names. This is deliberately a digest over an OPAQUE BLOB rather than a nested SAD: the manifest's whole job is committing to bytes nobody in this ecosystem authored, and a v2 ACDC's SAID does not commit to its own nested section SAIDs, so making the manifest a SAD would place that gap directly beneath the artifact whose byte-integrity is the entire point. Re-derive with `ipd.manifest.manifest_said()` over the parse directory and the workbook; a consumer who cannot re-derive it has not verified anything. NOTE the content plane is not the protocol's problem: this SAID proves integrity and provides NO retrieval. The shards and the workbook live in the actuary's own store, and an ecosystem relying on them must say who serves them and what happens when they stop.",
+              "type": "string",
+              "minLength": 44,
+              "maxLength": 44
+            },
+            "version": {
+              "description": "The rate program's own version, on the actuary's axis -- not the mandate's and not the product's. A human-chosen label, identifier kind 4: provenance carried as data, never this ACDC's identity. Two attestations may share a version and differ in bytes; the `manifest_said` is what distinguishes them, and `d` is what identifies them.",
+              "type": "string",
+              "minLength": 1
+            },
+            "filing_date": {
+              "description": "The filing date the actuary recorded at parse time. FILING ITSELF IS OUT OF SCOPE for this slice -- no SERFF, no regime, no deemer clock, no clearance. This is an attribute the actuary asserts, not the trace of a workflow this template runs, and nothing here verifies it against a regulator.",
+              "type": "string",
+              "format": "date"
+            },
+            "action": {
+              "description": "The IPD retention contract the parse was run under. `Publish` means the parsed program is retained as a filed-and-published artifact; `Sandbox` means it is retained as exploratory work. READ THIS AS RETENTION, NOT ISOLATION: `Sandbox` is emphatically NOT a separate environment, not a test mode, and not a weaker guarantee about the bytes -- a Sandbox attestation is as immutable and as verifiable as a Publish one, and an ecosystem that treated it as 'not real' would be reading a word from the parser's vocabulary and not from this schema.",
+              "type": "string",
+              "enum": [
+                "Publish",
+                "Sandbox"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "dt",
+            "manifest_said",
+            "version",
+            "filing_date",
+            "action"
+          ]
+        }
+      ]
+    },
+    "e": {
+      "oneOf": [
+        {
+          "description": "Edge block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "ECNmI-nLbT1SYzyd7PQuMfXtx47184Zmsw3KhAQDjPd5",
+          "description": "The single edge chaining this attestation to the mandate it was produced under.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Edge block SAID.",
+              "type": "string"
+            },
+            "mandate": {
+              "description": "NI2I reference to the immutable product_mandate attestation this rate program was produced under. PROVENANCE ONLY -- no authority transfer: the actuary's authority is the `actuary_role` credential admin granted, and reading authorization off this edge would invert the model, making the actuary look authorized BY the CUO rather than by their own role. NI2I is also the only operator legal here, and by a spec MUST rather than by convention: the far node is UNTARGETED, and for I2I 'to be valid, the ACDC node pointed to by this Edge MUST be a Targeted ACDC', while an edge whose far node 'does not have an Issuee' has NI2I appended to its effective operator list. REQUIRING this edge is what makes 'a rate program attested against no mandate' have no valid representation -- validate_edge step 1 rejects a dangling `n`, and because `n` is a HASH the mandate must exist and be hashed before this can commit to it, so the direction of the edge is the direction of time and a cycle is unconstructable. It is also why no work-in-progress identifier is needed anywhere in this slice: the scope is identified by the far node's SAID.",
+              "type": "object",
+              "properties": {
+                "n": {
+                  "description": "SAID of the product_mandate node.",
+                  "type": "string"
+                },
+                "s": {
+                  "description": "Schema SAID of product_mandate, minted by the Task 5 cascade. This field is ACDC wire content -- the spec's Edge map defines `s` as the 'Optional SAID of the JSON Schema block of the far node ACDC' -- so unlike the template's own `schema_said`/`schema_path` pair it has no path form: a verifier resolving an edge holds SAIDs and nothing else. That is the boundary of this project's defer-the-SAIDs ruling, and it is why this field carried a visible placeholder rather than being omitted while the set was being authored. Omitting `s` is spec-legal and would have kept the linter quiet, which is exactly why it was not done: linter S09 flags a non-SAID `const` on every run and says nothing at all about an absent `s`, so a placeholder is wrong-but-LOUD where omission is silently forgettable. ORDERING FOR ANY FUTURE RE-MINT: write the SAID here BEFORE saidifying this file. Editing it afterwards leaves the `$id` above disagreeing with its own bytes, and because this schema's SAID is pinned in the template, in a sibling bundle's import and in that bundle's vendored copy, the disagreement would surface only after those had been written.",
+                  "type": "string",
+                  "const": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
+                },
+                "o": {
+                  "description": "Edge operator: NI2I (not-issuer-to-issuee).",
+                  "type": "string",
+                  "const": "NI2I"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "n",
+                "s",
+                "o"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "mandate"
+          ]
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a",
+    "e"
+  ]
+}
