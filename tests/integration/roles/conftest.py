@@ -121,6 +121,35 @@ _ACTUARY_ROLE_SCHEMA_PATH = (
 )
 ACTUARY_ROLE_SCHEMA_SAID = "EIGJb6GFT8bLi2nDuS4ekp6gSr8JqIcpPE9AKjiCClLY"
 
+# Task 6's sibling pin: the designer's own gate credential.
+_PD_ROLE_SCHEMA_PATH = (
+    REPO_ROOT / "brands" / "usurance" / "egf"
+    / "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-.json"
+)
+PD_ROLE_SCHEMA_SAID = "EDYXGV5F6-AhKDAPC5-9kvUq0hB_P0P1WFTRkzdyf2A-"
+
+# Task 6's other two: what the designer READS (product_mandate -- the edge far
+# node it resolves; rate_program_attestation -- what it scans for) and what it
+# WRITES (product_bundle). All verified against the bundled schemas by
+# tests/plugins/roles/test_pin_regression.py, same as the role schemas above.
+_PRODUCT_MANDATE_SCHEMA_PATH = (
+    REPO_ROOT / "brands" / "usurance" / "egf"
+    / "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5.json"
+)
+PRODUCT_MANDATE_SCHEMA_SAID = "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
+
+_RATE_PROGRAM_ATTESTATION_SCHEMA_PATH = (
+    REPO_ROOT / "brands" / "usurance" / "egf"
+    / "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP.json"
+)
+RATE_PROGRAM_ATTESTATION_SCHEMA_SAID = "EPaMxGLoFc6u1if3s367j5J547kLXKJbsztT-OE1gcHP"
+
+_PRODUCT_BUNDLE_SCHEMA_PATH = (
+    REPO_ROOT / "brands" / "usurance" / "egf"
+    / "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-.json"
+)
+PRODUCT_BUNDLE_SCHEMA_SAID = "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-"
+
 # Deterministic, fixed salt for the synthetic test-admin party — NOT a secret,
 # NOT the real usurance-admin (whose keys live in a real passcode-protected
 # vault this suite never touches). The resulting AID is stable across runs
@@ -139,6 +168,7 @@ _BOOTSTRAP_DIR = str(pathlib.Path(__file__).resolve().parent / "_bootstrap")
 os.environ["CUO_TEST_ADMIN_AID"] = _TEST_ADMIN_AID
 os.environ["CUO_TEST_ROLE_SCHEMA_PATH"] = str(_CUO_ROLE_SCHEMA_PATH)
 os.environ["ACTUARY_TEST_ROLE_SCHEMA_PATH"] = str(_ACTUARY_ROLE_SCHEMA_PATH)
+os.environ["PD_TEST_ROLE_SCHEMA_PATH"] = str(_PD_ROLE_SCHEMA_PATH)
 _existing_pp = os.environ.get("PYTHONPATH")
 os.environ["PYTHONPATH"] = (
     f"{_BOOTSTRAP_DIR}{os.pathsep}{_existing_pp}" if _existing_pp else _BOOTSTRAP_DIR
@@ -158,10 +188,24 @@ def _build_test_admin():
     and `test_carrier_gate_e2e.py`'s admin/DOI parties use. Never touches a
     real vault or passcode.
 
-    Pins BOTH `cuo_role`'s and `actuary_role`'s schemas -- the EGF names the
-    SAME admin AID as issuer of both (`docs/superpowers/specs/2026-08-05-
-    actuarial-hoa-c2-design.md` §4's role table), so one test-admin party
-    plays both issuer roles rather than this suite standing up two."""
+    Pins `cuo_role`'s, `actuary_role`'s AND (Task 6) `product_designer_role`'s
+    schemas -- the EGF names the SAME admin AID as issuer of all three
+    (`docs/superpowers/specs/2026-08-05-actuarial-hoa-c2-design.md` §4's role
+    table; `ProductDesignerPlugin.required_credential` already hardcodes the
+    SAME `USURANCE_ADMIN_AID` cuo/actuary do), so one test-admin party plays
+    all three issuer roles rather than this suite standing up three.
+
+    (Task 6) ALSO pins `product_mandate`'s and `rate_program_attestation`'s
+    schemas. In REALITY those are CUO- and actuary-issued respectively, never
+    by usurance-admin -- but Tasks 4 and 5 already prove those two roles' own
+    UI flows for real (`declare_mandate_via_ui`, `open_vault_holding_actuary_
+    role` + a live attest), so `deliver_rate_program_to_designer` (Task 6's own
+    delivery recipe, this module further down) does not re-drive either a
+    second time. It re-uses THIS SAME party to synthesize a mandate and an
+    edge-linked attestation instead -- still through the real keripy issuance
+    machinery (real registries, real TELs, real schema validation), just not
+    ALSO routed through a second UI pass that would prove nothing new about
+    the designer surface Task 6 actually owns."""
     from keri.app import habbing
     from keri.core import signing as coresigning
     from keri.kering import Vrsn_1_0
@@ -189,6 +233,9 @@ def _build_test_admin():
     for schema_path, schema_said in (
         (_CUO_ROLE_SCHEMA_PATH, CUO_ROLE_SCHEMA_SAID),
         (_ACTUARY_ROLE_SCHEMA_PATH, ACTUARY_ROLE_SCHEMA_SAID),
+        (_PD_ROLE_SCHEMA_PATH, PD_ROLE_SCHEMA_SAID),
+        (_PRODUCT_MANDATE_SCHEMA_PATH, PRODUCT_MANDATE_SCHEMA_SAID),
+        (_RATE_PROGRAM_ATTESTATION_SCHEMA_PATH, RATE_PROGRAM_ATTESTATION_SCHEMA_SAID),
     ):
         sad = json.loads(schema_path.read_text())
         schemer = scheming.Schemer(sed=sad, kind=Kinds.json)
@@ -719,20 +766,21 @@ def _parser_python() -> str:
         f"{_PARSER_DIR}/.venv/bin/pip install -e {_PARSER_DIR}")
 
 
-@pytest.fixture(scope="session")
-def parse_dir(tmp_path_factory):
-    """A REAL `ipd-parse` output tree for the fixture workbook, PLUS the
-    `.workbook_source.json` sidecar `ActuaryPage._resolve_workbook` looks for
-    (see that module's docstring for why the sidecar convention exists: real
-    `ipd-parse` does not itself record the source workbook's location).
+def _run_ipd_parse(out: pathlib.Path) -> pathlib.Path:
+    """Run a REAL `ipd-parse` against the fixture workbook into `out`, write the
+    `.workbook_source.json` sidecar `ActuaryPage._resolve_workbook` looks for (see
+    that module's docstring for why the sidecar convention exists: real `ipd-parse`
+    does not itself record the source workbook's location), and return the shard
+    directory.
 
-    Session-scoped: one parse serves every test in this suite; the shape it
-    produces (`L/WI/1.0/` with a `risk-value-tables/` subdirectory) is exactly
-    what a top-level-only directory scan would silently miss.
+    Factored out of the `parse_dir` fixture below (Task 6) so `deliver_rate_program_
+    to_designer` -- which the designer-assembly test does not request a `parse_dir`
+    fixture into, by the test's own signature -- can obtain the SAME real tree
+    without a fixture-scoped `tmp_path_factory`. Both callers run the identical
+    `ipd-parse` invocation; only the destination directory differs.
     """
     if not _WORKBOOK.is_file():
         raise RuntimeError(f"fixture workbook missing: {_WORKBOOK}")
-    out = tmp_path_factory.mktemp("parse")
     proc = subprocess.run(
         [_parser_python(), "-m", "ipd.parse_cli", "--workbook", str(_WORKBOOK),
          *_PARSE_ARGS, "--out", str(out)],
@@ -745,3 +793,268 @@ def parse_dir(tmp_path_factory):
     (shards / _WORKBOOK_SIDECAR_NAME).write_text(
         json.dumps({"workbook_path": str(_WORKBOOK)}))
     return shards
+
+
+@pytest.fixture(scope="session")
+def parse_dir(tmp_path_factory):
+    """A REAL `ipd-parse` output tree for the fixture workbook, PLUS the
+    `.workbook_source.json` sidecar `ActuaryPage._resolve_workbook` looks for
+    (see that module's docstring for why the sidecar convention exists: real
+    `ipd-parse` does not itself record the source workbook's location).
+
+    Session-scoped: one parse serves every test in this suite; the shape it
+    produces (`L/WI/1.0/` with a `risk-value-tables/` subdirectory) is exactly
+    what a top-level-only directory scan would silently miss.
+    """
+    return _run_ipd_parse(tmp_path_factory.mktemp("parse"))
+
+
+# ---------------------------------------------------------------------------
+# Task 6: deliver_rate_program_to_designer -- the designer's receive leg.
+# ---------------------------------------------------------------------------
+
+def deliver_rate_program_to_designer(devctl, two_wallets) -> None:
+    """Bring up wallet B holding `product_designer_role`, then land a REAL,
+    schema-valid, edge-linked `rate_program_attestation` in its own registry --
+    genuinely admitted through B's own Kevery/Tevery/Verifier, never faked.
+
+    Uses ONLY wallet B. Tasks 4 and 5 already prove the CUO-declares
+    (`declare_mandate_via_ui`) and actuary-watches-and-attests
+    (`open_vault_holding_actuary_role` + `watch_cuo_mandate_via_peer` + a live
+    attest) legs for real, through genuine UI, in genuine separate wallet
+    processes. Re-driving either a second time here would prove nothing new
+    about the DESIGNER surface this task owns, and would multiply this
+    delivery's cross-process/dialog-reopening surface (a THIRD "Add Peer"
+    pairing, a SECOND "Accept Credential Issuance" cycle) for zero additional
+    coverage. So `_build_test_admin`'s SAME synthetic party (extended, see its
+    own docstring) stands in for the CUO and the actuary too here, minting a
+    `product_mandate` and an NI2I-edged `rate_program_attestation` through the
+    SAME real keripy issuance machinery (real registries, real TELs, real
+    schema validation) `open_vault_holding_cuo_role`/`open_vault_holding_
+    actuary_role` already use to grant role credentials.
+
+    Delivery is split by TARGETING, not by credential type:
+
+    - `product_designer_role` is TARGETED (the gate credential) -- delivered
+      as a real IPEX grant, admitted through the SAME file-based Accept flow
+      Task 4/5's role helpers use (`_expose_and_export` -> pair -> registry
+      TEL over the wire -> "Accept Credential Issuance" -> Admit).
+    - `product_mandate` and `rate_program_attestation` are BOTH untargeted
+      (neither schema's `a` block has an `i` -- see `cuo/page.py`'s and
+      `actuary/page.py`'s own module docstrings) -- delivered as bare ACDC
+      messages over the SAME peer connection, the mechanic `directing.py`'s
+      `vry=self.verifier` fix (Task 5) makes land at all and
+      `sitecustomize.py`'s mandate-export hook (patch 5) already mirrors for
+      wallet A. No second grant, no second Accept-dialog cycle, and no risk
+      of `AcceptGrantDialog`'s own not-destroyed-on-close reopening hazard
+      (Task 5 finding 3, `ViewIdentifierDialog`/`AddPeerDialog`'s sibling) --
+      untargeted credentials never needed IPEX in the first place; the
+      micro-app template's `on_rate_program_received` reaction names `grant`
+      as ONE valid transport, not the only one, and `ProductDesignerPage`
+      itself is transport-agnostic (it scans `reger` for anything schema-
+      matching and `saved`, whichever way it arrived).
+
+    ORDERING IS LOAD-BEARING. Everything is minted and both delivery streams
+    are built as plain bytes BEFORE any bytes cross the wire, then sent in
+    this order:
+
+    1. Pair B with the admin's peer-OOBI blob, exported AFTER every mint
+       below completes -- so ONE pairing carries the admin's COMPLETE KEL
+       (every registry-inception and credential-issuance `ixn`), avoiding any
+       need to re-pair for each later event (mirrors `open_vault_holding_
+       cuo_role`'s own "export AFTER issuance" rule).
+    2. Push the registry + credential TELs for ALL THREE credentials in one
+       stream (harmless to deliver early; TEL processing needs no schema).
+    3. Admit the `product_designer_role` grant via the file-based Accept
+       flow. This is what constructs `ProductDesignerPage` (the gate opening
+       registers it) and, via its own `__init__`, pins `product_mandate`'s
+       and `rate_program_attestation`'s schemas into B's `hby.db.schema`.
+    4. ONLY NOW push the mandate's and the attestation's own bare ACDC + their
+       SealSourceTriples anchoring proof. Pushing them before step 3 would
+       park them in `reger.mse` (missing-schema escrow) -- and NOTHING pumps
+       `Verifier.processEscrows()` on the peer-connection path
+       (`directing.py`'s own `escrowDo` only re-drives `kevery`/`tvy`,
+       measured, not assumed), so an out-of-order push would sit escrowed
+       forever rather than eventually landing.
+    """
+    b = two_wallets["b"]
+
+    open_test_vault_via_ui(devctl, b["sock"], name="designervault")
+    create_aid_via_ui(devctl, b["sock"], alias="designer")
+    designer_port = free_port()
+    from tests.integration.peer.conftest import (
+        import_peer_blob_via_ui, set_peer_mode_via_ui,
+    )
+    set_peer_mode_via_ui(devctl, b["sock"], port=designer_port)
+    designer_blob = _expose_and_export(devctl, b["sock"], "designer")
+
+    admin_hby, admin_hab, admin_rgy = _build_test_admin()
+    try:
+        from hio.base import doing
+        from keri.core import Codens, Counter
+        from keri.kering import Vrsn_1_0
+        from locksmith.peer.cesr_blob import export_peer_blob, import_peer_blob
+        from locksmith.peer.publishing import PublishPeerRoleDoer
+
+        designer_pre = import_peer_blob(admin_hby, designer_blob)
+
+        publish_doer = PublishPeerRoleDoer(
+            hby=admin_hby, hab=admin_hab,
+            url="tcp://127.0.0.1:1/", signal_bridge=None, allow=True,
+        )
+        doing.Doist(limit=2.0, tock=0.03125, real=False).do(doers=[publish_doer])
+
+        from keri_serviceaid.providers import frame_grant_for, issue_credential
+
+        # -- product_designer_role: TARGETED, the gate credential -----------
+        pd_said = issue_credential(
+            admin_hby, admin_hab, admin_rgy,
+            schema_said=PD_ROLE_SCHEMA_SAID, recipient=designer_pre,
+            attributes={}, registry_name=PD_ROLE_SCHEMA_SAID,
+        )
+        _pd_grant_said, pd_grant_raw = frame_grant_for(
+            admin_hby, admin_hab, admin_rgy,
+            credential_said=pd_said, recipient=designer_pre, return_raw=True,
+        )
+
+        # -- product_mandate: UNTARGETED, the scope the program is written for.
+        # Mirrors declare_mandate_via_ui's own payload shape (cuo/page.py's
+        # _build_payload) -- a real, schema-valid mandate, just minted here
+        # rather than through wallet A's own UI (see this function's own
+        # docstring for why).
+        mandate_said = issue_credential(
+            admin_hby, admin_hab, admin_rgy,
+            schema_said=PRODUCT_MANDATE_SCHEMA_SAID, recipient=None,
+            attributes={
+                "line_of_business": "auto",
+                "jurisdiction": "US-UT",
+                "coverages": ["BI", "PD"],
+                "window_opens": "2027-01-01",
+                "window_closes": "2027-12-31",
+                "thesis": "Rate adequacy restoration.",
+            },
+            registry_name=PRODUCT_MANDATE_SCHEMA_SAID,
+        )
+
+        # -- rate_program_attestation: UNTARGETED, NI2I-edged to the mandate.
+        # A REAL ipd-parse output tree (not the session `parse_dir` fixture --
+        # this test's own signature does not request it, see _run_ipd_parse's
+        # docstring), so the manifest SAID genuinely commits to parsed shard
+        # bytes and the source workbook's own bytes, exactly like
+        # ActuaryPage.load_parse computes.
+        parse_root = pathlib.Path(tempfile.mkdtemp(prefix="designer_parse_"))
+        shards = _run_ipd_parse(parse_root)
+        from locksmith.plugins.actuary.page import _build_manifest, _manifest_said
+
+        manifest = _build_manifest(shards, _WORKBOOK)
+        manifest_said = _manifest_said(manifest)
+
+        attestation_said = issue_credential(
+            admin_hby, admin_hab, admin_rgy,
+            schema_said=RATE_PROGRAM_ATTESTATION_SCHEMA_SAID, recipient=None,
+            attributes={
+                "manifest_said": manifest_said,
+                "version": "1.0",
+                "filing_date": time.strftime("%Y-%m-%d"),
+                "action": "Sandbox",
+            },
+            registry_name=RATE_PROGRAM_ATTESTATION_SCHEMA_SAID,
+            edges={
+                "mandate": {
+                    "cred_said": mandate_said,
+                    "schema_said": PRODUCT_MANDATE_SCHEMA_SAID,
+                    "operator": "NI2I",
+                },
+            },
+        )
+
+        # Export admin's blob AFTER every mint above, so pairing carries its
+        # COMPLETE KEL in one shot -- see the module docstring.
+        admin_blob = export_peer_blob(admin_hab)
+
+        # Leg 1: registry + credential TELs for all three, one combined
+        # stream. Registries before their own credentials (clonePreIter
+        # iteration order), same shape as open_vault_holding_cuo_role's leg 1.
+        tel_stream = bytearray()
+        for schema_said, cred_said in (
+            (PD_ROLE_SCHEMA_SAID, pd_said),
+            (PRODUCT_MANDATE_SCHEMA_SAID, mandate_said),
+            (RATE_PROGRAM_ATTESTATION_SCHEMA_SAID, attestation_said),
+        ):
+            registry = admin_rgy.registryByName(schema_said)
+            for msg in admin_rgy.reger.clonePreIter(pre=registry.regk):
+                tel_stream.extend(msg)
+            for msg in admin_rgy.reger.clonePreIter(pre=cred_said):
+                tel_stream.extend(msg)
+
+        # Leg 2 (sent LATER, after product_designer_role is admitted and its
+        # page has pinned both schemas -- see the module docstring): the
+        # mandate's and the attestation's own bare ACDC + SealSourceTriples
+        # anchoring proof, the exact recipe `sitecustomize.py`'s
+        # `_export_mandate_artifact` mirrors for wallet A (itself mirroring
+        # `keri.vdr.credentialing.sendCredential`).
+        bare_acdc_stream = bytearray()
+        for cred_said in (mandate_said, attestation_said):
+            _, prefixer, seqner, saider = admin_rgy.reger.cloneCred(cred_said)
+            creder = admin_rgy.reger.creds.get(keys=(cred_said,))
+            atc = bytearray(
+                Counter(Codens.SealSourceTriples, count=1, version=Vrsn_1_0).qb64b)
+            atc.extend(prefixer.qb64b)
+            atc.extend(seqner.qb64b)
+            atc.extend(saider.qb64b)
+            bare_acdc_stream.extend(bytes(creder.raw))
+            bare_acdc_stream.extend(atc)
+    finally:
+        admin_hby.close()
+
+    import_peer_blob_via_ui(devctl, b["sock"], admin_blob, label="admin")
+
+    with socket.create_connection(("127.0.0.1", designer_port), timeout=5.0) as s:
+        s.sendall(bytes(tel_stream))
+    time.sleep(1.0)  # let B's Reactant/Tevery land the registries + TELs
+
+    # -- deliver product_designer_role via the SAME file-based Accept flow
+    # Task 4/5's role helpers use --------------------------------------------
+    fd, cesr_path = tempfile.mkstemp(suffix=".cesr", prefix="pd_role_grant_")
+    with os.fdopen(fd, "wb") as f:
+        f.write(pd_grant_raw)
+
+    r = devctl(b["sock"], "click", target="vaultNavMenu.credentialsButton")
+    assert r.get("ok"), f"expand Credentials submenu: {r}"
+    r = devctl(b["sock"], "click", target="vaultNavMenu.receivedCredentialsButton")
+    assert r.get("ok"), f"navigate to Received Credentials: {r}"
+    r = devctl(b["sock"], "click", target="Accept Credential Issuance")
+    assert r.get("ok"), f"open Accept Credential dialog: {r}"
+    r = devctl(b["sock"], "wait_for", target="File Path", condition="visible",
+              timeout_ms=3000)
+    assert r.get("ok"), f"Accept Credential dialog never appeared: {r}"
+    r = devctl(b["sock"], "type", target="File Path", text=cesr_path)
+    assert r.get("ok"), f"type grant file path: {r}"
+    r = devctl(b["sock"], "click", target="Load")
+    assert r.get("ok"), f"click Load: {r}"
+
+    r = devctl(b["sock"], "wait_for", target="Admit", condition="visible",
+              timeout_ms=5000)
+    assert r.get("ok"), f"AcceptGrantDialog never opened: {r}"
+    r = devctl(b["sock"], "click", target="Admit")
+    assert r.get("ok"), f"click Admit: {r}"
+
+    # The gate reveal + page construction (which pins the mandate/attestation
+    # schemas) is asynchronous, same caveat as the "Underwriting"/"Actuarial"
+    # polls above.
+    deadline = time.time() + 15.0
+    last = None
+    while time.time() < deadline:
+        r = devctl(b["sock"], "click", target="Insurance Product Design")
+        if r.get("ok"):
+            break
+        last = r
+        time.sleep(0.5)
+    else:
+        raise AssertionError(
+            f"the Insurance Product Design menu entry never appeared: {last}")
+
+    # -- leg 2: NOW the mandate's and the attestation's own bare ACDCs -------
+    with socket.create_connection(("127.0.0.1", designer_port), timeout=5.0) as s:
+        s.sendall(bytes(bare_acdc_stream))
+    time.sleep(1.0)  # let B's Reactant/Verifier land + chain-verify both

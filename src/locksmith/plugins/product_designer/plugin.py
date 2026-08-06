@@ -3,9 +3,10 @@
 
 Bundled with the usurance brand ([plugins] bundled); its surface is revealed
 by the credential gate when the vault holds a valid, active, chain-verified
-product_designer_role credential issued by usurance-admin. Placeholder surface —
-this proves multi-role coexistence, not product design function. Domain content
-lives here (a brand-bundled role plugin), never in framework code.
+product_designer_role credential issued by usurance-admin. The real surface
+(receive attested rate programs, assemble a product bundle) lives in
+`ProductDesignerPage` — see its module docstring. Domain content lives here (a
+brand-bundled role plugin), never in framework code.
 """
 from __future__ import annotations
 
@@ -16,7 +17,7 @@ from PySide6.QtWidgets import QWidget
 
 from locksmith.plugins.base import VaultPlugin, _is_alive
 from locksmith.plugins.credential_gate import RequiredCredential
-from locksmith.plugins.product_designer.page import ProductDesignerPlaceholderPage
+from locksmith.plugins.product_designer.page import ProductDesignerPage
 from locksmith.plugins.actuary.plugin import USURANCE_ADMIN_AID
 from locksmith.ui.vault.menu import MenuButton
 
@@ -53,7 +54,7 @@ class ProductDesignerPlugin(VaultPlugin):
         # later activate re-registers a dead C++ object and raises. Revoke -> re-grant
         # is a real arc, so the page is rebuilt whenever the previous one is gone.
         if self._page is None or not _is_alive(self._page):
-            self._page = ProductDesignerPlaceholderPage()
+            self._page = ProductDesignerPage(app=self._app)
         return {"product_designer": self._page}   # page key == plugin_id == EGF role id
 
     def get_menu_entry(self) -> MenuButton:

@@ -1,0 +1,138 @@
+{
+  "$id": "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-",
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Usurance Product Bundle",
+  "description": "An UNTARGETED ACDC: the product designer's signed statement that a specific set of attested rate programs, all written under one product mandate, constitute a product bundle. THIS IS WHERE THE PRODUCT BEGINS TO EXIST, and that is why nothing upstream carries a product identifier: 'the product does not exist until assembled, so its identity is a SAID over its assembled content' -- and this ACDC's own `d` IS that SAID. A bundle over three rate programs and a bundle over four are therefore DIFFERENT products with different identities, not one product edited twice; assembly is immutable, like every other act in this slice. Addressed to nobody: the designer asserts the assembly, and a regulator, an auditor or a downstream publisher READS it. Two consequences a verifier must know, quoted rather than paraphrased. An ACDC is a container for authentic data 'only (not authentic data as an authorization or entitlement to a specified party)', so nothing can read authority off this container. And for an `I2I` edge 'to be valid, the ACDC node pointed to by this Edge MUST be a Targeted ACDC', while an edge whose far node 'does not have an Issuee' has `NI2I` appended to its effective operator list by a MUST -- the mandate is untargeted, so the edge below is NI2I and could be nothing else. Carries `ri`: this bundle is registry-backed and revocable (Amendment C \u00a714.1). Assembly itself is never edited -- a different set of programs is still a different bundle with its own SAID -- but the designer can withdraw a bundle, so the lifecycle has two states, `assembled` and `withdrawn`, and the `withdraw_bundle` command drives the transition. PUBLISHING IS OUT OF SCOPE and so is completeness -- nothing in this schema decides when a bundle is finished, and no attribute claims it is publishable.",
+  "credentialType": "UsuranceProductBundle",
+  "version": "1.0.0",
+  "type": "object",
+  "properties": {
+    "v": {
+      "description": "ACDC version string.",
+      "type": "string"
+    },
+    "d": {
+      "description": "ACDC SAID. This is the PRODUCT's identity -- a digest over the assembled content, which is the whole reason no `product_id` exists anywhere in this slice.",
+      "type": "string"
+    },
+    "i": {
+      "description": "Issuer AID -- the assembling product designer. This is the ISSUER field, not an Issuee; an untargeted ACDC still has an issuer, which is what makes its authorship verifiable.",
+      "type": "string"
+    },
+    "ri": {
+      "description": "Registry identifier (TEL) whose state says whether this bundle is still current. Present because a bundle is withdrawable: the designer can retract it, and a consumer must be able to learn that without asking her. Registry naming follows the shipped convention, one management TEL per credential type keyed by its schema SAID; the per-credential iss/rev entries under it are automatic (register finding 79).",
+      "type": "string"
+    },
+    "s": {
+      "description": "Schema SAID -- simultaneously this ACDC's type identity and its immutable validation rules.",
+      "type": "string"
+    },
+    "a": {
+      "oneOf": [
+        {
+          "description": "Attribute block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "ENJfMbDaEtSX0VtDfiwGtIt-a7PdqDe-rSvodE7vnCOP",
+          "description": "Attributes of the bundle. NO `i`: untargeted by construction, and the envelope agrees by omitting holder_role.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Attributes block SAID.",
+              "type": "string"
+            },
+            "dt": {
+              "description": "Issuance date-time. This IS the assembly time; an `assembled_at` attribute would restate a mandatory envelope field.",
+              "type": "string",
+              "format": "date-time"
+            },
+            "bundle_name": {
+              "description": "The designer's own name for this bundle, in their language. Prose, deliberately unpatterned, and deliberately NOT an identifier: it is a label a human reads, it is not unique, nothing routes on it, and two bundles may legitimately share it while differing in content. The identity is `d`.",
+              "type": "string",
+              "minLength": 1
+            },
+            "rate_program_saids": {
+              "description": "SAIDs of the rate_program_attestation ACDCs assembled into this bundle. REFERENCES, not copied attribute values: each attestation already holds its own manifest SAID, version, filing date and action, and duplicating those here would create a second copy able to disagree with the artifact it describes. A `*_said` field pointing at someone else's credential is a reference to a decision rather than a record of one, which is why this is not an identity smell. WHY THESE ARE NOT EDGES, since the obvious question is why the bundle does not chain to each program: an ACDC Edge-group's members are *labeled* edges with no array form defined in the specification, so '1..N of the same kind, count unknown when the schema is written' has no clean representation -- and an open-label group makes the compliance linter find zero edge blocks, so its NI2I and node checks silently stop running. The corpus agrees: the prior designer bundle used only cardinality-one edges and expressed many shards through a manifest SAID. THE COST, stated plainly: the protocol does not resolve these strings, so a bundle naming a non-existent program is constructable. What prevents it is this role's authoring-time invariants -- the same enforcement level as the actuary's coverage check, and no stronger.",
+              "type": "array",
+              "items": {
+                "type": "string",
+                "minLength": 44,
+                "maxLength": 44
+              },
+              "minItems": 1,
+              "uniqueItems": true
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "dt",
+            "bundle_name",
+            "rate_program_saids"
+          ]
+        }
+      ]
+    },
+    "e": {
+      "oneOf": [
+        {
+          "description": "Edge block SAID, compact form.",
+          "type": "string"
+        },
+        {
+          "$id": "EPzL1XtY2qhYCYA6XDASGYAAksNeWu39NSIb0iE5uglO",
+          "description": "The single edge chaining this bundle to the mandate its programs were written under.",
+          "type": "object",
+          "properties": {
+            "d": {
+              "description": "Edge block SAID.",
+              "type": "string"
+            },
+            "mandate": {
+              "description": "NI2I reference to the product_mandate this whole bundle is scoped to. PROVENANCE ONLY -- no authority transfer: the designer's authority is the `product_designer_role` credential admin granted, and reading authorization off this edge would make the designer look authorized BY the CUO. REQUIRING it is what makes 'a product bundle assembled under no mandate' have no valid representation: validate_edge step 1 rejects a dangling `n`, and because `n` is a HASH the mandate must exist and be hashed first, so the direction of the edge is the direction of time. The graph this completes is a FAN-IN rather than a single chain -- this bundle and every rate program it names all point back at the same mandate -- which is what the sibling invariant `bundle_programs_share_one_mandate` exists to keep true, since the protocol can enforce that THIS edge resolves but cannot compare it against a far node's edge.",
+              "type": "object",
+              "properties": {
+                "n": {
+                  "description": "SAID of the product_mandate node.",
+                  "type": "string"
+                },
+                "s": {
+                  "description": "Schema SAID of product_mandate, minted by the Task 5 cascade. This field is ACDC wire content -- the spec's Edge map defines `s` as the 'Optional SAID of the JSON Schema block of the far node ACDC' -- so unlike the template's own `schema_said`/`schema_path` pair it has no path form: a verifier resolving an edge holds SAIDs and nothing else. That is the boundary of this project's defer-the-SAIDs ruling, and it is why this field carried a visible placeholder rather than being omitted while the set was being authored. Omitting `s` is spec-legal and would have kept the linter quiet, which is exactly why it was not done: linter S09 flags a non-SAID `const` on every run and says nothing at all about an absent `s`, so a placeholder is wrong-but-LOUD where omission is silently forgettable. ORDERING FOR ANY FUTURE RE-MINT: write the SAID here BEFORE saidifying this file. Editing it afterwards leaves the `$id` above disagreeing with its own bytes, and because this schema's SAID is pinned in the template, in a sibling bundle's import and in that bundle's vendored copy, the disagreement would surface only after those had been written.",
+                  "type": "string",
+                  "const": "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
+                },
+                "o": {
+                  "description": "Edge operator: NI2I (not-issuer-to-issuee).",
+                  "type": "string",
+                  "const": "NI2I"
+                }
+              },
+              "additionalProperties": false,
+              "required": [
+                "n",
+                "s",
+                "o"
+              ]
+            }
+          },
+          "additionalProperties": false,
+          "required": [
+            "d",
+            "mandate"
+          ]
+        }
+      ]
+    }
+  },
+  "additionalProperties": false,
+  "required": [
+    "v",
+    "d",
+    "i",
+    "ri",
+    "s",
+    "a",
+    "e"
+  ]
+}

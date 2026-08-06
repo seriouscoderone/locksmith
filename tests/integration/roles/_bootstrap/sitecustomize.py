@@ -94,6 +94,25 @@ touches a tracked file):
    pipeline lands and verifies it exactly as it would any other peer
    delivery — see `directing.py`'s `vry=self.verifier` fix, without which an
    ACDC message over this same transport is silently dropped.
+
+6. (Task 6) ``ProductDesignerPlugin.required_credential.issuer_aids`` — same
+   trusted test-admin substitution as patches 2/4, for `product_designer_role`
+   (mirrors production exactly: `ProductDesignerPlugin` already hardcodes the
+   SAME `USURANCE_ADMIN_AID` cuo/actuary do, so trusting `_TEST_ADMIN_AID`
+   here is the identical substitution, not a new one). Also wraps
+   ``ProductDesignerPlugin.on_vault_opened`` to pin `product_designer_role`'s
+   OWN gate schema (read from ``PD_TEST_ROLE_SCHEMA_PATH``) — the credential
+   must be schema-resolvable to land in `reger.saved`/`reger.creds` at all
+   (`Verifier.processCredential`'s `MissingSchemaError` path otherwise), and
+   nothing pumps `Verifier.processEscrows()` on the peer-connection path
+   (`directing.py`'s own `escrowDo` only re-drives `kevery`/`tvy`, never
+   `verifier` — measured, not assumed), so a credential that arrives before
+   its schema is pinned would sit in `reger.mse` forever rather than
+   eventually landing. Unlike `product_mandate`/`rate_program_attestation`
+   (pinned by `ProductDesignerPage.__init__` itself — genuine production
+   behavior, not a test patch), `product_designer_role` is the GATE schema:
+   nothing constructs the page until the gate is already open, so nothing
+   else can pin it first.
 """
 from __future__ import annotations
 
@@ -299,6 +318,32 @@ def _patch() -> None:
                     "roles_test.mandate_export_failed said=%s", said)
 
     cuo_page_module.CuoMandatePage._show_declared = _show_declared_and_export
+
+    # -- 6. (Task 6) the product_designer plugin's trusted issuer + gate-schema
+    # seeding, mirroring blocks 2/4 exactly for product_designer_role -----------
+    import locksmith.plugins.product_designer.plugin as designer_plugin_module
+
+    designer_plugin_module.ProductDesignerPlugin.required_credential = RequiredCredential(
+        schema_said=designer_plugin_module.PD_ROLE_SCHEMA_SAID,
+        issuer_aids=[admin_aid],
+        required_state="active",
+    )
+
+    pd_schema_path_str = os.environ.get("PD_TEST_ROLE_SCHEMA_PATH")
+    if pd_schema_path_str:
+        pd_schema_path = Path(pd_schema_path_str)
+        _orig_pd_on_vault_opened = designer_plugin_module.ProductDesignerPlugin.on_vault_opened
+
+        def _pd_on_vault_opened_and_seed(self, vault):
+            _orig_pd_on_vault_opened(self, vault)
+            from keri.core import scheming
+            from keri.kering import Kinds
+
+            sad = json.loads(pd_schema_path.read_text())
+            schemer = scheming.Schemer(sed=sad, kind=Kinds.json)
+            vault.hby.db.schema.pin(keys=(schemer.said,), val=schemer)
+
+        designer_plugin_module.ProductDesignerPlugin.on_vault_opened = _pd_on_vault_opened_and_seed
 
 
 try:
