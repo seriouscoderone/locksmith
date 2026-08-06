@@ -267,10 +267,30 @@ def _expose_and_export(devctl, sock, alias: str) -> str:
 
 def open_vault_holding_cuo_role(
     devctl, sock, *, vault_name: str = "cuovault", alias: str = "cuo",
+    admin_state: dict | None = None,
 ) -> None:
     """Bring up a real vault + AID at `sock`, then make it GENUINELY hold an
     active, chain-verified `cuo_role` credential. See the module docstring
-    above for the full design."""
+    above for the full design.
+
+    `admin_state`: when given, the (still-open) admin `Habery`/`Hab`/`Regery`
+    that minted this credential — plus the credential's own SAID, the
+    registry name, and the wallet's peer-listener port — are stashed into it
+    INSTEAD of closing `admin_hby` (the caller then owns closing it). Needed
+    by `revoke_cuo_role_and_deliver` (Task 7), which must later revoke THIS
+    SAME registry entry: `_build_test_admin()` mints a fresh, EMPTY
+    environment on every call — `temp=True` Haberies live under a freshly
+    `tempfile.mkdtemp`ed directory each construction
+    (`hio.base.filing.Filer.reopen`'s own temp-path branch), and
+    `Habery.close()` always clears a temp resource regardless of its `clear`
+    flag — so a second `_build_test_admin()` call would carry the SAME
+    deterministic admin AID but NONE of this registry's TEL/credential
+    state. Revoking through a re-derived admin party would therefore either
+    crash (`registryByName` returns `None`) or, worse, silently mint+revoke
+    an UNRELATED credential the wallet was never granted, leaving the real
+    one (and its surface) untouched. Default `None` preserves the exact
+    prior behavior (close immediately) for every other caller of this
+    helper (`declare_mandate_via_ui` and its own callers)."""
     open_test_vault_via_ui(devctl, sock, name=vault_name)
     create_aid_via_ui(devctl, sock, alias=alias)
     cuo_port = free_port()
@@ -333,7 +353,22 @@ def open_vault_holding_cuo_role(
         for msg in admin_rgy.reger.clonePreIter(pre=said):
             artifact_stream.extend(msg)
     finally:
-        admin_hby.close()
+        if admin_state is None:
+            admin_hby.close()
+        else:
+            admin_state.update(
+                hby=admin_hby, hab=admin_hab, rgy=admin_rgy,
+                cred_said=said, registry_name=registry_name, port=cuo_port,
+                # the wallet's own AID prefix — admin already resolved it
+                # above; a LATER caller minting a second credential for the
+                # SAME wallet (grant_actuary_role_to_cuo_wallet) needs it too,
+                # and re-deriving it via a second import_peer_blob call does
+                # NOT work for an already-known AID (parse_oobi_cesr's
+                # `new_kevers` list is empty on a re-parse, so without an
+                # `expect=` it reports `damaged_stream` even though nothing
+                # is actually wrong — measured).
+                holder_pre=cuo_pre,
+            )
 
     # Deliver the registry's TEL over the real peer connection FIRST, as its
     # own message(s) — NOT bundled with the grant exn. Once the wallet's own
@@ -389,6 +424,266 @@ def open_vault_holding_cuo_role(
         time.sleep(0.5)
     else:
         raise AssertionError(f"the Underwriting menu entry never appeared: {last}")
+
+
+# ---------------------------------------------------------------------------
+# Task 7 helpers: grant_actuary_role_to_cuo_wallet, _complete_revoke,
+# revoke_cuo_role_and_deliver -- the cuo revocation slice (done-when #5).
+# ---------------------------------------------------------------------------
+
+def grant_actuary_role_to_cuo_wallet(devctl, sock, admin_state: dict) -> None:
+    """Grant a SECOND gated role -- `actuary_role` -- to the SAME wallet/AID
+    `open_vault_holding_cuo_role` (called with `admin_state=`) already
+    granted `cuo_role` to, using the SAME live admin session (continuing
+    its KEL forward) rather than a fresh `_build_test_admin()` party or a
+    second real peer pairing. Exists so a revocation test can prove
+    SELECTIVITY at the real UI layer: a sibling gated surface on the SAME
+    identity must survive revoking a DIFFERENT role -- a claim a second
+    wallet cannot demonstrate (a different OS process is independent by
+    construction, not by the revocation code's own selectivity).
+
+    Two measured constraints shape this, both real app-level behaviors this
+    helper works AROUND rather than through:
+
+    1. A FRESH `_build_test_admin()` party would carry the SAME
+       deterministic `_TEST_ADMIN_AID` (both plugins' `required_credential`
+       trust ONLY that AID -- sitecustomize.py patches 2 and 4) but its OWN
+       independent KEL, starting again at inception. Delivering ITS
+       registry-inception `ixn` to a wallet that already knows this AID's
+       KEL through a HIGHER sn (from the cuo grant) would be a KEL FORK, not
+       an extension. So this reuses `admin_state`'s SAME live
+       Habery/Hab/Regery, continuing its KEL forward instead.
+    2. `AddPeerDialog` refuses to re-pair an AID the vault already has as a
+       contact ("This peer is already paired with this vault.", measured in
+       `add_dialog.py::_on_pair_clicked`) -- so this does NOT re-run
+       `import_peer_blob_via_ui`. Admin's KEL growth (the actuary
+       registry-inception + issuance `ixn`s) is instead delivered as raw
+       bytes over the SAME peer connection already open
+       (`admin_state["port"]`), landed by the wallet's own real Kevery --
+       the identical mechanism `revoke_cuo_role_and_deliver` (below) uses to
+       deliver a revocation without re-pairing.
+
+    Runs a SECOND "Accept Credential Issuance" -> "Accept Credential Grant"
+    cycle on this wallet (the first was cuo's own grant, inside
+    `open_vault_holding_cuo_role`). Both dialogs are `LocksmithDialog`
+    subclasses whose `.close()`/`.accept()` HIDE rather than destroy (no
+    `WA_DeleteOnClose` -- see `dialogs.py`'s `showEvent`/`closeEvent`), so
+    the first cycle's now-hidden instances are still in the tree when this
+    second cycle opens its own -- the SAME not-destroyed-on-close shape as
+    `ViewIdentifierDialog`/`AddPeerDialog` elsewhere in this file. `wait_for`
+    (visibility-UNFILTERED `_find_widget_any`) therefore needs an
+    `occurrence` override to select the live (second-created) instance --
+    see the two wait_for calls below for the EXACT index each selector
+    needs (they differ: a label-text selector matches twice per dialog
+    instance, an objectName/button-text selector once). `type`/`click`
+    (visibility-FILTERED `_find_widget`, and with NO occurrence support at
+    all -- see `_export_current_blob`'s docstring) already exclude the
+    hidden stale ones, so they need no override.
+
+    Leaves the wallet navigated to `actuaryPage` (mirrors
+    `open_vault_holding_actuary_role`'s own tail poll). Does NOT close
+    `admin_state["hby"]` -- the caller (here, `revoke_cuo_role_and_deliver`,
+    called afterward) owns that."""
+    admin_hby = admin_state["hby"]
+    admin_hab = admin_state["hab"]
+    admin_rgy = admin_state["rgy"]
+    port = admin_state["port"]
+    # Admin already resolved this wallet's key state during the cuo grant
+    # (`open_vault_holding_cuo_role`'s own `cuo_pre = import_peer_blob(...)`)
+    # and `admin_state` carries it forward as `holder_pre`. Re-deriving it
+    # via a SECOND `import_peer_blob` call does NOT work for an
+    # already-known AID: `parse_oobi_cesr`'s `new_kevers` list is empty on a
+    # re-parse (nothing NEW landed), and without an explicit `expect=` that
+    # reads as `damaged_stream` even though nothing is actually wrong
+    # (measured) — so this reuses the prefix rather than re-importing it.
+    actuary_pre = admin_state["holder_pre"]
+
+    from keri_serviceaid.providers import frame_grant_for, issue_credential
+    from locksmith.core.credentialing import outputKEL
+
+    registry_name = ACTUARY_ROLE_SCHEMA_SAID
+    said = issue_credential(
+        admin_hby, admin_hab, admin_rgy,
+        schema_said=ACTUARY_ROLE_SCHEMA_SAID, recipient=actuary_pre,
+        attributes={}, registry_name=registry_name,
+    )
+    _grant_said, grant_raw = frame_grant_for(
+        admin_hby, admin_hab, admin_rgy,
+        credential_said=said, recipient=actuary_pre, return_raw=True,
+    )
+
+    # Admin's OWN KEL (now carrying the actuary registry-inception +
+    # issuance ixns, ON TOP of cuo's own) + the actuary registry's TEL + the
+    # actuary credential's own TEL -- all over the wire, no re-pairing.
+    registry = admin_rgy.registryByName(registry_name)
+    artifact_stream = bytearray()
+    artifact_stream.extend(outputKEL(admin_hby, admin_hab.pre))
+    for msg in admin_rgy.reger.clonePreIter(pre=registry.regk):
+        artifact_stream.extend(msg)
+    for msg in admin_rgy.reger.clonePreIter(pre=said):
+        artifact_stream.extend(msg)
+
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as s:
+        s.sendall(bytes(artifact_stream))
+    time.sleep(1.0)  # let the wallet's Reactant/Kevery/Tevery land it
+
+    fd, cesr_path = tempfile.mkstemp(
+        suffix=".cesr", prefix="actuary_role_grant_sibling_")
+    with os.fdopen(fd, "wb") as f:
+        f.write(grant_raw)
+
+    # open_vault_holding_cuo_role's own tail leaves the wallet on
+    # CuoMandatePage, reached by clicking "Underwriting" while the nav's own
+    # state still reads "in credentials" -- the SAME VaultNavMenu desync
+    # watch_cuo_mandate_via_peer's docstring documents (its own back-button
+    # never became visible). The credentials submenu's OWN back button pops
+    # to the top-level menu, where `vaultNavMenu.credentialsButton` exists
+    # to click again below.
+    devctl(sock, "click", target="vaultNavMenu.credentialsBackButton")
+
+    r = devctl(sock, "click", target="vaultNavMenu.credentialsButton")
+    assert r.get("ok"), f"expand Credentials submenu (sibling grant): {r}"
+    r = devctl(sock, "click", target="vaultNavMenu.receivedCredentialsButton")
+    assert r.get("ok"), f"navigate to Received Credentials (sibling grant): {r}"
+    r = devctl(sock, "click", target="Accept Credential Issuance")
+    assert r.get("ok"), f"open Accept Credential dialog (sibling grant): {r}"
+    # occurrence=2, NOT 1: "File Path" is a plain LABEL-TEXT selector (no
+    # objectName), and FloatingLabelLineEdit yields TWO matches per dialog
+    # instance for such a selector -- the inner QLabel's `.text()` AND the
+    # wrapper widget's own `_label_text` attribute (`_find_widget_any`
+    # checks both) -- so ONE stale AcceptCredentialDialog (cuo's own, from
+    # `open_vault_holding_cuo_role`) contributes matches at indices 0-1, and
+    # this second, live dialog's own pair starts at index 2 (measured: a
+    # `count`/`is_visible` sweep showed occurrence 0 and 1 both
+    # `visible=False`, occurrence 2 `visible=True`). objectName-selected
+    # targets elsewhere in this file (e.g. `viewIdentifierDialog.aidField`)
+    # only ever get ONE match per instance, hence occurrence=1 there.
+    r = devctl(sock, "wait_for", target="File Path", condition="visible",
+              timeout_ms=3000, occurrence=2)
+    assert r.get("ok"), f"Accept Credential dialog (sibling grant) never appeared: {r}"
+    r = devctl(sock, "type", target="File Path", text=cesr_path)
+    assert r.get("ok"), f"type grant file path (sibling grant): {r}"
+    r = devctl(sock, "click", target="Load")
+    assert r.get("ok"), f"click Load (sibling grant): {r}"
+
+    # "Admit" is a plain LocksmithButton (`.text()` only, no label_text
+    # duplicate), so it gets exactly ONE match per instance -- occurrence=1
+    # skips cuo's own now-stale AcceptGrantDialog and lands on this live one.
+    r = devctl(sock, "wait_for", target="Admit", condition="visible",
+              timeout_ms=5000, occurrence=1)
+    assert r.get("ok"), f"AcceptGrantDialog (sibling grant) never opened: {r}"
+    r = devctl(sock, "click", target="Admit")
+    assert r.get("ok"), f"click Admit (sibling grant): {r}"
+
+    # Mirrors open_vault_holding_actuary_role's own tail poll.
+    deadline = time.time() + 15.0
+    last = None
+    while time.time() < deadline:
+        r = devctl(sock, "click", target="Actuarial")
+        if r.get("ok"):
+            break
+        last = r
+        time.sleep(0.5)
+    else:
+        raise AssertionError(
+            f"the Actuarial menu entry never appeared (sibling grant): {last}")
+
+
+def _complete_revoke(rgy, registrar, pre, sn, rounds: int = 64) -> None:
+    """Pump the no-backer TEL revoke escrow on a virtual-time Doist until the
+    `rev` event is committed. Re-derived (not imported) from
+    `test_carrier_gate_e2e.py`'s own `_complete` -- same cross-test-module
+    convention this file's other sibling-test re-derivations already follow
+    (see `_expose_and_export`'s docstring) -- narrowed to the registrar-only
+    path a revoke needs (no verifier/credentialer args, unlike issuance)."""
+    from hio.base import doing
+
+    doist = doing.Doist(real=False, tock=1.0)
+    deeds = doist.enter(doers=[registrar])
+    try:
+        for _ in range(rounds):
+            if registrar.complete(pre=pre, sn=sn):
+                return
+            rgy.processEscrows()
+            doist.recur(deeds=deeds)
+        raise AssertionError(f"TEL revoke did not complete: pre={pre} sn={sn}")
+    finally:
+        doist.exit(deeds=deeds)
+
+
+def revoke_cuo_role_and_deliver(admin_state: dict) -> None:
+    """Revoke the `cuo_role` credential `open_vault_holding_cuo_role` (called
+    with `admin_state=`) already granted to a wallet, and deliver the
+    revocation over a real peer connection -- the two Task-7 recipes, BOTH
+    load-bearing. Takes no `devctl`/`two_wallets`: this drives no UI, only
+    the admin-side issuer machinery + the wire delivery the recipient
+    wallet's OWN Reactant lands on its own (the UI test that calls this
+    separately `wait_for`s the visible effect on its own socket).
+
+    Issuer side, following `test_carrier_gate_e2e.py:616`'s `_revoke`
+    EXACTLY: `registry.revoke()` -> `SealEvent` -> version-pinned
+    `hab.interact()` -> `Registrar.revoke()`. Skipping the interact leaves
+    the TEL unanchored -- `registrar.complete()` never returns True (there is
+    no anchoring seal in `admin_hab`'s KEL for `_complete_revoke` to find),
+    so the revocation would be invisible to any holder however delivered.
+
+    Holder side, mirroring `test_multi_role_e2e.py:183`'s `_deliver_rev`
+    idiom (issuer KEL + credential TEL) -- except these bytes travel over
+    the SAME real peer TCP connection `open_vault_holding_cuo_role` already
+    opened wallet B's listener on (`admin_state["port"]`), landed by wallet
+    B's OWN real Reactant/Kevery/Tevery in its own subprocess, not parsed
+    in-process. Reusing that port for a SECOND delivery is a proven pattern
+    in this file already -- `deliver_rate_program_to_designer` sends two
+    separate messages to the same `designer_port` across two legs.
+
+    Requires `admin_state` to be the SAME dict `open_vault_holding_cuo_role`
+    populated (its `hby`/`hab`/`rgy` must still be the live party that
+    minted the credential wallet B holds -- see that function's own
+    docstring for why a fresh `_build_test_admin()` party cannot stand in).
+    Closes `admin_state["hby"]` when done -- this is the one-shot consumer
+    of the state that function stashed."""
+    from keri.app import grouping
+    from keri.core import eventing, serdering
+    from keri.help import helping
+    from keri.kering import Vrsn_1_0
+    from keri.vdr import credentialing
+
+    from locksmith.core.credentialing import outputKEL, outputTEL
+
+    admin_hby = admin_state["hby"]
+    admin_hab = admin_state["hab"]
+    admin_rgy = admin_state["rgy"]
+    said = admin_state["cred_said"]
+    registry_name = admin_state["registry_name"]
+    port = admin_state["port"]
+
+    try:
+        registry = admin_rgy.registryByName(registry_name)
+        assert registry is not None, (
+            f"registry {registry_name!r} not found in the SAME admin party "
+            "that minted the credential -- admin_state must come from the "
+            "matching open_vault_holding_cuo_role(admin_state=...) call")
+        counselor = grouping.Counselor(hby=admin_hby)
+        registrar = credentialing.Registrar(
+            hby=admin_hby, rgy=admin_rgy, counselor=counselor)
+        creder = admin_rgy.reger.cloneCred(said=said)[0]
+        rserder = registry.revoke(said=said, dt=helping.nowIso8601())
+        rseal = eventing.SealEvent(rserder.pre, rserder.snh, rserder.said)
+        rseal = dict(i=rseal.i, s=rseal.s, d=rseal.d)
+        anc = admin_hab.interact(data=[rseal], version=Vrsn_1_0)
+        registrar.revoke(creder=creder, rserder=rserder,
+                         anc=serdering.SerderKERI(raw=bytes(anc)))
+        _complete_revoke(admin_rgy, registrar, rserder.pre, rserder.sn)
+
+        stream = bytearray()
+        stream.extend(outputKEL(admin_hby, admin_hab.pre))
+        stream.extend(outputTEL(admin_rgy, said))
+    finally:
+        admin_hby.close()
+
+    with socket.create_connection(("127.0.0.1", port), timeout=5.0) as s:
+        s.sendall(bytes(stream))
+    time.sleep(1.0)  # let wallet B's Reactant/Kevery/Tevery land the revoke
 
 
 # ---------------------------------------------------------------------------
