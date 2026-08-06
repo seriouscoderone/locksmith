@@ -100,7 +100,15 @@ def _wait_for_socket(socket_path: Path, timeout: float = 60.0) -> None:
 
 def _devctl(socket_path: Path, op: str, **kwa) -> dict:
     sock = socket.socket(socket.AF_UNIX)
-    sock.settimeout(5.0)
+    # The CLIENT must outwait the SERVER, or a server-side poll is silently
+    # capped by the client's patience. `wait_for` blocks up to its own
+    # `timeout_ms` before replying and callers pass values up to 15000, so a
+    # fixed 5s socket timeout turned every one of those into "5 seconds or
+    # bust": green on an idle machine, TimeoutError under load, and the failure
+    # points at the socket rather than at the condition that was still pending.
+    # Give the server its full budget plus headroom for the round trip.
+    budget_s = float(kwa.get("timeout_ms") or 0) / 1000.0
+    sock.settimeout(max(5.0, budget_s + 5.0))
     sock.connect(str(socket_path))
     payload = json.dumps({"op": op, **kwa}).encode("utf-8") + b"\n"
     sock.sendall(payload)
