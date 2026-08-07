@@ -114,6 +114,16 @@ class HoaShellPlugin(VaultPlugin):
         from keri_serviceaid.egf.errors import EgfError
 
         if not (brand().onboarding_enabled and isinstance(vault_page, HoaVaultPage)):
+            # Say WHY. Both halves are brand-driven and either one silently
+            # disables the entire HOA surface — no onboarding, no EGF
+            # resolution, no per-vault doers — while the wallet still looks
+            # branded. Diagnosing that from outside meant guessing between the
+            # brand file, the composed-plugin list and the page class.
+            logger.info(
+                "hoa.shell_inactive onboarding_enabled=%s vault_page=%s "
+                "(peel_core_pages decides the page class)",
+                brand().onboarding_enabled, type(vault_page).__name__,
+            )
             return
 
         try:

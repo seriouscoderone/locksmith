@@ -143,9 +143,19 @@ class PluginManager:
         # brand() resolved HERE (not inside the rules) so the policy stays pure
         # and `manager.brand` remains the one patch point tests already use.
         rules = activation_policy.default_rules(excluded, brand())
+        seen = []
         for origin in self._origins:
             for candidate in origin.candidates():
+                seen.append(f"{candidate.plugin_id}@{candidate.origin_id}")
                 self._consider(candidate, origin, rules)
+        # One line saying what this build actually found and kept. Composed
+        # plugins are brand-gated, so "the HOA shell never loaded" has several
+        # indistinguishable causes -- no entry point, brand did not list it,
+        # another origin claimed the id -- and none of them said anything at
+        # INFO. A wallet that silently ships without its shell looks branded
+        # and behaves like a stock wallet.
+        logger.info("plugin.discovery candidates=%s loaded=%s bundled=%s",
+                    seen, sorted(self._plugins), list(brand().bundled_plugins))
         self._call_initialize_on_all()
 
     #: Skip reasons recorded only in the log — the pre-change code returned
