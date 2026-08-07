@@ -11,6 +11,7 @@ from hio.help import decking
 from keri import help, kering
 from keri.core import eventing, routing
 from keri.core import parsing
+from keri.app import prodding
 from keri.vdr.eventing import Tevery
 
 logger = help.ogler.getLogger(__name__)
@@ -354,7 +355,8 @@ class Directant(doing.DoDoer):
        ._tock is hidden attribute for .tock property
     """
 
-    def __init__(self, hab, server, verifier=None, exchanger=None, doers=None, cues=None, **kwa):
+    def __init__(self, hab, server, verifier=None, exchanger=None, doers=None, cues=None,
+                 disclosable=None, prodPolicy=None, **kwa):
         """
         Initialize instance.
 
@@ -371,6 +373,11 @@ class Directant(doing.DoDoer):
         self.verifier = verifier
         self.exchanger = exchanger
         self.server = server  # use server for cx
+        # Forwarded verbatim to every per-connection Reactant, which is where
+        # the ProdResponder lives (only the Reactant owns a kevery and a way to
+        # write back on the connection the prod arrived on).
+        self.disclosable = disclosable
+        self.prodPolicy = prodPolicy
         self.rants = dict()
         self.cues = cues if cues is not None else decking.Deck()
 
@@ -420,7 +427,9 @@ class Directant(doing.DoDoer):
                 # bytes — every short-lived peer connection lost data.
                 if ca not in self.rants and (ix.rxbs or not ix.cutoff):
                     rant = Reactant(tymth=self.tymth, hab=self.hab, verifier=self.verifier,
-                                    exchanger=self.exchanger, remoter=ix, cues=self.cues)
+                                    exchanger=self.exchanger, remoter=ix, cues=self.cues,
+                                    disclosable=self.disclosable,
+                                    prodPolicy=self.prodPolicy)
                     self.rants[ca] = rant
                     # add Reactant (rant) doer to running doers
                     self.extend(doers=[rant])  # open and run rant as doer
@@ -505,7 +514,8 @@ class Reactant(doing.DoDoer):
 
     """
 
-    def __init__(self, hab, remoter, verifier=None, exchanger=None, doers=None, cues=None, **kwa):
+    def __init__(self, hab, remoter, verifier=None, exchanger=None, doers=None, cues=None,
+                 disclosable=None, prodPolicy=None, **kwa):
         """
         Initialize instance.
 
@@ -519,6 +529,13 @@ class Reactant(doing.DoDoer):
             verifier is Verifier instance of local controller's TEL context
             remoter is TCP Remoter instance
             doers is list of doers (do generator instances, functions or methods)
+            disclosable (dict|None): said -> SAD this controller consents to
+                disclose when prodded. Built by a RULE over its own
+                credentials (keri_serviceaid.providers.disclosure), never
+                hand-curated -- a hand-kept map is an ACL keyed by SAID.
+                None means disclose nothing.
+            prodPolicy (callable|None): ProdResponder audience gate
+                (source, said, route, serder) -> bool.
 
         """
         self.hab = hab
@@ -528,9 +545,6 @@ class Reactant(doing.DoDoer):
         self.cues = cues if cues is not None else decking.Deck()
 
         doers = doers if doers is not None else []
-        doers.extend([doing.doify(self.msgDo),
-                      doing.doify(self.cueDo),
-                      doing.doify(self.escrowDo)])
 
         #  needs unique kevery with ims per remoter connnection
         rvy = routing.Revery(db=hab.db)
@@ -570,6 +584,49 @@ class Reactant(doing.DoDoer):
                                      rvy=rvy,
                                      vry=self.verifier,
                                      version=kering.Vrsn_1_0)
+
+        # -- answering a `pro` -------------------------------------------
+        # ORDER IS THE FIX, not merely the wiring. cueDo drains
+        # self.kevery.cues through hab.processCuesIter, which pull()s every cue
+        # unconditionally and dispatches on kind -- and it has no `prod` branch
+        # and no else, so a prod cue is pulled and silently DISCARDED. A
+        # ProdResponder scheduled after cueDo is handed an empty deck and
+        # produces zero bars, which on the wire is byte-identical to having no
+        # responder at all. A DoDoer runs its doers in list order, one recur per
+        # pass, so the responder must sit between msgDo (which parses the prod
+        # and pushes the cue) and cueDo (which would destroy it).
+        #
+        # pvrsn must match the Parser pin below (Vrsn_1_0): a bar built at a
+        # different major version is dropped by the asker's parser without an
+        # error, which is the same silent-zero again.
+        # A CALLABLE, snapshotted per connection. A dict fixed at listener
+        # startup would never contain a credential issued afterwards -- the
+        # mandate a CUO declares mid-session is exactly that case. Each
+        # inbound connection gets its own Reactant, and the asker opens a new
+        # connection per request, so snapshotting here is current.
+        if callable(disclosable):
+            try:
+                bodies = disclosable() or {}
+            except Exception:               # noqa: BLE001 -- disclose nothing on error
+                logger.exception("prod.disclosable_provider_failed")
+                bodies = {}
+        else:
+            bodies = disclosable if disclosable is not None else {}
+
+        self.prodder = prodding.ProdResponder(
+            hab=self.hab,
+            kvy=self.kevery,
+            disclosable=bodies,
+            policy=prodPolicy,
+            pvrsn=kering.Vrsn_1_0,
+        )
+
+        doers.extend([doing.doify(self.msgDo),
+                      prodding.ProdResponderDoer(
+                          responder=self.prodder,
+                          send=lambda msg: self.sendMessage(msg, label="bar")),
+                      doing.doify(self.cueDo),
+                      doing.doify(self.escrowDo)])
 
         super(Reactant, self).__init__(doers=doers, **kwa)
         if self.tymth:

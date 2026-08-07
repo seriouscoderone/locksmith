@@ -22,6 +22,7 @@ from hio.base import doing
 from hio.help import decking
 from keri import kering
 from keri.app import habbing
+from keri.core import serdering
 
 from locksmith.peer.doer import GuardedServerDoer
 from locksmith.peer.sending import peer_request
@@ -122,3 +123,75 @@ def test_ingest_response_is_a_no_op_on_an_empty_reply():
         hby.makeHab(name="me", version=kering.Vrsn_1_0)
         assert ingest_response(hby, b"") == 0
         assert ingest_response(hby, None) == 0
+
+
+def test_a_prod_gets_a_bar_back_and_the_body_lands():
+    """The whole point: ask for a sealed body, and HAVE IT.
+
+    Asserting a responder exists is not enough — three separate defects each
+    produced byte-identical silence on the wire, and every one of them would
+    pass a "responder is wired" test:
+
+      1. Kevery.anchoringPre could only match a bare {'d': said} seal, so a
+         credential anchored by issuance (a 3-field SealEvent) looked
+         UNANCHORED and processPro never cued.
+      2. cueDo's processCuesIter pulls a prod cue off the deck and discards it,
+         so a responder scheduled after it sees an empty deck.
+      3. disclosable defaults to {} and policy defaults to denyAll, so a
+         correctly-ordered responder still discloses nothing.
+
+    So this asserts the body itself comes back.
+    """
+    from keri.app import prodding
+    from keri_serviceaid.providers.peer_sync import body_request
+
+    port = _free_port()
+    with habbing.openHby(name="pb-disc", temp=True) as dhby, \
+            habbing.openHby(name="pb-ask", temp=True) as ahby:
+        disc = dhby.makeHab(name="discloser", version=kering.Vrsn_1_0)
+        asker = ahby.makeHab(name="asker", version=kering.Vrsn_1_0)
+
+        # An untargeted, unblinded ACDC-shaped SAD: no `u`, no `a.i`.
+        from keri.core import coring
+        sad = {"d": "", "i": disc.pre, "a": {"line_of_business": "auto",
+                                             "jurisdiction": "US-WI"}}
+        _, body = coring.Saider.saidify(sad=dict(sad))
+        said = body["d"]
+
+        # Anchor it the way credential issuance does: a 3-field SealEvent
+        # whose `i` is the credential SAID (credentialing.py:628).
+        disc.interact(data=[dict(i=said, s="0", d="E" + "T" * 43)])
+
+        listener = _Listener(disc, port)
+        listener.directant = turret_directing.Directant(
+            hab=disc, server=listener.server, cues=decking.Deck(),
+            disclosable=lambda: {said: body},
+            prodPolicy=prodding.openPolicy,
+        )
+        listener._thread = threading.Thread(
+            target=listener.doist.do,
+            kwargs={"doers": [GuardedServerDoer(server=listener.server),
+                              listener.directant]},
+            daemon=True)
+
+        with listener:
+            # The discloser must KNOW the asker before it can authenticate a
+            # signed prod (Kevery is lax=False). Pairing does this in the real
+            # system; here, deliver the asker's KEL over the same transport.
+            peer_request(None, disc.pre, bytes(asker.replay()),
+                         endpoint_url=f"tcp://127.0.0.1:{port}",
+                         read_timeout=1.0)
+
+            pro = body_request(asker, said, peer_pre=disc.pre)
+            reply = peer_request(None, disc.pre, pro,
+                                 endpoint_url=f"tcp://127.0.0.1:{port}",
+                                 read_timeout=4.0)
+
+        assert reply, "no bar came back — the prod was never answered"
+        assert b'"t":"bar"' in reply, f"reply is not a bar: {reply[:120]}"
+
+        got = prodding.ProdClient(hab=asker).harvest(
+            serdering.SerderKERI(raw=bytes(reply)), said)
+        assert got is not None, "bar carried no body for the requested SAID"
+        assert got["a"]["jurisdiction"] == "US-WI"
+        assert got["d"] == said, "body does not re-derive to the SAID asked for"

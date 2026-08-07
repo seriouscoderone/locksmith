@@ -7,6 +7,7 @@ from hio.base import doing
 from hio.help import decking
 from hio.core.tcp.serving import ServerDoer
 from keri import help
+from keri.app import prodding
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerModeSettings
@@ -89,12 +90,41 @@ class PeerDoer(doing.DoDoer):
             # (KELs still land via the always-present kvy.)
             cues = decking.Deck()
             first_hab = next(iter(getattr(hby, "habs", {}).values()), None)
+
+            # Answering a `pro`. Without this the listener parses a prod, the
+            # Kevery cues it, and cueDo pulls the cue off the deck and discards
+            # it -- measured live as 538 prods sent, 0 replies, 0 bodies held.
+            #
+            # `disclosable` is a CALLABLE evaluated per inbound connection, not
+            # a startup snapshot, so a mandate declared mid-session is
+            # disclosable without a restart. It is computed by a RULE over this
+            # controller's own credentials (untargeted AND unblinded) rather
+            # than curated: a hand-kept map would be an ACL keyed by SAID,
+            # which Principle VIII forbids as squarely as one keyed by AID.
+            #
+            # The policy is deliberately open, because the RULE is the gate.
+            # Everything it admits is an ACDC the spec calls public
+            # (no `u` -> "SHOULD be considered a public (non-confidential)
+            # ACDC") and untargeted -- addressed to whoever is watching. What
+            # this does NOT do is express "actuaries may, competitors may
+            # not"; that needs the disclosee to present authority, which is
+            # what ProdResponder's policy hook and the prod's q["az"] are for.
+            def _disclosable():
+                from keri_serviceaid.providers.disclosure import disclosable_bodies
+
+                verifier = self._verifier
+                if verifier is None or getattr(verifier, "reger", None) is None:
+                    return {}
+                return disclosable_bodies(verifier.reger)
+
             self.directant = turret_directing.Directant(
                 hab=first_hab,
                 server=self.server,
                 verifier=self._verifier,
                 exchanger=self.shim,
                 cues=cues,
+                disclosable=_disclosable,
+                prodPolicy=prodding.openPolicy,
             )
             doers = [server_doer, self.directant]
 
