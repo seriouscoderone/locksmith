@@ -117,8 +117,25 @@ class PeerDoer(doing.DoDoer):
                     return {}
                 return disclosable_bodies(verifier.reger)
 
+            # NOT first_hab for signing bars: that is the non-transferable
+            # peer-listener EID, and a bar it signs is rejected by the
+            # recipient's processBar as "not anchored" — the credential is
+            # anchored in the controller's OWN KEL, not the listener's.
+            # Guarded: receiving is this listener's core job, and it must not
+            # fail to start because the DISCLOSURE extra could not resolve a
+            # signer. Without one, prods simply go unanswered — which is the
+            # behaviour before this feature existed.
+            try:
+                from keri_serviceaid.providers.peer_sync import signing_hab
+                from locksmith.core.branding import brand
+                prod_hab = signing_hab(hby, brand().default_aid_alias or "default")
+            except Exception:               # noqa: BLE001
+                logger.debug("prod.signer_unresolved", exc_info=True)
+                prod_hab = None
+
             self.directant = turret_directing.Directant(
                 hab=first_hab,
+                prodHab=prod_hab,
                 server=self.server,
                 verifier=self._verifier,
                 exchanger=self.shim,

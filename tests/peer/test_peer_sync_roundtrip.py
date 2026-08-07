@@ -143,7 +143,8 @@ def test_a_prod_gets_a_bar_back_and_the_body_lands():
     So this asserts the body itself comes back.
     """
     from keri.app import prodding
-    from keri_serviceaid.providers.peer_sync import body_request
+    from keri.core import eventing as _eventing
+    from keri_serviceaid.providers.peer_sync import body_request, ingest_response
 
     port = _free_port()
     with habbing.openHby(name="pb-disc", temp=True) as dhby, \
@@ -162,11 +163,20 @@ def test_a_prod_gets_a_bar_back_and_the_body_lands():
         # whose `i` is the credential SAID (credentialing.py:628).
         disc.interact(data=[dict(i=said, s="0", d="E" + "T" * 43)])
 
+        # Production shape: the listener's own hab is the NON-TRANSFERABLE
+        # peer-listener EID (locksmith passes next(iter(hby.habs)) there), and
+        # the bar must nonetheless be signed by the controller that anchored
+        # the credential. A bar signed by the listener EID is rejected by the
+        # recipient with "Bare not anchored error: ... has no seal in KEL of
+        # B..." -- measured live.
+        listener_eid = dhby.makeHab(name="peer-listener", transferable=False,
+                                    version=kering.Vrsn_1_0)
         listener = _Listener(disc, port)
         listener.directant = turret_directing.Directant(
-            hab=disc, server=listener.server, cues=decking.Deck(),
+            hab=listener_eid, server=listener.server, cues=decking.Deck(),
             disclosable=lambda: {said: body},
             prodPolicy=prodding.openPolicy,
+            prodHab=disc,
         )
         listener._thread = threading.Thread(
             target=listener.doist.do,
@@ -194,3 +204,27 @@ def test_a_prod_gets_a_bar_back_and_the_body_lands():
         assert got is not None, "bar carried no body for the requested SAID"
         assert got["a"]["jurisdiction"] == "US-WI"
         assert got["d"] == said, "body does not re-derive to the SAID asked for"
+
+        # And it must SURVIVE processBar, which re-checks that the SAID is
+        # anchored in the KEL of the bar's SIGNER. Harvesting the bytes proves
+        # only that a bar came back; this proves the recipient accepts it.
+        import logging
+        from keri.core import parsing as _parsing
+        seen = []
+
+        class _Cap(logging.Handler):
+            def emit(self, r):
+                seen.append(r.getMessage())
+
+        h = _Cap()
+        for lg in (_parsing.logger, _eventing.logger):
+            lg.addHandler(h)
+            lg.setLevel(logging.ERROR)
+        try:
+            ingest_response(ahby, reply)
+        finally:
+            for lg in (_parsing.logger, _eventing.logger):
+                lg.removeHandler(h)
+
+        notanchored = [m for m in seen if "not anchored" in m]
+        assert not notanchored, f"recipient rejected the bar: {notanchored[:1]}"

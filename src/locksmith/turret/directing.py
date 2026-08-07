@@ -356,7 +356,7 @@ class Directant(doing.DoDoer):
     """
 
     def __init__(self, hab, server, verifier=None, exchanger=None, doers=None, cues=None,
-                 disclosable=None, prodPolicy=None, **kwa):
+                 disclosable=None, prodPolicy=None, prodHab=None, **kwa):
         """
         Initialize instance.
 
@@ -378,6 +378,7 @@ class Directant(doing.DoDoer):
         # write back on the connection the prod arrived on).
         self.disclosable = disclosable
         self.prodPolicy = prodPolicy
+        self.prodHab = prodHab
         self.rants = dict()
         self.cues = cues if cues is not None else decking.Deck()
 
@@ -429,7 +430,8 @@ class Directant(doing.DoDoer):
                     rant = Reactant(tymth=self.tymth, hab=self.hab, verifier=self.verifier,
                                     exchanger=self.exchanger, remoter=ix, cues=self.cues,
                                     disclosable=self.disclosable,
-                                    prodPolicy=self.prodPolicy)
+                                    prodPolicy=self.prodPolicy,
+                                    prodHab=self.prodHab)
                     self.rants[ca] = rant
                     # add Reactant (rant) doer to running doers
                     self.extend(doers=[rant])  # open and run rant as doer
@@ -515,7 +517,7 @@ class Reactant(doing.DoDoer):
     """
 
     def __init__(self, hab, remoter, verifier=None, exchanger=None, doers=None, cues=None,
-                 disclosable=None, prodPolicy=None, **kwa):
+                 disclosable=None, prodPolicy=None, prodHab=None, **kwa):
         """
         Initialize instance.
 
@@ -613,8 +615,16 @@ class Reactant(doing.DoDoer):
         else:
             bodies = disclosable if disclosable is not None else {}
 
+        # The bar MUST be signed by the DATA SOURCE, not by the listener.
+        # processBar checks that the disclosed SAID is anchored in the KEL of
+        # the bar's signer ("Bare not anchored error: ... has no seal in KEL of
+        # B..."), and self.hab here is whatever next(iter(hby.habs)) returned —
+        # in locksmith that is the NON-TRANSFERABLE peer-listener EID, whose
+        # KEL anchors nothing. The credential is anchored in the controller's
+        # own KEL, so that is the identity that must disclose it. Same
+        # next(iter(...)) trap already fixed on the asking side (signing_hab).
         self.prodder = prodding.ProdResponder(
-            hab=self.hab,
+            hab=prodHab if prodHab is not None else self.hab,
             kvy=self.kevery,
             disclosable=bodies,
             policy=prodPolicy,
