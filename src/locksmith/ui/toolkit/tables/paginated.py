@@ -4,6 +4,7 @@ locksmith.ui.toolkit.tables.paginated module
 
 Main paginated table widget with search, sort, and pagination.
 """
+import re
 from enum import Enum
 from pathlib import Path
 from typing import List, Dict, Any, Optional, Callable
@@ -204,6 +205,17 @@ class PaginatedTableWidget(QWidget):
 
         # Create table
         self.table = _HoverClearingTableWidget()
+        # Name the inner QTableWidget after its title so it is addressable the
+        # way hand-built tables already are (e.g. designerPage.receivedPrograms).
+        # Every PaginatedTableWidget in the app was anonymous, so `get_table_rows`
+        # — which requires an actual QTableWidget — could not reach ANY of them:
+        # resolving by the header title finds the QLabel that renders it, not the
+        # table. Cell text lives in QTableWidgetItems, which are not QWidgets and
+        # so are invisible to a widget-tree walk too, leaving no way at all to
+        # read one of these tables.
+        if title:
+            self.table.setObjectName(
+                f"table.{re.sub(r'[^A-Za-z0-9]+', '', title)}")
         self._setup_table()
         main_layout.addWidget(self.table)
 

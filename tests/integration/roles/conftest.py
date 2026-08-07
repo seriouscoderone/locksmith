@@ -1677,7 +1677,7 @@ def _select_combo_by_prefix(devctl, sock, target: str, prefix: str,
         f"no entry starting with {prefix!r} in {target}; saw {seen}")
 
 
-def load_issuable_schema_via_admin_ui(devctl, sock, schema_path) -> str:
+def load_issuable_schema_via_admin_ui(devctl, sock, schema_path: pathlib.Path) -> str:
     """Load a schema into a VANILLA wallet AND create its issuance registry.
 
     Returns the SAID the dialog extracted, so the caller can assert it is the
@@ -1718,16 +1718,36 @@ def load_issuable_schema_via_admin_ui(devctl, sock, schema_path) -> str:
     r = devctl(sock, "click", target="Load Schema")
     assert r.get("ok"), f"click Load Schema: {r}"
 
+    # The dialog closing IS the completion signal — `LoadSchemaDoer` emits
+    # `schema_loaded` and `AddSchemaDialog` accepts. Deterministic and fast:
+    # measured at well under a second for an unwitnessed issuer.
+    #
+    # This used to poll the Schemas table for a row containing `said`, which
+    # could NEVER match: SAID is a HIDDEN key on that table (its visible columns
+    # are Schema Name / Version / Issuable / Issuer / Description), exactly as on
+    # the Issued list. So the loop burned its full 30s budget and then fell
+    # through to `return said` anyway — a silent 30s per schema, twice per run,
+    # proving nothing. It was visible only as an unexplained pause on screen.
+    r = devctl(sock, "wait_for", target="File", condition="hidden",
+               timeout_ms=30000)
+    assert r.get("ok"), (
+        f"Add Schema dialog never closed — the load failed: {r}")
+
+    # And confirm the registry actually exists, which is the whole point of
+    # ticking the box: `IssueCredentialDialog` skips every schema without one.
     devctl(sock, "click", target="vaultNavMenu.schemaButton")
-    deadline = time.time() + 30.0
+    deadline, rows = time.time() + 15.0, None
     while time.time() < deadline:
-        rows = devctl(sock, "get_table_rows", target="Credential Schemas")
-        for row in (rows.get("rows") or rows.get("items") or []):
-            values = row if isinstance(row, (list, tuple)) else list(row.values())
-            if any(said in str(v) for v in values):
-                return said
-        time.sleep(1.0)
-    return said
+        r = devctl(sock, "get_table_rows", target="table.CredentialSchemas")
+        rows = r.get("rows")
+        if rows and any(row.get("Issuable") == "Yes" for row in rows):
+            return said
+        time.sleep(0.5)
+    raise AssertionError(
+        f"{schema_path.name} loaded but no schema on the page reports "
+        f"Issuable=Yes, so the registry was not created. The Issue dialog "
+        f"skips every schema without one and would silently not list it. "
+        f"Rows: {rows}")
 
 
 def issue_and_grant_role_via_admin_ui(devctl, sock, *, schema_prefix: str,
