@@ -797,3 +797,62 @@ def _admin_identity(devctl, sock) -> tuple[str, str]:
         f"could not read the admin's AID from the open View Identifier "
         f"dialog: {r}")
     return aid, token
+
+
+#: What a branded HOA lands on before any vault exists.
+SETUP_PAGE_FIELD = "setupPage.nameField"
+
+
+def open_workspace_via_hoa_setup(devctl, sock, name: str,
+                                 passcode: str = DEFAULT_TEST_PASSCODE,
+                                 timeout_ms: int = 20000) -> None:
+    """Drive a branded HOA's FIRST-RUN setup page to create its workspace.
+
+    An onboarding brand does not show the vault drawer on first run: it logs
+    `hoa.first_run reason=no_workspace path=setup` and mounts `SetupPage`
+    instead (ui/window.py:401-403). So `open_test_vault_via_ui`, which clicks
+    "Initialize New Vault" in the drawer, drives a surface that is not there —
+    and the HOA sits on setup with no vault, no EGF resolved and nothing
+    paired, which reads exactly like a broken ecosystem.
+
+    Submit is gated on name + matching passcodes (`_update_validity`), so all
+    three fields are filled before clicking; typing only the passcode leaves the
+    button disabled and the click silently does nothing.
+    """
+    r = devctl(sock, "wait_for", target=SETUP_PAGE_FIELD,
+               condition="visible", timeout_ms=timeout_ms)
+    assert r.get("ok"), f"HOA setup page never appeared: {r}"
+
+    for target, text in (("setupPage.nameField", name),
+                         ("setupPage.passcodeField", passcode),
+                         ("setupPage.confirmField", passcode)):
+        r = devctl(sock, "type", target=target, text=text)
+        assert r.get("ok"), f"fill {target}: {r}"
+
+    r = devctl(sock, "click", target="setupPage.submitButton")
+    assert r.get("ok"), f"click setup submit: {r}"
+
+    # Workspace creation incepts an identifier and brings transport up, so the
+    # landing page arrives asynchronously.
+    r = devctl(sock, "wait_for", target=SETUP_PAGE_FIELD,
+               condition="hidden", timeout_ms=timeout_ms)
+    assert r.get("ok"), (
+        f"setup page never closed — submit is gated on name + matching "
+        f"passcodes; is one field empty? {r}")
+    landing_target(devctl, sock, timeout_ms=timeout_ms)
+
+
+def open_vault_any_build(devctl, sock, name: str,
+                         passcode: str = DEFAULT_TEST_PASSCODE) -> str:
+    """Open a workspace whatever build this is; returns which path was taken.
+
+    Branded HOA on first run -> the setup page. Everything else -> the vault
+    drawer. Decided by what is ON SCREEN, not by an env var, so it stays right
+    for a brand this harness has never seen.
+    """
+    probe = devctl(sock, "is_visible", target=SETUP_PAGE_FIELD)
+    if probe.get("ok") and probe.get("visible"):
+        open_workspace_via_hoa_setup(devctl, sock, name, passcode)
+        return "hoa-setup"
+    open_test_vault_via_ui(devctl, sock, name, passcode)
+    return "vault-drawer"
