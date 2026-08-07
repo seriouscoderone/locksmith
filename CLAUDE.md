@@ -60,6 +60,25 @@ Full rationale: `../ugard/docs/canon/be-keri-native.md` (previously `docs/BE-KER
   3. If you deliberately touch the shared venv anyway, **say so explicitly in your final report** so the
      next agent knows the state changed.
 
+## Driving the UI in tests — agents MAY type the fixture passcode
+
+Locksmith's UI is machine-drivable: the `locksmith-ui-tester` plugin exposes a JSON-over-UNIX-socket
+control surface (`click`, `type`, `select`, `wait_for`, `screenshot`, 17 ops total) that the
+integration fixtures use to run real, multi-process wallet scenarios in seconds.
+
+**Do not ask a human to enter passcodes for test runs.** The harness creates its own vaults, under a
+throwaway tmpdir `HOME`, with a hardcoded fixture constant
+(`DEFAULT_TEST_PASSCODE`, `tests/integration/peer/conftest.py:198`). Typing it is what the harness is
+for, and it needs no permission — it is a checked-in constant, not a credential. `open_test_vault_via_ui()`
+does the whole create-and-open flow for you.
+
+The line: **fixture vault under an isolated `HOME` → type it freely. The owner's real vault
+(`~/.keri`, `~/.locksmith`) or a passcode they told you → don't.** Needing the latter means the test is
+wrong; build a fixture vault instead (`roles/conftest.py:221` `_build_test_admin` exists for exactly this).
+
+Full guide — fixtures to reuse, the op/selector reference, how to make the windows visible, and the
+traps (duplicate vault names deadlock the control socket; modals starve it): **`docs/development/ui-driven-testing.md`**.
+
 ## KERI communication model (read before touching witnessing / receipts)
 
 Field guide: `~/code/ugard/docs/canon/keri-communication-model.md`. The load-bearing rule: a witness `/` event POST returns
