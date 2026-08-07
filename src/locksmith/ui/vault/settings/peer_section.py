@@ -396,8 +396,20 @@ class PeerSettingsSection(QFrame):
             return
 
         rows = 0
-        for pre, hab in list(getattr(hby, "habs", {}).items()):
-            alias = getattr(hab, "name", None) or pre[:12]
+        for (ns, alias), pre in list(hby.db.names.getTopItemIter(keys=())):
+            # Namespaced habs are INFRASTRUCTURE, not identities the user
+            # manages: the `peer-listener` EID (ns="peer") owns the vault's
+            # listener socket, and the turret's settings hab (ns="settings") is
+            # likewise internal. `listener_eid.py` is explicit that surfacing
+            # the listener as a user identity "would be a lie about what it
+            # is" — and worse here, it would render as "not exposed for peer
+            # mode", inviting the user to go expose a thing that must not be.
+            # Same rule the Identifiers page applies (identifiers/list.py:106).
+            if ns != "":
+                continue
+            hab = hby.habByName(alias)
+            if hab is None:
+                continue
             row = QHBoxLayout()
             label = QLabel(f"{alias}\n{pre}")
             label.setStyleSheet("font-family: monospace; font-size: 10px;")

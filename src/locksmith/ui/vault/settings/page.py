@@ -249,12 +249,28 @@ class SettingsPage(QWidget):
         self._mount_peer_section_if_ready()
 
     def _mount_peer_section_if_ready(self):
-        if self.peer_section is not None:
-            return
+        """Mount the peer section, REBUILDING it when the open vault changed.
+
+        This used to return early whenever a section already existed, which
+        silently pinned it to whichever vault happened to be open the first
+        time the page was built. A window that then switched vaults kept
+        rendering the OLD vault's listener state, paired peers and identifiers
+        — indistinguishable from the new vault genuinely having them, because
+        `PeerSettingsSection` captures `vault` once in its constructor.
+
+        Found in the field: two HOA windows showed identical port and identical
+        peer-OOBIs while on-disk one of those vaults had no habs at all.
+        """
         if not self.app or not self.app.vault:
             return
         if self._peer_section_placeholder is None:
             return
+        if self.peer_section is not None:
+            if getattr(self.peer_section, "_vault", None) is self.app.vault:
+                return
+            self._peer_section_placeholder_layout.removeWidget(self.peer_section)
+            self.peer_section.deleteLater()
+            self.peer_section = None
         self.peer_section = PeerSettingsSection(vault=self.app.vault)
         self._peer_section_placeholder_layout.addWidget(self.peer_section)
 
