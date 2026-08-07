@@ -678,3 +678,40 @@ def test_bring_up_direct_transport_stops_at_budget(monkeypatch):
     plugin = _transport_plugin(MagicMock(name="vault"))
     plugin._bring_up_direct_transport(MagicMock(), attempt=39, max_attempts=40)
     assert scheduled == []                                    # budget spent, no reschedule
+
+
+# ---------------------------------------------------------------------------
+# on_vault_opened -- the watch's asking half is actually REGISTERED
+# ---------------------------------------------------------------------------
+
+def test_on_vault_opened_registers_the_peer_sync_doer(monkeypatch):
+    """PeerSyncDoer must be extended onto the vault, not merely importable.
+
+    This test exists because of the exact defect it guards: the WATCHING half
+    of "the actuary sees the mandate by watching the CUO's KEL" was verified by
+    AnchorWatcher and sealed_retrieval, both of which read a KEL/registry the
+    wallet ALREADY HOLDS -- and nothing ever ASKED a peer for updates. Every
+    unit test passed; no mandate was ever observed. A doer that exists, works
+    in isolation, and is registered nowhere reproduces that failure exactly, so
+    asserting the class is instantiable is not enough: assert it is WIRED.
+    """
+    from locksmith.core.peer_sync_doer import PeerSyncDoer
+    from locksmith.plugins.hoa_shell import plugin as shell_mod
+
+    monkeypatch.setattr(shell_mod.QTimer, "singleShot", lambda delay, slot: None)
+    monkeypatch.setattr(shell_mod, "make_hoa_oobi_source", lambda: None)
+
+    vault = MagicMock(name="vault")
+    plugin = HoaShellPlugin()
+    plugin.initialize(SimpleNamespace(vault=vault))
+    plugin._request_flow = MagicMock(name="request_flow")
+    plugin._home_page = MagicMock(name="home_page")
+    plugin._notifications_page = MagicMock(name="notifications_page")
+
+    plugin.on_vault_opened(vault)
+
+    extended = [d for call in vault.extend.call_args_list for d in call.args[0]]
+    assert any(isinstance(d, PeerSyncDoer) for d in extended), (
+        "PeerSyncDoer is not registered on the vault -- the watch has no asking "
+        f"half and will never observe a peer's anchors. Registered: {extended}"
+    )
