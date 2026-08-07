@@ -25,6 +25,7 @@ from __future__ import annotations
 from keri import help
 from hio.base import doing
 
+from locksmith.core.branding import brand
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.sending import peer_send
 
@@ -69,10 +70,17 @@ class PeerSyncDoer(doing.Doer):
         unreachable peer stops tracking every other peer too, and the failure
         would surface far from here."""
         try:
+            from keri_serviceaid.providers.peer_sync import signing_hab
+
             vault = getattr(self.app, "vault", None)
             if vault is None:
                 return
-            hab = next(iter(vault.hby.habs.values()), None)
+            # NOT next(iter(hby.habs.values())): that dict also holds
+            # infrastructure EIDs -- notably the non-transferable
+            # "peer-listener" -- and a query signed by a non-transferable AID
+            # is dropped by the receiver before it is ever processed. See
+            # signing_hab's docstring for the mechanism.
+            hab = signing_hab(vault.hby, brand().default_aid_alias or "default")
             if hab is None:
                 return                      # no identity yet — nothing to sign with
             for peer_pre in self._paired_peers(vault, hab):
@@ -97,7 +105,9 @@ class PeerSyncDoer(doing.Doer):
 
         # 1. Ask the peer to replay its own KEL. Anchors we have never seen
         #    cannot be requested until they are visible here.
-        self._send(vault, peer_pre, kel_sync_request(hab, peer_pre), "qry/logs")
+        first = peer_pre not in self._checkpoints
+        self._send(vault, peer_pre, kel_sync_request(hab, peer_pre), "qry/logs",
+                   announce=first)
 
         # 2. Ask for the bodies behind anchors we can see but do not hold.
         #    `missing_bodies` keeps this from re-requesting on every tick.
@@ -113,17 +123,30 @@ class PeerSyncDoer(doing.Doer):
 
         for said in missing_bodies(vault.rgy.reger, saids):
             self._send(vault, peer_pre, body_request(hab, said, peer_pre=peer_pre),
-                       f"pro/sealed {said[:12]}…")
+                       f"pro/sealed {said[:12]}…", announce=True)
 
-    def _send(self, vault, peer_pre: str, raw: bytes, label: str) -> None:
+    def _send(self, vault, peer_pre: str, raw: bytes, label: str,
+              announce: bool = False) -> None:
+        """`announce` promotes a send to INFO.
+
+        A 5s loop over every paired peer would bury the log at INFO, so the
+        routine tick stays at DEBUG. But logging the WHOLE feature at DEBUG
+        made it invisible in a build that logs at INFO: this doer ran for
+        minutes against a live demo emitting nothing of its own, and its
+        behaviour had to be inferred from the `peer.send.*` lines underneath
+        it. That is backwards for a background loop whose entire job is to be
+        observable. So the events that are both RARE and MEANINGFUL -- the
+        first sync of a peer, and every body actually requested -- are INFO.
+        """
         try:
             outcome = peer_send(
                 PeerAllowlist(vault.db), peer_pre, raw,
                 mailbox_send=lambda _aid, _b: False,   # a watch never falls back
                 keridb=vault.hby.db,
             )
-            logger.debug("peer_sync.sent peer=%s what=%s outcome=%s",
-                         peer_pre[:12], label, outcome)
+            log = logger.info if announce else logger.debug
+            log("peer_sync.sent peer=%s what=%s bytes=%d outcome=%s",
+                peer_pre[:12], label, len(raw), outcome)
         except Exception:                   # noqa: BLE001 — unreachable peer is normal
             logger.debug("peer_sync.send_failed peer=%s what=%s",
                          peer_pre[:12], label, exc_info=True)
