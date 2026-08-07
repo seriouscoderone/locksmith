@@ -108,7 +108,22 @@ def wait_for_vault_open(devctl, sock, timeout_ms: int = 10000) -> str:
     return landing_target(devctl, sock, timeout_ms=timeout_ms)
 
 
-def _start_wallet(home: Path, log_path: Path, brand: Path | None = None) -> subprocess.Popen:
+#: Where to place spawned wallet windows, as "x,y;x,y;..." — one origin per
+#: wallet, applied in spawn order and cycled if there are more wallets than
+#: origins. Unset by default, so CI and offscreen runs are unaffected.
+#: Set it when WATCHING a run on a multi-monitor desk, e.g. two 1920x1080s
+#: side by side plus an ultrawide above:
+#:     LOCKSMITH_TEST_WIN_ORIGINS="-1920,0;0,0;0,-1080"
+WIN_ORIGINS_ENV = "LOCKSMITH_TEST_WIN_ORIGINS"
+
+
+def _win_origins() -> list[str]:
+    raw = os.environ.get(WIN_ORIGINS_ENV, "").strip()
+    return [o.strip() for o in raw.split(";") if o.strip()] if raw else []
+
+
+def _start_wallet(home: Path, log_path: Path, brand: Path | None = None,
+                  win_pos: str | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env["HOME"] = str(home)
     if brand is not None:
@@ -134,8 +149,11 @@ def _start_wallet(home: Path, log_path: Path, brand: Path | None = None) -> subp
     src = str((REPO_ROOT / "src").resolve())
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = f"{src}{os.pathsep}{existing}" if existing else src
+    argv = [sys.executable, "-m", "locksmith.main"]
+    if win_pos:
+        argv += ["--win-pos", win_pos]
     proc = subprocess.Popen(
-        [sys.executable, "-m", "locksmith.main"],
+        argv,
         env=env,
         stdout=log_path.open("w"),
         stderr=subprocess.STDOUT,
@@ -396,13 +414,35 @@ def import_peer_blob_via_ui(
                condition="visible", timeout_ms=3000)
     assert r.get("ok"), r
 
-    r = devctl(sock, "click",
-               target="peerSettingsSection.addPeerButton")
-    assert r.get("ok"), f"open Add Peer dialog: {r}"
-    r = devctl(sock, "wait_for",
-               target="addPeerDialog.oobiInput",
-               condition="visible", timeout_ms=3000)
-    assert r.get("ok"), f"Add Peer dialog never appeared: {r}"
+    # RETRY the click, do not just wait longer on one. The peer settings card
+    # rebuilds itself on its own tick (it re-probes reachability and re-renders
+    # the paired list), so a click can land on a button that is being replaced
+    # — the click reports ok and nothing opens. Re-clicking is what actually
+    # recovers; a longer single wait just fails more slowly.
+    r = {"error": "not attempted"}
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        devctl(sock, "click", target="peerSettingsSection.addPeerButton")
+        r = devctl(sock, "wait_for",
+                   target="addPeerDialog.oobiInput",
+                   condition="visible", timeout_ms=3000)
+        if r.get("ok"):
+            break
+        time.sleep(1.0)
+    if not r.get("ok"):
+        # Screenshot before theorising (docs/development/ui-driven-testing.md):
+        # a dialog that does not appear after a successful click is either
+        # stacked behind a stale one or was never constructed, and the widget
+        # tree distinguishes those in one look.
+        shot = Path(tempfile.gettempdir()) / "addpeer_failure.png"
+        devctl(sock, "screenshot", path=str(shot))
+        tree = devctl(sock, "tree")
+        names = [w.get("objectName") or w.get("type")
+                 for w in (tree.get("widgets") or [])][:40]
+        raise AssertionError(
+            f"Add Peer dialog never appeared: {r}\nscreenshot: {shot}\n"
+            f"visible widgets: {names}"
+        )
 
     r = devctl(sock, "type",
                target="addPeerDialog.oobiInput", text=blob)
@@ -496,7 +536,11 @@ def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None):
             home.mkdir()
             _install_plugins(home)
             log = root / f"{name}.log"
-            proc = _start_wallet(home, log, brand=brand)
+            origins = _win_origins()
+            proc = _start_wallet(
+                home, log, brand=brand,
+                win_pos=origins[len(procs) % len(origins)] if origins else None,
+            )
             procs.append(proc)
             wallets[name] = {
                 "home": home, "log": log,
@@ -554,3 +598,55 @@ def two_hoa_wallets():
     with _spawn_wallets(["cuo", "actuary"], prefix="lshoa-",
                         brand=USURANCE_BRAND) as wallets:
         yield {**wallets, "devctl": _devctl}
+
+
+def accept_grant_via_hoa_notifications(devctl, sock, *, timeout_s: float = 45.0) -> int:
+    """Accept every pending IPEX grant on a BRANDED HOA's Notifications page.
+
+    The HOA equivalent of vanilla's Credentials -> Received -> Accept flow,
+    which is unreachable here: a peeled HOA has no `vaultNavMenu.credentialsButton`
+    at all, and incoming grants surface on Notifications instead.
+
+    Crucially this path is DRIVABLE where vanilla's is not. `four_wallets`'
+    own docstring records why a live grant cannot be accepted through the
+    vanilla UI — `notifications/list.py::_show_accept_grant_dialog` admits via
+    `QDialog.exec()`, a MODAL call that blocks the same Qt main thread the
+    devctl server dispatches on, so the harness deadlocks. The HOA page has no
+    `exec()`: `hoaNotifications.acceptButton` calls `_accept(row)` directly,
+    which schedules `make_admit_doer` on the vault's doer runner and returns.
+    That is what makes an end-to-end HOA credential test possible at all.
+
+    Returns how many grants were accepted. Polls rather than sleeping blindly:
+    a grant arrives over the network, so the row's appearance is asynchronous,
+    but each accept has a deterministic end state (the row loses its button).
+    """
+    r = devctl(sock, "click", target="vaultNavMenu.notificationsButton")
+    assert r.get("ok"), f"navigate to HOA Notifications: {r}"
+
+    accepted = 0
+    deadline = time.time() + timeout_s
+    while time.time() < deadline:
+        # on_show refreshes on every navigation, so re-entering the page is
+        # how a newly-arrived grant becomes visible.
+        devctl(sock, "click", target="vaultNavMenu.notificationsButton")
+        r = devctl(sock, "count", target="hoaNotifications.acceptButton")
+        pending = r.get("count", 0) if r.get("ok") else 0
+        if pending:
+            click = devctl(sock, "click", target="hoaNotifications.acceptButton")
+            assert click.get("ok"), f"click Accept: {click}"
+            accepted += 1
+            # The admit is scheduled on the doer runner, not run inline; give
+            # it a tick to land before re-reading the list.
+            time.sleep(1.0)
+            continue
+        if accepted:
+            return accepted
+        time.sleep(1.0)
+
+    if accepted:
+        return accepted
+    raise AssertionError(
+        f"no grant appeared on HOA Notifications within {timeout_s}s. The page "
+        "shows 'hoaNotifications.emptyLabel' when there is nothing to accept — "
+        "check the wallet log for an inbound /exn/ipex/grant."
+    )

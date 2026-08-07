@@ -453,6 +453,49 @@ def open_vault_holding_cuo_role(
     with os.fdopen(fd, "wb") as f:
         f.write(grant_raw)
 
+    # A peeled HOA has no Credentials page — inbound grants surface on its own
+    # Notifications page, whose Accept is non-modal and therefore drivable
+    # (vanilla's admit goes through QDialog.exec(), which deadlocks devctl; see
+    # accept_grant_via_hoa_notifications). The grant is already on the wire by
+    # this point, so the HOA path needs no file at all.
+    from tests.integration.peer.conftest import (
+        accept_grant_via_hoa_notifications, landing_target,
+    )
+
+    if landing_target(devctl, sock) != "vaultNavMenu.identifiersButton":
+        # The grant must reach the wallet OVER THE WIRE here. Vanilla hands it
+        # over as a file because its admit dialog is modal and the file flow is
+        # the only non-blocking way in; the HOA has no such dialog and no
+        # Credentials page to load a file from, so the grant is delivered the
+        # way a real issuer would deliver it — the same connection the TEL just
+        # went down — and surfaces as a notification.
+        with socket.create_connection(("127.0.0.1", cuo_port), timeout=5.0) as s:
+            s.sendall(bytes(grant_raw))
+        accept_grant_via_hoa_notifications(devctl, sock)
+
+        # The admit is SCHEDULED on the vault's doer runner, and the role gate
+        # re-evaluates on GateRecheckDoer's own tick — so the plugin section
+        # appears some seconds after Accept returns, not synchronously. Poll for
+        # it rather than assuming, then enter it exactly as vanilla does.
+        deadline = time.time() + 45.0
+        while time.time() < deadline:
+            r = devctl(sock, "click", target="Underwriting")
+            if r.get("ok"):
+                # Entering a plugin section PUSHES its submenu, leaving the
+                # top-level entries (Settings, where peer mode and Add Peer
+                # live) unreachable. Pop it so the caller lands on a usable
+                # nav, exactly as the vanilla flow pops the credentials
+                # submenu.
+                devctl(sock, "click",
+                       target="vaultNavMenu.cuoAutoBackButton")
+                return
+            time.sleep(1.5)
+        raise AssertionError(
+            "the 'Underwriting' section never appeared after accepting the "
+            "cuo_role grant — the credential admitted but the role gate never "
+            "opened. Check the wallet log for 'gate' and 'admit'."
+        )
+
     r = devctl(sock, "click", target="vaultNavMenu.credentialsButton")
     assert r.get("ok"), f"expand Credentials submenu: {r}"
     r = devctl(sock, "click", target="vaultNavMenu.receivedCredentialsButton")
@@ -938,6 +981,36 @@ def open_vault_holding_actuary_role(
         s.sendall(bytes(artifact_stream))
     time.sleep(1.0)  # let the wallet's Reactant/Tevery land it
 
+    # Same brand split as open_vault_holding_cuo_role: a peeled HOA has no
+    # Credentials page, so the grant goes over the wire and is accepted from
+    # Notifications (non-modal, hence drivable) instead of via a file dialog.
+    from tests.integration.peer.conftest import (
+        accept_grant_via_hoa_notifications, landing_target,
+    )
+
+    if landing_target(devctl, sock) != "vaultNavMenu.identifiersButton":
+        with socket.create_connection(("127.0.0.1", actuary_port), timeout=5.0) as s:
+            s.sendall(bytes(grant_raw))
+        accept_grant_via_hoa_notifications(devctl, sock)
+
+        # The role gate opens on GateRecheckDoer's tick, not synchronously.
+        deadline = time.time() + 45.0
+        while time.time() < deadline:
+            if devctl(sock, "click", target="Actuarial").get("ok"):
+                # Entering a plugin section PUSHES its submenu, leaving the
+                # top-level entries (Settings, where peer mode and Add Peer
+                # live) unreachable. Pop it so the caller lands on a usable
+                # nav, exactly as the vanilla flow pops the credentials
+                # submenu.
+                devctl(sock, "click",
+                       target="vaultNavMenu.actuaryAutoBackButton")
+                return
+            time.sleep(1.5)
+        raise AssertionError(
+            "the 'Actuarial' section never appeared after accepting the "
+            "actuary_role grant — check the wallet log for 'gate' and 'admit'."
+        )
+
     fd, cesr_path = tempfile.mkstemp(suffix=".cesr", prefix="actuary_role_grant_")
     with os.fdopen(fd, "wb") as f:
         f.write(grant_raw)
@@ -1001,6 +1074,14 @@ def _export_current_blob(devctl, sock, alias: str) -> str:
     never enters that list at all, so the (one and only) live widget is
     `occurrence=0`. Passing `occurrence=1` to one of THESE, by analogy with
     `wait_for`, silently resolves nothing (measured: "widget not found")."""
+    # Peeled HOA: no Identifiers page, no View Identifier dialog. Its own OOBI
+    # is rendered in Settings and read the same way _expose_and_export reads it,
+    # so both callers share one brand split.
+    from tests.integration.peer.conftest import landing_target
+
+    if landing_target(devctl, sock) != "vaultNavMenu.identifiersButton":
+        return _expose_and_export(devctl, sock, alias)
+
     devctl(sock, "click_row_action", row_text=alias, action="View")
     r = devctl(sock, "wait_for", target="viewIdentifierDialog.aidField",
               condition="visible", timeout_ms=3000, occurrence=1)
