@@ -33,6 +33,19 @@ class AddPeerDialog(QDialog):
 
     def __init__(self, vault, parent=None):
         super().__init__(parent=parent)
+        # Destroy on close. Both call sites (`peer_section._on_add_peer`,
+        # `peers/list.py`) build this with `parent=<window>` and keep only a
+        # LOCAL reference, so the Python name goes away but the C++ object
+        # stays alive as a child of the window — one hidden, fully-built
+        # AddPeerDialog accumulating per pairing, each with the same object
+        # names on its fields.
+        #
+        # That is not merely a leak: it makes the widget tree ambiguous.
+        # Anything resolving `addPeerDialog.oobiInput` gets the FIRST match
+        # among the window's children, which is the oldest hidden corpse — so
+        # pairing a second peer opens a real dialog that nothing can see or
+        # drive. Measured: Add Peer worked once per session and never again.
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
         self._vault = vault
         self._allowlist = PeerAllowlist(vault.db)
         self._pending_aid: str | None = None  # AID we're trying to resolve

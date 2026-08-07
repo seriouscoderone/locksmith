@@ -19,13 +19,20 @@ wallet the suite owns instead — see tests/integration/peer/testegf.py.
 
 Built leg by leg; nothing here asserts a step that has not actually been driven.
 """
+import time
+from pathlib import Path
+
 import pytest
 
 from tests.integration.peer.conftest import (  # noqa: F401 (fixture)
-    admin_then_two_hoas, create_aid_via_ui, free_port, import_peer_blob_via_ui,
-    landing_target, open_test_vault_via_ui, set_peer_mode_via_ui,
+    accept_grant_via_hoa_notifications, admin_then_two_hoas, create_aid_via_ui,
+    free_port, import_peer_blob_via_ui, landing_target, open_test_vault_via_ui,
+    open_workspace_via_hoa_setup, set_peer_mode_via_ui, wait_for_peer_reachable,
 )
-from tests.integration.roles.conftest import _expose_and_export
+from tests.integration.roles.conftest import (
+    ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, _expose_and_export,
+    issue_and_grant_role_via_admin_ui, load_issuable_schema_via_admin_ui,
+)
 
 pytestmark = pytest.mark.integration
 
@@ -72,3 +79,72 @@ def test_the_admin_pairs_outward_with_both_hoas(admin_then_two_hoas):
     items = rows.get("items") or rows.get("rows") or []
     assert len(items) >= 2, (
         f"admin should have paired with both HOAs; peers list shows {items}")
+
+
+def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
+    """Leg 3 — the whole membrane, with nothing hand-delivered.
+
+    A running vanilla admin loads each role schema into its own vault, issues
+    the credential to a paired HOA, and GRANTS it live over IPEX. Each HOA
+    admits it from its own Notifications page, and its role gate — whose issuer
+    is resolved from the EGF, not compiled in — opens the role's surface.
+
+    Every prior role test short-circuits some part of this: `_build_test_admin`
+    is an in-process party, `open_vault_holding_*_role` pushes the registry TEL
+    down a raw socket the test opens itself, and `_bootstrap/sitecustomize.py`
+    re-points the gate at that party. None of that is here. The only thing the
+    pytest process does is click.
+    """
+    devctl = admin_then_two_hoas["devctl"]
+    admin = admin_then_two_hoas["admin"]["sock"]
+    egf = Path(admin_then_two_hoas["brand"]).parent / "egf"
+
+    roles = (
+        ("cuo", "arccuo", CUO_ROLE_SCHEMA_SAID,
+         "Usurance Chief Underwriting Officer Role", "Underwriting"),
+        ("actuary", "arcactuary", ACTUARY_ROLE_SCHEMA_SAID,
+         "Usurance Actuary Role", "Actuarial"),
+    )
+
+    for name, vault, schema_said, schema_title, section in roles:
+        sock = admin_then_two_hoas[name]["sock"]
+        open_workspace_via_hoa_setup(devctl, sock, vault)
+        set_peer_mode_via_ui(devctl, sock, port=free_port())
+        import_peer_blob_via_ui(devctl, admin,
+                                _expose_and_export(devctl, sock, name),
+                                label=name)
+
+    # Both peers must be REACHABLE before anything is granted. Pairing writes
+    # the allowlist row synchronously; reachability is a probe cycle later, and
+    # a grant sent at a peer that has not answered yet fails as a transport
+    # error attributed to the grant.
+    wait_for_peer_reachable(devctl, admin, count=len(roles))
+
+    for name, _vault, schema_said, schema_title, section in roles:
+        sock = admin_then_two_hoas[name]["sock"]
+
+        loaded = load_issuable_schema_via_admin_ui(
+            devctl, admin, egf / f"{schema_said}.json")
+        assert loaded == schema_said, (
+            f"the admin loaded {loaded}, not {name}'s role schema {schema_said}")
+
+        issue_and_grant_role_via_admin_ui(
+            devctl, admin, schema_prefix=schema_title, recipient_prefix=name)
+
+        accepted = accept_grant_via_hoa_notifications(devctl, sock)
+        assert accepted >= 1, (
+            f"{name} admitted no grant. The credential left the admin — check "
+            f"{admin_then_two_hoas[name]['log']} for 'exn' and 'admit'.")
+
+        # The gate opens on GateRecheckDoer's tick, not synchronously.
+        deadline = time.time() + 45.0
+        while time.time() < deadline:
+            if devctl(sock, "click", target=section).get("ok"):
+                break
+            time.sleep(1.5)
+        else:
+            raise AssertionError(
+                f"{name} accepted the grant but the {section!r} section never "
+                f"appeared. The gate resolves its issuer from the EGF — if the "
+                f"brand's authority is not the wallet that granted this, it "
+                f"never opens. Check the wallet log for 'gate' and 'egf.resolved'.")

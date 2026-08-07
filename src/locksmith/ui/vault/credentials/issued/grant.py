@@ -45,7 +45,8 @@ class GrantCredentialDialog(LocksmithDialog):
         parent: "VaultPage",
         credential_said: str,
         credential_schema: str,
-        credential_issuer: str
+        credential_issuer: str,
+        credential_recipient: str = ""
     ):
         """
         Initialize the GrantCredentialDialog.
@@ -55,13 +56,26 @@ class GrantCredentialDialog(LocksmithDialog):
             parent: Parent widget (VaultPage)
             credential_said: SAID of the credential to grant
             credential_schema: Schema name/title for display
-            credential_issuer: Issuer/Recipient identifier for display
+            credential_issuer: the AID that ISSUED this credential. It is the
+                signing hab for the grant, and must stay the issuer.
+            credential_recipient: the AID the credential was ISSUED TO — used
+                to pre-select "Grant To", and shown in the header.
+
+                These were one argument. `_populate_recipients` compared the
+                ISSUER's AID against the vault's REMOTE identifier list, where
+                an issuer's own AID can never appear, so `default_index` stayed
+                -1 and the dropdown fell back to index 0: the first contact in
+                the vault, whoever that happened to be. Invisible with one
+                contact. With two, the dialog opens pre-set to send a role
+                credential to the WRONG holder, and the header labelled that
+                issuer AID "Recipient:" while doing it.
         """
         self.app = app
         self.parent_widget = parent
         self.credential_said = credential_said
         self.credential_schema = credential_schema
         self.credential_issuer = credential_issuer
+        self.credential_recipient = credential_recipient
 
         # Create content widget
         content_widget = QWidget()
@@ -79,7 +93,7 @@ class GrantCredentialDialog(LocksmithDialog):
         schema_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
         layout.addWidget(schema_label)
 
-        issuer_label = QLabel(f"Recipient: {credential_issuer}")
+        issuer_label = QLabel(f"Recipient: {credential_recipient}")
         issuer_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
         layout.addWidget(issuer_label)
 
@@ -229,7 +243,7 @@ class GrantCredentialDialog(LocksmithDialog):
                 self.recipient_dropdown.addItem(display_text, userData=pre)
 
                 # Check if this is the credential's recipient (default selection)
-                if pre == self.credential_issuer:
+                if pre == self.credential_recipient:
                     default_index = current_index
 
                 current_index += 1

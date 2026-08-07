@@ -1586,3 +1586,146 @@ def deliver_rate_program_to_designer(devctl, two_wallets) -> None:
     with socket.create_connection(("127.0.0.1", designer_port), timeout=5.0) as s:
         s.sendall(bytes(bare_acdc_stream))
     time.sleep(1.0)  # let B's Reactant/Verifier land + chain-verify both
+
+
+# ---------------------------------------------------------------------------
+# The REAL issuing side: a running vanilla admin, driven through its own UI.
+#
+# Everything above this line issues role credentials from `_build_test_admin`,
+# an in-process KERI party. That was the right call while a live grant could not
+# be admitted (`test_four_app_arc_via_ui`'s docstring measures the deadlock: a
+# vanilla recipient's Notifications page admits through three `QDialog.exec()`
+# calls, which block the very Qt main thread devctl dispatches on). A BRANDED
+# HOA has no such modal — `hoaNotifications.acceptButton` calls `_accept(row)`
+# directly — so vanilla-issuer -> HOA-recipient is the combination that works,
+# and these helpers drive it.
+# ---------------------------------------------------------------------------
+
+def _select_combo_by_prefix(devctl, sock, target: str, prefix: str,
+                            limit: int = 16) -> str:
+    """Select the first combo entry whose visible text starts with `prefix`.
+
+    `select` matches a `value` by EXACT text, and these combos render
+    "<alias> (<44-char AID>)" — an AID the caller does not have. Walking the
+    indices and reading back `selected_text` is the only way to pick a row by
+    the part that is knowable.
+
+    It also guards devctl's sharpest edge: `select` does NOT range-check
+    `index`. Selecting past the end returns ok with `selected_text: ''`, which
+    is how a Grant went out with `recipient=None` and failed downstream in
+    `ServiceaidGrantDoer` with "expected str instance, NoneType found".
+    """
+    seen = []
+    for i in range(limit):
+        r = devctl(sock, "select", target=target, index=i)
+        text = (r.get("selected_text") or "") if r.get("ok") else ""
+        if not text:
+            break                     # past the end — see the docstring
+        seen.append(text)
+        if text.startswith(prefix):
+            return text
+    raise AssertionError(
+        f"no entry starting with {prefix!r} in {target}; saw {seen}")
+
+
+def load_issuable_schema_via_admin_ui(devctl, sock, schema_path) -> str:
+    """Load a schema into a VANILLA wallet AND create its issuance registry.
+
+    Returns the SAID the dialog extracted, so the caller can assert it is the
+    one it meant to load rather than trusting the file path.
+
+    The registry is not optional: `IssueCredentialDialog._populate_schema_dropdown`
+    skips every schema without one (`if not rgy.registryByName(said): continue`),
+    so a schema loaded with the box unchecked is present, listed on the Schemas
+    page as `Issuable: No`, and silently absent from the Issue dialog.
+    """
+    devctl(sock, "click", target="vaultNavMenu.credentialsButton")
+    devctl(sock, "click", target="vaultNavMenu.schemaButton")
+    r = devctl(sock, "click", target="Add Schema")
+    assert r.get("ok"), f"open Add Schema: {r}"
+    r = devctl(sock, "wait_for", target="File", condition="visible",
+               timeout_ms=5000)
+    assert r.get("ok"), f"Add Schema dialog never appeared: {r}"
+
+    devctl(sock, "click", target="File")
+    r = devctl(sock, "type", target="File Path", text=str(schema_path))
+    assert r.get("ok"), f"type schema path: {r}"
+    # The SAID is extracted from the file by a textChanged handler; it is the
+    # dialog's own read of what it is about to load.
+    deadline, said = time.time() + 10.0, ""
+    while time.time() < deadline:
+        said = (devctl(sock, "get_text", target="SAID").get("text") or "").strip()
+        if said:
+            break
+        time.sleep(0.5)
+    assert said.startswith("E"), (
+        f"the dialog extracted no SAID from {schema_path} — Load would fail "
+        f"with 'Missing field: SAID'")
+
+    devctl(sock, "click", target="Use for Credential Issuance")
+    r = devctl(sock, "select", target="Issuer", index=1)
+    assert r.get("ok") and r.get("selected_text"), (
+        f"no issuer identifier to create the registry under: {r}")
+    r = devctl(sock, "click", target="Load Schema")
+    assert r.get("ok"), f"click Load Schema: {r}"
+
+    devctl(sock, "click", target="vaultNavMenu.schemaButton")
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        rows = devctl(sock, "get_table_rows", target="Credential Schemas")
+        for row in (rows.get("rows") or rows.get("items") or []):
+            values = row if isinstance(row, (list, tuple)) else list(row.values())
+            if any(said in str(v) for v in values):
+                return said
+        time.sleep(1.0)
+    return said
+
+
+def issue_and_grant_role_via_admin_ui(devctl, sock, *, schema_prefix: str,
+                                      recipient_prefix: str) -> None:
+    """Issue `schema_prefix` to `recipient_prefix` and GRANT it live over IPEX.
+
+    Both legs run in the admin's real UI: `IssueCredentialDialog` mints the ACDC
+    into the schema's registry, then the Issued row's Grant action sends it.
+    Grant defaults to "Send" — a live exn to the recipient's peer endpoint —
+    not the file-based Save path the older helpers rely on.
+    """
+    devctl(sock, "click", target="vaultNavMenu.credentialsButton")
+    devctl(sock, "click", target="vaultNavMenu.issuedCredentialsButton")
+    r = devctl(sock, "click", target="Issue Credential")
+    assert r.get("ok"), f"open Issue Credential: {r}"
+    r = devctl(sock, "wait_for", target="issueCredentialDialog.schemaCombo",
+               condition="visible", timeout_ms=5000)
+    assert r.get("ok"), f"Issue dialog never appeared: {r}"
+
+    _select_combo_by_prefix(devctl, sock, "issueCredentialDialog.schemaCombo",
+                            schema_prefix)
+    _select_combo_by_prefix(devctl, sock, "issueCredentialDialog.recipientCombo",
+                            recipient_prefix)
+    r = devctl(sock, "click", target="issueCredentialDialog.issueButton")
+    assert r.get("ok"), f"click Issue: {r}"
+    r = devctl(sock, "wait_for", target="issueCredentialDialog.schemaCombo",
+               condition="hidden", timeout_ms=30000)
+    assert r.get("ok"), f"Issue dialog never closed — issuance failed: {r}"
+
+    devctl(sock, "click", target="vaultNavMenu.issuedCredentialsButton")
+    r = devctl(sock, "click_row_action", row_text=schema_prefix, action="Grant")
+    assert r.get("ok"), f"Grant row action for {schema_prefix!r}: {r}"
+    r = devctl(sock, "wait_for", target="grantCredentialDialog.grantButton",
+               condition="visible", timeout_ms=5000)
+    assert r.get("ok"), f"Grant dialog never appeared: {r}"
+
+    # Do NOT select here. Unlike the Issue dialog, this combo has no
+    # "Select a recipient..." placeholder row: `_populate_recipients` fills it
+    # from index 0 and pre-selects the credential's OWN recipient. Selecting
+    # index 1 picked a row past the end, devctl reported ok with empty text,
+    # and the grant went out with `recipient=None`.
+    pre = devctl(sock, "get_text", target="grantCredentialDialog.recipientCombo")
+    assert (pre.get("text") or "").startswith(recipient_prefix), (
+        f"Grant dialog pre-selected {pre.get('text')!r}, not {recipient_prefix!r}")
+
+    r = devctl(sock, "click", target="grantCredentialDialog.grantButton")
+    assert r.get("ok"), f"click Grant: {r}"
+    r = devctl(sock, "wait_for", target="grantCredentialDialog.grantButton",
+               condition="hidden", timeout_ms=30000)
+    assert r.get("ok"), f"Grant dialog never closed — the send failed: {r}"

@@ -134,6 +134,10 @@ class IssuedCredentialsListPage(BaseListPage):
                 cred_dict = {
                     "Schema": schemer.get("title", ""),
                     "Recipient": recipient_name,
+                    # The recipient's BARE AID. `Recipient` above is a display
+                    # string ("alias (AID)"); the Grant dialog needs the AID
+                    # itself to pre-select the right holder.
+                    "RecipientAID": recp,
                     "Issuer": sad['i'],
                     "Status": status_text,
                     "Issued Date": dt.strftime("%b %d, %Y %I:%M %p"),
@@ -185,7 +189,8 @@ class IssuedCredentialsListPage(BaseListPage):
                     parent=self.parent,
                     credential_said=credential_said,
                     credential_schema=credential_schema,
-                    credential_issuer=credential_issuer
+                    credential_issuer=credential_issuer,
+                    credential_recipient=row_data.get('RecipientAID', '')
                 )
                 dialog.open()
             except Exception as e:

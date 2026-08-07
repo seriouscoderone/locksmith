@@ -110,6 +110,20 @@ class LocksmithDialog(QDialog):
         # Enable translucent background for border radius to work
         self.setAttribute(Qt.WidgetAttribute.WA_TranslucentBackground)
 
+        # Destroy on close. Callers build these as `dialog = SomeDialog(...);
+        # dialog.open()` and keep only a LOCAL reference, so the Python name
+        # goes away while the C++ object survives as a child of `parent` —
+        # one hidden, fully-built dialog accumulating per open, each carrying
+        # the same objectNames on its fields as the live one.
+        #
+        # That is not only a leak. Anything that resolves a widget by name over
+        # the window's children — devctl's `_find_widget_any`, and any future
+        # accessibility or scripting surface — gets the FIRST match, which is
+        # the oldest hidden corpse. Measured: Add Peer and Add Schema each
+        # opened correctly once per session, and every later open produced a
+        # real dialog on screen that no selector could reach.
+        self.setAttribute(Qt.WidgetAttribute.WA_DeleteOnClose)
+
         # Create overlay if we have a parent and show_overlay is True
         self.overlay = None
         if parent and show_overlay:
