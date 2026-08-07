@@ -51,9 +51,71 @@ def _install_plugins(home: Path) -> None:
     shutil.copytree(HOST_PLUGINS_DIR, dest, symlinks=False)
 
 
-def _start_wallet(home: Path, log_path: Path) -> subprocess.Popen:
+
+#: Nav entries a vault can land on once it has mounted, most specific first.
+#: A build is identified by WHICH of these exists, not by an env var — the
+#: drivers then work against vanilla and HOA alike.
+#:
+#:   vanilla Locksmith  -> identifiers, settings, credentials, ...
+#:   branded HOA        -> home, notifications, settings ONLY (HoaVaultPage.
+#:                         _register_core_pages peels the rest; Settings stays
+#:                         because peer transport is configured there and
+#:                         nowhere else)
+LANDING_TARGETS = (
+    "vaultNavMenu.identifiersButton",   # vanilla
+    "vaultNavMenu.homeButton",          # HOA shell
+    "vaultNavMenu.settingsButton",      # present in BOTH — last-resort probe
+)
+
+_LANDING_CACHE: dict = {}
+
+
+def landing_target(devctl, sock, timeout_ms: int = 10000) -> str:
+    """The nav entry THIS wallet lands on, discovered once per socket.
+
+    Waiting on `vaultNavMenu.identifiersButton` is what every driver used to
+    do, and it is a vanilla-only assumption: a peeled HOA has no identifiers
+    page, so the wait times out and the failure reads "vault did not auto-open"
+    when the vault opened perfectly well.
+
+    Probes in order and returns the first that appears. The whole budget is
+    spent on the first candidate only if nothing else is up yet, so a vanilla
+    wallet still resolves immediately.
+    """
+    key = str(sock)
+    if key in _LANDING_CACHE:
+        return _LANDING_CACHE[key]
+
+    deadline = time.time() + timeout_ms / 1000.0
+    last = None
+    while time.time() < deadline:
+        for target in LANDING_TARGETS:
+            r = devctl(sock, "is_visible", target=target)
+            if r.get("ok") and r.get("visible"):
+                _LANDING_CACHE[key] = target
+                return target
+            last = r
+        time.sleep(0.2)
+
+    raise AssertionError(
+        f"no landing page appeared within {timeout_ms}ms — tried "
+        f"{list(LANDING_TARGETS)}; last probe: {last}"
+    )
+
+
+def wait_for_vault_open(devctl, sock, timeout_ms: int = 10000) -> str:
+    """Block until a vault has mounted in whatever build this is."""
+    return landing_target(devctl, sock, timeout_ms=timeout_ms)
+
+
+def _start_wallet(home: Path, log_path: Path, brand: Path | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env["HOME"] = str(home)
+    if brand is not None:
+        # Spawns a BRANDED app, i.e. one that loads HoaShellPlugin. Vanilla
+        # wallets do not register the HOA's own doers at all, so any test of
+        # HOA behaviour run without this passes or fails for the wrong reason.
+        env["LOCKSMITH_BRAND_CONFIG"] = str(brand)
     env["QT_QPA_PLATFORM"] = "offscreen"
     # Run the tree under test, not whichever tree the shared venv points at.
     #
@@ -190,9 +252,12 @@ def set_peer_mode_via_ui(
     # synchronous; the UI uses QTimer.singleShot for the self-test).
     time.sleep(0.6)
 
-    # Return to Identifiers so subsequent expose flows find the table.
-    r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
-    assert r.get("ok"), f"navigate back to Identifiers: {r}"
+    # Return to the wallet's landing page so subsequent flows start from a
+    # known nav state. In vanilla that is Identifiers (where the expose flows
+    # find their table); a peeled HOA has no such page and lands on home.
+    landing = landing_target(devctl, sock)
+    r = devctl(sock, "click", target=landing)
+    assert r.get("ok"), f"navigate back to {landing}: {r}"
 
 
 DEFAULT_TEST_PASSCODE = "DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07"
@@ -255,8 +320,11 @@ def open_test_vault_via_ui(
 
     # The vault auto-opens after creation (no second password prompt): the
     # vault page mounts and the Identifiers nav button appears.
+    # Brand-aware: a peeled HOA has no identifiers page, so waiting on it
+    # reported "vault did not auto-open" for a vault that opened fine.
+    landing = landing_target(devctl, sock, timeout_ms=15000)
     r = devctl(sock, "wait_for",
-               target="vaultNavMenu.identifiersButton",
+               target=landing,
                condition="visible", timeout_ms=10000)
     assert r.get("ok"), f"vault did not auto-open after create: {r}"
 
@@ -269,6 +337,14 @@ def create_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     dialog defaults (key chain / salty key type, 1 signing key, 1
     rotation key, no witnesses, toad=0) — same shape as the bypass made.
     """
+    # A peeled HOA has no Identifiers page and MINTS ITS OWN identifier when
+    # the vault opens (HoaShellPlugin._ensure_default_identifier), so there is
+    # nothing here to drive and nothing to create. Returning early is the
+    # brand-aware equivalent of "the wallet now has an identity" — the
+    # postcondition every caller actually depends on.
+    if landing_target(devctl, sock) != "vaultNavMenu.identifiersButton":
+        return
+
     # The Identifiers page table has an "Add Identifier" LocksmithButton
     # in its header; click by visible text.
     r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
@@ -394,7 +470,7 @@ def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
 
 
 @contextmanager
-def _spawn_wallets(names: list[str], prefix: str = "lspeer-"):
+def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None):
     """Spawn one Locksmith wallet subprocess per name, each with its own isolated
     HOME + devctl socket. Generalizes what used to be `two_wallets`'s own inline
     two-copy spawn loop, so a THIRD (or Nth) named wallet is one more list entry,
@@ -419,7 +495,7 @@ def _spawn_wallets(names: list[str], prefix: str = "lspeer-"):
             home.mkdir()
             _install_plugins(home)
             log = root / f"{name}.log"
-            proc = _start_wallet(home, log)
+            proc = _start_wallet(home, log, brand=brand)
             procs.append(proc)
             wallets[name] = {
                 "home": home, "log": log,
@@ -449,4 +525,31 @@ def _spawn_wallets(names: list[str], prefix: str = "lspeer-"):
 @pytest.fixture
 def two_wallets():
     with _spawn_wallets(["a", "b"], prefix="lspeer-") as wallets:
+        yield {**wallets, "devctl": _devctl}
+
+
+#: The built usurance brand. GITIGNORED (`.gitignore:244`) — produced by
+#: `scripts/brand_apply.py`, not checked in.
+USURANCE_BRAND = REPO_ROOT / "src" / "locksmith" / "release" / "usurance" / "brand.json"
+
+
+@pytest.fixture
+def two_hoa_wallets():
+    """Two BRANDED wallets — i.e. two real HOAs, not two vanilla Locksmiths.
+
+    `two_wallets` spawns vanilla wallets, where `HoaShellPlugin` never loads and
+    therefore the HOA's own doers are never registered. A test of HOA behaviour
+    run on that fixture exercises nothing and still reports green, which is how
+    a completely dead peer-sync survived this suite.
+
+    Skips LOUDLY when the brand has not been built, rather than silently falling
+    back to vanilla — a suite that ran nothing must never look like a pass.
+    """
+    if not USURANCE_BRAND.is_file():
+        pytest.skip(
+            f"branded wallets need {USURANCE_BRAND}, which is gitignored and "
+            f"built on demand. Run: .venv/bin/python scripts/brand_apply.py usurance"
+        )
+    with _spawn_wallets(["cuo", "actuary"], prefix="lshoa-",
+                        brand=USURANCE_BRAND) as wallets:
         yield {**wallets, "devctl": _devctl}
