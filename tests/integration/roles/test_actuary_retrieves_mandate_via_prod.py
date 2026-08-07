@@ -73,6 +73,13 @@ def test_the_actuary_retrieves_the_mandate_by_prodding_for_it(two_hoa_wallets):
     import_peer_blob_via_ui(devctl, b["sock"],
                             _export_current_blob(devctl, a["sock"], "cuo"))
 
+    # Peering settles asynchronously — the listener binds, the imported KEL is
+    # parsed, and the peer record's endpoint becomes resolvable — with no
+    # deterministic UI end-state to wait_for. A commented sleep is the harness's
+    # sanctioned tool for exactly this (see docs/development/ui-driven-testing.md
+    # "Waiting"); everything downstream of it is polled, not slept through.
+    time.sleep(3.0)
+
     # 4. Wait for B's OWN watch. PeerSyncDoer ticks every 5s: sync A's KEL,
     #    spot the anchor, prod for the body, ingest the bar. Generous budget --
     #    several ticks plus TCP settling -- and polled rather than slept

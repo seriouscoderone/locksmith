@@ -288,6 +288,37 @@ def _expose_and_export(devctl, sock, alias: str) -> str:
     `_expose_and_export` (that helper lives in a sibling TEST module, not the
     peer conftest, so it is re-derived here rather than imported across test
     files)."""
+    # A peeled HOA has no Identifiers page and so no View Identifier dialog.
+    # It exposes the default AID for peer mode automatically
+    # (core/direct_transport.py:101 — `ensure_direct_transport`), and Settings
+    # renders the resulting OOBI in a readable field, so the HOA path is a read
+    # rather than a drive.
+    from tests.integration.peer.conftest import landing_target
+
+    if landing_target(devctl, sock) != "vaultNavMenu.identifiersButton":
+        # POLLED, not read once. Bringing transport up is asynchronous and
+        # self-healing: `_bring_up_direct_transport` finds no hab on its first
+        # attempt (the default identifier is still being incepted — the log says
+        # `direct_transport.no_hab` and that is EXPECTED) and retries on a
+        # QTimer until it succeeds. Only then is the AID exposed and an OOBI
+        # renderable. Re-navigates each round because the card rebuilds itself
+        # on its own tick.
+        deadline = time.time() + 30.0
+        while time.time() < deadline:
+            devctl(sock, "click", target="vaultNavMenu.settingsButton")
+            for candidate in (alias, "default"):
+                r = devctl(sock, "get_text",
+                           target=f"peerSettingsSection.oobiToken.{candidate}")
+                if r.get("ok") and r.get("text"):
+                    return r["text"]
+            time.sleep(1.0)
+        raise AssertionError(
+            f"no readable peer OOBI in Settings for {alias!r} or 'default' "
+            "after 30s. The HOA auto-exposes its default AID once transport is "
+            "up, so this means the retry chain never succeeded — check the "
+            "wallet log for 'direct_transport'."
+        )
+
     devctl(sock, "click_row_action", row_text=alias, action="View")
     devctl(sock, "wait_for", target="viewIdentifierDialog.aidField",
           condition="visible", timeout_ms=3000)

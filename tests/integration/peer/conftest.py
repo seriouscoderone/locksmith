@@ -429,10 +429,11 @@ def import_peer_blob_via_ui(
             f"{err.get('text', '?')!r}"
         )
 
-    # Return to Identifiers so subsequent UI interactions land on a
-    # familiar page.
-    r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
-    assert r.get("ok"), r
+    # Return to whatever page this build lands on, so subsequent UI
+    # interactions start from a known nav state.
+    landing = landing_target(devctl, sock)
+    r = devctl(sock, "click", target=landing)
+    assert r.get("ok"), f"navigate back to {landing}: {r}"
 
 
 def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:

@@ -4,8 +4,8 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QSpinBox, QVBoxLayout, QWidget,
+    QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QLineEdit,
+    QListWidget, QListWidgetItem, QSpinBox, QVBoxLayout, QWidget,
 )
 from keri import help
 
@@ -412,6 +412,7 @@ class PeerSettingsSection(QFrame):
                 continue
             row = QHBoxLayout()
             label = QLabel(f"{alias}\n{pre}")
+            label.setObjectName(f"peerSettingsSection.oobiIdentity.{alias}")
             label.setStyleSheet("font-family: monospace; font-size: 10px;")
             label.setTextInteractionFlags(Qt.TextSelectableByMouse)
             row.addWidget(label, 1)
@@ -427,6 +428,21 @@ class PeerSettingsSection(QFrame):
                 note.setWordWrap(True)
                 row.addWidget(note)
             else:
+                # READABLE, not just copyable. The token used to exist solely
+                # inside the copy button's clipboard payload, so the only way
+                # to obtain this wallet's own OOBI was a human clicking Copy —
+                # which made the HOA's pairing untestable end to end, and left
+                # a user with no way to SEE what they were about to hand out.
+                # Read-only and elided: the blob is long, and this is an
+                # identifier to inspect and copy, never to edit.
+                token_field = QLineEdit(token)
+                token_field.setObjectName(f"peerSettingsSection.oobiToken.{alias}")
+                token_field.setReadOnly(True)
+                token_field.setCursorPosition(0)
+                token_field.setStyleSheet(
+                    "font-family: monospace; font-size: 10px;")
+                row.addWidget(token_field, 2)
+
                 copy_btn = LocksmithCopyButton()
                 copy_btn.setObjectName(f"peerSettingsSection.copyOobi.{alias}")
                 copy_btn.set_copy_content(token)
