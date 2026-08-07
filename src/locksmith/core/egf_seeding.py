@@ -34,6 +34,7 @@ reaching for an EGF.
 import json
 from typing import Optional, Tuple
 
+from keri import help
 from keri_serviceaid.egf.config import EgfConfig, make_resolver
 from keri_serviceaid.egf.documents import EgfDocument
 from keri_serviceaid.egf.onboarding import derive_apply_request, derive_request
@@ -41,6 +42,8 @@ from keri_serviceaid.egf.resolver import EgfResolver
 
 from locksmith.core.branding import Brand, egf_local_dir
 from locksmith.core.credentialing import LoadSchemaDoer
+
+logger = help.ogler.getLogger(__name__)
 
 
 class EgfSeeder:

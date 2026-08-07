@@ -5,7 +5,7 @@ locksmith.ui.toolbar module
 This module contains the toolbar component for the Locksmith application.
 """
 from PySide6.QtCore import QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QAction, QFont, QIcon
 from PySide6.QtWidgets import QToolBar, QLabel, QPushButton
 from hio.base import doing
 from keri import help
