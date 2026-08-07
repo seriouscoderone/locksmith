@@ -697,7 +697,8 @@ def two_hoa_wallets():
         yield {**wallets, "devctl": _devctl}
 
 
-def accept_grant_via_hoa_notifications(devctl, sock, *, timeout_s: float = 45.0) -> int:
+def accept_grant_via_hoa_notifications(devctl, sock, *, timeout_s: float = 45.0,
+                                       require: bool = True) -> int:
     """Accept every pending IPEX grant on a BRANDED HOA's Notifications page.
 
     The HOA equivalent of vanilla's Credentials -> Received -> Accept flow,
@@ -742,6 +743,13 @@ def accept_grant_via_hoa_notifications(devctl, sock, *, timeout_s: float = 45.0)
 
     if accepted:
         return accepted
+    if not require:
+        # Nothing to accept is the NORMAL outcome when this HOA APPLIED for the
+        # role: having asked, the wallet admits the matching grant itself. The
+        # arc test sees `admit-back delivery failed (non-fatal)` and a
+        # "Credential accepted" toast with no row ever rendered. Requiring a
+        # manual accept there asserts the absence of a feature.
+        return 0
     raise AssertionError(
         f"no grant appeared on HOA Notifications within {timeout_s}s. The page "
         "shows 'hoaNotifications.emptyLabel' when there is nothing to accept — "

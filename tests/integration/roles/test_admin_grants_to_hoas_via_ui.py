@@ -145,10 +145,20 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
         issue_and_grant_role_via_admin_ui(
             devctl, admin, schema_prefix=schema_title, recipient_prefix=name)
 
-        accepted = accept_grant_via_hoa_notifications(devctl, sock)
-        assert accepted >= 1, (
-            f"{name} admitted no grant. The credential left the admin — check "
-            f"{admin_then_two_hoas[name]['log']} for 'exn' and 'admit'.")
+        # This HOA APPLIED, so it admits the matching grant on its own the
+        # moment it arrives — measured as `admit-back delivery failed
+        # (non-fatal)` then a "Credential accepted" toast, with no row ever
+        # rendered to click. Demanding a manual accept asserted the absence of
+        # a feature.
+        #
+        # Kept as a SHORT probe rather than dropped, so a build that does
+        # surface a row still gets it clicked. The budget is 5s, not the 45s
+        # default: waiting the full window for a row that by design never comes
+        # cost ~90s a run, which is visible as a dead pause between roles. The
+        # gate opening below is the real proof the credential landed, and it
+        # polls on its own.
+        accept_grant_via_hoa_notifications(devctl, sock, require=False,
+                                           timeout_s=5.0)
 
         # The gate opens on GateRecheckDoer's tick, not synchronously.
         deadline = time.time() + 45.0
