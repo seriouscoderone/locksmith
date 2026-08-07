@@ -10,24 +10,19 @@ Notifications admit goes through `QDialog.exec()` — a modal on the Qt main
 thread the devctl server dispatches on, deadlocking the harness. Vanilla
 ISSUING and GRANTING was always drivable, and an HOA recipient admits with no
 modal at all. So vanilla-admin -> HOA-recipient is precisely the combination
-that works, and this file is what that unlocks.
+that works.
 
-Built leg by leg, each asserted before the next is added:
+The second thing that made it impossible was trust, not UI: a branded HOA
+accepts role credentials only from the authority its EGF pins, which ships as
+the real usurance-admin. `admin_then_two_hoas` mints an ecosystem rooted at a
+wallet the suite owns instead — see tests/integration/peer/testegf.py.
 
-  1. the fleet comes up mixed (vanilla admin + two HOAs)          [asserted]
-  2. the admin pairs OUTWARD with both HOAs                        [asserted]
-  3. the admin issues + grants each role over the wire
-  4. each HOA accepts from its own Notifications page
-  5. the CUO declares a mandate
-  6. the actuary's watch retrieves it by prodding
-
-Legs 3-6 land as they are proven; nothing here asserts a step that has not
-actually been driven.
+Built leg by leg; nothing here asserts a step that has not actually been driven.
 """
 import pytest
 
 from tests.integration.peer.conftest import (  # noqa: F401 (fixture)
-    admin_and_two_hoas, create_aid_via_ui, free_port, import_peer_blob_via_ui,
+    admin_then_two_hoas, create_aid_via_ui, free_port, import_peer_blob_via_ui,
     landing_target, open_test_vault_via_ui, set_peer_mode_via_ui,
 )
 from tests.integration.roles.conftest import _expose_and_export
@@ -35,39 +30,44 @@ from tests.integration.roles.conftest import _expose_and_export
 pytestmark = pytest.mark.integration
 
 
-def _bring_up(devctl, wallets, name, vault_name):
-    """Open a vault and put the wallet on the air, whatever build it is."""
-    sock = wallets[name]["sock"]
+def _bring_up_hoa(devctl, wallet, vault_name):
+    """Open an HOA's vault and put it on the air. It mints its own identifier."""
+    sock = wallet["sock"]
     open_test_vault_via_ui(devctl, sock, vault_name)
-    # An HOA mints its own identifier on vault open; vanilla needs one made.
-    create_aid_via_ui(devctl, sock, name)
     set_peer_mode_via_ui(devctl, sock, port=free_port())
     return sock
 
 
-def test_the_admin_pairs_outward_with_both_hoas(admin_and_two_hoas):
-    """Leg 2. The ADMIN does the pairing, which is what makes this tractable:
-    a peeled HOA's own Add Peer dialog is awkward to drive, but nothing needs
-    it — an HOA only has to PUBLISH its OOBI, which Settings now renders in a
-    readable field, and the vanilla admin imports it through the dialog that
-    has always worked.
+def test_the_admin_pairs_outward_with_both_hoas(admin_then_two_hoas):
+    """Leg 2 — the admin does the pairing, which is what makes this tractable.
+
+    A peeled HOA only has to PUBLISH its OOBI, which Settings renders in a
+    readable field; the vanilla admin imports it through the Add Peer dialog
+    that has always worked. Nothing needs the HOA's own pairing dialog.
+
+    The fixture has already opened the admin's vault, created its AID, put it on
+    the air, and derived an EGF rooted at it — so by here the HOAs exist and
+    already trust this admin.
     """
-    devctl = admin_and_two_hoas["devctl"]
+    devctl = admin_then_two_hoas["devctl"]
+    admin = admin_then_two_hoas["admin"]["sock"]
 
-    admin = _bring_up(devctl, admin_and_two_hoas, "admin", "arcadmin")
-    cuo = _bring_up(devctl, admin_and_two_hoas, "cuo", "arccuo")
-    actuary = _bring_up(devctl, admin_and_two_hoas, "actuary", "arcactuary")
+    assert landing_target(devctl, admin) == "vaultNavMenu.identifiersButton", (
+        "the admin must be VANILLA — its Identifiers/Credentials surfaces are "
+        "what the issue and grant flows are driven through")
 
-    assert landing_target(devctl, admin) == "vaultNavMenu.identifiersButton"
-    for hoa in (cuo, actuary):
-        assert landing_target(devctl, hoa) != "vaultNavMenu.identifiersButton"
+    cuo = _bring_up_hoa(devctl, admin_then_two_hoas["cuo"], "arccuo")
+    actuary = _bring_up_hoa(devctl, admin_then_two_hoas["actuary"], "arcactuary")
+    for name, sock in (("cuo", cuo), ("actuary", actuary)):
+        assert landing_target(devctl, sock) != "vaultNavMenu.identifiersButton", (
+            f"{name} must be a branded HOA (peeled nav)")
 
-    # Each HOA publishes its own OOBI; the admin imports both.
     for name, sock in (("cuo", cuo), ("actuary", actuary)):
         blob = _expose_and_export(devctl, sock, name)
         assert blob, f"{name} published no peer OOBI"
         import_peer_blob_via_ui(devctl, admin, blob, label=name)
 
+    devctl(admin, "click", target="vaultNavMenu.settingsButton")
     rows = devctl(admin, "get_list_items", target="peerSettingsSection.peersList")
     items = rows.get("items") or rows.get("rows") or []
     assert len(items) >= 2, (

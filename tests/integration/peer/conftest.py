@@ -775,23 +775,25 @@ def admin_then_two_hoas():
 def _admin_identity(devctl, sock) -> tuple[str, str]:
     """(aid, peer-oobi token) for the admin's own identifier, read from its UI.
 
-    Deliberately UI-sourced: the token Settings renders is base64 over exactly
-    the bytes an EGF `oobis/<aid>.cesr` holds, so the fixture needs no keystore
-    access and no passcode to publish its authority.
+    The admin is VANILLA, so nothing exposes its AID for peer mode on its
+    behalf: `ensure_direct_transport`'s auto-expose is an HOA behaviour, driven
+    by HoaShellPlugin. A vanilla wallet exposes through the View Identifier
+    dialog, which is exactly what `_expose_and_export` drives — and it
+    deliberately leaves that dialog open, so the AID can be read from it
+    afterwards.
+
+    Deliberately UI-sourced: the token is base64 over exactly the bytes an EGF
+    `oobis/<aid>.cesr` holds, so the fixture needs no keystore access and no
+    passcode to publish its authority.
     """
-    devctl(sock, "click", target="vaultNavMenu.settingsButton")
-    deadline = time.time() + 30.0
-    while time.time() < deadline:
-        r = devctl(sock, "get_text", target="peerSettingsSection.oobiIdentity.admin")
-        ident = r.get("text") if r.get("ok") else None
-        tok = devctl(sock, "get_text", target="peerSettingsSection.oobiToken.admin")
-        token = tok.get("text") if tok.get("ok") else None
-        if ident and token:
-            # The label is "alias\n<aid>".
-            return ident.split("\n")[-1].strip(), token
-        time.sleep(1.0)
-        devctl(sock, "click", target="vaultNavMenu.settingsButton")
-    raise AssertionError(
-        "admin never published a peer OOBI in Settings — transport comes up "
-        "asynchronously, but 30s should be ample; check its log for "
-        "'direct_transport' and 'peer.listener'.")
+    from tests.integration.roles.conftest import _expose_and_export
+
+    token = _expose_and_export(devctl, sock, "admin")
+    assert token, "admin published no peer OOBI after being exposed"
+
+    r = devctl(sock, "get_text", target="viewIdentifierDialog.aidField")
+    aid = (r.get("text") or "").strip() if r.get("ok") else ""
+    assert aid.startswith("E"), (
+        f"could not read the admin's AID from the open View Identifier "
+        f"dialog: {r}")
+    return aid, token
