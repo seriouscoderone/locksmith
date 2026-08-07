@@ -302,7 +302,8 @@ class VaultNavMenu(QFrame):
     # Plugin menu signal — emits plugin_id when a plugin entry button is clicked
     plugin_section_clicked = Signal(str)
 
-    def __init__(self, parent=None, collapsible: bool = True, include_core_items: bool = True):
+    def __init__(self, parent=None, collapsible: bool = True, include_core_items: bool = True,
+                 include_settings_item: bool = False):
         """
         Initialize the VaultNavMenu.
 
@@ -321,6 +322,12 @@ class VaultNavMenu(QFrame):
 
         self.collapsible = collapsible
         self.include_core_items = include_core_items
+        # A peeled HOA build suppresses every core nav button, which left it with
+        # no way to reach peer settings — and an HOA that cannot enable its own
+        # listener cannot participate in its ecosystem at all (found by the §8.4
+        # manual pass). This adds back JUST the Settings button; identifiers,
+        # credentials, schema and plugins stay peeled.
+        self.include_settings_item = include_settings_item
         self.is_locked_open = False
         self.is_expanded = False
         self.active_nav_button = None  # Track the currently active navigation button
@@ -393,6 +400,8 @@ class VaultNavMenu(QFrame):
         # Credentials menu items (hidden initially)
         if self.include_core_items:
             self._create_credentials_menu_items()
+        elif self.include_settings_item:
+            self._add_settings_menu_item()
 
         # Track where plugin entry buttons should be inserted (before the stretch)
         self._plugin_insert_index = self.layout.count()
@@ -508,6 +517,15 @@ class VaultNavMenu(QFrame):
         self.menu_items.append(credentials_btn)
 
         # Settings
+        self._add_settings_menu_item()
+
+    def _add_settings_menu_item(self) -> None:
+        """The Settings nav button, shared by the stock build and by a peeled
+        HOA that opts in via ``include_settings_item``.
+
+        Extracted rather than duplicated so the two builds cannot drift on the
+        objectName, which the devctl UI tests select on.
+        """
         settings_btn = MenuButton(
             self._create_icon("settings"),
             "Settings"

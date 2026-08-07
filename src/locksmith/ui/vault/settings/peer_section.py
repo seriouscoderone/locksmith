@@ -5,7 +5,7 @@ from PySide6.QtCore import Qt, QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QCheckBox, QComboBox, QFrame, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QSpinBox, QVBoxLayout,
+    QListWidgetItem, QSpinBox, QVBoxLayout, QWidget,
 )
 from keri import help
 
@@ -16,7 +16,7 @@ from locksmith.peer.health import summarize_health_for_ui
 from locksmith.peer.reachability import check_reachable
 from locksmith.peer.records import PeerModeSettings
 from locksmith.ui import colors
-from locksmith.ui.toolkit.widgets.buttons import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithCopyButton
 from locksmith.ui.toolkit.widgets.toggle import ToggleSwitch
 
 logger = help.ogler.getLogger(__name__)
@@ -205,6 +205,39 @@ class PeerSettingsSection(QFrame):
         if primary:
             self.advertised_combo.setCurrentText(primary)
 
+        # --- This wallet's peer OOBIs ---
+        # Pairing is symmetric — both wallets must add each other — but the only
+        # place to COPY your own peer-OOBI was the View Identifier dialog on the
+        # identifiers page. A peeled HOA build has no identifiers page, so it
+        # could paste a peer's token and never hand out its own: pairable one
+        # way only. This card is on the SHARED settings section deliberately, so
+        # stock Locksmith gets the same one-click copy rather than the HOA
+        # growing a private variant that drifts.
+        layout.addSpacing(18)
+        mine_header = QLabel("This wallet's peer OOBIs")
+        mine_header.setFont(header_font)
+        mine_header.setStyleSheet(f"color: {colors.TEXT_PRIMARY};")
+        layout.addWidget(mine_header)
+        mine_sub = QLabel(
+            "Send one of these tokens to a peer; they paste it into their "
+            "Pair new peer dialog. Each token carries the identifier's key "
+            "state and signed endpoint — an address alone is not enough to "
+            "verify who answers."
+        )
+        mine_sub.setWordWrap(True)
+        mine_sub.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 12px; "
+            f"margin-bottom: 10px;"
+        )
+        layout.addWidget(mine_sub)
+
+        self.mine_list = QVBoxLayout()
+        self.mine_list.setSpacing(8)
+        mine_holder = QWidget()
+        mine_holder.setObjectName("peerSettingsSection.myOobis")
+        mine_holder.setLayout(self.mine_list)
+        layout.addWidget(mine_holder)
+
         # --- Paired peers card ---
         layout.addSpacing(18)
         peers_header = QLabel("Paired peers")
@@ -261,6 +294,7 @@ class PeerSettingsSection(QFrame):
         layout.addWidget(peers_card)
 
         self._refresh_peers_list()
+        self._refresh_my_oobis()
         self._refresh_exposure_banner()
 
         # PeerHealthMonitorDoer updates db.peerHealth every ~60s. Re-paint
@@ -270,6 +304,7 @@ class PeerSettingsSection(QFrame):
         self._health_refresh_timer = QTimer(self)
         self._health_refresh_timer.setInterval(15_000)
         self._health_refresh_timer.timeout.connect(self._refresh_peers_list)
+        self._health_refresh_timer.timeout.connect(self._refresh_my_oobis)
         # Same tick is enough to keep the no-AID-exposed banner in sync —
         # exposure state changes only when the user flips a per-AID toggle,
         # which is rare relative to network conditions.
@@ -338,6 +373,62 @@ class PeerSettingsSection(QFrame):
             )
         else:
             self._set_status("amber", result.message)
+
+    def _refresh_my_oobis(self) -> None:
+        """One copyable peer-OOBI per local identifier.
+
+        Only EXPOSED identifiers get a token: `export_peer_blob` derives it from
+        `hab.replyToOobi(role=peer)`, which is empty for an unexposed AID, so an
+        unexposed one is reported as such rather than rendered as a broken
+        button. Failures are shown inline per identifier — one bad hab must not
+        blank the whole card.
+        """
+        from locksmith.peer.cesr_blob import export_peer_blob
+        from locksmith.peer.exposure import is_aid_peer_exposed
+
+        while self.mine_list.count():
+            child = self.mine_list.takeAt(0)
+            if child.widget():
+                child.widget().deleteLater()
+
+        hby = getattr(self._vault, "hby", None)
+        if hby is None:
+            return
+
+        rows = 0
+        for pre, hab in list(getattr(hby, "habs", {}).items()):
+            alias = getattr(hab, "name", None) or pre[:12]
+            row = QHBoxLayout()
+            label = QLabel(f"{alias}\n{pre}")
+            label.setStyleSheet("font-family: monospace; font-size: 10px;")
+            label.setTextInteractionFlags(Qt.TextSelectableByMouse)
+            row.addWidget(label, 1)
+
+            try:
+                if not is_aid_peer_exposed(hby, pre):
+                    raise ValueError("not exposed for peer mode")
+                token = export_peer_blob(hab)
+            except Exception as exc:  # noqa: BLE001 — surface, never blank the card
+                note = QLabel(str(exc))
+                note.setStyleSheet(
+                    f"color: {colors.TEXT_MUTED}; font-style: italic; font-size: 11px;")
+                note.setWordWrap(True)
+                row.addWidget(note)
+            else:
+                copy_btn = LocksmithCopyButton()
+                copy_btn.setObjectName(f"peerSettingsSection.copyOobi.{alias}")
+                copy_btn.set_copy_content(token)
+                row.addWidget(copy_btn)
+
+            holder = QWidget()
+            holder.setLayout(row)
+            self.mine_list.addWidget(holder)
+            rows += 1
+
+        if rows == 0:
+            empty = QLabel("No identifiers in this wallet yet.")
+            empty.setStyleSheet(f"color: {colors.TEXT_MUTED}; font-style: italic;")
+            self.mine_list.addWidget(empty)
 
     def _refresh_exposure_banner(self) -> None:
         """Show the no-AID-exposed warning only when:

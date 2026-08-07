@@ -36,13 +36,35 @@ class HoaVaultPage(VaultPage):
     """
 
     def _register_core_pages(self) -> None:
-        """Suppress registration of the built-in wallet pages."""
-        return
+        """Suppress the built-in wallet pages — except Settings.
+
+        Settings is the ONE core page a peeled HOA still needs, and the §8.4
+        manual demo pass is what proved it: peer transport is configured there
+        and nowhere else, so a peeled build could not enable its own listener,
+        could not be dialled, and could not reach its own admin. An HOA that
+        cannot turn on its transport cannot participate in its ecosystem at all.
+
+        The page itself is narrow — peer settings, update preferences, and
+        delete-vault — so this does NOT re-admit the wallet surface the peel
+        exists to hide: identifiers, remotes, groups, credentials, schema,
+        notifications and plugins all stay peeled.
+
+        This is a stopgap the demo forced, not the settled design. Peer config
+        arguably belongs on the HOA's own connection page (today deliberately
+        read-only) or should be provisioned by the brand; and the default port
+        is 5621 for EVERY vault, so multi-instance HOAs still collide until
+        something allocates per-instance ports.
+        """
+        from locksmith.ui.vault.settings.page import SettingsPage
+
+        self.register_page("settings", SettingsPage(self))
 
     def _create_nav_menu(self) -> VaultNavMenu:
-        """Suppress the built-in wallet nav buttons — no core pages are
-        registered for an HOA build, so their nav buttons would be dead."""
-        return VaultNavMenu(self, include_core_items=False)
+        """Suppress the built-in wallet nav buttons, except Settings — whose
+        page ``_register_core_pages`` above registers, so its button is live
+        rather than dead."""
+        return VaultNavMenu(self, include_core_items=False,
+                            include_settings_item=True)
 
     def registered_page_keys(self) -> list[str]:
         """Expose the current page-registry keys (for tests/inspection)."""
