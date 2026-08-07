@@ -200,6 +200,52 @@ class HoaShellPlugin(VaultPlugin):
         # read-only one is gone rather than kept in sync.
 
     # -- per-vault wiring (was window._maybe_wire_onboarding_for_vault) ---
+    def _ensure_default_identifier(self, vault: Any) -> None:
+        """Mint this vault's default identifier when it has none.
+
+        `bootstrap_default_environment` creates the default AID **on first run
+        only** — "no existing vaults" is its own precondition. So the FIRST HOA
+        vault gets an identifier and every vault created afterwards (via
+        Vaults -> New Instance) gets none, permanently. Without one,
+        `RequestFlow._default_hab()` returns None and every role request dies
+        on "your workspace identity is still being created — try again in a
+        moment", which is doubly wrong for that vault: nothing is creating it,
+        so waiting cannot help. The peel makes it unrecoverable, since the
+        identifiers page that would normally mint one is not registered.
+
+        Idempotent: returns immediately once the alias resolves, so this is
+        safe on every vault open. Mirrors bootstrapping.py's recipe exactly —
+        same alias, same 'salty' key type with its own random salt, same
+        brand toad/witnesses — so a vault created here is indistinguishable
+        from a first-run one.
+
+        Found by the §8.4 manual demo pass: a second and third HOA instance
+        could never request a role at all.
+        """
+        alias = brand().default_aid_alias or "default"
+        try:
+            if vault.hby.habByName(alias) is not None:
+                return
+        except Exception:  # noqa: BLE001 — a vault mid-open is not an error here
+            return
+
+        from keri.core import signing
+
+        from locksmith.core.habbing import create_identifier
+
+        logger.info("hoa.default_identifier.creating alias=%s", alias)
+        result = create_identifier(
+            self._app,
+            alias=alias,
+            key_type="salty",
+            salt=signing.Salter().qb64[2:23],
+            toad=str(brand().default_toad),
+            wits=list(brand().default_witnesses),
+        )
+        if isinstance(result, dict) and not result.get("success", True):
+            logger.error("hoa.default_identifier.failed alias=%s message=%s",
+                         alias, result.get("message"))
+
     def on_vault_opened(self, vault: Any) -> None:
         """Idempotent per-vault-open onboarding hook (Task 8), now the
         standard VaultPlugin.on_vault_opened lifecycle hook (HOA #4) rather
@@ -222,6 +268,8 @@ class HoaShellPlugin(VaultPlugin):
         if vault is self._wired_vault:
             return
         self._wired_vault = vault
+
+        self._ensure_default_identifier(vault)
 
         self._request_flow.seed_all_personas()
         oobi_source = make_hoa_oobi_source()
