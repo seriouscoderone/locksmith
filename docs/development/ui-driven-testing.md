@@ -197,6 +197,31 @@ assertion messages.
 
 ---
 
+## Driving a BRANDED HOA (not just vanilla)
+
+Every fixture and driver in this file was written for vanilla Locksmith. A
+branded HOA differs in three ways that each look like a broken app from outside:
+
+| difference | what to use |
+|---|---|
+| no Identifiers/Credentials nav (peeled to Settings) | `landing_target(devctl, sock)` — probes identifiers / home / settings |
+| no vault drawer on first run; mounts `SetupPage` | `open_vault_any_build(devctl, sock, name)` |
+| grants surface on Notifications, not Credentials | `accept_grant_via_hoa_notifications(devctl, sock)` |
+
+The HOA's accept path is DRIVABLE where vanilla's is not: vanilla admits via
+`QDialog.exec()`, a modal on the thread devctl dispatches on, so the harness
+deadlocks. The HOA page has no `exec()`. That is what makes a vanilla-admin ->
+HOA-recipient test possible at all.
+
+An HOA also trusts only the authority its EGF pins, so a spawned test admin's
+grants satisfy nothing until you mint an ecosystem the suite owns —
+`tests/integration/peer/testegf.py` and the `admin_then_two_hoas` fixture. It
+spawns in two phases because it must: the EGF cannot be derived until the admin
+holds an AID.
+
+To WATCH a run across monitors, set `LOCKSMITH_TEST_WIN_ORIGINS="x,y;x,y;..."`
+(one origin per wallet, in spawn order) alongside `-p qpa_visible`.
+
 ## Traps that cost hours
 
 - **Vault names must be unique across wallets.** `HOME` isolation does *not*
@@ -220,6 +245,19 @@ assertion messages.
   See CLAUDE.md § Running tests.
 - **The plugin README is stale.** It documents 8 ops; the server implements 17.
   Read `server.py`.
+- **Never blind-retry a dialog click.** A retry loop that re-clicks without
+  checking opened TEN stacked `AddPeerDialog`s. Probe `is_visible` first; click
+  only when nothing is open; dismiss before retrying.
+- **macOS UNIX sockets cap at ~104 chars.** pytest's `tmp_path` is too deep for
+  the devctl socket — the wallet starts and the socket never appears. Use a short
+  `mkdtemp` prefix (the fixtures do).
+- **A wallet with no `LOCKSMITH_BRAND_CONFIG` is not fully vanilla.**
+  `load_brand()` falls back to the packaged `release/brand.json` (`egf: {}`, so
+  functionally vanilla), but `_brand_source_dir` is `release/` — it renders with
+  whatever assets `brand_apply` last baked. Expect Usurance icons on a "vanilla"
+  wallet in this checkout.
+- **`ensure_direct_transport`'s auto-expose is HOA-only.** A vanilla wallet is
+  exposed through its View Identifier dialog, not automatically.
 
 ---
 
