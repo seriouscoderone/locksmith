@@ -203,7 +203,7 @@ class PeerSyncDoer(doing.Doer):
                     verifier=getattr(vault, "verifier", None),
                     exc=getattr(vault, "exc", None),
                 )
-                logger.info("peer_sync.received peer=%s what=%s bytes=%d new_kels=%d",
+                logger.info("peer_sync.received peer=%s what=%s bytes=%d new_events=%d",
                             peer_pre[:12], label, len(raw), accepted)
             except Exception:           # noqa: BLE001
                 logger.warning("peer_sync.ingest_failed peer=%s what=%s",
