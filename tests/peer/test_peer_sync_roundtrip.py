@@ -175,14 +175,13 @@ def test_a_prod_gets_a_bar_back_and_the_body_lands():
             daemon=True)
 
         with listener:
-            # The discloser must KNOW the asker before it can authenticate a
-            # signed prod (Kevery is lax=False). Pairing does this in the real
-            # system; here, deliver the asker's KEL over the same transport.
-            peer_request(None, disc.pre, bytes(asker.replay()),
-                         endpoint_url=f"tcp://127.0.0.1:{port}",
-                         read_timeout=1.0)
-
-            pro = body_request(asker, said, peer_pre=disc.pre)
+            # NO separate introduction. introduced() prepends the asker's own
+            # KEL to the prod itself, which is what production sends — a
+            # responder that has never seen this AID drops the prod as
+            # "Unknown sender" before authenticating it, silently at DEBUG.
+            # Measured live: 32 prods lost exactly this way.
+            from keri_serviceaid.providers.peer_sync import introduced
+            pro = introduced(asker, body_request(asker, said, peer_pre=disc.pre))
             reply = peer_request(None, disc.pre, pro,
                                  endpoint_url=f"tcp://127.0.0.1:{port}",
                                  read_timeout=4.0)

@@ -138,7 +138,10 @@ def _make_splash() -> QSplashScreen | None:
     except Exception as exc:  # noqa: BLE001 - a splash must never block startup
         logger.warning("splash init failed: %s; skipping", exc)
         return None
-LOG_LEVEL = "INFO"
+# Env-settable so a running app can be asked WHY without a code change.
+# Every hard bug in the peer/prod path this year has been a SILENT drop
+# whose only explanation lived on a DEBUG logger nobody could turn on.
+LOG_LEVEL = os.environ.get("LOCKSMITH_LOG_LEVEL", "INFO").upper()
 
 help.ogler.level = logging.getLevelName(LOG_LEVEL)
 baseFormatter = logging.Formatter(FORMAT)

@@ -122,7 +122,8 @@ class PeerSyncDoer(doing.Doer):
 
     def _sync_peer(self, vault, hab, peer_pre: str) -> None:
         from keri_serviceaid.providers.peer_sync import (
-            anchored_saids, body_request, kel_sync_request, missing_bodies,
+            anchored_saids, body_request, introduced, kel_sync_request,
+            missing_bodies,
         )
 
         # 1. Ask the peer to replay its own KEL. Anchors we have never seen
@@ -144,7 +145,10 @@ class PeerSyncDoer(doing.Doer):
             return
 
         for said in missing_bodies(vault.rgy.reger, saids):
-            self._ask(vault, peer_pre, body_request(hab, said, peer_pre=peer_pre),
+            # introduced(): a peer that has never seen this AID drops the
+            # prod as "Unknown sender" before authenticating it -- silently.
+            self._ask(vault, peer_pre,
+                      introduced(hab, body_request(hab, said, peer_pre=peer_pre)),
                       f"pro/sealed {said[:12]}…", announce=True)
 
     def _ask(self, vault, peer_pre: str, raw: bytes, label: str,
