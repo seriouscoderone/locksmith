@@ -32,7 +32,8 @@ class ActuaryPlugin(VaultPlugin):
     plugin_id = "actuary"
     required_credential = RequiredCredential(
         schema_said=ACTUARY_ROLE_SCHEMA_SAID,
-        issuer_aids=[USURANCE_ADMIN_AID],
+        issuer_aids=[USURANCE_ADMIN_AID],   # FALLBACK only
+        credential_id="actuary_role",
         required_state="active",
     )
 

@@ -365,7 +365,13 @@ class PluginManager:
         host = self._surface_host
         held = self._held_credentials(vault)
         for plugin in self._gated_plugins():
-            req = plugin.required_credential
+            # Resolve the gate against the ECOSYSTEM before evaluating it. A
+            # plugin's declared issuer_aids are a fallback, not the authority:
+            # the trust root belongs to whoever deployed this framework, and
+            # lives in their EGF. Resolving here rather than at plugin
+            # construction means a brand swap or an EGF update is picked up
+            # without rebuilding the plugin.
+            req = self._resolved_gate(plugin.required_credential)
             satisfied = gate_satisfied(held, req)
             active = plugin.plugin_id in self._active_roles
             if satisfied and not active:
@@ -482,6 +488,35 @@ class PluginManager:
             said=said,
             revoked_at=revoked_at,
         )
+
+    def _resolved_gate(self, req: RequiredCredential) -> RequiredCredential:
+        """`req` with schema and trusted issuers taken from the active EGF.
+
+        Falls back to the plugin's own literals whenever the ecosystem cannot
+        be read or does not describe the credential -- never widening the gate,
+        only re-pointing it at the deployment's real authority.
+        """
+        from locksmith.plugins.credential_gate import resolve_from_egf
+
+        egf_doc = getattr(self, "_egf_doc", None)
+        if egf_doc is None:
+            try:
+                from locksmith.core.branding import brand
+                from locksmith.core.egf_seeding import make_hoa_resolver
+
+                resolved = make_hoa_resolver(brand())
+                egf_doc = resolved[1] if resolved else None
+            except Exception:                    # noqa: BLE001
+                egf_doc = None
+            self._egf_doc = egf_doc              # resolve once per manager
+        if egf_doc is None:
+            return req
+        try:
+            from locksmith.core.branding import brand
+            phases = brand().egf_accept_phases
+        except Exception:                        # noqa: BLE001
+            phases = ("production",)
+        return resolve_from_egf(req, egf_doc, accept_phases=phases)
 
     @staticmethod
     def _matching_credential(

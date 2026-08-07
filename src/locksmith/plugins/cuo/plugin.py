@@ -30,7 +30,8 @@ class CuoPlugin(VaultPlugin):
     plugin_id = "cuo"                     # MUST equal the entry-point name
     required_credential = RequiredCredential(
         schema_said=CUO_ROLE_SCHEMA_SAID,
-        issuer_aids=[USURANCE_ADMIN_AID],
+        issuer_aids=[USURANCE_ADMIN_AID],   # FALLBACK only
+        credential_id="cuo_role",
         required_state="active",
     )
 

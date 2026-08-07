@@ -32,7 +32,8 @@ class ProductDesignerPlugin(VaultPlugin):
     plugin_id = "product_designer"
     required_credential = RequiredCredential(
         schema_said=PD_ROLE_SCHEMA_SAID,
-        issuer_aids=[USURANCE_ADMIN_AID],
+        issuer_aids=[USURANCE_ADMIN_AID],   # FALLBACK only
+        credential_id="product_designer_role",
         required_state="active",
     )
 
