@@ -85,6 +85,12 @@ test = [
     "click>=8.1",
     "fido2>=1.1",
     "boto3>=1.34",
+    # `ruff` is a TEST dependency, not a style tool: tests/test_undefined_names.py
+    # runs `ruff check --select F821` over src/, which is the only thing in this
+    # repo that can see a name used but never bound. That defect shipped once
+    # (42fcfcb4) and cost a session — a NameError on a rarely-taken branch is
+    # invisible to a suite that never takes it.
+    "ruff>=0.5",
 ]
 build-macos = [
     "pyinstaller>=6.6,<7",
