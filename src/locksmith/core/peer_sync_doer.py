@@ -14,20 +14,30 @@ the ANSWERING halves both already exist and are already wired.
     path literally labelled "chit or receipt or replay".
   * `pro` route "/sealed" -> Plan A's `ProdResponder` answers with a `bar`.
 
-What was missing is only the ASKING. This doer is that, and nothing more: every
-message it sends is built by `keri_serviceaid.providers.peer_sync` (headless,
-pure, unit-tested without Qt or sockets) and handed to the existing
-`peer_send`. No protocol decisions live here — deliberately, so the GUI, a CLI
-and a service can share one implementation of the asking rather than three.
+What was missing is the ASKING **and the reading**. `peer_send` — correct for
+every other message on this transport — closes the socket the instant the write
+completes, so the Reactant's reply ("Server peer-listener: sent chit or receipt
+or replay: 459", measured live every 5s) went into a connection the asker had
+already hung up on. This doer therefore uses `peer_request`, which reads the
+reply, and hands the bytes to `ingest_response`.
+
+Every message it sends and every reply it parses is built by
+`keri_serviceaid.providers.peer_sync` (headless, pure, unit-tested without Qt or
+sockets). No protocol decisions live here — deliberately, so the GUI, a CLI and
+a service can share one implementation rather than three. What IS here is
+threading: socket waits happen off the GUI thread, KERI state is touched only on
+the doer's thread.
 """
 from __future__ import annotations
+
+from concurrent.futures import ThreadPoolExecutor
 
 from keri import help
 from hio.base import doing
 
 from locksmith.core.branding import brand
 from locksmith.peer.allowlist import PeerAllowlist
-from locksmith.peer.sending import peer_send
+from locksmith.peer.sending import peer_request
 
 logger = help.ogler.getLogger(__name__)
 
@@ -52,6 +62,14 @@ class PeerSyncDoer(doing.Doer):
     def __init__(self, app, tock: float = DEFAULT_TOCK, **kwa):
         self.app = app
         self._checkpoints: dict[str, int] = {}      # peer AID -> last seen sn
+        # Socket I/O only. peer_request blocks for up to its read timeout, and
+        # the hio loop that drives this doer also drives the UI -- doing the
+        # waiting inline would freeze the window for (timeout x peers) every
+        # tick. Workers return raw bytes and touch no KERI state; every parse
+        # happens back on this thread in _drain().
+        self._pool = ThreadPoolExecutor(max_workers=4,
+                                        thread_name_prefix="peer-sync")
+        self._pending: list = []                    # (peer_pre, Future)
         super().__init__(tock=tock, **kwa)
 
     def do(self, tymth, tock=0.0, **opts):
@@ -83,6 +101,10 @@ class PeerSyncDoer(doing.Doer):
             hab = signing_hab(vault.hby, brand().default_aid_alias or "default")
             if hab is None:
                 return                      # no identity yet — nothing to sign with
+            # Drain FIRST: a reply that arrived since the last tick must be
+            # ingested before missing_bodies decides what is still missing,
+            # otherwise every in-flight body is re-requested every tick.
+            self._drain(vault)
             for peer_pre in self._paired_peers(vault, hab):
                 self._sync_peer(vault, hab, peer_pre)
         except Exception:                   # noqa: BLE001
@@ -106,8 +128,8 @@ class PeerSyncDoer(doing.Doer):
         # 1. Ask the peer to replay its own KEL. Anchors we have never seen
         #    cannot be requested until they are visible here.
         first = peer_pre not in self._checkpoints
-        self._send(vault, peer_pre, kel_sync_request(hab, peer_pre), "qry/logs",
-                   announce=first)
+        self._ask(vault, peer_pre, kel_sync_request(hab, peer_pre), "qry/logs",
+                  announce=first)
 
         # 2. Ask for the bodies behind anchors we can see but do not hold.
         #    `missing_bodies` keeps this from re-requesting on every tick.
@@ -122,31 +144,68 @@ class PeerSyncDoer(doing.Doer):
             return
 
         for said in missing_bodies(vault.rgy.reger, saids):
-            self._send(vault, peer_pre, body_request(hab, said, peer_pre=peer_pre),
-                       f"pro/sealed {said[:12]}…", announce=True)
+            self._ask(vault, peer_pre, body_request(hab, said, peer_pre=peer_pre),
+                      f"pro/sealed {said[:12]}…", announce=True)
 
-    def _send(self, vault, peer_pre: str, raw: bytes, label: str,
-              announce: bool = False) -> None:
-        """`announce` promotes a send to INFO.
+    def _ask(self, vault, peer_pre: str, raw: bytes, label: str,
+             announce: bool = False) -> None:
+        """Send a request and QUEUE its reply for parsing on the next tick.
 
-        A 5s loop over every paired peer would bury the log at INFO, so the
-        routine tick stays at DEBUG. But logging the WHOLE feature at DEBUG
-        made it invisible in a build that logs at INFO: this doer ran for
-        minutes against a live demo emitting nothing of its own, and its
-        behaviour had to be inferred from the `peer.send.*` lines underneath
-        it. That is backwards for a background loop whose entire job is to be
-        observable. So the events that are both RARE and MEANINGFUL -- the
-        first sync of a peer, and every body actually requested -- are INFO.
+        `announce` promotes the log line to INFO. A 5s loop over every paired
+        peer would bury the log at INFO, so routine ticks stay DEBUG -- but
+        logging the WHOLE feature at DEBUG once made it invisible in a build
+        that logs at INFO, and its behaviour had to be inferred from the
+        `peer.send.*` lines underneath it. The rare, meaningful events -- a
+        peer's first sync, every body actually requested -- are INFO.
         """
         try:
-            outcome = peer_send(
-                PeerAllowlist(vault.db), peer_pre, raw,
-                mailbox_send=lambda _aid, _b: False,   # a watch never falls back
-                keridb=vault.hby.db,
-            )
+            record = PeerAllowlist(vault.db).get(peer_pre)
+            url = record.endpoint_url if record is not None else None
+            if not url:
+                return
             log = logger.info if announce else logger.debug
-            log("peer_sync.sent peer=%s what=%s bytes=%d outcome=%s",
-                peer_pre[:12], label, len(raw), outcome)
-        except Exception:                   # noqa: BLE001 — unreachable peer is normal
-            logger.debug("peer_sync.send_failed peer=%s what=%s",
+            log("peer_sync.sent peer=%s what=%s bytes=%d endpoint=%s",
+                peer_pre[:12], label, len(raw), url)
+            # Endpoint resolved HERE, on the thread that owns the db; the
+            # worker gets a URL and bytes and nothing else.
+            fut = self._pool.submit(peer_request, None, peer_pre, raw,
+                                    endpoint_url=url)
+            self._pending.append((peer_pre, label, fut))
+        except Exception:               # noqa: BLE001 — never kill the watch
+            logger.debug("peer_sync.ask_failed peer=%s what=%s",
                          peer_pre[:12], label, exc_info=True)
+
+    def _drain(self, vault) -> None:
+        """Parse every reply that has come back since the last tick.
+
+        Runs on the doer's thread, so all KERI state is touched from the
+        thread that owns it. Unfinished requests stay pending; a request that
+        never answers is dropped when its future completes empty.
+        """
+        from keri_serviceaid.providers.peer_sync import ingest_response
+
+        still = []
+        for peer_pre, label, fut in self._pending:
+            if not fut.done():
+                still.append((peer_pre, label, fut))
+                continue
+            try:
+                raw = fut.result()
+            except Exception:           # noqa: BLE001 — unreachable peer is normal
+                logger.debug("peer_sync.reply_failed peer=%s", peer_pre[:12],
+                             exc_info=True)
+                continue
+            if not raw:
+                continue
+            try:
+                accepted = ingest_response(
+                    vault.hby, raw,
+                    verifier=getattr(vault, "verifier", None),
+                    exc=getattr(vault, "exc", None),
+                )
+                logger.info("peer_sync.received peer=%s what=%s bytes=%d new_kels=%d",
+                            peer_pre[:12], label, len(raw), accepted)
+            except Exception:           # noqa: BLE001
+                logger.warning("peer_sync.ingest_failed peer=%s what=%s",
+                               peer_pre[:12], label, exc_info=True)
+        self._pending = still

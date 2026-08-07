@@ -100,3 +100,76 @@ def _split_tcp_url(url: str) -> tuple[str, int]:
     if not up.hostname or not up.port:
         raise ValueError(f"missing host or port in {url!r}")
     return up.hostname, up.port
+
+
+#: How long to wait for a peer's reply before giving up on this round. A watch
+#: is a background loop -- a peer that is slow this tick is asked again next
+#: tick, so waiting longer buys nothing and costs a blocked thread.
+REPLY_READ_TIMEOUT_SECONDS = 2.0
+
+
+def peer_request(allowlist, recipient_aid: str, raw: bytes,
+                 *, endpoint_url: str | None = None,
+                 read_timeout: float = REPLY_READ_TIMEOUT_SECONDS) -> bytes:
+    """Send `raw` to a paired peer and RETURN ITS REPLY bytes.
+
+    Deliberately NOT part of `peer_send`. Every other outbound message on this
+    transport is genuinely fire-and-forget, and `peer_send` closes the socket
+    the instant the write completes -- correct for a grant, fatal for a query.
+    The Reactant answers a `qry`/`pro` on the same connection
+    (`sendMessage` -> `remoter.tx`, logged "chit or receipt or replay"), so the
+    reply is already being written; it was simply going into a socket the
+    asker had hung up on. Measured live: 459-byte replays sent every 5s, zero
+    of them ever read.
+
+    PURE SOCKET I/O, returning bytes and touching no KERI state, so a caller
+    may run it OFF the GUI thread. That matters: this blocks for up to
+    `read_timeout`, and the hio doer loop that drives the watch also drives the
+    UI. Parsing the returned bytes belongs on the owning thread -- see
+    `keri_serviceaid.providers.peer_sync.ingest_response`.
+
+    Returns b"" on any failure (no peer record, bad URL, unreachable, timeout
+    with nothing read). There is no mailbox fallback: a mailbox cannot answer
+    a query, and the next tick will ask again.
+    """
+    # `endpoint_url` lets a caller resolve the peer record on ITS OWN thread and
+    # hand this function nothing but a URL -- so a GUI can run the blocking part
+    # in a worker without ever touching LMDB off the thread that owns it.
+    url = endpoint_url
+    if url is None:
+        record = allowlist.get(recipient_aid)
+        url = record.endpoint_url if record is not None else None
+    if not url:
+        return b""
+    try:
+        host, port = _split_tcp_url(url)
+    except ValueError:
+        return b""
+
+    chunks = []
+    try:
+        with socket.create_connection((host, port),
+                                      timeout=CONNECT_TIMEOUT_SECONDS) as sock:
+            sock.sendall(raw)
+            # The responder needs no EOF to act: its Parser is framed and each
+            # message carries its own size in `v`. So do NOT half-close here --
+            # shutdown(SHUT_WR) risks the hio Remoter treating the FIN as a
+            # closed connection and tearing down before it replies.
+            sock.settimeout(read_timeout)
+            while True:
+                try:
+                    buf = sock.recv(65536)
+                except (socket.timeout, TimeoutError):
+                    break           # answered what it was going to answer
+                if not buf:
+                    break           # peer closed
+                chunks.append(buf)
+    except (OSError, socket.timeout) as e:
+        logger.debug(f"peer.request.failed recipient={recipient_aid} err={e}")
+        return b""
+
+    reply = b"".join(chunks)
+    logger.debug(
+        f"peer.request.reply recipient={recipient_aid} sent={len(raw)} got={len(reply)}"
+    )
+    return reply
