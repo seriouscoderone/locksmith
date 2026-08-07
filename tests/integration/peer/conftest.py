@@ -12,6 +12,7 @@ dev-control socket comes up on launch.
 """
 from __future__ import annotations
 
+import contextlib
 import json
 import os
 import shutil
@@ -419,15 +420,29 @@ def import_peer_blob_via_ui(
     # the paired list), so a click can land on a button that is being replaced
     # — the click reports ok and nothing opens. Re-clicking is what actually
     # recovers; a longer single wait just fails more slowly.
+    # NEVER click blind. An earlier version of this loop re-clicked every
+    # three seconds without checking, and each click opened ANOTHER AddPeerDialog
+    # — ten stacked copies of the same modal piling up on screen, which is both
+    # a mess to watch and the reason the wait kept failing (the selector can
+    # resolve to a covered instance). So: probe first, click only when nothing
+    # is open, and dismiss whatever we opened before trying again.
     r = {"error": "not attempted"}
     deadline = time.time() + 30.0
     while time.time() < deadline:
+        probe = devctl(sock, "is_visible", target="addPeerDialog.oobiInput")
+        if probe.get("ok") and probe.get("visible"):
+            r = {"ok": True, "already_open": True}
+            break
+
         devctl(sock, "click", target="peerSettingsSection.addPeerButton")
         r = devctl(sock, "wait_for",
                    target="addPeerDialog.oobiInput",
                    condition="visible", timeout_ms=3000)
         if r.get("ok"):
             break
+
+        # Leave no orphan behind before the next attempt.
+        devctl(sock, "click", target="addPeerDialog.cancelButton")
         time.sleep(1.0)
     if not r.get("ok"):
         # Screenshot before theorising (docs/development/ui-driven-testing.md):
@@ -537,8 +552,12 @@ def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None):
             _install_plugins(home)
             log = root / f"{name}.log"
             origins = _win_origins()
+            # `brand` may be one value for every wallet, or a {name: path|None}
+            # map for a MIXED fleet — e.g. a vanilla admin issuing credentials
+            # to branded HOAs, which is the real shape of this ecosystem.
+            wallet_brand = brand.get(name) if isinstance(brand, dict) else brand
             proc = _start_wallet(
-                home, log, brand=brand,
+                home, log, brand=wallet_brand,
                 win_pos=origins[len(procs) % len(origins)] if origins else None,
             )
             procs.append(proc)
@@ -650,3 +669,129 @@ def accept_grant_via_hoa_notifications(devctl, sock, *, timeout_s: float = 45.0)
         "shows 'hoaNotifications.emptyLabel' when there is nothing to accept — "
         "check the wallet log for an inbound /exn/ipex/grant."
     )
+
+
+@pytest.fixture
+def admin_and_two_hoas():
+    """A VANILLA admin wallet plus two branded HOAs — cuo and actuary.
+
+    The shape the ecosystem actually has: a Locksmith operator issues role
+    credentials, and persona-shaped HOAs consume them. Every leg runs through a
+    real UI in a real process — nothing is issued in-process on the test's
+    behalf.
+
+    `four_wallets` explains why this could not be done before: the RECEIVING
+    side of a live grant surfaced only on vanilla's Notifications page, whose
+    admit goes through `QDialog.exec()` — a modal on the Qt main thread the
+    devctl server dispatches on, so the harness deadlocked. That blocker is
+    specific to a VANILLA recipient. Vanilla ISSUING and GRANTING was always
+    drivable (issueCredentialDialog / grantCredentialDialog carry stable
+    objectNames), and an HOA recipient admits without any modal at all. So
+    vanilla-admin -> HOA-recipient is precisely the combination that works.
+    """
+    if not USURANCE_BRAND.is_file():
+        pytest.skip(
+            f"branded wallets need {USURANCE_BRAND}, which is gitignored and "
+            f"built on demand. Run: .venv/bin/python scripts/brand_apply.py usurance"
+        )
+    brands = {"admin": None, "cuo": USURANCE_BRAND, "actuary": USURANCE_BRAND}
+    with _spawn_wallets(["admin", "cuo", "actuary"], prefix="lsarc-",
+                        brand=brands) as wallets:
+        yield {**wallets, "devctl": _devctl}
+
+
+@contextlib.contextmanager
+def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
+    """Spawn a single wallet into `root/name`, honouring window placement."""
+    home = root / name
+    home.mkdir(exist_ok=True)
+    _install_plugins(home)
+    log = root / f"{name}.log"
+    origins = _win_origins()
+    proc = _start_wallet(home, log, brand=brand,
+                         win_pos=origins[idx % len(origins)] if origins else None)
+    entry = {"home": home, "log": log,
+             "sock": home / ".locksmith-control.sock", "proc": proc}
+    try:
+        _wait_for_socket(entry["sock"])
+        yield entry
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+@pytest.fixture
+def admin_then_two_hoas():
+    """A vanilla admin, then two HOAs that TRUST IT — spawned in that order.
+
+    They cannot be spawned together. A branded HOA trusts exactly the authority
+    AID pinned in its EGF, and that AID does not exist until the admin wallet is
+    running and has made one. So: bring the admin up, take its AID and its OOBI
+    from its own UI, derive an EGF rooted at it, and only then launch the HOAs
+    against that brand.
+
+    This is why the shipped usurance brand cannot be used for an end-to-end HOA
+    test: it pins the real `usurance-admin` (EGjm-X1JMz-...), whose passcode the
+    suite must never touch. Same reason `_build_test_admin` exists, one level up
+    — the suite owns its ecosystem, not just its admin.
+
+    Yields {"admin", "cuo", "actuary", "devctl", "admin_aid", "brand"}; the
+    caller drives the admin's own UI to create the AID before the HOAs exist.
+    """
+    from tests.integration.peer.testegf import build_test_brand
+
+    if not USURANCE_BRAND.is_file():
+        pytest.skip(
+            f"needs {USURANCE_BRAND} (gitignored; build with "
+            f"scripts/brand_apply.py usurance) as the template brand")
+
+    root = Path(tempfile.mkdtemp(prefix="lsarc-"))
+    keep = os.environ.get("LOCKSMITH_KEEP_TEST_HOMES")
+    try:
+        with _spawn_one("admin", root, None, 0) as admin:
+            open_test_vault_via_ui(_devctl, admin["sock"], "arcadmin")
+            create_aid_via_ui(_devctl, admin["sock"], "admin")
+            set_peer_mode_via_ui(_devctl, admin["sock"], port=free_port())
+
+            aid, token = _admin_identity(_devctl, admin["sock"])
+            brand = build_test_brand(root / "brand", admin_aid=aid,
+                                     admin_oobi_token=token,
+                                     src_brand=USURANCE_BRAND)
+
+            with _spawn_one("cuo", root, brand, 1) as cuo, \
+                    _spawn_one("actuary", root, brand, 2) as actuary:
+                yield {"admin": admin, "cuo": cuo, "actuary": actuary,
+                       "devctl": _devctl, "admin_aid": aid, "brand": brand}
+    finally:
+        if keep:
+            print(f"\n[admin_then_two_hoas] logs kept at {root}")
+        else:
+            shutil.rmtree(root, ignore_errors=True)
+
+
+def _admin_identity(devctl, sock) -> tuple[str, str]:
+    """(aid, peer-oobi token) for the admin's own identifier, read from its UI.
+
+    Deliberately UI-sourced: the token Settings renders is base64 over exactly
+    the bytes an EGF `oobis/<aid>.cesr` holds, so the fixture needs no keystore
+    access and no passcode to publish its authority.
+    """
+    devctl(sock, "click", target="vaultNavMenu.settingsButton")
+    deadline = time.time() + 30.0
+    while time.time() < deadline:
+        r = devctl(sock, "get_text", target="peerSettingsSection.oobiIdentity.admin")
+        ident = r.get("text") if r.get("ok") else None
+        tok = devctl(sock, "get_text", target="peerSettingsSection.oobiToken.admin")
+        token = tok.get("text") if tok.get("ok") else None
+        if ident and token:
+            # The label is "alias\n<aid>".
+            return ident.split("\n")[-1].strip(), token
+        time.sleep(1.0)
+        devctl(sock, "click", target="vaultNavMenu.settingsButton")
+    raise AssertionError(
+        "admin never published a peer OOBI in Settings — transport comes up "
+        "asynchronously, but 30s should be ample; check its log for "
+        "'direct_transport' and 'peer.listener'.")
