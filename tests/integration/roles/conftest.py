@@ -1306,8 +1306,18 @@ _UGARD_ROOT = pathlib.Path.home() / "code" / "ugard"
 _PARSER_DIR = _UGARD_ROOT / "insurance-product" / "parser"
 _WORKBOOK = _PARSER_DIR / "tests" / "fixtures" / "TestExcel_01.xlsm"
 _PARSE_ARGS = ["--line-of-business", "L", "--jurisdiction", "WI",
-              "--version", "1.0", "--filing-date", "2022-05-01",
-              "--action", "sandbox"]
+              "--filing-date", "2022-05-01", "--action", "sandbox"]
+
+#: A parse now answers a SPECIFIC product mandate: `ipd-parse` replaced
+#: `--version` with `--product-mandate <SAID>` and writes to
+#: `<out>/<lob>/<juris>/<said>` instead of `<out>/<lob>/<juris>/<version>`
+#: (ugard `insurance-product/parser/src/ipd/parse_cli.py:14,24`). The harness
+#: still passed `--version 1.0`, so both tests that use `parse_dir` errored
+#: before spawning a single wallet:
+#:     ipd-parse: error: the following arguments are required: --product-mandate
+#: Standalone callers pass this placeholder; the four-window arc passes the SAID
+#: the CUO actually declared, which is the point of the CLI change.
+_PLACEHOLDER_MANDATE_SAID = "EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 _WORKBOOK_SIDECAR_NAME = ".workbook_source.json"  # must match actuary/page.py's own
 
 
@@ -1331,7 +1341,8 @@ def _parser_python() -> str:
         f"{_PARSER_DIR}/.venv/bin/pip install -e {_PARSER_DIR}")
 
 
-def _run_ipd_parse(out: pathlib.Path) -> pathlib.Path:
+def _run_ipd_parse(out: pathlib.Path,
+                   product_mandate: str = _PLACEHOLDER_MANDATE_SAID) -> pathlib.Path:
     """Run a REAL `ipd-parse` against the fixture workbook into `out`, write the
     `.workbook_source.json` sidecar `ActuaryPage._resolve_workbook` looks for (see
     that module's docstring for why the sidecar convention exists: real `ipd-parse`
@@ -1348,11 +1359,12 @@ def _run_ipd_parse(out: pathlib.Path) -> pathlib.Path:
         raise RuntimeError(f"fixture workbook missing: {_WORKBOOK}")
     proc = subprocess.run(
         [_parser_python(), "-m", "ipd.parse_cli", "--workbook", str(_WORKBOOK),
-         *_PARSE_ARGS, "--out", str(out)],
+         *_PARSE_ARGS, "--product-mandate", product_mandate,
+         "--out", str(out)],
         capture_output=True, text=True,
         env={"PYTHONPATH": str(_PARSER_DIR / "src"), "PATH": "/usr/bin:/bin"})
     assert proc.returncode == 0, f"ipd-parse failed:\n{proc.stdout}\n{proc.stderr}"
-    shards = out / "L" / "WI" / "1.0"
+    shards = out / "L" / "WI" / product_mandate
     assert shards.is_dir(), f"ipd-parse wrote no {shards.relative_to(out)}"
 
     (shards / _WORKBOOK_SIDECAR_NAME).write_text(
