@@ -501,23 +501,45 @@ class HoaShellPlugin(VaultPlugin):
         from keri_serviceaid.providers.disclosure import disclosable_bodies
         from keri_serviceaid.providers.peer_sync import signing_hab
 
-        directant = getattr(getattr(vault, "peer_doer", None), "directant", None)
-        if directant is None:
-            return                      # peer mode off -- nothing to answer with
-
         def _disclosable():
             verifier = getattr(vault, "verifier", None)
             reger = getattr(verifier, "reger", None)
             return disclosable_bodies(reger) if reger is not None else {}
 
         try:
-            directant.disclosable = _disclosable
-            directant.prodPolicy = prodding.openPolicy
+            # Install on the VAULT, which outlives every listener rebuild, not
+            # only on the live Directant.
+            #
+            # This used to start with `if directant is None: return` — a silent
+            # early exit that fired whenever the vault opened with peer mode
+            # OFF, which is the normal order for a fresh workspace: open, then
+            # turn peer mode on. Nothing was ever installed, `disclosable`
+            # stayed `{}`, and the CUO answered every prod for its own mandate
+            # with "not marked disclosable; withholding". The ask, the KEL sync
+            # and the prod all worked; only the answer was empty, and nothing
+            # said why.
+            #
+            # `restart_peer_mode` compounded it: it builds a fresh PeerDoer on
+            # every settings change, so a policy patched onto a Directant was
+            # discarded the next time the port moved.
+            vault.disclosable = _disclosable
+            vault.prod_policy = prodding.openPolicy
             # The bar must be signed by the identity that ANCHORED the
             # credential; the listener's own hab is the non-transferable
             # peer-listener EID, whose KEL anchors nothing, and a bar it signs
             # is rejected by the recipient as "not anchored".
-            directant.prodHab = signing_hab(
+            vault.prod_hab = signing_hab(
                 vault.hby, brand().default_aid_alias or "default")
+
+            # Also patch a Directant that already exists, so enabling this on an
+            # already-listening vault takes effect without a restart.
+            directant = getattr(getattr(vault, "peer_doer", None),
+                                "directant", None)
+            if directant is not None:
+                directant.disclosable = vault.disclosable
+                directant.prodPolicy = vault.prod_policy
+                directant.prodHab = vault.prod_hab
+            logger.info("hoa.disclosure_installed live_directant=%s",
+                        directant is not None)
         except Exception:               # noqa: BLE001
             logger.exception("hoa.disclosure_install_failed")

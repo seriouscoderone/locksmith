@@ -30,9 +30,10 @@ from tests.integration.peer.conftest import (  # noqa: F401 (fixture)
     open_workspace_via_hoa_setup, set_peer_mode_via_ui, wait_for_peer_reachable,
 )
 from tests.integration.roles.conftest import (
-    ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, _expose_and_export,
-    issue_and_grant_role_via_admin_ui, load_issuable_schema_via_admin_ui,
-    request_role_via_hoa_ui, wait_for_admin_notifications,
+    ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, _export_current_blob,
+    _expose_and_export, issue_and_grant_role_via_admin_ui,
+    load_issuable_schema_via_admin_ui, request_role_via_hoa_ui,
+    submit_mandate_form_via_ui, wait_for_admin_notifications,
 )
 
 pytestmark = pytest.mark.integration
@@ -172,3 +173,46 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
                 f"appeared. The gate resolves its issuer from the EGF — if the "
                 f"brand's authority is not the wallet that granted this, it "
                 f"never opens. Check the wallet log for 'gate' and 'egf.resolved'.")
+
+    # ---- the membrane: the CUO declares, the actuary RETRIEVES -------------
+    cuo, actuary = (admin_then_two_hoas["cuo"]["sock"],
+                    admin_then_two_hoas["actuary"]["sock"])
+
+    # ONE-WAY on purpose. The actuary learns how to reach the CUO; the CUO is
+    # never told how to reach the actuary and is never asked to send anything.
+    # That is the whole claim — the actuary does the asking. It works because
+    # the `bar` returns on the SAME socket the `pro` arrived on, and because the
+    # peer allowlist gates `exn` only, never `pro` (the prod carries the asker's
+    # KEL as an introduction, so it is not dropped as "Unknown sender").
+    #
+    # Consequence worth expecting: the CUO's peer list stays empty and its dot
+    # never goes green. Correct, not a missing pairing.
+    import_peer_blob_via_ui(devctl, actuary,
+                            _export_current_blob(devctl, cuo, "cuo"),
+                            label="cuo")
+    wait_for_peer_reachable(devctl, actuary, count=1)
+
+    devctl(cuo, "click", target="Underwriting")
+    submit_mandate_form_via_ui(devctl, cuo)
+
+    # Nothing is pushed. The actuary's own `PeerSyncDoer` syncs the CUO's KEL,
+    # finds the mandate's anchoring seal, sends a `pro`, and ingests the `bar`.
+    # It ticks every 5s, so this is polled, not slept through.
+    devctl(actuary, "click", target="Actuarial")
+    deadline, rows = time.time() + 120.0, None
+    while time.time() < deadline:
+        rows = (devctl(actuary, "get_list_items",
+                       target="actuaryPage.observedMandates").get("items")) or []
+        if rows:
+            break
+        time.sleep(3.0)
+
+    assert rows, (
+        "the actuary never retrieved the mandate. NOTHING pushed it, so an "
+        "empty list means the ask, the answer, or the storing of the body "
+        "failed — and all three look identical from here. The wallet logs "
+        "separate them: the actuary should log "
+        "'peer_sync.sent … what=pro/sealed', and the CUO should log "
+        "'Prod: disclosing'. Whichever is missing names the half that broke.\n"
+        f"  actuary: {admin_then_two_hoas['actuary']['log']}\n"
+        f"  cuo:     {admin_then_two_hoas['cuo']['log']}")

@@ -142,6 +142,22 @@ class ActuaryPage(QWidget):
         # watch state
         self._watchers: dict[str, Any] = {}       # peer AID -> AnchorWatcher
         self._observed: dict[str, dict] = {}       # mandate SAID -> {line_of_business, jurisdiction, coverages}
+        # Seals seen but NOT yet resolvable, re-considered on every tick.
+        #
+        # `AnchorWatcher.since()` advances `.checkpoint` to the highest sn
+        # EXAMINED — its own docstring calls it a scan cursor — so a seal this
+        # page looks at and cannot act on is stepped over PERMANENTLY. And that
+        # is the normal case, not an edge one: the seal is what tells us a body
+        # exists, so the body necessarily arrives afterwards. Measured, one run:
+        #
+        #   17:36:11  CUO anchors the mandate; the actuary syncs the KEL, sees
+        #             the seal, finds no local body, returns False — cursor moves
+        #   17:36:22  peer_sync.stored said=EOaM4IbWLJGA   (11s too late)
+        #
+        # The retrieval worked perfectly and the mandate still never appeared.
+        # Holding unresolved seals here is the consumer saying "I am not done
+        # with this one", which the watcher's cursor cannot express.
+        self._pending_seals: dict[str, dict] = {}  # candidate SAID -> seal
         self._egf_doc_cache = "unresolved"          # sentinel: distinct from a real None
 
         # attest state
@@ -355,13 +371,56 @@ class ActuaryPage(QWidget):
             return
 
         changed = False
+
+        # Retry everything we could not resolve last time, FIRST — the body may
+        # have landed since, and the watcher will never offer these again.
+        for candidate, seal in list(self._pending_seals.items()):
+            if self._consider_one(vault, seal):
+                self._pending_seals.pop(candidate, None)
+                changed = True
+
         for pre in self._known_peer_pres(vault):
             watcher = self._watcher_for(hab, pre)
             for _sn, seal in watcher.since(watcher.checkpoint):
-                if self._consider_seal(vault, seal):
+                if self._consider_one(vault, seal):
+                    self._pending_seals.pop(seal.get("i") or "", None)
                     changed = True
+                else:
+                    candidate = seal.get("i")
+                    # Only hold seals that could still become a mandate. A KEL's
+                    # `a` block carries all sorts of anchors; one already
+                    # observed, or with no `i` to resolve, is not pending on
+                    # anything.
+                    if candidate and candidate not in self._observed:
+                        if candidate not in self._pending_seals:
+                            logger.info("actuary.watch.pending said=%s",
+                                        str(candidate)[:12])
+                        self._pending_seals[candidate] = seal
         if changed:
             self._refresh_observed_list()
+
+    def _consider_one(self, vault, seal: dict) -> bool:
+        """`_consider_seal` with a blast radius of one seal.
+
+        A KEL's `a` block carries anchors this page knows nothing about, and
+        resolving one walks into keripy's TEL accessors — where an entry that
+        has not arrived yet used to surface as a TypeError out of `dgKey`
+        (upstream `cloneTvtAt` passed a None digest straight through; see
+        keripy docs/FORK_DIVERGENCE.md). That exception propagated out of
+        `_scan_for_mandates` and killed the ENTIRE scan mid-loop — including
+        the `_refresh_observed_list()` at the end.
+
+        Measured, one run: the mandate was retrieved, verified, and recorded in
+        `self._observed`, and the list still rendered empty forever, because a
+        LATER unrelated seal in the same pass raised before the repaint. A
+        watch must degrade on the anchor it cannot read, never stop.
+        """
+        try:
+            return self._consider_seal(vault, seal)
+        except Exception:               # noqa: BLE001 — one bad anchor, not the watch
+            logger.exception("actuary.watch.seal_failed said=%s",
+                             str(seal.get("i"))[:12])
+            return False
 
     def _consider_seal(self, vault, seal: dict) -> bool:
         """Try to resolve `seal` to a genuinely-anchored, schema-matching,
@@ -374,10 +433,18 @@ class ActuaryPage(QWidget):
 
         reger = vault.rgy.reger
         creder = reger.creds.get(keys=(candidate_said,))
-        if creder is None or creder.schema != PRODUCT_MANDATE_SCHEMA_SAID:
-            # Either not landed locally yet (a real watch is asynchronous with
-            # delivery), or an anchor for something else entirely -- a KEL's
-            # `a` block is not reserved for credential seals.
+        if creder is None:
+            # Not landed locally yet — a real watch is asynchronous with
+            # delivery, so this is the NORMAL first answer for a fresh seal.
+            logger.debug("actuary.watch.skip reason=no_body said=%s",
+                         str(candidate_said)[:12])
+            return False
+        if creder.schema != PRODUCT_MANDATE_SCHEMA_SAID:
+            # An anchor for something else entirely — a KEL's `a` block is not
+            # reserved for credential seals.
+            logger.debug("actuary.watch.skip reason=other_schema said=%s "
+                         "schema=%s", str(candidate_said)[:12],
+                         str(creder.schema)[:12])
             return False
 
         from keri_serviceaid.providers.sealed_retrieval import (
@@ -386,6 +453,8 @@ class ActuaryPage(QWidget):
 
         iss_raw = reger.cloneTvtAt(candidate_said, sn=0)
         if not iss_raw:
+            logger.debug("actuary.watch.skip reason=no_tel_iss said=%s",
+                         str(candidate_said)[:12])
             return False
         iss_event = SerderKERI(raw=bytes(iss_raw)).sad
         try:
@@ -394,6 +463,9 @@ class ActuaryPage(QWidget):
             logger.warning("actuary.watch.chain_broken said=%s", candidate_said)
             return False
         if proven_said != creder.said:
+            logger.debug("actuary.watch.skip reason=said_mismatch said=%s "
+                         "proven=%s", str(candidate_said)[:12],
+                         str(proven_said)[:12])
             return False
 
         tel_state = None

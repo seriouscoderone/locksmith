@@ -848,7 +848,20 @@ def declare_mandate_via_ui(devctl, sock) -> None:
     `open_vault_holding_cuo_role`, alias "cuo") and submits design §6's five
     fields, waiting for the real issuance to complete."""
     open_vault_holding_cuo_role(devctl, sock)
+    submit_mandate_form_via_ui(devctl, sock)
 
+
+def submit_mandate_form_via_ui(devctl, sock) -> None:
+    """Fill and submit the CUO's mandate form on a wallet that ALREADY holds
+    the role.
+
+    Split out of `declare_mandate_via_ui`, which begins by calling
+    `open_vault_holding_cuo_role` — the legacy recipe: an in-process fake admin
+    issuing the credential and the test pushing the registry TEL down a raw
+    socket. A CUO that got its role the real way (applied, was granted, admitted)
+    must not run that again; it would mint a SECOND cuo_role from a different
+    issuer. So the form-filling lives here and both paths share one copy.
+    """
     r = devctl(sock, "wait_for", target="cuoMandatePage",
                condition="visible", timeout_ms=5000)
     assert r.get("ok"), r
@@ -1849,21 +1862,27 @@ def wait_for_admin_notifications(devctl, sock, *, count: int,
     # only the toolbar button (`window._toolbar_config` sets
     # show_notifications_button, and the nav has no such item). Try the nav
     # first, fall back to the toolbar, and fail loudly if neither opens.
-    for target in ("vaultNavMenu.notificationsButton",
-                   "toolbar.notificationsButton"):
-        if devctl(sock, "click", target=target).get("ok"):
-            break
-    else:
-        raise AssertionError(
-            "could not reach the Notifications page by either door "
-            "(vaultNavMenu.notificationsButton / toolbar.notificationsButton)")
-    deadline, rows = time.time() + timeout_s, None
+    deadline, rows, opened = time.time() + timeout_s, None, False
     while time.time() < deadline:
+        # RE-OPEN each pass. The page renders from a snapshot taken when it is
+        # shown, so a row that lands after that is not picked up — polling
+        # `get_table_rows` on an already-open page reads the same stale render
+        # forever. Measured: two applies delivered, table still reporting zero
+        # rows sixty seconds later.
+        for target in ("vaultNavMenu.notificationsButton",
+                       "toolbar.notificationsButton"):
+            if devctl(sock, "click", target=target).get("ok"):
+                opened = True
+                break
         rows = (devctl(sock, "get_table_rows",
                        target="table.Notifications").get("rows")) or []
         if len(rows) >= count:
             return rows
         time.sleep(1.0)
+    if not opened:
+        raise AssertionError(
+            "could not reach the Notifications page by either door "
+            "(vaultNavMenu.notificationsButton / toolbar.notificationsButton)")
     raise AssertionError(
         f"the admin saw {len(rows or [])} of {count} expected applications. "
         f"Each HOA reported its apply as sent, so this is the receiving side: "

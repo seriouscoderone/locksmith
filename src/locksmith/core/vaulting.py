@@ -233,6 +233,20 @@ class Vault(doing.DoDoer):
         # so credential presentations over peer transport break after a
         # restart even though the toolbar still reads "exposed".
         self.peer_doer: PeerDoer | None = None
+        # App-supplied disclosure policy, held on the VAULT so it survives every
+        # listener rebuild. Answering a `pro` is protocol and lives here; WHAT
+        # may be disclosed and WHICH identity signs it are application
+        # decisions, so these stay None (disclose nothing) until something sets
+        # them.
+        #
+        # They must live here, not on the transient Directant. A Directant only
+        # exists while peer mode is ON, and `restart_peer_mode` builds a fresh
+        # PeerDoer on every settings change. So an app that installed its policy
+        # onto the live Directant lost it the moment the port changed — and, if
+        # the vault opened with peer mode OFF, never installed it at all.
+        self.disclosable = None
+        self.prod_policy = None
+        self.prod_hab = None
         self._peer_exposed_aids: set[str] = set(peer_exposure.exposed_pres(self.hby))
         peer_settings = self.db.peerSettings.get(keys=("default",)) or PeerModeSettings()
         if peer_settings.enabled:
@@ -244,6 +258,9 @@ class Vault(doing.DoDoer):
                 is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
                 on_first_contact=self._register_first_contact_peer,
                 verifier=self.verifier,
+                disclosable=self.disclosable,
+                prod_policy=self.prod_policy,
+                prod_hab=self.prod_hab,
             )
 
         # Background reachability probe for paired peers (always on —
@@ -365,6 +382,9 @@ class Vault(doing.DoDoer):
             is_destination_exposed=lambda aid: aid in self._peer_exposed_aids,
             on_first_contact=self._register_first_contact_peer,
             verifier=self.verifier,
+            disclosable=self.disclosable,
+            prod_policy=self.prod_policy,
+            prod_hab=self.prod_hab,
         )
         self.extend(self.peer_doer.doers)
 

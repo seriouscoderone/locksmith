@@ -29,6 +29,9 @@ from pathlib import Path
 #: verbatim; only the trust root changes.
 UGARD_EGF = Path.home() / "code" / "ugard" / "docs" / "usurance" / "egf"
 
+#: This checkout, for the checked-in `brands/usurance/egf/` source.
+REPO_ROOT = Path(__file__).resolve().parents[3]
+
 TOKEN_PREFIX = "locksmith-peer-oobi:v1:"
 
 #: The authority the shipped bundle is rooted at — the real operator identity,
@@ -71,6 +74,32 @@ def build_test_brand(dest: Path, *, admin_aid: str, admin_oobi_token: str,
     if egf_dir.exists():
         shutil.rmtree(egf_dir)
     shutil.copytree(UGARD_EGF, egf_dir)
+
+    # Overlay schemas the ugard copy does not carry. The two sources have
+    # drifted: `brands/usurance/egf/` holds ten documents, ugard's holds eight,
+    # and the three extra ones include `product_mandate`
+    # (EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5). Without it the CUO cannot
+    # declare anything — `CuoMandatePage._ensure_mandate_schema_pinned` raises
+    # "mandate schema not bundled at …", the form silently never confirms, and
+    # the failure surfaces as a missing `declaredBanner` with nothing to explain
+    # it. (`roles/_bootstrap/sitecustomize.py` already documents this drift for
+    # its own scratch bundle; this is the same fact, for a brand the suite owns.)
+    #
+    # Guarded, not blind: an existing file always wins, and anything naming the
+    # real admin is refused outright — the whole point of this brand is that it
+    # names nobody but the test's own authority.
+    schema_source = REPO_ROOT / "brands" / "usurance" / "egf"
+    if not schema_source.is_dir():
+        schema_source = Path(src_brand).parent / "egf"
+    for extra in (sorted(schema_source.glob("E*.json"))
+                  if schema_source.is_dir() else []):
+        target = egf_dir / extra.name
+        if target.exists():
+            continue
+        body = extra.read_text()
+        if REAL_ADMIN_AID in body:
+            continue
+        target.write_text(body)
 
     # 0. RE-ROOT THE CORPUS FIRST. The authority AID is not confined to the
     #    overlay: every micro-app template pins it as `commands[].authz.issuer`
