@@ -7,7 +7,6 @@ from hio.base import doing
 from hio.help import decking
 from hio.core.tcp.serving import ServerDoer
 from keri import help
-from keri.app import prodding
 
 from locksmith.peer.allowlist import PeerAllowlist
 from locksmith.peer.records import PeerModeSettings
@@ -50,6 +49,9 @@ class PeerDoer(doing.DoDoer):
         is_destination_exposed: Callable[[str], bool],
         on_first_contact=None,
         verifier=None,
+        disclosable=None,
+        prod_hab=None,
+        prod_policy=None,
         **kwa,
     ):
         self._hby = hby
@@ -91,48 +93,12 @@ class PeerDoer(doing.DoDoer):
             cues = decking.Deck()
             first_hab = next(iter(getattr(hby, "habs", {}).values()), None)
 
-            # Answering a `pro`. Without this the listener parses a prod, the
-            # Kevery cues it, and cueDo pulls the cue off the deck and discards
-            # it -- measured live as 538 prods sent, 0 replies, 0 bodies held.
-            #
-            # `disclosable` is a CALLABLE evaluated per inbound connection, not
-            # a startup snapshot, so a mandate declared mid-session is
-            # disclosable without a restart. It is computed by a RULE over this
-            # controller's own credentials (untargeted AND unblinded) rather
-            # than curated: a hand-kept map would be an ACL keyed by SAID,
-            # which Principle VIII forbids as squarely as one keyed by AID.
-            #
-            # The policy is deliberately open, because the RULE is the gate.
-            # Everything it admits is an ACDC the spec calls public
-            # (no `u` -> "SHOULD be considered a public (non-confidential)
-            # ACDC") and untargeted -- addressed to whoever is watching. What
-            # this does NOT do is express "actuaries may, competitors may
-            # not"; that needs the disclosee to present authority, which is
-            # what ProdResponder's policy hook and the prod's q["az"] are for.
-            def _disclosable():
-                from keri_serviceaid.providers.disclosure import disclosable_bodies
-
-                verifier = self._verifier
-                if verifier is None or getattr(verifier, "reger", None) is None:
-                    return {}
-                return disclosable_bodies(verifier.reger)
-
-            # NOT first_hab for signing bars: that is the non-transferable
-            # peer-listener EID, and a bar it signs is rejected by the
-            # recipient's processBar as "not anchored" — the credential is
-            # anchored in the controller's OWN KEL, not the listener's.
-            # Guarded: receiving is this listener's core job, and it must not
-            # fail to start because the DISCLOSURE extra could not resolve a
-            # signer. Without one, prods simply go unanswered — which is the
-            # behaviour before this feature existed.
-            try:
-                from keri_serviceaid.providers.peer_sync import signing_hab
-                from locksmith.core.branding import brand
-                prod_hab = signing_hab(hby, brand().default_aid_alias or "default")
-            except Exception:               # noqa: BLE001
-                logger.debug("prod.signer_unresolved", exc_info=True)
-                prod_hab = None
-
+            # Answering a `pro` is KERI protocol and belongs here. WHAT may be
+            # disclosed, and WHICH identity signs the disclosure, are
+            # application questions -- they arrive already decided, via
+            # `disclosable` / `prod_hab`, and this module never computes them.
+            # Defaulting both to None means the base discloses nothing, which
+            # is the correct posture for a wallet with no app policy loaded.
             self.directant = turret_directing.Directant(
                 hab=first_hab,
                 prodHab=prod_hab,
@@ -140,8 +106,8 @@ class PeerDoer(doing.DoDoer):
                 verifier=self._verifier,
                 exchanger=self.shim,
                 cues=cues,
-                disclosable=_disclosable,
-                prodPolicy=prodding.openPolicy,
+                disclosable=disclosable,
+                prodPolicy=prod_policy,
             )
             doers = [server_doer, self.directant]
 

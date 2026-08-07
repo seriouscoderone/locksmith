@@ -695,7 +695,7 @@ def test_on_vault_opened_registers_the_peer_sync_doer(monkeypatch):
     in isolation, and is registered nowhere reproduces that failure exactly, so
     asserting the class is instantiable is not enough: assert it is WIRED.
     """
-    from locksmith.core.peer_sync_doer import PeerSyncDoer
+    from locksmith.plugins.hoa_shell.peer_sync_doer import PeerSyncDoer
     from locksmith.plugins.hoa_shell import plugin as shell_mod
 
     monkeypatch.setattr(shell_mod.QTimer, "singleShot", lambda delay, slot: None)

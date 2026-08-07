@@ -31,7 +31,7 @@ from locksmith.core.branding import brand
 from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import EgfSeeder, make_hoa_resolver
 from locksmith.core.inbound_watch import GateRecheckDoer, InboundGrantWatchDoer
-from locksmith.core.peer_sync_doer import PeerSyncDoer
+from locksmith.plugins.hoa_shell.peer_sync_doer import PeerSyncDoer
 from locksmith.plugins.base import VaultPlugin
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
@@ -298,6 +298,8 @@ class HoaShellPlugin(VaultPlugin):
             # headless keri_serviceaid.providers.peer_sync.
             PeerSyncDoer(self._app),
         ])
+
+        self._install_disclosure(vault)
         vault.signals.doer_event.connect(self._home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
         # emissions as a visible inline banner on the form view (distinct
@@ -463,3 +465,49 @@ class HoaShellPlugin(VaultPlugin):
         if current_page is not self._vault_page:
             window.nav_manager.navigate_to(Pages.VAULT)
         self._vault_page._show_vault_page("home")
+
+    def _install_disclosure(self, vault) -> None:
+        """Tell this vault's peer listener what it may disclose, and who signs.
+
+        Answering a `pro` is KERI protocol and lives in the Locksmith base. WHAT
+        may be disclosed is an application decision, so the base ships with
+        `disclosable=None` (disclose nothing) and the HOA installs the rule
+        here. Nothing in `locksmith.peer` or `locksmith.turret` imports the
+        framework as a result.
+
+        Installed onto the live Directant rather than passed at construction:
+        the PeerDoer is built by Vault before any plugin runs, and a Reactant
+        reads these attributes when it is created -- one per inbound connection
+        -- so setting them now covers every connection that will carry a prod.
+
+        The rule (keri_serviceaid.providers.disclosure) admits only UNTARGETED,
+        UNBLINDED credentials, so the policy can be open: an ACDC with no `a.i`
+        and no `u` is public by the ACDC spec's own test, and this brand's
+        mandates exist precisely to be found by whoever is watching. A curated
+        list would be an ACL keyed by SAID, which Principle VIII forbids as
+        squarely as one keyed by AID.
+        """
+        from keri.app import prodding
+        from keri_serviceaid.providers.disclosure import disclosable_bodies
+        from keri_serviceaid.providers.peer_sync import signing_hab
+
+        directant = getattr(getattr(vault, "peer_doer", None), "directant", None)
+        if directant is None:
+            return                      # peer mode off -- nothing to answer with
+
+        def _disclosable():
+            verifier = getattr(vault, "verifier", None)
+            reger = getattr(verifier, "reger", None)
+            return disclosable_bodies(reger) if reger is not None else {}
+
+        try:
+            directant.disclosable = _disclosable
+            directant.prodPolicy = prodding.openPolicy
+            # The bar must be signed by the identity that ANCHORED the
+            # credential; the listener's own hab is the non-transferable
+            # peer-listener EID, whose KEL anchors nothing, and a bar it signs
+            # is rejected by the recipient as "not anchored".
+            directant.prodHab = signing_hab(
+                vault.hby, brand().default_aid_alias or "default")
+        except Exception:               # noqa: BLE001
+            logger.exception("hoa.disclosure_install_failed")
