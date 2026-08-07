@@ -207,4 +207,17 @@ def make_hoa_resolver(brand: Brand) -> Optional[Tuple[EgfResolver, EgfDocument]]
     )
     resolver = make_resolver(cfg)
     egf_doc = resolver.resolve_egf(brand.egf_document_said)
+    # Which ecosystem is this build actually running? Nothing recorded it, so a
+    # wallet loading the wrong EGF looked identical to one loading the right
+    # one until its authorities showed up in a peer list. Log the SAID, the dir
+    # it came from, and who it makes the trust root.
+    try:
+        logger.info(
+            "egf.resolved said=%s dir=%s authorities=%s",
+            brand.egf_document_said, cfg.local_dir,
+            [a.aid for a in egf_doc.all_authorities(
+                accept_phases=brand.egf_accept_phases)],
+        )
+    except Exception:                       # noqa: BLE001 -- never break bring-up
+        logger.debug("egf.resolved_log_failed", exc_info=True)
     return resolver, egf_doc
