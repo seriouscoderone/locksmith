@@ -31,6 +31,7 @@ from locksmith.core.branding import brand
 from locksmith.core.direct_transport import ensure_direct_transport, make_hoa_oobi_source
 from locksmith.core.egf_seeding import EgfSeeder, make_hoa_resolver
 from locksmith.core.inbound_watch import GateRecheckDoer, InboundGrantWatchDoer
+from locksmith.core.peer_sync_doer import PeerSyncDoer
 from locksmith.plugins.base import VaultPlugin
 from locksmith.ui.hoa.notifications_page import HoaNotificationsPage
 from locksmith.ui.onboarding.home_page import OnboardingErrorPage, OnboardingHomePage
@@ -288,6 +289,14 @@ class HoaShellPlugin(VaultPlugin):
                 applies_provider=lambda: _sent_applies(self._app),
             ),
             GateRecheckDoer(self._app),
+            # The asking half of a watch. AnchorWatcher reads anchors from a
+            # KEL we already hold and sealed_retrieval verifies a body we
+            # already hold — neither FETCHES, and a witness-less peer has no
+            # witness to fetch for it. Without this the actuary's copy of the
+            # CUO's KEL stays frozen at the pairing handshake and no mandate
+            # is ever observed. Every message it sends is built by the
+            # headless keri_serviceaid.providers.peer_sync.
+            PeerSyncDoer(self._app),
         ])
         vault.signals.doer_event.connect(self._home_page.refresh)
         # Acceptance-demo item 2: surface RequestFlow's own request_failed
