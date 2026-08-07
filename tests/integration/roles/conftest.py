@@ -1798,3 +1798,74 @@ def issue_and_grant_role_via_admin_ui(devctl, sock, *, schema_prefix: str,
     r = devctl(sock, "wait_for", target="grantCredentialDialog.grantButton",
                condition="hidden", timeout_ms=30000)
     assert r.get("ok"), f"Grant dialog never closed — the send failed: {r}"
+
+
+def request_role_via_hoa_ui(devctl, sock, role_id: str,
+                            timeout_s: float = 30.0) -> None:
+    """The HOA ASKS for a role, from its own onboarding home.
+
+    This is the real trigger, and the reason the admin has anything to respond
+    to. These roles are APPLY-MODE (`role.onboarding.apply_mode` — no
+    `request_micro_app_said`), so there is no form and no
+    `onboarding.submitButton`: `OnboardingHomePage._on_card_request` calls
+    `on_apply(role_id)`, which derives the apply plan, seeds the role's schemas,
+    and sends a bare IPEX apply to the authority the EGF selects.
+    (`onboarding.submitButton` belongs to the FORM path, for roles that carry a
+    submit-application micro-app.)
+
+    The end state is the card losing its Request button — a PENDING card renders
+    no button at all (`RoleCard._build`), so this is exact rather than a sleep.
+    """
+    devctl(sock, "click", target="vaultNavMenu.homeButton")
+    target = f"roleCard.requestButton.{role_id}"
+    r = devctl(sock, "wait_for", target=target, condition="visible",
+               timeout_ms=15000)
+    assert r.get("ok"), (
+        f"no Request button for role {role_id!r} on the onboarding home: {r}. "
+        f"Either the EGF does not carry that role, or the card is not in the "
+        f"AVAILABLE state (an already-granted role renders Open, not Request).")
+
+    r = devctl(sock, "click", target=target)
+    assert r.get("ok"), f"click Request for {role_id!r}: {r}"
+
+    r = devctl(sock, "wait_for", target=target, condition="hidden",
+               timeout_ms=int(timeout_s * 1000))
+    assert r.get("ok"), (
+        f"role {role_id!r} never left AVAILABLE after Request — the apply was "
+        f"not sent. Check the wallet log for 'apply' and 'peer.send'.")
+
+
+def wait_for_admin_notifications(devctl, sock, *, count: int,
+                                 timeout_s: float = 60.0) -> list:
+    """Block until the admin's Notifications page shows `count` rows.
+
+    An IPEX *apply* is not a credential grant, so it never appears under
+    Received Credentials — it surfaces here. Asserting on it is what makes the
+    request leg a real cross-process claim rather than a local UI state change:
+    the applicant's card going to "Requested" only proves the applicant sent
+    something.
+    """
+    # Two different doors. A peeled HOA has a nav entry; a VANILLA wallet has
+    # only the toolbar button (`window._toolbar_config` sets
+    # show_notifications_button, and the nav has no such item). Try the nav
+    # first, fall back to the toolbar, and fail loudly if neither opens.
+    for target in ("vaultNavMenu.notificationsButton",
+                   "toolbar.notificationsButton"):
+        if devctl(sock, "click", target=target).get("ok"):
+            break
+    else:
+        raise AssertionError(
+            "could not reach the Notifications page by either door "
+            "(vaultNavMenu.notificationsButton / toolbar.notificationsButton)")
+    deadline, rows = time.time() + timeout_s, None
+    while time.time() < deadline:
+        rows = (devctl(sock, "get_table_rows",
+                       target="table.Notifications").get("rows")) or []
+        if len(rows) >= count:
+            return rows
+        time.sleep(1.0)
+    raise AssertionError(
+        f"the admin saw {len(rows or [])} of {count} expected applications. "
+        f"Each HOA reported its apply as sent, so this is the receiving side: "
+        f"check the admin log for 'peer.recv.delivered' and 'New notification "
+        f"detected'. Rows: {rows}")

@@ -32,6 +32,7 @@ from tests.integration.peer.conftest import (  # noqa: F401 (fixture)
 from tests.integration.roles.conftest import (
     ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, _expose_and_export,
     issue_and_grant_role_via_admin_ui, load_issuable_schema_via_admin_ui,
+    request_role_via_hoa_ui, wait_for_admin_notifications,
 )
 
 pytestmark = pytest.mark.integration
@@ -84,8 +85,9 @@ def test_the_admin_pairs_outward_with_both_hoas(admin_then_two_hoas):
 def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
     """Leg 3 — the whole membrane, with nothing hand-delivered.
 
-    A running vanilla admin loads each role schema into its own vault, issues
-    the credential to a paired HOA, and GRANTS it live over IPEX. Each HOA
+    Each HOA ASKS for its role from its own onboarding home; the applications
+    reach the admin's Notifications; the admin then loads each role schema into
+    its own vault, issues the credential, and GRANTS it live over IPEX. Each HOA
     admits it from its own Notifications page, and its role gate — whose issuer
     is resolved from the EGF, not compiled in — opens the role's surface.
 
@@ -114,11 +116,23 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
                                 _expose_and_export(devctl, sock, name),
                                 label=name)
 
-    # Both peers must be REACHABLE before anything is granted. Pairing writes
-    # the allowlist row synchronously; reachability is a probe cycle later, and
-    # a grant sent at a peer that has not answered yet fails as a transport
-    # error attributed to the grant.
+    # Both peers must be REACHABLE before anything is sent. Pairing writes the
+    # allowlist row synchronously; reachability is a probe cycle later, and
+    # anything sent at a peer that has not answered yet fails as a transport
+    # error attributed to whatever step was running.
     wait_for_peer_reachable(devctl, admin, count=len(roles))
+
+    # Each HOA ASKS. This is the real trigger — the admin is responding to an
+    # application, not pushing a role at a wallet that never applied. These
+    # roles are apply-mode, so Request sends a bare IPEX apply with no form.
+    for name, *_ in roles:
+        request_role_via_hoa_ui(devctl, admin_then_two_hoas[name]["sock"], name)
+
+    # …and the applications actually ARRIVE. The card going to "Requested" is
+    # local state on the applicant; this is the receiving side. An apply is not
+    # a credential grant, so it lands in Notifications, never under Received
+    # Credentials.
+    wait_for_admin_notifications(devctl, admin, count=len(roles))
 
     for name, _vault, schema_said, schema_title, section in roles:
         sock = admin_then_two_hoas[name]["sock"]

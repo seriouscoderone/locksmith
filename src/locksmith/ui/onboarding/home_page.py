@@ -189,6 +189,9 @@ class RoleCard(QFrame):
 
         status_text, status_detail = self._STATUS_COPY[status]
         badge = QLabel(status_text)
+        # Two names for one badge is not possible, so this stays keyed by
+        # STATUS (what a reader wants to find: "is anything pending?") and the
+        # role is carried on the card itself, below.
         badge.setObjectName(f"roleCard.status.{status.value}")
         badge.setStyleSheet(
             f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
@@ -207,7 +210,13 @@ class RoleCard(QFrame):
         if status in (RoleStatus.AVAILABLE, RoleStatus.REVOKED):
             label = "Request" if status is RoleStatus.AVAILABLE else "Request again"
             self.request_button = LocksmithButton(label)
-            self.request_button.setObjectName("roleCard.requestButton")
+            # Per-role, like the context combos (`onboarding.context.<dim.id>`).
+            # Every card carried the SAME name, so with three roles on the page
+            # nothing could ask for a PARTICULAR one — neither a test nor any
+            # future scripting or accessibility surface. Name lookup returns the
+            # first match, so "request the actuary role" was unexpressible.
+            self.request_button.setObjectName(
+                f"roleCard.requestButton.{self.role_id}")
             self.request_button.clicked.connect(
                 lambda: self.request_clicked.emit(self.role_id))
             buttons_row.addWidget(self.request_button)

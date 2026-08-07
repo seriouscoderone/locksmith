@@ -163,6 +163,12 @@ class LocksmithToolbar(QToolBar):
 
         # Notifications button (with dropdown) - initially hidden
         self.notifications_button = NotificationsButton(self.app, self)
+        # Named like its siblings (toolbar.vaultsButton, toolbar.rolesButton).
+        # It was the ONLY unnamed toolbar button, and on a vanilla wallet it is
+        # the sole way in to Notifications — there is no nav entry, unlike a
+        # peeled HOA. So "open Notifications" was unexpressible on exactly the
+        # build where an inbound IPEX apply shows up.
+        self.notifications_button.setObjectName("toolbar.notificationsButton")
         self.notifications_button.clicked.connect(self.notifications_clicked.emit)
         self.notifications_action = self.addWidget(self.notifications_button)
         self.notifications_action.setVisible(False)  # Hidden by default
