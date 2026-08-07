@@ -4,6 +4,8 @@ locksmith.core.vaulting module
 
 Vault management for Locksmith application
 """
+import os
+
 from PySide6.QtCore import QTimer
 from hio.base import doing
 from hio.help import decking
@@ -46,6 +48,25 @@ from locksmith.peer import exposure as peer_exposure
 logger = help.ogler.getLogger(__name__)
 
 TURRET_SETTINGS_NS = "settings"
+
+#: Seconds between peer reachability probe cycles. Overridable via
+#: LOCKSMITH_PEER_PROBE_INTERVAL; see the call site in Vault for why.
+_DEFAULT_PEER_PROBE_INTERVAL = 60.0
+
+
+def _peer_probe_interval() -> float:
+    raw = os.environ.get("LOCKSMITH_PEER_PROBE_INTERVAL")
+    if not raw:
+        return _DEFAULT_PEER_PROBE_INTERVAL
+    try:
+        value = float(raw)
+    except ValueError:
+        logger.warning("peer.health.bad_interval value=%r — using default", raw)
+        return _DEFAULT_PEER_PROBE_INTERVAL
+    if value <= 0:
+        logger.warning("peer.health.bad_interval value=%r — using default", raw)
+        return _DEFAULT_PEER_PROBE_INTERVAL
+    return value
 
 
 def ensure_turret_settings_hab(hby, alias):
@@ -228,10 +249,19 @@ class Vault(doing.DoDoer):
         # Background reachability probe for paired peers (always on —
         # cheap, ~1 TCP connect/peer/minute, and the user can read peer
         # health without triggering an actual send).
+        #
+        # The interval is env-settable for the same reason LOCKSMITH_LOG_LEVEL
+        # is: a peer paired just after a cycle shows "not yet probed" (grey) for
+        # up to interval*1.25, and there is no "probe now" control. That is
+        # tolerable for a person and useless for an automated run, which must
+        # either wait 75s per pairing or proceed against a peer whose
+        # reachability nothing has established — the second of which is how a
+        # later step fails for a reason that has nothing to do with its subject.
         self.peer_health_doer = PeerHealthMonitorDoer(
             allowlist=PeerAllowlist(self.db),
             db=self.db,
             keridb=self.hby.db,
+            interval_seconds=_peer_probe_interval(),
         )
 
         # Assemble all doers

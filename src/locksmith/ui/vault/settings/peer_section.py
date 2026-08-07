@@ -342,6 +342,7 @@ class PeerSettingsSection(QFrame):
             f"bind={rec.bind_host} advertised={rec.advertised_host!r}"
         )
         self._vault.restart_peer_mode()
+        self._republish_exposed_endpoints(rec)
         self._sync_status_from_doer()
         self._refresh_exposure_banner()
         if rec.enabled:
@@ -349,6 +350,53 @@ class PeerSettingsSection(QFrame):
             # 500ms is enough for hio's TCPServer to flip self.opened
             # in the common path without making the user wait.
             QTimer.singleShot(500, lambda: self._run_reachability_self_test(rec))
+
+    def _republish_exposed_endpoints(self, rec: PeerModeSettings) -> None:
+        """Re-sign a /loc/scheme at the NEW address for every exposed AID.
+
+        An AID's endpoint is published once, when it is first exposed
+        (`direct_transport.ensure_direct_transport`, or the View Identifier
+        toggle). Changing the port or the advertised host afterwards restarted
+        the listener and left that signed statement untouched — so every OOBI
+        the wallet handed out from then on advertised an address it was not
+        listening on.
+
+        The wallet cannot see this. Its own status line probes the CURRENT
+        settings and goes green; its OUTBOUND sends work, because those dial
+        the peer's address, not its own. Only the far side notices, as a peer
+        that never comes up — measured: a wallet listening on `0.0.0.0:58949`
+        advertising `127.0.0.1` was still published at `tcp://10.0.0.194:5622`,
+        and its peer probed that address into a permanent red dot while the
+        reverse direction carried traffic normally.
+
+        BADA settles the supersedure: a later-dated /loc/scheme wins, so
+        re-publishing is the whole fix. Best-effort — a failure here must never
+        block the settings save the user just made; the endpoint stays stale,
+        which is exactly the status quo ante.
+        """
+        if not rec.enabled:
+            return
+        try:
+            from locksmith.peer.exposure import exposed_pres
+            from locksmith.peer.publishing import PublishPeerRoleDoer
+
+            hby = getattr(self._vault, "hby", None)
+            if hby is None:
+                return
+            url = f"tcp://{rec.advertised_host}:{rec.port}"
+            doers = []
+            for pre in exposed_pres(hby):
+                hab = hby.habs.get(pre)
+                if hab is None:
+                    continue
+                doers.append(PublishPeerRoleDoer(
+                    hby, hab, url, signal_bridge=self._vault.signals, allow=True))
+            if doers:
+                self._vault.extend(doers)
+                logger.info(
+                    f"peer.settings.republishing count={len(doers)} url={url}")
+        except Exception as e:  # noqa: BLE001 — never block a settings save
+            logger.warning(f"peer.settings.republish_failed err={e}")
 
     def _on_find_free_port(self) -> None:
         port = find_free_port(start=self.port_spin.value())

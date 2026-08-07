@@ -494,6 +494,52 @@ def import_peer_blob_via_ui(
     assert r.get("ok"), f"navigate back to {landing}: {r}"
 
 
+#: Health phrases `peer/health.py::summarize_health_for_ui` renders on the
+#: peers list, keyed by the dot colour a watcher actually sees.
+_PEER_REACHABLE_PREFIX = "reachable ("
+_PEER_UNPROBED = "not yet probed"
+
+
+def wait_for_peer_reachable(devctl, sock: Path, *, count: int = 1,
+                            timeout_s: float = 90.0) -> list[str]:
+    """Block until `count` peers render a GREEN dot, and return their phrases.
+
+    Pairing writes the allowlist record synchronously, but reachability is
+    established by `PeerHealthMonitorDoer` on its own cycle — so the instant
+    after Pair the row reads "not yet probed" (grey) and every send made
+    against it is a guess. Watching a run, this is the moment where the dot is
+    still grey and the harness has already moved on; the failure then surfaces
+    several steps later, attributed to whatever step happened to be running.
+
+    Polled through the widget tree because the row is a custom
+    `setItemWidget` render with NO item text (`peer_section.py::_refresh_peers_list`
+    says so explicitly), which is why `get_list_items` reports blanks and the
+    pairing test can only count rows. The phrase lives in a QLabel, so `tree`
+    sees it.
+
+    Set LOCKSMITH_PEER_PROBE_INTERVAL low in the wallet's env or this waits a
+    full default cycle (60s ±25%) for a peer paired mid-cycle.
+    """
+    devctl(sock, "click", target="vaultNavMenu.settingsButton")
+    deadline = time.time() + timeout_s
+    seen: list[str] = []
+    while time.time() < deadline:
+        tree = devctl(sock, "tree")
+        texts = [(w.get("text") or "") for w in (tree.get("widgets") or [])]
+        seen = [t for t in texts if t.startswith(_PEER_REACHABLE_PREFIX)]
+        if len(seen) >= count:
+            return seen
+        time.sleep(2.0)
+    unprobed = sum(1 for t in texts if t == _PEER_UNPROBED)
+    raise AssertionError(
+        f"only {len(seen)} of {count} peers went green within {timeout_s}s "
+        f"({unprobed} still {_PEER_UNPROBED!r}). Either the far side is not "
+        f"listening, or the record's endpoint_url is wrong — both render "
+        f"identically here. Phrases on screen: "
+        f"{[t for t in texts if 'probe' in t or 'reachable' in t or 'down' in t]}"
+    )
+
+
 def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
     """Drive the View Identifier "Expose over peer mode" toggle the way
     a user would: click the row action, wait for the dialog, click the
@@ -716,7 +762,10 @@ def admin_and_two_hoas():
 #: test brand AND the absence of one — which is to say it overrode the exact
 #: thing `build_test_brand` exists to control. This fixture owns its ecosystem;
 #: it must not inherit that.
-NO_TEST_BOOTSTRAP = {"LOCKSMITH_TEST_NO_BOOTSTRAP": "1"}
+#: …and probe peers every 5s instead of every 60s, so `wait_for_peer_reachable`
+#: resolves in seconds rather than a full default cycle.
+NO_TEST_BOOTSTRAP = {"LOCKSMITH_TEST_NO_BOOTSTRAP": "1",
+                     "LOCKSMITH_PEER_PROBE_INTERVAL": "5"}
 
 
 @contextlib.contextmanager
@@ -816,6 +865,16 @@ def _admin_identity(devctl, sock) -> tuple[str, str]:
     assert aid.startswith("E"), (
         f"could not read the admin's AID from the open View Identifier "
         f"dialog: {r}")
+
+    # CLOSE IT. `_expose_and_export` leaves the dialog open on purpose so the
+    # AID can be read out of it — but nothing closed it afterwards, and it
+    # covers the page for the rest of the run. Every later click on this wallet
+    # then lands behind a dialog: a target resolves, the click reports ok, and
+    # the thing it was supposed to open is invisible. That is what "Add Peer
+    # dialog never appeared" was.
+    devctl(sock, "click", target="Close")
+    devctl(sock, "wait_for", target="viewIdentifierDialog.aidField",
+           condition="hidden", timeout_ms=5000)
     return aid, token
 
 
