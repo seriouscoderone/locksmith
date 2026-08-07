@@ -19,8 +19,8 @@ import time
 import pytest
 
 from tests.integration.peer.conftest import (           # noqa: F401
-    _devctl as devctl, _spawn_wallets, free_port, open_test_vault_via_ui,
-    create_aid_via_ui, two_wallets,
+    USURANCE_BRAND, _devctl as devctl, _spawn_wallets, free_port,
+    open_test_vault_via_ui, create_aid_via_ui,
 )
 
 _UI_TESTER = pathlib.Path.home() / ".locksmith" / "plugins" / "ui_tester"
@@ -40,6 +40,37 @@ def _require_ui_tester():
     if os.environ.get("CI"):
         pytest.fail(_MISSING, pytrace=False)
     pytest.skip(_MISSING, allow_module_level=True)
+
+
+@pytest.fixture
+def two_wallets():
+    """Shadows `peer/conftest.py::two_wallets` FOR THIS PACKAGE, with the
+    in-process-admin bootstrap armed.
+
+    Every test in this directory issues role credentials from
+    `_build_test_admin` and needs `_bootstrap/sitecustomize.py` to re-point the
+    gates at it. That bootstrap used to arm itself for the whole pytest process
+    — which meant it also armed wallets belonging to `peer/`, silently
+    replacing their brand (see `peer/conftest.py::NO_TEST_BOOTSTRAP` for the two
+    measurements). It is now off by default and opted into here, where it
+    belongs. A same-named fixture in a nearer conftest wins, so these tests keep
+    exactly the wallets they had.
+    """
+    with _spawn_wallets(["a", "b"], prefix="lspeer-", bootstrap=True) as wallets:
+        yield {**wallets, "devctl": devctl}
+
+
+@pytest.fixture
+def two_hoa_wallets():
+    """Same shadow as `two_wallets` above, for the BRANDED pair."""
+    if not USURANCE_BRAND.is_file():
+        pytest.skip(
+            f"branded wallets need {USURANCE_BRAND}, which is gitignored and "
+            f"built on demand. Run: .venv/bin/python scripts/brand_apply.py usurance"
+        )
+    with _spawn_wallets(["cuo", "actuary"], prefix="lshoa-",
+                        brand=USURANCE_BRAND, bootstrap=True) as wallets:
+        yield {**wallets, "devctl": devctl}
 
 
 @pytest.fixture
@@ -73,7 +104,13 @@ def four_wallets():
     See `test_four_app_arc_via_ui.py`'s own module docstring for exactly how each
     leg of the arc is driven and which one substitution this makes.
     """
-    with _spawn_wallets(["cuo", "actuary", "designer"], prefix="lsroles-") as wallets:
+    # bootstrap=True: THIS suite is what `_bootstrap/sitecustomize.py` exists
+    # for — it re-points the role gates at `_build_test_admin`'s in-process
+    # party. It is off by default for every other fixture (see
+    # `peer/conftest.py::NO_TEST_BOOTSTRAP`), because merely collecting a file
+    # from this package arms it process-wide.
+    with _spawn_wallets(["cuo", "actuary", "designer"], prefix="lsroles-",
+                        bootstrap=True) as wallets:
         yield {**wallets, "devctl": devctl}
 
 

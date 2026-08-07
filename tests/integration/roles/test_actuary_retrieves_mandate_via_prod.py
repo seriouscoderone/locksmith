@@ -34,8 +34,11 @@ import time
 
 import pytest
 
-from tests.integration.peer.conftest import (  # noqa: F401 (two_hoa_wallets)
-    free_port, import_peer_blob_via_ui, set_peer_mode_via_ui, two_hoa_wallets,
+# `two_hoa_wallets` is NOT imported here: this package's own conftest defines a
+# same-named fixture that arms the in-process-admin bootstrap these role tests
+# need. Importing the peer one into this module would shadow it.
+from tests.integration.peer.conftest import (
+    free_port, import_peer_blob_via_ui, set_peer_mode_via_ui,
 )
 from tests.integration.roles.conftest import (
     _export_current_blob, declare_mandate_via_ui, open_vault_holding_actuary_role,

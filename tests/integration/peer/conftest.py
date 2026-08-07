@@ -123,11 +123,39 @@ def _win_origins() -> list[str]:
     return [o.strip() for o in raw.split(";") if o.strip()] if raw else []
 
 
+#: Turns OFF `tests/integration/roles/_bootstrap/sitecustomize.py`, which is
+#: enabled PROCESS-WIDE: `roles/conftest.py` sets `CUO_TEST_ADMIN_AID` and
+#: prepends `_bootstrap/` to `PYTHONPATH` at MODULE IMPORT, so merely COLLECTING
+#: a test in `roles/` arms it for every wallet the whole pytest run spawns —
+#: including wallets belonging to unrelated files in `peer/`.
+#:
+#: An armed wallet has its brand REPLACED: usurance assets, the real usurance
+#: `egf_document_said`, and role gates re-pointed at an in-process fake admin.
+#: Measured twice. `admin_then_two_hoas`'s VANILLA admin (spawned brand=None)
+#: logged `egf.resolved said=EEtxdiMWf1… authorities=['EGjm-X1JMz-…']` from a
+#: directory named `cuo_brand_source_…`; and `test_fixture_smoke.py` passes
+#: alone but fails when a `roles/` file is collected first.
+#:
+#: So the default is OFF and the `roles/` fixtures that need the in-process
+#: admin recipe opt IN (`_spawn_wallets(..., bootstrap=True)`). Ownership runs
+#: the right way round: the bootstrap belongs to `roles/`, not to every process
+#: that happens to import it.
+NO_TEST_BOOTSTRAP = {"LOCKSMITH_TEST_NO_BOOTSTRAP": "1"}
+
+#: Applies to every spawned wallet. The peer reachability probe is 60s ±25% with
+#: no "probe now" control, so a peer paired mid-cycle reads "not yet probed" for
+#: up to 75s — `wait_for_peer_reachable` would spend the run waiting.
+TEST_WALLET_ENV = {"LOCKSMITH_PEER_PROBE_INTERVAL": "5"}
+
+
 def _start_wallet(home: Path, log_path: Path, brand: Path | None = None,
-                  win_pos: str | None = None,
+                  win_pos: str | None = None, bootstrap: bool = False,
                   extra_env: dict[str, str] | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env["HOME"] = str(home)
+    env.update(TEST_WALLET_ENV)
+    if not bootstrap:
+        env.update(NO_TEST_BOOTSTRAP)
     if brand is not None:
         # Spawns a BRANDED app, i.e. one that loads HoaShellPlugin. Vanilla
         # wallets do not register the HOA's own doers at all, so any test of
@@ -575,7 +603,8 @@ def expose_aid_via_ui(devctl, sock: Path, alias: str) -> None:
 
 
 @contextmanager
-def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None):
+def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None,
+                   bootstrap: bool = False):
     """Spawn one Locksmith wallet subprocess per name, each with its own isolated
     HOME + devctl socket. Generalizes what used to be `two_wallets`'s own inline
     two-copy spawn loop, so a THIRD (or Nth) named wallet is one more list entry,
@@ -606,7 +635,7 @@ def _spawn_wallets(names: list[str], prefix: str = "lspeer-", brand=None):
             # to branded HOAs, which is the real shape of this ecosystem.
             wallet_brand = brand.get(name) if isinstance(brand, dict) else brand
             proc = _start_wallet(
-                home, log, brand=wallet_brand,
+                home, log, brand=wallet_brand, bootstrap=bootstrap,
                 win_pos=origins[len(procs) % len(origins)] if origins else None,
             )
             procs.append(proc)
@@ -749,25 +778,6 @@ def admin_and_two_hoas():
         yield {**wallets, "devctl": _devctl}
 
 
-#: Turns OFF `tests/integration/roles/_bootstrap/sitecustomize.py` for one
-#: spawned wallet. That bootstrap is enabled PROCESS-WIDE — `roles/conftest.py`
-#: sets `CUO_TEST_ADMIN_AID` and prepends `_bootstrap/` to `PYTHONPATH` at module
-#: import — so every wallet spawned by any test in `roles/` silently has its
-#: brand REPLACED: usurance assets, the real usurance `egf_document_said`, and
-#: role gates re-pointed at an in-process fake admin.
-#:
-#: Measured: `admin_then_two_hoas`'s VANILLA admin (spawned with brand=None)
-#: logged `egf.resolved said=EEtxdiMWf1… authorities=['EGjm-X1JMz-…']` out of a
-#: directory named `cuo_brand_source_…`. The hijack overrode both the injected
-#: test brand AND the absence of one — which is to say it overrode the exact
-#: thing `build_test_brand` exists to control. This fixture owns its ecosystem;
-#: it must not inherit that.
-#: …and probe peers every 5s instead of every 60s, so `wait_for_peer_reachable`
-#: resolves in seconds rather than a full default cycle.
-NO_TEST_BOOTSTRAP = {"LOCKSMITH_TEST_NO_BOOTSTRAP": "1",
-                     "LOCKSMITH_PEER_PROBE_INTERVAL": "5"}
-
-
 @contextlib.contextmanager
 def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
     """Spawn a single wallet into `root/name`, honouring window placement."""
@@ -777,7 +787,6 @@ def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
     log = root / f"{name}.log"
     origins = _win_origins()
     proc = _start_wallet(home, log, brand=brand,
-                         extra_env=NO_TEST_BOOTSTRAP,
                          win_pos=origins[idx % len(origins)] if origins else None)
     entry = {"home": home, "log": log,
              "sock": home / ".locksmith-control.sock", "proc": proc}
