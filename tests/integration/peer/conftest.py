@@ -124,7 +124,8 @@ def _win_origins() -> list[str]:
 
 
 def _start_wallet(home: Path, log_path: Path, brand: Path | None = None,
-                  win_pos: str | None = None) -> subprocess.Popen:
+                  win_pos: str | None = None,
+                  extra_env: dict[str, str] | None = None) -> subprocess.Popen:
     env = os.environ.copy()
     env["HOME"] = str(home)
     if brand is not None:
@@ -132,6 +133,8 @@ def _start_wallet(home: Path, log_path: Path, brand: Path | None = None,
         # wallets do not register the HOA's own doers at all, so any test of
         # HOA behaviour run without this passes or fails for the wrong reason.
         env["LOCKSMITH_BRAND_CONFIG"] = str(brand)
+    if extra_env:
+        env.update(extra_env)
     env["QT_QPA_PLATFORM"] = "offscreen"
     # Run the tree under test, not whichever tree the shared venv points at.
     #
@@ -700,6 +703,22 @@ def admin_and_two_hoas():
         yield {**wallets, "devctl": _devctl}
 
 
+#: Turns OFF `tests/integration/roles/_bootstrap/sitecustomize.py` for one
+#: spawned wallet. That bootstrap is enabled PROCESS-WIDE — `roles/conftest.py`
+#: sets `CUO_TEST_ADMIN_AID` and prepends `_bootstrap/` to `PYTHONPATH` at module
+#: import — so every wallet spawned by any test in `roles/` silently has its
+#: brand REPLACED: usurance assets, the real usurance `egf_document_said`, and
+#: role gates re-pointed at an in-process fake admin.
+#:
+#: Measured: `admin_then_two_hoas`'s VANILLA admin (spawned with brand=None)
+#: logged `egf.resolved said=EEtxdiMWf1… authorities=['EGjm-X1JMz-…']` out of a
+#: directory named `cuo_brand_source_…`. The hijack overrode both the injected
+#: test brand AND the absence of one — which is to say it overrode the exact
+#: thing `build_test_brand` exists to control. This fixture owns its ecosystem;
+#: it must not inherit that.
+NO_TEST_BOOTSTRAP = {"LOCKSMITH_TEST_NO_BOOTSTRAP": "1"}
+
+
 @contextlib.contextmanager
 def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
     """Spawn a single wallet into `root/name`, honouring window placement."""
@@ -709,6 +728,7 @@ def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
     log = root / f"{name}.log"
     origins = _win_origins()
     proc = _start_wallet(home, log, brand=brand,
+                         extra_env=NO_TEST_BOOTSTRAP,
                          win_pos=origins[idx % len(origins)] if origins else None)
     entry = {"home": home, "log": log,
              "sock": home / ".locksmith-control.sock", "proc": proc}

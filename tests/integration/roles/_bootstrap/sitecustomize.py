@@ -163,6 +163,15 @@ def _export_mandate_artifact(vault, said: str) -> None:
 
 
 def _patch() -> None:
+    if os.environ.get("LOCKSMITH_TEST_NO_BOOTSTRAP"):
+        # Per-wallet opt-out. The switch below is process-wide (roles/conftest.py
+        # sets CUO_TEST_ADMIN_AID at module import, and every spawned wallet
+        # inherits the environment), so a fixture that brings up its OWN
+        # ecosystem — `admin_then_two_hoas`, whose whole purpose is an authority
+        # the suite controls — otherwise had this brand silently pasted over its
+        # own. Measured: that fixture's VANILLA admin resolved the real usurance
+        # EGF (`authorities=['EGjm-X1JMz-…']`) from a `cuo_brand_source_…` dir.
+        return
     admin_aid = os.environ.get("CUO_TEST_ADMIN_AID")
     if not admin_aid:
         return  # not a roles-suite wallet — do nothing

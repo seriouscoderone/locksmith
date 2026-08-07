@@ -112,6 +112,28 @@ def build_test_brand(dest: Path, *, admin_aid: str, admin_oobi_token: str,
     brand["egf"]["source"] = "local"
     brand_path = dest / "brand.json"
     brand_path.write_text(json.dumps(brand, indent=2))
+
+    # 5. The compiled asset bundle, copied from the source brand.
+    #
+    # `register_brand_resources()` resolves assets.rcc as a SIBLING of the
+    # resolved brand.json (`branding.brand_assets_rcc`) and raises outright when
+    # there is none — a wallet cannot boot without one. This was invisible until
+    # today because `roles/_bootstrap/sitecustomize.py` re-pointed every spawned
+    # wallet's `_brand_source_dir` at a scratch dir that carried usurance's
+    # assets.rcc, so a brand missing its own assets still came up (wearing
+    # usurance's skin, and its EGF). With that hijack off, the omission is a
+    # hard `RuntimeError: No brand asset bundle (assets.rcc) found` at startup.
+    #
+    # These ARE usurance HOAs — only their AUTHORITY is re-rooted — so the
+    # source brand's assets are the right ones, and they make the fleet legible
+    # while watching a run: usurance-skinned HOAs, plain-Locksmith admin.
+    src_rcc = Path(src_brand).parent / "assets.rcc"
+    if not src_rcc.is_file():
+        raise AssertionError(
+            f"{src_brand} has no sibling assets.rcc, so a wallet given this "
+            f"brand cannot start. Build it with: "
+            f".venv/bin/python scripts/brand_apply.py --brand usurance")
+    shutil.copy2(src_rcc, dest / "assets.rcc")
     return brand_path
 
 
