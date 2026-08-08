@@ -52,6 +52,17 @@ def test_every_interpolation_token_is_ratified():
             f"renders as literal braces")
 
 
+def test_tokens_is_exactly_the_set_of_tokens_actually_used():
+    """Ratification cuts both ways. An unratified token renders as literal braces in
+    front of a user; a ratified-but-unused one is a claim about strings that do not
+    exist, and it is how the set drifts out of step with the copy."""
+    used = set()
+    for _, text in _all_strings():
+        used |= {f for _, f, _, _ in string.Formatter().parse(text) if f}
+    assert used == copy.TOKENS, (
+        f"unratified={used - copy.TOKENS}, ratified-but-unused={copy.TOKENS - used}")
+
+
 def test_the_summary_counts_one_error_correctly():
     assert copy.error_summary(1) == "Fix 1 error before signing."
     assert copy.error_summary(3) == "Fix 3 errors before signing."
@@ -60,6 +71,8 @@ def test_the_summary_counts_one_error_correctly():
 def test_the_summary_refuses_a_nonsense_count():
     with pytest.raises(ValueError):
         copy.error_summary(0)
+    with pytest.raises(ValueError):
+        copy.error_summary(1.5)
 
 
 def test_every_submitted_field_has_a_label_help_and_placeholder():
@@ -112,6 +125,22 @@ def test_the_enum_error_lists_what_is_allowed():
 
 
 def test_required_errors_exist_for_every_field_name_used():
-    for field in ("line_of_business", "coverages", "thesis", "window_opens"):
+    for field in copy.FIELD_ORDER:
         message = copy.required_error(field)
         assert message and message[0].isupper() and message.endswith(".")
+
+
+def test_the_forbidden_word_scan_actually_reaches_the_required_messages():
+    """The scan skips underscore-prefixed attributes, which once hid REQUIRED --
+    six strings the form renders directly -- from every policy test in this file.
+    Assert the scan sees them, by name, so a future rename cannot quietly re-hide
+    them."""
+    scanned = {name for name, _ in _all_strings()}
+    for field in copy.FIELD_ORDER:
+        assert f"REQUIRED[{field}]" in scanned, (
+            f"REQUIRED[{field}] is not reached by _all_strings(), so no forbidden-"
+            f"word, shouting or token check applies to it")
+
+
+def test_there_is_a_required_message_for_every_field():
+    assert set(copy.REQUIRED) == set(copy.FIELD_ORDER)

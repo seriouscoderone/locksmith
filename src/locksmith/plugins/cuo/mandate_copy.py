@@ -14,8 +14,8 @@ vocabulary.
 from __future__ import annotations
 
 TOKENS = frozenset({
-    "code", "count", "cuo_name", "field", "line_of_business", "jurisdiction",
-    "existing_opens", "existing_closes", "allowed",
+    "code", "cuo_name", "line_of_business", "jurisdiction",
+    "existing_opens", "existing_closes",
 })
 
 #: Field sequence for the form AND for error reporting. Deliberately NOT read from
@@ -112,7 +112,12 @@ WINDOW_OVERLAP = (
     "force {existing_opens} through {existing_closes}. Withdraw that mandate or "
     "set this window to start after it closes.")
 
-_REQUIRED = {
+#: Public, user-visible copy -- the form renders these directly to the CUO when a
+#: required field is empty. Deliberately NOT underscore-prefixed: an earlier draft
+#: named this `_REQUIRED`, which hid it from every policy test in this module (they
+#: all skip underscore-prefixed attributes) and let a forbidden word slip through
+#: undetected. See `test_the_forbidden_word_scan_actually_reaches_the_required_messages`.
+REQUIRED = {
     "line_of_business": "Choose a line of business.",
     "jurisdiction": "Enter a jurisdiction, like US-UT.",
     "coverages": "Add at least one coverage code.",
@@ -129,14 +134,14 @@ def error_summary(count: int) -> str:
     the spec's own example string, so the pluralisation lives here rather than in
     a format call at the call site.
     """
-    if count < 1:
-        raise ValueError(f"error_summary is for 1 or more errors, got {count}")
+    if not isinstance(count, int) or count < 1:
+        raise ValueError(f"error_summary is for 1 or more errors, got {count!r}")
     noun = "error" if count == 1 else "errors"
     return f"Fix {count} {noun} before signing."
 
 
 def required_error(field: str) -> str:
-    return _REQUIRED.get(field, f"{FIELD_LABEL.get(field, field)} is required.")
+    return REQUIRED.get(field, f"{FIELD_LABEL.get(field, field)} is required.")
 
 
 def enum_error(field: str, value: str, allowed: tuple[str, ...]) -> str:
