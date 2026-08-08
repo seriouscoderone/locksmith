@@ -839,6 +839,16 @@ class ServiceaidAdmitDoer(doing.Doer):
         `serializeMessage` otherwise adds for re-embedding, since this
         message is sent individually (mirrors `ServiceaidGrantDoer`'s
         raw-splitting of `frame_grant_for(return_raw=True)`'s output).
+
+        This is where "admit-back delivery failed (non-fatal)" came from, on
+        EVERY auto-admit: `serializeMessage` seeded its attachment accumulator
+        with `exn.raw` -- JSON, not 4-aligned -- and then quadlet-checked it,
+        so it raised `ValueError: Invalid attachments size=489, nonintegral
+        quadlets.` (489 % 4 == 1). A keripy defect, FIXED in the fork
+        2026-08-08 (`keripy docs/FORK_DIVERGENCE.md` ->
+        `src/keri/peer/exchanging.py`), which also makes the `if not raw:`
+        guard below work: the helper used to return a TRUTHY `(None, None)`
+        for a missing exn.
         """
         vault = self.app.vault
         grant, _pathed = exchanging.cloneMessage(vault.hby, self.grant_said)

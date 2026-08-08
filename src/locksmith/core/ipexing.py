@@ -487,11 +487,17 @@ class SendGrantDoer(doing.DoDoer):
                     postman.send(serder=source, attachment=satc)
 
                 # Send grant message with the attachments returned by
-                # ipexGrantExn (signatures). Round-tripping through
-                # exchanging.serializeMessage hits a CESR alignment
-                # raise in keripy because that helper prepends the
-                # exn.raw to the attachment bytes before quadlet-checking
-                # — exn.raw is JSON, not 4-aligned.
+                # ipexGrantExn (signatures). Deliberately does NOT round-trip
+                # through exchanging.serializeMessage: the builder's atc is
+                # already in hand and already quadlet-aligned, so re-fetching
+                # would be work for nothing.
+                #
+                # It also used to be a CESR alignment raise — that helper seeded
+                # its attachment accumulator with exn.raw (JSON, not 4-aligned)
+                # before quadlet-checking. FIXED in the fork 2026-08-08
+                # (keripy docs/FORK_DIVERGENCE.md, src/keri/peer/exchanging.py),
+                # so the helper is safe now; this path stays as it is on the
+                # simpler "already have it" ground above.
                 postman.send(serder=exn, attachment=atc)
 
                 # Deliver all messages
@@ -601,7 +607,14 @@ def _send_attachment(hab, exn, atc, hby):
 
     The old code always re-fetched (``serializeMessage(...)`` then ``del
     gatc[:exn.size]``), which crashed on a ``(None, None)`` not-found tuple and could
-    emit a non-quadlet-aligned attachment ("nonintegral quadlets").
+    emit a non-quadlet-aligned attachment ("nonintegral quadlets"). BOTH of those
+    were keripy defects and both are FIXED in the fork as of 2026-08-08 (see
+    ``keripy docs/FORK_DIVERGENCE.md`` → ``src/keri/peer/exchanging.py``): the
+    helper now returns a bare ``None`` when the exn is absent, and its ``framed=False``
+    layout is ``[body][counter][attachments]`` — which is what makes the
+    ``del gatc[:exn.size]`` below land exactly on the counter instead of mid-body.
+    The single-sig branch still short-circuits, on the "already have it" ground
+    above rather than on distrust of the helper.
     """
     if isinstance(hab, habbing.GroupHab):
         gatc = exchanging.serializeMessage(hby, exn.said)
