@@ -110,7 +110,8 @@ REPLY_READ_TIMEOUT_SECONDS = 2.0
 
 def peer_request(allowlist, recipient_aid: str, raw: bytes,
                  *, endpoint_url: str | None = None,
-                 read_timeout: float = REPLY_READ_TIMEOUT_SECONDS) -> bytes:
+                 read_timeout: float = REPLY_READ_TIMEOUT_SECONDS,
+                 outcome: dict | None = None) -> bytes:
     """Send `raw` to a paired peer and RETURN ITS REPLY bytes.
 
     Deliberately NOT part of `peer_send`. Every other outbound message on this
@@ -131,7 +132,28 @@ def peer_request(allowlist, recipient_aid: str, raw: bytes,
     Returns b"" on any failure (no peer record, bad URL, unreachable, timeout
     with nothing read). There is no mailbox fallback: a mailbox cannot answer
     a query, and the next tick will ask again.
+
+    `outcome`, when given, is filled with ``{"delivered": bool}`` —
+    **whether the bytes reached the peer**, which a bare `b""` cannot express.
+    Two completely different things return `b""` today: the connection never
+    opened (the peer never saw the request), and the peer read it and answered
+    nothing. A caller that treats those alike will draw conclusions about the
+    peer's *policy* from the peer being *down*.
+
+    That is not hypothetical — it is exactly what `PeerSyncDoer`'s prod-ask cap
+    did on 2026-08-08. It counted six asks against an admin that was not
+    running, logged "presuming withheld", and stopped asking permanently. The
+    log showed zero replies and zero failures, because `_drain`'s `if not raw:
+    continue` absorbs both cases silently.
+
+    `delivered` becomes True the moment `sendall` returns, not when a reply
+    arrives: a peer that receives a prod and deliberately says nothing HAS been
+    asked, and silence is the answer (`ProdResponder` withholds by returning
+    None — see `keri/app/prodding.py`). Everything before `sendall` completes is
+    a non-delivery and must not be read as an answer.
     """
+    if outcome is not None:
+        outcome["delivered"] = False
     # `endpoint_url` lets a caller resolve the peer record on ITS OWN thread and
     # hand this function nothing but a URL -- so a GUI can run the blocking part
     # in a worker without ever touching LMDB off the thread that owns it.
@@ -151,6 +173,11 @@ def peer_request(allowlist, recipient_aid: str, raw: bytes,
         with socket.create_connection((host, port),
                                       timeout=CONNECT_TIMEOUT_SECONDS) as sock:
             sock.sendall(raw)
+            if outcome is not None:
+                # The bytes are on the wire. Anything from here on — including a
+                # read that times out with nothing — is the peer's answer, not a
+                # transport failure.
+                outcome["delivered"] = True
             # The responder needs no EOF to act: its Parser is framed and each
             # message carries its own size in `v`. So do NOT half-close here --
             # shutdown(SHUT_WR) risks the hio Remoter treating the FIN as a

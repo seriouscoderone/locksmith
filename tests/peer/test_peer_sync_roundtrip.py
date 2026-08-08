@@ -228,3 +228,71 @@ def test_a_prod_gets_a_bar_back_and_the_body_lands():
 
         notanchored = [m for m in seen if "not anchored" in m]
         assert not notanchored, f"recipient rejected the bar: {notanchored[:1]}"
+
+
+# --- delivered vs never-connected -------------------------------------------------
+#
+# `peer_request` returns b"" for BOTH "the connection never opened" and "the peer
+# read it and answered nothing". Conflating them let PeerSyncDoer's prod-ask cap
+# read a DOWN admin as a REFUSING one: six prods, "presuming withheld", then
+# permanent silence toward a peer that had never once been asked (observed live
+# 2026-08-08). The `outcome` dict carries the distinction.
+
+
+def test_outcome_reports_not_delivered_when_nothing_is_listening():
+    port = _free_port()                      # nothing bound
+    outcome = {}
+    reply = peer_request(None, "EnobodyHome", b"x" * 32,
+                         endpoint_url=f"tcp://127.0.0.1:{port}", outcome=outcome)
+    assert reply == b""
+    assert outcome["delivered"] is False, (
+        "a refused connection must never look like an answer")
+
+
+def test_outcome_reports_not_delivered_on_an_unusable_url():
+    outcome = {}
+    assert peer_request(None, "Ebad", b"x", endpoint_url="not-a-tcp-url",
+                        outcome=outcome) == b""
+    assert outcome["delivered"] is False
+
+
+def test_outcome_reports_delivered_when_the_peer_reads_but_says_nothing():
+    """The case that IS an answer. A silent peer has been asked; withholding is
+    exactly how ProdResponder refuses. So `delivered` must be True even though the
+    reply is empty — otherwise the cap can never fire at all and the prod noise it
+    exists to stop comes straight back."""
+    import socket as _socket
+    import threading as _threading
+
+    srv = _socket.socket(_socket.AF_INET, _socket.SOCK_STREAM)
+    srv.setsockopt(_socket.SOL_SOCKET, _socket.SO_REUSEADDR, 1)
+    srv.bind(("127.0.0.1", 0))
+    srv.listen(1)
+    port = srv.getsockname()[1]
+
+    def _accept_and_say_nothing():
+        conn, _ = srv.accept()
+        try:
+            conn.recv(65536)                 # read the request, answer nothing
+        finally:
+            conn.close()
+
+    t = _threading.Thread(target=_accept_and_say_nothing, daemon=True)
+    t.start()
+    try:
+        outcome = {}
+        reply = peer_request(None, "Esilent", b"x" * 32,
+                            endpoint_url=f"tcp://127.0.0.1:{port}",
+                            outcome=outcome, read_timeout=0.5)
+        assert reply == b""                  # same bytes as the refused case...
+        assert outcome["delivered"] is True  # ...different meaning
+    finally:
+        t.join(timeout=2)
+        srv.close()
+
+
+def test_outcome_is_optional_and_omitting_it_changes_nothing():
+    """Two existing callers in this file pass no `outcome`; they must be untouched."""
+    port = _free_port()
+    assert peer_request(None, "EnobodyHome", b"x",
+                        endpoint_url=f"tcp://127.0.0.1:{port}") == b""

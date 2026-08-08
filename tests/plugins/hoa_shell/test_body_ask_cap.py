@@ -61,6 +61,48 @@ def test_the_cap_is_per_said_not_per_peer():
     assert doer._claim_body_ask(PEER_A, other) is True
 
 
+def test_an_undelivered_ask_is_refunded_so_a_down_peer_is_never_written_off():
+    """THE REGRESSION THIS FILE SHIPPED WITH, observed live on 2026-08-08.
+
+    The cap counted asks at QUEUE time, with no knowledge of whether the bytes
+    reached the peer. Driving the HOA against an admin that was not running
+    produced six prods per SAID, "presuming withheld", and then permanent silence
+    toward a peer that had never once been asked — strictly worse than the log
+    noise the cap was added to fix. Zero replies and zero failures appeared in the
+    log, because `peer_request` returns b"" for both "never connected" and
+    "connected, said nothing" and `_drain` absorbed both.
+
+    A down peer must be indefinitely re-askable."""
+    doer = _doer()
+    for _ in range(MAX_BODY_ASKS * 3):
+        assert doer._claim_body_ask(PEER_A, SAID) is True, (
+            "an undelivered ask must not consume the budget — a peer that is "
+            "down has told us nothing about what it would disclose")
+        doer._refund_body_ask(PEER_A, SAID)      # what _drain does on delivered=False
+
+
+def test_a_refund_cannot_push_the_count_below_zero():
+    doer = _doer()
+    doer._refund_body_ask(PEER_A, SAID)
+    doer._refund_body_ask(PEER_A, SAID)
+    allowed = [doer._claim_body_ask(PEER_A, SAID) for _ in range(MAX_BODY_ASKS + 1)]
+    assert allowed == [True] * MAX_BODY_ASKS + [False], (
+        "refunds on an unasked pair must not buy extra asks")
+
+
+def test_a_refund_after_giving_up_does_not_re_arm_the_asking():
+    """The asymmetry is deliberate. Once a peer has DELIVERED-refused the full
+    budget, a later unreachable blip must not restart the cycle — otherwise a
+    genuinely withholding peer that also flaps gets prodded forever."""
+    doer = _doer()
+    for _ in range(MAX_BODY_ASKS):
+        doer._claim_body_ask(PEER_A, SAID)
+    assert doer._claim_body_ask(PEER_A, SAID) is False
+    doer._refund_body_ask(PEER_A, SAID)
+    assert doer._claim_body_ask(PEER_A, SAID) is False, (
+        "a refund must not undo a give-up that delivered asks earned")
+
+
 def test_exhaustion_is_announced_once_at_info():
     """A watch that quietly stops asking is indistinguishable from one that never
     asked. Log the give-up -- once, not on every subsequent tick.
@@ -92,6 +134,44 @@ def test_exhaustion_is_announced_once_at_info():
     lines = [m for m in captured if "body_asks_exhausted" in m]
     assert len(lines) == 1, f"expected exactly one give-up line, got {len(lines)}"
     assert SAID[:12] in lines[0]
+
+
+def test_the_give_up_line_fires_only_once_the_ask_is_actually_declined():
+    """It used to fire at `asks + 1 == MAX_BODY_ASKS` and then `return True`, so
+    the log read "will not ask again" immediately followed by an outbound prod for
+    the same SAID — measured in the live log, lines 139-140. The announcement must
+    coincide with a refusal, not with the last permitted ask."""
+    from locksmith.plugins.hoa_shell import peer_sync_doer as mod
+
+    captured = []
+
+    class _Cap(logging.Handler):
+        def emit(self, record):
+            captured.append((len(captured), record.getMessage()))
+
+    handler = _Cap(level=logging.INFO)
+    mod.logger.addHandler(handler)
+    previous = mod.logger.level
+    mod.logger.setLevel(logging.INFO)
+    try:
+        doer = _doer()
+        results = []
+        for _ in range(MAX_BODY_ASKS + 1):
+            allowed = doer._claim_body_ask(PEER_A, SAID)
+            results.append((allowed, [m for _, m in captured
+                                      if "body_asks_exhausted" in m]))
+    finally:
+        mod.logger.removeHandler(handler)
+        mod.logger.setLevel(previous)
+
+    # Every allowed ask must have been announced-free; the announcement appears
+    # on the first call that returns False.
+    for allowed, announced in results[:MAX_BODY_ASKS]:
+        assert allowed is True
+        assert announced == [], (
+            "the give-up was announced while the ask was still going out")
+    allowed, announced = results[-1]
+    assert allowed is False and len(announced) == 1
 
 
 def test_the_cap_leaves_room_for_a_slow_peer():

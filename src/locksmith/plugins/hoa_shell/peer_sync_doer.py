@@ -74,10 +74,15 @@ class PeerSyncDoer(doing.Doer):
     def __init__(self, app, tock: float = DEFAULT_TOCK, **kwa):
         self.app = app
         self._checkpoints: dict[str, int] = {}      # peer AID -> last seen sn
-        # (peer AID, SAID) -> how many times we have asked for that body.
+        # (peer AID, SAID) -> how many DELIVERED asks for that body.
         # See MAX_BODY_ASKS: silent withholding is indistinguishable from
         # in-flight, so the only way to stop asking forever is to count.
+        # Undelivered asks are refunded in _drain -- a peer that is down is not
+        # a peer that refused.
         self._body_asks: dict[tuple[str, str], int] = {}
+        # (peer AID, SAID) pairs already announced as given up, so the give-up
+        # line is logged once rather than on every subsequent tick.
+        self._body_gave_up: set[tuple[str, str]] = set()
         # Socket I/O only. peer_request blocks for up to its read timeout, and
         # the hio loop that drives this doer also drives the UI -- doing the
         # waiting inline would freeze the window for (timeout x peers) every
@@ -171,9 +176,16 @@ class PeerSyncDoer(doing.Doer):
                 continue
             # introduced(): a peer that has never seen this AID drops the
             # prod as "Unknown sender" before authenticating it -- silently.
+            #
+            # The refund closure is what keeps the cap honest: only an ask the
+            # peer actually RECEIVED counts against it. `said` and `peer_pre` are
+            # bound per iteration deliberately (default args, not closure capture
+            # over the loop variable).
             self._ask(vault, peer_pre,
                       introduced(hab, body_request(hab, said, peer_pre=peer_pre)),
-                      f"pro/sealed {said[:12]}…", announce=True)
+                      f"pro/sealed {said[:12]}…", announce=True,
+                      on_undelivered=(lambda p=peer_pre, s=said:
+                                      self._refund_body_ask(p, s)))
 
         # 3. Ask for the TEL of every body we now hold but cannot place in a
         #    registry state.
@@ -212,18 +224,52 @@ class PeerSyncDoer(doing.Doer):
 
         Counted per (peer, said): the same SAID may be disclosable by one peer and
         not another, so exhausting one peer must not give up on the rest.
+
+        Only DELIVERED asks count. An ask whose bytes never reached the peer is
+        refunded by `_drain` via `_refund_body_ask`, because a peer that is DOWN
+        tells us nothing about what it would disclose. Without that refund this
+        cap did the opposite of its job, measured 2026-08-08: six prods to an
+        admin that was not running, "presuming withheld", and then permanent
+        silence toward a peer that had never once been asked. Six wasted ticks is
+        noise; never asking again is a stalled leg.
         """
         key = (peer_pre, said)
+        # The give-up mark is AUTHORITATIVE, checked before the count. Reading the
+        # count alone let a single refund buy another ask forever: exhaust, decline,
+        # refund on an unreachable blip, and the count drops back under the cap.
+        # Caught by test_a_refund_after_giving_up_does_not_re_arm_the_asking.
+        if key in self._body_gave_up:
+            return False
         asks = self._body_asks.get(key, 0)
         if asks >= MAX_BODY_ASKS:
+            if key not in self._body_gave_up:
+                self._body_gave_up.add(key)
+                # Announced HERE, on the first ask actually declined -- not on
+                # the last one allowed. It used to fire at `asks + 1 ==
+                # MAX_BODY_ASKS` and then return True, so the log read
+                # "will not ask again" immediately followed by peer_sync.sent.
+                logger.info(
+                    "peer_sync.body_asks_exhausted said=%s peer=%s after=%d "
+                    "delivered asks — presuming withheld, will not ask again",
+                    said[:12], peer_pre[:12], MAX_BODY_ASKS)
             return False
         self._body_asks[key] = asks + 1
-        if asks + 1 == MAX_BODY_ASKS:
-            logger.info(
-                "peer_sync.body_asks_exhausted said=%s peer=%s after=%d — "
-                "presuming withheld, will not ask again",
-                said[:12], peer_pre[:12], MAX_BODY_ASKS)
         return True
+
+    def _refund_body_ask(self, peer_pre: str, said: str) -> None:
+        """Un-count an ask whose bytes never reached the peer.
+
+        Called from `_drain` when `peer_request` reports `delivered=False`. Cannot
+        take the counter below zero, and deliberately does NOT clear the
+        gave-up mark: once a peer has genuinely declined MAX_BODY_ASKS delivered
+        asks, a later unreachable blip must not re-arm the asking."""
+        key = (peer_pre, said)
+        asks = self._body_asks.get(key, 0)
+        if asks <= 0:
+            return
+        self._body_asks[key] = asks - 1
+        logger.debug("peer_sync.body_ask_refunded said=%s peer=%s now=%d "
+                     "(never delivered)", said[:12], peer_pre[:12], asks - 1)
 
     def _tel_gaps(self, vault, saids) -> list:
         """SAIDs whose body we hold, whose registry we can name, and whose TEL
@@ -253,7 +299,7 @@ class PeerSyncDoer(doing.Doer):
         return out
 
     def _ask(self, vault, peer_pre: str, raw: bytes, label: str,
-             announce: bool = False) -> None:
+             announce: bool = False, on_undelivered=None) -> None:
         """Send a request and QUEUE its reply for parsing on the next tick.
 
         `announce` promotes the log line to INFO. A 5s loop over every paired
@@ -262,21 +308,35 @@ class PeerSyncDoer(doing.Doer):
         that logs at INFO, and its behaviour had to be inferred from the
         `peer.send.*` lines underneath it. The rare, meaningful events -- a
         peer's first sync, every body actually requested -- are INFO.
+
+        `on_undelivered`, when given, is called from `_drain` if the bytes never
+        reached the peer. Only the prod path uses it, to refund an ask that
+        cannot be evidence about disclosure.
+
+        Note the log line says QUEUED, not sent: the socket work happens off this
+        thread, so at this point nothing has been transmitted. It read
+        "peer_sync.sent" until 2026-08-08, which is how six prods to an admin
+        that was not running looked like six prods answered with silence.
         """
         try:
             record = PeerAllowlist(vault.db).get(peer_pre)
             url = record.endpoint_url if record is not None else None
             if not url:
+                if on_undelivered is not None:
+                    on_undelivered()
                 return
             log = logger.info if announce else logger.debug
-            log("peer_sync.sent peer=%s what=%s bytes=%d endpoint=%s",
+            log("peer_sync.queued peer=%s what=%s bytes=%d endpoint=%s",
                 peer_pre[:12], label, len(raw), url)
             # Endpoint resolved HERE, on the thread that owns the db; the
             # worker gets a URL and bytes and nothing else.
+            outcome: dict = {}
             fut = self._pool.submit(peer_request, None, peer_pre, raw,
-                                    endpoint_url=url)
-            self._pending.append((peer_pre, label, fut))
+                                    endpoint_url=url, outcome=outcome)
+            self._pending.append((peer_pre, label, fut, outcome, on_undelivered))
         except Exception:               # noqa: BLE001 — never kill the watch
+            if on_undelivered is not None:
+                on_undelivered()
             logger.debug("peer_sync.ask_failed peer=%s what=%s",
                          peer_pre[:12], label, exc_info=True)
 
@@ -290,15 +350,26 @@ class PeerSyncDoer(doing.Doer):
         from keri_serviceaid.providers.peer_sync import ingest_response
 
         still = []
-        for peer_pre, label, fut in self._pending:
+        for peer_pre, label, fut, outcome, on_undelivered in self._pending:
             if not fut.done():
-                still.append((peer_pre, label, fut))
+                still.append((peer_pre, label, fut, outcome, on_undelivered))
                 continue
             try:
                 raw = fut.result()
             except Exception:           # noqa: BLE001 — unreachable peer is normal
+                if on_undelivered is not None:
+                    on_undelivered()
                 logger.debug("peer_sync.reply_failed peer=%s", peer_pre[:12],
                              exc_info=True)
+                continue
+            # Undelivered is NOT an answer. `peer_request` returns b"" for both
+            # "never connected" and "connected, said nothing", and conflating
+            # them let the prod-ask cap read a down peer as a refusing one.
+            if not outcome.get("delivered", False):
+                if on_undelivered is not None:
+                    on_undelivered()
+                logger.debug("peer_sync.undelivered peer=%s what=%s",
+                             peer_pre[:12], label)
                 continue
             if not raw:
                 continue
