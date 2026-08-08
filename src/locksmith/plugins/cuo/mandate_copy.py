@@ -93,6 +93,8 @@ REVIEW_CAUTION = (
     "and leaves what you declared readable.")
 REVIEW_CONFIRM = "Sign mandate"
 REVIEW_BACK = "Keep editing"
+REVIEW_IN_FORCE_LABEL = "In force"
+REVIEW_THESIS_LABEL = "Thesis, published in full"
 
 JURISDICTION_PATTERN = (
     "Jurisdiction must be US, a dash, then two uppercase letters. Enter it like "

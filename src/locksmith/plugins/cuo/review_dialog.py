@@ -10,7 +10,7 @@ holds no rules: whatever it is handed, it shows.
 """
 from __future__ import annotations
 
-from PySide6.QtCore import Signal
+from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
 
 from locksmith.plugins.cuo import mandate_copy as copy
@@ -33,6 +33,11 @@ def _row(label: str, value: str) -> QWidget:
     name.setFixedWidth(150)
     shown = QLabel(value)
     shown.setWordWrap(True)
+    # Defensive, not reactive: today's schema patterns for these fields exclude
+    # '<' and '>', but this module owns no rules and must not depend on another
+    # layer's patterns holding. Force plain text so a value can never render as
+    # markup regardless of what upstream validation does or stops doing.
+    shown.setTextFormat(Qt.TextFormat.PlainText)
     shown.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 14px;")
     layout.addWidget(name)
     layout.addWidget(shown, 1)
@@ -68,18 +73,25 @@ class MandateReviewDialog(LocksmithDialog):
             shown = ", ".join(value) if isinstance(value, list) else str(value or "")
             rows.addWidget(_row(copy.FIELD_LABEL[field], shown))
         # ISO on purpose -- see the module docstring.
-        rows.addWidget(_row("In force", (
+        rows.addWidget(_row(copy.REVIEW_IN_FORCE_LABEL, (
             f"{payload.get('window_opens', '')} through "
             f"{payload.get('window_closes', '')}, inclusive")))
         outer.addWidget(summary)
 
-        thesis_label = QLabel("Thesis, published in full")
+        thesis_label = QLabel(copy.REVIEW_THESIS_LABEL)
         thesis_label.setStyleSheet(
             f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
         outer.addWidget(thesis_label)
         thesis = QLabel(str(payload.get("thesis") or ""))
         thesis.setObjectName("mandateReviewDialog.thesis")
         thesis.setWordWrap(True)
+        # CRITICAL: the thesis is free, unpatterned prose -- the one field most
+        # likely to contain '<', '>' or '&'. Left at Qt's default AutoText, a
+        # thesis that happens to look like markup renders AS markup: tags vanish
+        # and the text restyles, so the CUO would sign a string they cannot see.
+        # This dialog's entire reason for existing is showing what will be
+        # signed, so this must be plain text, unconditionally.
+        thesis.setTextFormat(Qt.TextFormat.PlainText)
         thesis.setStyleSheet(
             f"color: {colors.TEXT_PRIMARY}; font-size: 15px; padding: 10px 12px;"
             f" background: {colors.BACKGROUND_HIGHLIGHT}; border-radius: 4px;")
