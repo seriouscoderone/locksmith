@@ -24,7 +24,23 @@
 10. **Two date formats, deliberately:** `MM/DD/YYYY` in the form, **ISO in the review dialog**, ISO always in the payload.
 11. **Verb is "sign" at the commit point.** Page H1 stays "Declare a product mandate"; the form's primary is "Review mandate"; the modal's primary is "Sign mandate".
 12. Run tests with `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest <paths> -q --import-mode=importlib` from the locksmith repo root. **Never run the whole suite** — it has pre-existing collection errors unrelated to this work.
-13. **Every test module here needs the usurance brand ACTIVATED**, via the
+13. **Dates must be PARSED before they are compared, never string-compared.**
+    `date.fromisoformat` accepts every ISO 8601 form since Python 3.11 — `20270101`
+    and `2027-W01-1` both parse — and the schema puts **no `pattern`** on
+    `window_opens`/`window_closes`, only `format: date`. A string compare between two
+    different forms inverts (`'-'` is 0x2D, `'0'` is 0x30). Measured: `window_opens`
+    `"2027-12-31"` with `window_closes` `"20270101"` validated CLEAN, a −364-day
+    window, on a gate that nothing re-checks after the ACDC is anchored. Nor may a
+    non-string be coerced with `str()` to satisfy a date check — that makes it pass
+    the field test and then skip the gate's own isinstance test. Task 2's `_as_date`
+    is the one place this is decided.
+    **Task 4's `MandateDateField.iso_value()` incidentally canonicalizes dates, and
+    that is NOT the gate.** Validation must stand alone: its module docstring claims
+    to be "the only place rules live", and letting a widget keep a permanent-record
+    gate correct inverts that layering. Task 6's `existing_mandates()` reads ACDC
+    attributes possibly minted by another implementation, where `yyyy-MM-dd` is an
+    assumption rather than a guarantee.
+14. **Every test module here needs the usurance brand ACTIVATED**, via the
     `tests/plugins/cuo/conftest.py` autouse fixture Task 1 creates. Two reasons, both
     discovered in execution: `egf_local_dir()` returns `None` until
     `branding.brand()` has run (it reads `_brand_source_dir`, which `load_brand()`
