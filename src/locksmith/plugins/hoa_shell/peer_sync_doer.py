@@ -46,6 +46,18 @@ logger = help.ogler.getLogger(__name__)
 #: every paired peer a KEL replay.
 DEFAULT_TOCK = 5.0
 
+#: How many unanswered `pro`s for one SAID before this peer is presumed to be
+#: withholding it, and we stop asking.
+#:
+#: Withholding is SILENT: `ProdResponder.processProd` returns None and logs on the
+#: RESPONDER's side (`keri/app/prodding.py:148-152`), so the asker cannot tell
+#: "not disclosable to you" from "in flight". `credential_anchors` removes the
+#: registry events, which can NEVER have a body; this cap covers the other half —
+#: a real credential the peer declines to disclose, which no filter can predict.
+#: Deliberately generous: the cost of guessing wrong is a stalled leg, and the
+#: cost of one surplus ask is a log line.
+MAX_BODY_ASKS = 6
+
 
 class PeerSyncDoer(doing.Doer):
     """Per-vault poller: KEL sync for each paired peer, then bodies for the
@@ -62,6 +74,10 @@ class PeerSyncDoer(doing.Doer):
     def __init__(self, app, tock: float = DEFAULT_TOCK, **kwa):
         self.app = app
         self._checkpoints: dict[str, int] = {}      # peer AID -> last seen sn
+        # (peer AID, SAID) -> how many times we have asked for that body.
+        # See MAX_BODY_ASKS: silent withholding is indistinguishable from
+        # in-flight, so the only way to stop asking forever is to count.
+        self._body_asks: dict[tuple[str, str], int] = {}
         # Socket I/O only. peer_request blocks for up to its read timeout, and
         # the hio loop that drives this doer also drives the UI -- doing the
         # waiting inline would freeze the window for (timeout x peers) every
@@ -122,8 +138,8 @@ class PeerSyncDoer(doing.Doer):
 
     def _sync_peer(self, vault, hab, peer_pre: str) -> None:
         from keri_serviceaid.providers.peer_sync import (
-            anchored_saids, body_request, introduced, kel_sync_request,
-            missing_bodies, registry_of, tel_sync_request,
+            anchored_seals, body_request, credential_anchors, introduced,
+            kel_sync_request, missing_bodies, registry_of, tel_sync_request,
         )
 
         # 1. Ask the peer to replay its own KEL. Anchors we have never seen
@@ -139,12 +155,20 @@ class PeerSyncDoer(doing.Doer):
 
             watcher = AnchorWatcher(hab=hab, pre=peer_pre)
             since = self._checkpoints.get(peer_pre, 0)
-            saids = anchored_saids(watcher, since=since)
+            seals = anchored_seals(watcher, since=since)
+            # Only the anchors that could name an ACDC. A KEL also anchors
+            # registry inceptions and rotations, which have no body to fetch and
+            # can only ever be withheld -- silently, so the asker would re-ask on
+            # every tick forever. Measured on the arc: 27 of 33 prods from the
+            # designer went to the admin, which had nothing to disclose to it.
+            saids = credential_anchors(vault.rgy.reger, seals)
             self._checkpoints[peer_pre] = getattr(watcher, "checkpoint", since)
         except Exception:                   # noqa: BLE001 — a peer with no KEL yet
             return
 
         for said in missing_bodies(vault.rgy.reger, saids):
+            if not self._claim_body_ask(peer_pre, said):
+                continue
             # introduced(): a peer that has never seen this AID drops the
             # prod as "Unknown sender" before authenticating it -- silently.
             self._ask(vault, peer_pre,
@@ -174,6 +198,32 @@ class PeerSyncDoer(doing.Doer):
                       tel_sync_request(hab, peer_pre, registry_of(
                           vault.rgy.reger.creds.get(keys=(said,)).sad), said),
                       f"qry/tels {said[:12]}…", announce=True)
+
+    def _claim_body_ask(self, peer_pre: str, said: str) -> bool:
+        """True if we may still `pro` this peer for this body; records the attempt.
+
+        The other half of the prod waste, and the half no filter can predict:
+        `credential_anchors` removes the anchors that CANNOT have a body, but a
+        peer may also simply decline to disclose a real credential — a role
+        credential issued to somebody else, say. That refusal is SILENT
+        (`ProdResponder.processProd` returns None and logs on the RESPONDER's
+        side, `keri/app/prodding.py:148-152`), so from here "withheld" and "in
+        flight" look identical and counting is the only way to stop.
+
+        Counted per (peer, said): the same SAID may be disclosable by one peer and
+        not another, so exhausting one peer must not give up on the rest.
+        """
+        key = (peer_pre, said)
+        asks = self._body_asks.get(key, 0)
+        if asks >= MAX_BODY_ASKS:
+            return False
+        self._body_asks[key] = asks + 1
+        if asks + 1 == MAX_BODY_ASKS:
+            logger.info(
+                "peer_sync.body_asks_exhausted said=%s peer=%s after=%d — "
+                "presuming withheld, will not ask again",
+                said[:12], peer_pre[:12], MAX_BODY_ASKS)
+        return True
 
     def _tel_gaps(self, vault, saids) -> list:
         """SAIDs whose body we hold, whose registry we can name, and whose TEL
