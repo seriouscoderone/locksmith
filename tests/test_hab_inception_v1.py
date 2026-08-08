@@ -16,8 +16,15 @@ from locksmith.core import habbing
 
 def _fake_incept_doer(captured):
     class FakeInceptDoer:
-        def __init__(self, app, alias, proxy=None, signal_bridge=None, **kwargs):
+        # Mirrors the REAL InceptDoer.__init__ signature, named parameters included.
+        # It has to: test_threaded_kwargs_emit_v1_icp feeds captured["kwargs"]
+        # straight into a live hby.makeHab, so any named parameter this stand-in
+        # fails to declare falls into **kwargs and reaches makeHab as an unexpected
+        # keyword. That is how adding `if_absent` to the real class broke this file.
+        def __init__(self, app, alias, proxy=None, signal_bridge=None,
+                     if_absent=False, **kwargs):
             captured["kwargs"] = kwargs
+            captured["if_absent"] = if_absent
 
     return FakeInceptDoer
 

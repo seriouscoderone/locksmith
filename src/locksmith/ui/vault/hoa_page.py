@@ -70,6 +70,17 @@ class HoaVaultPage(VaultPage):
         """Expose the current page-registry keys (for tests/inspection)."""
         return list(self._pages.keys())
 
+    def preferred_default_page_keys(self) -> tuple[str, ...]:
+        """"home" first, then "settings".
+
+        "home" is the onboarding persona picker, registered by ``hoa_shell``
+        (plugin.py) rather than by this class, so it is present only for an
+        onboarding-enabled brand and cannot be assumed. "settings" is the one
+        core page ``_register_core_pages`` above always registers, which makes it
+        the honest last resort. Neither is "identifiers" — the stock default,
+        which a peeled build never registers."""
+        return ("home", "settings")
+
     def get_toolbar_config(self) -> dict[str, Any]:
         """Same as ``VaultPage.get_toolbar_config()``, except the Plugins
         and Notifications toolbar icons are hidden. No "plugins" page is

@@ -408,6 +408,12 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
             - delpre: Delegator prefix (for delegation)
             - delegation_type: 'none', 'local', or 'remote'
             - proxy_alias: Proxy identifier alias (for remote delegation)
+            - if_absent: mint only if this alias does not already exist, and treat
+              an existing one as success. For callers whose intent is idempotence
+              rather than creation — see ``InceptDoer.__init__``, which explains
+              why their own ``habByName`` pre-check cannot cover it (this function
+              is asynchronous: it extends the vault with a doer and returns before
+              the hab exists).
 
     Returns:
         dict: Result with 'success' bool, 'message' str, and optionally 'pre' (identifier prefix)
@@ -527,6 +533,7 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
                 alias=alias,
                 proxy=proxy,
                 signal_bridge=app.vault.signals,
+                if_absent=kwargs.get('if_absent', False),
                 **creation_kwargs
             )
             app.vault.extend([incept_doer])
@@ -653,7 +660,8 @@ class InceptDoer(doing.DoDoer):
     - Signaling completion to UI
     """
 
-    def __init__(self, app, alias, proxy=None, signal_bridge=None, **kwargs):
+    def __init__(self, app, alias, proxy=None, signal_bridge=None,
+                 if_absent=False, **kwargs):
         """
         Initialize the InceptDoer.
 
@@ -662,6 +670,30 @@ class InceptDoer(doing.DoDoer):
             alias: Alias for the new identifier
             proxy: Optional proxy hab for delegation
             signal_bridge: DoerSignalBridge for UI communication
+            if_absent: "mint this alias only if nobody else has" — an alias that
+                already exists is then a SUCCESS, not a failure. For the paths
+                whose intent is idempotence rather than creation, i.e. the two
+                that mint a vault's default AID (``bootstrapping.py``,
+                ``hoa_shell``'s ``_ensure_default_identifier``).
+
+                Their own ``habByName`` pre-checks cannot cover this, because
+                ``create_identifier`` is ASYNCHRONOUS: it does
+                ``vault.extend([incept_doer])`` and returns immediately, so the
+                hab does not exist until this doer's ``makeHab`` runs. Two
+                idempotent callers in one vault-open window therefore both pass
+                their pre-check, and the loser's ``makeHab`` raises keripy's
+                ``ValueError("AID already exists with that name")``
+                (``keripy habbing.py:1178``) — which the blanket ``except`` below
+                turns into an ERROR-with-traceback and an
+                ``identifier_creation_failed`` event, for a vault that has
+                exactly the identifier it wanted.
+
+                Left False for the two USER-initiated paths
+                (``ui/vault/identifiers/create.py``, ``groups/create.py``).
+                Neither validates alias uniqueness before calling, so that
+                failure event is the only thing telling a user the name is
+                taken; swallowing it there would make a rejected creation look
+                like a successful one.
             **kwargs: Parameters for identifier creation
         """
         self.app = app
@@ -669,6 +701,7 @@ class InceptDoer(doing.DoDoer):
         self.alias = alias
         self.proxy = proxy
         self.signal_bridge = signal_bridge
+        self.if_absent = if_absent
         self.creation_kwargs = kwargs
 
         # Setup doers
@@ -696,7 +729,15 @@ class InceptDoer(doing.DoDoer):
         _ = (yield self.tock)
 
         try:
-            # Create the identifier
+            # Create the identifier. Under if_absent, an alias another doer got to
+            # first is the outcome this caller wanted -- report it as created and
+            # stop, rather than letting makeHab's ValueError fall through to the
+            # blanket handler below as an ERROR traceback plus a failure event.
+            if self.if_absent:
+                existing = self.hby.habByName(self.alias)
+                if existing is not None:
+                    self._signal_already_present(existing)
+                    return
             hab = self.hby.makeHab(name=self.alias, **self.creation_kwargs)
 
             # Receiptor collects witness receipts and ingests them into
@@ -750,6 +791,14 @@ class InceptDoer(doing.DoDoer):
             return
 
         except Exception as e:
+            # Belt-and-braces for the same idempotent case. The pre-check above is
+            # sufficient under hio's single-threaded cooperative scheduling (nothing
+            # yields between the check and makeHab), so this only fires if that ever
+            # stops holding -- and then it should still not be an error.
+            if self.if_absent and (existing := self.hby.habByName(self.alias)) is not None:
+                self._signal_already_present(existing)
+                return
+
             logger.exception(f"InceptDoer failed with exception: {e}")
 
             # Signal failure to UI
@@ -765,6 +814,25 @@ class InceptDoer(doing.DoDoer):
                 )
             self.app.vault.remove([self])
             return
+
+    def _signal_already_present(self, hab) -> None:
+        """Report an alias somebody else already minted as the success it is for an
+        ``if_absent`` caller: the same ``identifier_created`` event a fresh mint
+        emits, so a listener cannot tell the two apart, at INFO rather than an
+        ERROR traceback."""
+        logger.info("InceptDoer: %s (%s) already present — nothing to mint",
+                    self.alias, hab.pre)
+        if self.signal_bridge:
+            self.signal_bridge.emit_doer_event(
+                doer_name="InceptDoer",
+                event_type="identifier_created",
+                data={
+                    'alias': self.alias,
+                    'pre': hab.pre,
+                    'success': True
+                }
+            )
+        self.app.vault.remove([self])
 
 
 def get_identifier_details(app, hab):

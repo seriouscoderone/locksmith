@@ -186,6 +186,10 @@ def bootstrap_default_environment(
         salt=aid_salt,
         toad=str(brand_cfg.default_toad),
         wits=list(brand_cfg.default_witnesses),
+        # Idempotent intent: hoa_shell's _ensure_default_identifier mints the same
+        # alias on vault-open, and create_identifier returns before the hab exists,
+        # so both can be in flight at once. See InceptDoer.__init__.
+        if_absent=True,
     )
     if isinstance(result, dict) and not result.get("success", True):
         logger.error(

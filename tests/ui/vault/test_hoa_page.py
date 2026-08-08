@@ -44,15 +44,31 @@ _CORE_NAV_BUTTON_NAMES = {
     "vaultNavMenu.schemaButton",
 }
 
+# Settings is the ONE core page a peeled HOA deliberately keeps, and the ONE core
+# nav button with it: peer transport is configured there and nowhere else, so a
+# peeled build without it could not enable its own listener, be dialled, or reach
+# its own admin (HoaVaultPage._register_core_pages / _create_nav_menu spell this
+# out; the §8.4 manual demo pass is what forced it). The three assertions below
+# predate that decision and had been failing since it landed -- red for a product
+# choice, which is the state where nobody reads the suite.
+_PEELED_PAGE_KEYS_ADMITTED = {"settings"}
+_PEELED_NAV_BUTTON_NAMES = _CORE_NAV_BUTTON_NAMES - {"vaultNavMenu.settingsButton"}
 
-def test_hoa_page_registers_no_core_wallet_pages(qtbot):
+
+def test_hoa_page_registers_no_core_wallet_pages_except_settings(qtbot):
     parent = _fake_parent()
     qtbot.addWidget(parent)
     page = HoaVaultPage(parent)
     qtbot.addWidget(page)
     # Core wallet page keys that stock Locksmith registers in _register_core_pages()
     core_keys = {"identifiers", "credentials", "groups", "remotes", "settings", "notifications"}
-    assert core_keys.isdisjoint(set(page.registered_page_keys()))
+    registered = set(page.registered_page_keys())
+    admitted = core_keys & registered
+    # Asserted as EQUALITY, not disjointness: the point is that exactly one core
+    # page is re-admitted, so re-admitting a second (say "identifiers", which would
+    # bring the wallet surface back) fails here instead of quietly widening the peel.
+    assert admitted == _PEELED_PAGE_KEYS_ADMITTED, (
+        f"peeled HOA admits {admitted}, expected exactly {_PEELED_PAGE_KEYS_ADMITTED}")
 
 
 def test_hoa_page_still_accepts_plugin_pages(qtbot):
@@ -70,7 +86,6 @@ def test_hoa_page_nav_menu_has_no_core_page_buttons(qtbot):
     page = HoaVaultPage(parent)
     qtbot.addWidget(page)
 
-    assert page.nav_menu.nav_buttons == []
     assert page.nav_menu.credentials_nav_buttons == []
 
     found_names = {
@@ -78,7 +93,10 @@ def test_hoa_page_nav_menu_has_no_core_page_buttons(qtbot):
         for btn in page.nav_menu.findChildren(QPushButton)
         if btn.objectName()
     }
-    assert found_names.isdisjoint(_CORE_NAV_BUTTON_NAMES)
+    assert found_names.isdisjoint(_PEELED_NAV_BUTTON_NAMES)
+    # ...and the one button that IS kept is present, so a peel that swallows
+    # Settings again (leaving the build unable to configure its transport) fails.
+    assert "vaultNavMenu.settingsButton" in found_names
 
 
 def test_hoa_page_nav_menu_still_shows_plugin_entries(qtbot):
@@ -97,14 +115,14 @@ def test_hoa_page_nav_menu_still_shows_plugin_entries(qtbot):
         if btn.objectName()
     }
     assert "vaultNavMenu.carrierEntryButton" in found_names
-    assert found_names.isdisjoint(_CORE_NAV_BUTTON_NAMES)
+    assert found_names.isdisjoint(_PEELED_NAV_BUTTON_NAMES)
 
 
 def test_hoa_page_toolbar_config_hides_plugins_and_notifications(qtbot):
     """Acceptance-demo fix wave item 6: neither "plugins" nor
     "notifications" is ever registered for a peeled HOA build (see
-    ``test_hoa_page_registers_no_core_wallet_pages`` above), so their
-    toolbar icons must be hidden rather than dead clicks (live log: "No
+    ``test_hoa_page_registers_no_core_wallet_pages_except_settings`` above), so
+    their toolbar icons must be hidden rather than dead clicks (live log: "No
     page registered for key 'plugins'")."""
     parent = _fake_parent()
     qtbot.addWidget(parent)
@@ -117,6 +135,42 @@ def test_hoa_page_toolbar_config_hides_plugins_and_notifications(qtbot):
     # Untouched keys still come from the stock VaultPage config.
     assert config["show_vaults_button"] is True
     assert config["show_settings_button"] is True
+
+
+def test_peeled_page_never_defaults_to_an_unregistered_page(qtbot):
+    """``VaultPage`` hardcoded "identifiers" as both the back-navigation target and
+    ``on_show``'s restore key. A peeled HOA registers no such page, so both pointed
+    at a page that does not exist: the navigation was a silent no-op and
+    ``_show_page`` logged ERROR "No page registered for key 'identifiers'" on a
+    completely healthy HOA — teaching everyone to ignore that message, which is the
+    only thing that would report a REAL missing page.
+
+    Both now resolve through ``default_page_key()`` against the live registry."""
+    parent = _fake_parent()
+    qtbot.addWidget(parent)
+    page = HoaVaultPage(parent)
+    qtbot.addWidget(page)
+
+    registered = set(page.registered_page_keys())
+    assert page.default_page_key() in registered
+    assert page._previous_vault_page_key in registered
+    assert page.default_page_key() != "identifiers"
+
+    # "home" is registered by hoa_shell, not by this class, so with only the core
+    # peel in place the honest answer is "settings" -- never a dead key.
+    assert page.default_page_key() == "settings"
+    page.register_page("home", QWidget())
+    assert page.default_page_key() == "home", "home must win once it exists"
+
+
+def test_stock_vault_page_default_is_still_identifiers(qtbot):
+    """Sanity guard: the stock wallet's behaviour is unchanged by the hook."""
+    parent = _fake_parent()
+    qtbot.addWidget(parent)
+    page = VaultPage(parent)
+    qtbot.addWidget(page)
+    assert page.default_page_key() == "identifiers"
+    assert page._previous_vault_page_key == "identifiers"
 
 
 def test_default_vault_page_toolbar_config_unaffected(qtbot):

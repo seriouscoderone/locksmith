@@ -74,7 +74,7 @@ class VaultPage(BasePage):
         self._register_core_pages()
 
         # Track previous vault sub-page key for back navigation
-        self._previous_vault_page_key = "identifiers"
+        self._previous_vault_page_key = self.default_page_key()
 
         # Add content_stack with stretch factor to fill remaining space
         main_layout.addWidget(self.content_stack, 1)
@@ -91,6 +91,29 @@ class VaultPage(BasePage):
         also suppress their now-dead nav buttons without altering this
         class's default behavior."""
         return VaultNavMenu(self)
+
+    def preferred_default_page_keys(self) -> tuple[str, ...]:
+        """Sub-page keys to land on, best first, when there is nothing to
+        restore. Overridable hook; the stock wallet wants "identifiers"."""
+        return ("identifiers",)
+
+    def default_page_key(self) -> str | None:
+        """The first *registered* key from ``preferred_default_page_keys``,
+        falling back to any registered page and finally to None.
+
+        Resolved against the registry rather than hardcoded, because
+        "identifiers" was hardcoded in two places here and a peeled HOA
+        (``HoaVaultPage``) registers no such page — so both the back-navigation
+        target and ``on_show``'s restore key pointed at a page that does not
+        exist. The visible result was a silent no-op navigation plus
+        ``_show_page``'s ERROR "No page registered for key 'identifiers'" on a
+        completely healthy HOA, which is how a real missing-page bug learns to
+        look like noise. Returning only registered keys puts that ERROR back to
+        meaning what it says."""
+        for key in self.preferred_default_page_keys():
+            if key in self._pages:
+                return key
+        return next(iter(self._pages), None)
 
     def _register_core_pages(self):
         """Register the built-in core vault pages."""
@@ -323,7 +346,7 @@ class VaultPage(BasePage):
         # as part of resetting the menu's active state, which clobbers
         # _current_page_key. Read it first so back-navigation from Plugins
         # returns to the exact sub-page the user left.
-        restore_key = self._current_page_key or "identifiers"
+        restore_key = self._current_page_key or self.default_page_key()
 
         super().on_show(**params)
         self.vault_name = params.get('vault_name', 'Unknown Vault')
@@ -341,7 +364,10 @@ class VaultPage(BasePage):
                 page.set_vault_name(self.vault_name)
 
         # Apply the captured restore key, overriding whatever pop_to_vault_menu set.
-        self._show_page(restore_key)
+        # None means no page is registered at all — leave the stack alone rather
+        # than routing to a key that cannot resolve.
+        if restore_key is not None:
+            self._show_page(restore_key)
 
     def on_hide(self):
         super().on_hide()

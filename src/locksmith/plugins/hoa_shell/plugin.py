@@ -252,6 +252,11 @@ class HoaShellPlugin(VaultPlugin):
             salt=signing.Salter().qb64[2:23],
             toad=str(brand().default_toad),
             wits=list(brand().default_witnesses),
+            # The habByName guard above cannot see an incept that bootstrapping.py
+            # already has IN FLIGHT -- create_identifier returns before the hab
+            # exists. if_absent makes the loser of that race a no-op instead of an
+            # ERROR traceback and an identifier_creation_failed event.
+            if_absent=True,
         )
         if isinstance(result, dict) and not result.get("success", True):
             logger.error("hoa.default_identifier.failed alias=%s message=%s",
