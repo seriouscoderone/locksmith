@@ -1109,21 +1109,21 @@ def _export_current_blob(devctl, sock, alias: str) -> str:
     more KEL events have landed (e.g. after declaring a mandate) picks up the
     growth — which is the entire point of calling it a second time.
 
-    (Task 5 finding) `ViewIdentifierDialog`'s own `Close` button hides rather
-    than destroys it (no `deleteLater()`), so a SECOND "View" open leaves TWO
-    `viewIdentifierDialog.*`-named widget sets alive in the tree at once — the
-    first permanently `visible=False`. This alias's SECOND-ever View open
-    (the first was `_expose_and_export`'s, during initial role setup) always
-    leaves exactly this pair, which is why the occurrence indices below are
-    hardcoded rather than derived. **The two devctl finders disagree on what
-    they count**, measured directly (`server.py`'s `_find_widget` vs
-    `_find_widget_any`): `wait_for`/`is_visible` use `_find_widget_any`, which
-    does NOT filter by visibility, so BOTH dialogs are in its match list and
-    the live one is `occurrence=1`. `is_checked`/`select`/`get_text` use
-    `_find_widget`, which filters to visible widgets ONLY -- the stale dialog
-    never enters that list at all, so the (one and only) live widget is
-    `occurrence=0`. Passing `occurrence=1` to one of THESE, by analogy with
-    `wait_for`, silently resolves nothing (measured: "widget not found")."""
+    HISTORY, because it explains why this reads so plainly now. This helper used
+    to pass `occurrence=1` to its `wait_for` calls: `ViewIdentifierDialog`'s Close
+    button hid rather than destroyed it, so a SECOND "View" open left TWO
+    `viewIdentifierDialog.*`-named widget sets alive at once, and the two devctl
+    finders disagreed about them -- `wait_for` uses `_find_widget_any`, which does
+    NOT filter by visibility, so the live dialog was match 1, while
+    `is_checked`/`select`/`get_text` use the visible-only `_find_widget`, where it
+    was match 0.
+
+    `LocksmithDialog.__init__` now sets `WA_DeleteOnClose`
+    (`ui/toolkit/widgets/dialogs.py:125`), which `ViewIdentifierDialog` inherits,
+    so the stale copy no longer exists and BOTH finders see exactly one widget.
+    Which turned `occurrence=1` into a selector that resolves nothing -- the
+    "View Identifier dialog never opened for 'cuo'" failure. The indices are gone
+    rather than renumbered: with one dialog alive there is nothing to index."""
     # Peeled HOA: no Identifiers page, no View Identifier dialog. Its own OOBI
     # is rendered in Settings and read the same way _expose_and_export reads it,
     # so both callers share one brand split.
@@ -1134,78 +1134,63 @@ def _export_current_blob(devctl, sock, alias: str) -> str:
 
     devctl(sock, "click_row_action", row_text=alias, action="View")
     r = devctl(sock, "wait_for", target="viewIdentifierDialog.aidField",
-              condition="visible", timeout_ms=3000, occurrence=1)
+              condition="visible", timeout_ms=3000)
     assert r.get("ok"), f"View Identifier dialog never opened for {alias!r}: {r}"
 
-    r = devctl(sock, "is_checked", target="viewIdentifierDialog.exposeToggle",
-              occurrence=0)
+    r = devctl(sock, "is_checked", target="viewIdentifierDialog.exposeToggle")
     assert r.get("ok"), r
     if not r["checked"]:
-        # Should never fire in practice (the alias was already exposed by
-        # _expose_and_export) -- fail loudly rather than clicking, since
-        # _op_click has no occurrence support at all (see conftest module
-        # docstring's sibling note) and could hit either dialog.
+        # Should never fire in practice -- the alias was already exposed by
+        # _expose_and_export. Fail loudly rather than clicking: this helper's
+        # contract is the already-exposed case, and clicking the toggle here
+        # would turn exposure OFF.
         raise AssertionError(
             f"{alias!r} was not already exposed -- _export_current_blob only "
             "handles the already-exposed case")
 
     r = devctl(sock, "select", target="viewIdentifierDialog.oobiRoleCombo",
-              value="Peer (offline)", occurrence=0)
+              value="Peer (offline)")
     assert r.get("ok"), r
     r = devctl(sock, "wait_for", target="viewIdentifierDialog.oobiTokenLabel",
-              condition="visible", timeout_ms=3000, occurrence=1)
+              condition="visible", timeout_ms=3000)
     assert r.get("ok"), r
-    text = devctl(sock, "get_text", target="viewIdentifierDialog.oobiTokenLabel",
-                 occurrence=0)["text"]
+    text = devctl(sock, "get_text",
+                  target="viewIdentifierDialog.oobiTokenLabel")["text"]
 
-    # Deliberately no "Close" click: _op_click has no occurrence support, so
-    # it would resolve first-match (the stale, already-inert dialog from
-    # _expose_and_export) rather than this live one -- a harmless no-op, but
-    # not an honest "closed the dialog" either. Leaving the live dialog open
-    # is harmless; nothing downstream in this suite depends on this page.
+    # Close it, and mean it. This used to be skipped because `_op_click` takes no
+    # occurrence and would have resolved the stale copy; with WA_DeleteOnClose the
+    # Close actually DESTROYS the dialog, so there is nothing to be ambiguous
+    # about -- and a dialog left open is what made the next open ambiguous.
+    # `target="Close"` is a label-text selector (the button carries no
+    # objectName), matching tests/integration/peer/conftest.py:600. Not asserted
+    # there or here: some dialog variants close on Escape instead, and the next
+    # interaction fails loudly if this one is still modal.
+    devctl(sock, "click", target="Close")
     return text
 
 
 def _import_peer_blob_second_time(devctl, sock, blob: str, label: str | None = None) -> None:
-    """Sibling of `tests.integration.peer.conftest.import_peer_blob_via_ui`
-    for a wallet's SECOND "Add Peer" pairing (`b["sock"]` here already paired
-    with "admin" during `open_vault_holding_actuary_role`). Not a copy for
-    its own sake: `AddPeerDialog` is the same not-destroyed-on-close shape as
-    `ViewIdentifierDialog` (see `_export_current_blob`'s docstring), so a
-    second open leaves the same live-vs-stale pair, and the shared helper
-    takes no `occurrence` to select between them. Only the ONE `wait_for`
-    call needs `occurrence=1` -- `_op_type`/`_op_click` resolve through
-    `_find_widget`, which is visible-only-filtered, so the stale copy is
-    never a candidate for them in the first place and the default
-    occurrence=0 already lands on the live widget."""
-    r = devctl(sock, "click", target="vaultNavMenu.settingsButton")
-    assert r.get("ok"), f"navigate to Settings: {r}"
-    r = devctl(sock, "wait_for", target="peerSettingsSection.addPeerButton",
-              condition="visible", timeout_ms=3000)
-    assert r.get("ok"), r
+    """A wallet's SECOND "Add Peer" pairing (`b["sock"]` here already paired with
+    "admin" during `open_vault_holding_actuary_role`).
 
-    r = devctl(sock, "click", target="peerSettingsSection.addPeerButton")
-    assert r.get("ok"), f"open Add Peer dialog: {r}"
-    r = devctl(sock, "wait_for", target="addPeerDialog.oobiInput",
-              condition="visible", timeout_ms=3000, occurrence=1)
-    assert r.get("ok"), f"Add Peer dialog never appeared: {r}"
+    This was a near-copy of `tests.integration.peer.conftest.import_peer_blob_via_ui`
+    for exactly one reason: `AddPeerDialog` was not destroyed on close, so a second
+    open left a live-vs-stale pair and the two `wait_for` calls needed
+    `occurrence=1` to reach the live one, which the shared helper does not offer.
 
-    r = devctl(sock, "type", target="addPeerDialog.oobiInput", text=blob)
-    assert r.get("ok"), f"paste blob into OOBI input: {r}"
+    `AddPeerDialog` now sets `WA_DeleteOnClose` (`ui/vault/peers/add_dialog.py:48`),
+    so there is no stale copy and no index to pass. It delegates to the shared
+    helper, which is strictly better than this copy was: it probes before clicking
+    and retries, because the peer settings card rebuilds on its own tick and a
+    click can land on a button being replaced.
 
-    if label:
-        r = devctl(sock, "type", target="addPeerDialog.labelInput", text=label)
-        assert r.get("ok"), f"type label: {r}"
+    Kept as a named wrapper rather than deleted so the call sites keep saying
+    "second pairing" -- and so the navigation tail below, which the shared helper
+    has no reason to do, stays with the caller that needs it.
+    """
+    from tests.integration.peer.conftest import import_peer_blob_via_ui
 
-    r = devctl(sock, "click", target="addPeerDialog.pairButton")
-    assert r.get("ok"), f"click Pair: {r}"
-
-    r = devctl(sock, "wait_for", target="addPeerDialog.oobiInput",
-              condition="hidden", timeout_ms=3000, occurrence=1)
-    if not r.get("ok"):
-        err = devctl(sock, "get_text", target="addPeerDialog.errorLabel")
-        raise AssertionError(
-            f"Pair dialog didn't close — likely error: {err.get('text', '?')!r}")
+    import_peer_blob_via_ui(devctl, sock, blob, label=label)
 
     r = devctl(sock, "click", target="vaultNavMenu.identifiersButton")
     assert r.get("ok"), r
