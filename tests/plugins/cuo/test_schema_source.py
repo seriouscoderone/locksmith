@@ -3,7 +3,18 @@
 Uses the REAL bundled EGF, not a fixture. A hand-built schema fixture would let the
 loader and the shipped bundle drift apart silently, which is the exact defect class
 this whole plan exists to close.
+
+One exception: `test_a_field_missing_from_required_is_optional_and_appended_last`
+below uses a synthetic EGF on purpose. Every field in the real bundled template
+happens to be required, so the `required=False` path and `order`'s append-fallback
+path are both permanently unreachable against the shipped bundle alone -- the real
+bundle cannot express the case a mutation test needs (confirmed: hardcoding
+`required=True` unconditionally in `_constraints` still left the suite green before
+that test was added). Everywhere else in this module, testing only against the real
+bundle stays correct.
 """
+import json
+
 import pytest
 
 from locksmith.core.branding import egf_local_dir
@@ -78,3 +89,43 @@ def test_the_brand_fixture_actually_activated_an_egf_dir():
     egf = egf_local_dir()
     assert egf is not None and egf.is_dir()
     assert egf.name == "egf" and egf.parent.name == "usurance"
+
+
+def test_a_field_missing_from_required_is_optional_and_appended_last(tmp_path):
+    """Synthetic EGF, deliberately -- see the module docstring for why.
+
+    `beta` is declared in `properties` but left out of `required`. That must
+    produce a `FieldConstraints(required=False)` for `beta`, AND `beta` must
+    land at the end of `order` (the append-fallback branch for anything the
+    author didn't position via `required`). Both assertions are needed: either
+    one alone would pass under a mutant that gets the other wrong.
+    """
+    said = "ETESTCUOTEMPLATE0000000000000000000000000A"
+    egf_doc = {
+        "spec_version": "egf-doc/0.1",
+        "micro_apps": [{"said": said, "id": "test-cuo", "role_id": "cuo"}],
+    }
+    template = {
+        "commands": [{
+            "id": "declare_product_mandate",
+            "payload_schema": {
+                "type": "object",
+                "properties": {
+                    "alpha": {"type": "string"},
+                    "beta": {"type": "string"},
+                    "gamma": {"type": "string"},
+                },
+                "required": ["gamma", "alpha"],
+            },
+        }],
+    }
+    (tmp_path / "Etest-egf-doc.json").write_text(json.dumps(egf_doc), encoding="utf-8")
+    (tmp_path / f"{said}.json").write_text(json.dumps(template), encoding="utf-8")
+
+    schema = load_mandate_schema(tmp_path)
+
+    assert schema.fields["beta"].required is False
+    assert schema.fields["alpha"].required is True
+    assert schema.fields["gamma"].required is True
+    assert schema.order[-1] == "beta"
+    assert schema.order[:2] == ("gamma", "alpha")

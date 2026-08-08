@@ -50,6 +50,20 @@ class FieldConstraints:
 
 @dataclass(frozen=True)
 class MandateSchema:
+    """The parsed `declare_product_mandate` payload schema.
+
+    `order` is a best-effort reading of the schema's own key order (see
+    `load_mandate_schema`) -- a canary, not an authority. It is NOT the
+    presentation order the form should render fields in, nor the order
+    validation should report errors in. `required` is a JSON-Schema *set*:
+    nothing in the format distinguishes "the author's intended order" from
+    "incidentally alphabetical", and this bundle's `properties` block IS
+    alphabetized (see `load_mandate_schema`'s docstring) -- so `required`
+    merely happens to agree with intent today, it is not provably safer. The
+    single authority for field sequence is `mandate_copy.FIELD_ORDER`
+    (Task 3), used for both form layout and the order validation reports
+    errors in.
+    """
     fields: dict[str, FieldConstraints]
     order: tuple[str, ...]
 
@@ -77,7 +91,10 @@ def _cuo_template(egf_dir: Path, doc: dict[str, Any]) -> dict[str, Any]:
     if not path.is_file():
         raise SchemaSourceError(
             f"the EGF references micro-app {said} but {path} is not published")
-    return json.loads(path.read_text(encoding="utf-8"))
+    try:
+        return json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, ValueError) as exc:
+        raise SchemaSourceError(f"{path} is not valid JSON: {exc}") from exc
 
 
 def _payload_schema(template: dict[str, Any]) -> dict[str, Any]:
@@ -112,16 +129,24 @@ def _constraints(name: str, sub: dict[str, Any], required: bool) -> FieldConstra
 def load_mandate_schema(egf_dir: Path) -> MandateSchema:
     """Parse the mandate payload schema out of the bundled EGF at `egf_dir`.
 
-    `order` comes from the schema's `required` list, not from iterating
-    `properties`. Measured against the real bundled template: `properties` is
-    alphabetized (`coverages, jurisdiction, line_of_business, ...` -- an
-    artifact of whatever serialized the template), while `required` carries
-    the author's actual field order (`line_of_business, jurisdiction,
-    coverages, ...` -- the order a CUO would naturally fill the form). Using
-    `properties` order here would silently hand the page an alphabetized
-    control layout. Any property the author left out of `required` (declared
-    optional, no position implied) is appended afterward in `properties`
-    order, so it still appears exactly once.
+    `order` is read from the schema's `required` list rather than from
+    iterating `properties`. Measured against the real bundled template:
+    `properties` is alphabetized (`coverages, jurisdiction, line_of_business,
+    ...` -- an artifact of whatever serialized the template), while `required`
+    happens to carry the field order a CUO would naturally fill the form in
+    (`line_of_business, jurisdiction, coverages, ...`). Reading `properties`
+    order would have silently handed the page an alphabetized control layout.
+
+    This only relocates the fragility, though -- it does not remove it.
+    `required` is a JSON-Schema *set*; nothing in the format distinguishes
+    "authored order" from "incidentally alphabetical", and this same file
+    already alphabetized one field once. Treat `MandateSchema.order` as a
+    canary (see its docstring), never as the presentation order -- that
+    authority is `mandate_copy.FIELD_ORDER` (Task 3).
+
+    Any property the schema leaves out of `required` (declared optional, no
+    position implied by this reading) is appended afterward in `properties`
+    order, so it still appears exactly once in `order`.
     """
     schema = _payload_schema(_cuo_template(egf_dir, _egf_doc(egf_dir)))
     required = list(schema.get("required") or ())
