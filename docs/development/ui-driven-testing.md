@@ -269,3 +269,69 @@ fixture rather than borrowing the owner's: `roles/conftest.py:221`
 touches `usurance-admin`, which is a real, passcode-protected operator identity.
 Follow that pattern. If you conclude you truly cannot, stop and ask the owner —
 with the specific reason the fixture path fails.
+
+## The four-window arc, and the traps it cost (2026-08-08)
+
+`tests/integration/roles/test_admin_grants_to_hoas_via_ui.py` drives a vanilla
+Locksmith admin plus three branded HOAs through the whole membrane in ~155s.
+`admin_then_two_hoas` takes its HOA set by indirect parametrize:
+
+```python
+@pytest.mark.parametrize("admin_then_two_hoas",
+                         [["cuo", "actuary", "product_designer"]], indirect=True)
+```
+
+Four monitors' worth of placement, admin left / two on an ultrawide / designer on
+the main screen:
+
+```bash
+LOCKSMITH_TEST_WIN_ORIGINS="-1900,60;0,-1050;1280,-1050;620,60"
+```
+
+### devctl sharp edges that make a NO-OP look driven
+
+- **`select` does not range-check `index`.** Past the end it returns
+  `ok` with an empty `selected_text`. That is how a Grant went out with
+  `recipient=None` and died in `ServiceaidGrantDoer`. Use
+  `_select_combo_by_prefix`, which reads `selected_text` back.
+- **`click` reports `ok` on a DISABLED button.** Assert on the `enabled` flag
+  devctl already returns in `r["clicked"]`.
+- **`click_table_row` matches a row by any CELL'S TEXT — there is no `row=`.**
+  Passing one selects nothing, silently.
+- **A page renders from a snapshot taken when it is shown.** Polling
+  `get_table_rows` on an already-open page reads the same stale render forever;
+  re-click the nav entry each pass (see `wait_for_admin_notifications`).
+- **`PaginatedTableWidget`'s inner table is now named** `table.<TitleNoSpaces>`
+  (e.g. `table.CredentialSchemas`). Before that, none of these tables was readable
+  at all: `get_table_rows` needs a real `QTableWidget`, resolving by the header
+  title finds the QLabel, and cell text lives in `QTableWidgetItem`s that a
+  widget-tree walk cannot see.
+- **Hidden table keys.** `SAID` rides the Issued/Schemas tables and
+  `RecipientAID` the Issued table, but neither is a visible column — so a row
+  filter on the SAID can never match. `get_list_items` DOES return
+  `item.setData(Qt.UserRole, …)` under `data`, which is how the arc gets the
+  declared mandate's full SAID off `actuaryPage.observedMandates`.
+
+### Other traps
+
+- **A vault name longer than `"cuo"` can exceed the socket path cap.** macOS caps
+  a UNIX socket path near 104 bytes and the default temp dir is
+  `/private/var/folders/<40 chars>/T/`, so `mkdtemp` **must** pass `dir="/tmp"`.
+  The symptom is a bare `TimeoutError` naming a path that looks fine.
+- **The roles bootstrap is opt-in now.** `roles/conftest.py` arms
+  `_bootstrap/sitecustomize.py` at MODULE IMPORT, so merely *collecting* a
+  `roles/` file used to replace the brand of every wallet the whole run spawned.
+  Fixtures opt in with `_spawn_wallets(..., bootstrap=True)`; `roles/conftest.py`
+  shadows `two_wallets` / `two_hoa_wallets` to do so.
+- **An HOA that APPLIED admits its own grant** — no row is ever rendered, so
+  demanding a manual accept asserts the absence of a feature. Keep the accept as a
+  short probe (`require=False, timeout_s=5`), and let the gate opening be the
+  proof.
+- **Close dialogs you deliberately left open.** `_expose_and_export` leaves View
+  Identifier open so the AID can be read out of it; nothing closed it, and it
+  covered the page for the rest of the run, so every later click landed behind a
+  dialog. That was "Add Peer dialog never appeared".
+- **`LOCKSMITH_PEER_PROBE_INTERVAL`** — the reachability probe is 60s ±25% with no
+  "probe now" control, so a peer paired mid-cycle reads grey for up to 75s.
+  Spawned wallets get `5`. Wait on the PEER's dot (`wait_for_peer_reachable`), not
+  the card's status line, which reports the wallet's own listener.
