@@ -290,5 +290,27 @@ None blocking. Two small things worth a second set of eyes:
 ### Commit
 
 Second commit on this task, on top of `828946588c855d8d2ddb611d30d982cec4e448a4`
-(see the top of this file for that commit's message/diff). SHA and summary line
-below once committed — filled in immediately after `git commit`.
+(see the top of this file for that commit's message/diff):
+
+```
+6479ba8d04c718e09f171cc165c1c3bd433422ee
+fix(cuo): guard MandateDateField against stepping/wheeling out of the empty state
+ 3 files changed, 406 insertions(+), 10 deletions(-)
+ create mode 100644 .superpowers/sdd/task-4-report.md
+```
+
+Note: staging this commit required restoring `.superpowers/sdd/.gitignore`,
+which the working tree held in a regressed state (a bare `*` with no
+negations) before this task touched it — first observed via `git status`
+before any edit in this round. The file's own committed header comment
+predicts and names this exact failure mode ("The `sdd-workspace` script
+creates this file containing a bare `*` ... If a future SDD workspace appears
+with a bare `*`, replace it with this file") and documents that `*-report.md`
+is meant to be tracked. Restored via `git checkout -- .superpowers/sdd/.gitignore`
+(back to HEAD's version, which has the `!*-report.md` negation) rather than
+force-adding into the broken state. This surfaced several other untracked,
+uncommitted report files belonging to other tasks in this plan
+(`task-1-report.md` through `task-5-report.md`, `progress.md`,
+`cuo-mandate-form/`) — none of those were staged or committed here; only this
+task's own `date_field.py`, `test_date_field.py`, and `task-4-report.md` were
+part of this commit.
