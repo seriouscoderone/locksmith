@@ -8,6 +8,11 @@ Two formats is deliberate: MM/DD/YYYY in the form per the suite's date standard,
 ISO in the payload and in the read-back, so the read-back shows byte-for-byte what
 is signed.
 """
+from PySide6.QtCore import QPoint, QPointF, Qt
+from PySide6.QtGui import QWheelEvent
+from PySide6.QtTest import QTest
+from PySide6.QtWidgets import QApplication
+
 from locksmith.plugins.cuo.date_field import MandateDateField
 
 
@@ -76,3 +81,63 @@ def test_the_sentinel_is_the_minimum_so_no_real_date_can_be_clamped_onto_it(qtbo
         field.set_iso(iso)
         assert field.iso_value() == iso, f"{iso} was clamped or lost"
         assert field.is_empty() is False, f"{iso} read back as empty"
+
+
+def test_an_up_arrow_on_an_empty_field_does_not_invent_a_date(qtbot):
+    """Regression test: with the field EMPTY and focused, one Up-arrow silently
+    produced 0001-02-01 -- a date the user never chose. Drives real key input
+    rather than calling `stepBy` directly, because the defect arrived through the
+    event system, not through the method in isolation."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.show()
+    qtbot.waitExposed(field)
+    QTest.keyClick(field._edit, Qt.Key_Up)
+    assert field.is_empty() is True
+    assert field.iso_value() == ""
+
+
+def test_a_wheel_scroll_on_an_empty_field_does_not_invent_a_date(qtbot):
+    """Same defect, the wheel path: `QAbstractSpinBox.wheelEvent` dispatches
+    through `stepBy`, so a real `QWheelEvent` must be equally inert while empty."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.show()
+    qtbot.waitExposed(field)
+    event = QWheelEvent(
+        QPointF(10, 10), QPointF(10, 10),
+        QPoint(0, 0), QPoint(0, 120),
+        Qt.NoButton, Qt.NoModifier, Qt.ScrollUpdate, False,
+    )
+    QApplication.sendEvent(field._edit, event)
+    assert field.is_empty() is True
+    assert field.iso_value() == ""
+
+
+def test_stepping_still_works_once_a_date_is_chosen(qtbot):
+    """The guard must not turn this into a read-only field."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.show()
+    qtbot.waitExposed(field)
+    field.set_iso("2027-06-15")
+    QTest.keyClick(field._edit, Qt.Key_Up)
+    assert field.iso_value() != "2027-06-15" and field.is_empty() is False
+
+
+def test_setting_the_same_iso_value_does_not_emit_changed(qtbot):
+    """A spurious emit would drive the form to validate before the user has acted,
+    breaking the project's "no errors before the first submit" rule."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("2027-06-15")
+    with qtbot.assertNotEmitted(field.changed):
+        field.set_iso("2027-06-15")
+
+
+def test_clearing_an_already_empty_field_does_not_emit_changed(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    assert field.is_empty() is True
+    with qtbot.assertNotEmitted(field.changed):
+        field.clear()
