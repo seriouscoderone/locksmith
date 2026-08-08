@@ -1,0 +1,1909 @@
+# CUO Product-Mandate Form Implementation Plan
+
+> **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development (recommended) or superpowers:executing-plans to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
+
+**Goal:** Rebuild the CUO product-mandate form so that every control and every validation rule is derived from the EGF at runtime, and no invalid or unintended mandate can be anchored without the CUO first reading back exactly what will be signed.
+
+**Architecture:** Five new focused modules in `src/locksmith/plugins/cuo/` — schema reading, pure validation, copy, a date field, and the review dialog — consumed by a rewritten `page.py` built on `LocksmithFormPage`. The schema modules are pure Python with no Qt, so validation is unit-testable without a widget; the Qt layer holds no rules of its own.
+
+**Tech Stack:** Python 3.14, PySide6/Qt, pytest + pytest-qt. Reads the brand's bundled EGF via `locksmith.core.branding.egf_local_dir()`.
+
+**Design spec:** [`docs/superpowers/specs/2026-08-08-cuo-mandate-form-design.md`](../specs/2026-08-08-cuo-mandate-form-design.md). Read §2 and §4 before Task 2. Copy source of truth: [`docs/superpowers/specs/assets/2026-08-08-cuo-mandate-copy.json`](../specs/assets/2026-08-08-cuo-mandate-copy.json).
+
+## Global Constraints
+
+1. **Python + PySide6/Qt.** Not TypeScript, not a web view.
+2. **No schema literal may appear in Python source.** Not the eight `line_of_business` values, not `^US-[A-Z]{2}$`, not `^[A-Z0-9][A-Z0-9-]*$`. Task 7 enforces this with a test that greps the plugin package. Test files may contain them; `src/` may not.
+3. **The EGF is READ-ONLY.** Never write to, re-SAID, or add fields to anything under `release/<brand>/egf/`.
+4. **Authority for layout, validation timing and copy** is `~/code/usurance/spec/suite/ux-patterns.md` §11 and `design-system.md`. The `tools/brand-kit-gate/` documents do **not** govern this form (spec §1.2).
+5. **Do not modify `src/locksmith/ui/onboarding/form_builder.py`** or anything else outside `src/locksmith/plugins/cuo/` and `tests/`, with the single exception of `tests/integration/roles/conftest.py` in Task 8.
+6. **Labels go ABOVE fields, never beside.** `ux-patterns.md:300`: *"Label position: Always above the field. Never to the left"*.
+7. **Sentence case everywhere.** No "please", "simply", "just". Every error names the offending value and the next action.
+8. **Required errors fire on submit only. Format errors fire on blur, and only after the first submit attempt.** (`ux-patterns.md:190-191`)
+9. **The primary button stays ENABLED while the form is invalid.** It disables for exactly one reason: an issuance in flight.
+10. **Two date formats, deliberately:** `MM/DD/YYYY` in the form, **ISO in the review dialog**, ISO always in the payload.
+11. **Verb is "sign" at the commit point.** Page H1 stays "Declare a product mandate"; the form's primary is "Review mandate"; the modal's primary is "Sign mandate".
+12. Run tests with `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest <paths> -q --import-mode=importlib` from the locksmith repo root. **Never run the whole suite** — it has pre-existing collection errors unrelated to this work.
+
+---
+
+## File Structure
+
+| File | Responsibility |
+|---|---|
+| `src/locksmith/plugins/cuo/schema_source.py` (new) | Locate and parse the `declare_product_mandate` `payload_schema` from the bundled EGF. Pure; no Qt. |
+| `src/locksmith/plugins/cuo/validation.py` (new) | Pure validation of a payload dict against the parsed constraints plus the two template pre-mint rules. No Qt. |
+| `src/locksmith/plugins/cuo/mandate_copy.py` (new) | Every user-visible string, including the count-aware error summary. No Qt. |
+| `src/locksmith/plugins/cuo/date_field.py` (new) | A nullable date control: `MM/DD/YYYY` display, ISO value. |
+| `src/locksmith/plugins/cuo/review_dialog.py` (new) | The read-back modal. Renders a canonical payload; owns no rules. |
+| `src/locksmith/plugins/cuo/page.py` (rewrite) | The form: builds controls from constraints, runs validation on the spec's timing, drives the submit lifecycle. |
+| `tests/plugins/cuo/…` (new) | One test module per source module above. |
+| `tests/integration/roles/conftest.py` (modify, Task 8) | `submit_mandate_form_via_ui` rewritten for the new controls. |
+
+`schema_source.py`, `validation.py` and `mandate_copy.py` import no Qt at all. That is deliberate: it makes every rule testable without a widget, and it is what keeps the Qt layer rule-free.
+
+---
+
+## Task 1: Read the payload schema from the EGF
+
+**Files:**
+- Create: `src/locksmith/plugins/cuo/schema_source.py`
+- Test: `tests/plugins/cuo/test_schema_source.py`
+- Create: `tests/plugins/cuo/__init__.py` (empty file — the package marker)
+
+**Interfaces:**
+- Consumes: `locksmith.core.branding.egf_local_dir() -> Path | None`
+- Produces:
+  - `class SchemaSourceError(RuntimeError)`
+  - `@dataclass(frozen=True) FieldConstraints` with fields `name: str`, `type: str`, `required: bool`, `enum: tuple[str, ...] | None`, `pattern: str | None`, `fmt: str | None`, `min_length: int | None`, `item_pattern: str | None`, `min_items: int | None`, `unique_items: bool`, `description: str`
+  - `@dataclass(frozen=True) MandateSchema` with `fields: dict[str, FieldConstraints]` and `order: tuple[str, ...]`
+  - `load_mandate_schema(egf_dir: Path) -> MandateSchema`
+  - Module constants `CUO_ROLE_ID = "cuo"`, `DECLARE_COMMAND_ID = "declare_product_mandate"`
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/__init__.py` as an empty file, then `tests/plugins/cuo/test_schema_source.py`:
+
+```python
+"""The form's controls and rules come from the EGF, so this is where that starts.
+
+Uses the REAL bundled EGF, not a fixture. A hand-built schema fixture would let the
+loader and the shipped bundle drift apart silently, which is the exact defect class
+this whole plan exists to close.
+"""
+import pytest
+
+from locksmith.core.branding import egf_local_dir
+from locksmith.plugins.cuo.schema_source import (
+    SchemaSourceError,
+    load_mandate_schema,
+)
+
+
+@pytest.fixture
+def schema():
+    egf = egf_local_dir()
+    assert egf is not None, "no bundled EGF for the active brand"
+    return load_mandate_schema(egf)
+
+
+def test_the_six_submitted_fields_are_all_found(schema):
+    assert set(schema.fields) == {
+        "line_of_business", "jurisdiction", "coverages",
+        "window_opens", "window_closes", "thesis",
+    }
+    assert all(f.required for f in schema.fields.values())
+
+
+def test_line_of_business_carries_the_enum_from_the_bundle(schema):
+    lob = schema.fields["line_of_business"]
+    assert lob.enum is not None
+    assert len(lob.enum) == 8
+    assert "workers_compensation" in lob.enum
+    assert lob.pattern is None
+
+
+def test_jurisdiction_carries_a_pattern_and_no_enum(schema):
+    j = schema.fields["jurisdiction"]
+    assert j.pattern is not None and j.pattern.startswith("^US-")
+    assert j.enum is None, (
+        "if the EGF ever gains a jurisdiction enum, the form should offer a "
+        "dropdown -- see the design spec's jurisdiction decision")
+
+
+def test_coverages_carries_array_constraints(schema):
+    c = schema.fields["coverages"]
+    assert c.type == "array"
+    assert c.min_items == 1
+    assert c.unique_items is True
+    assert c.item_pattern is not None
+
+
+def test_both_window_fields_are_dates(schema):
+    assert schema.fields["window_opens"].fmt == "date"
+    assert schema.fields["window_closes"].fmt == "date"
+
+
+def test_thesis_has_a_min_length(schema):
+    assert schema.fields["thesis"].min_length == 1
+
+
+def test_order_is_the_declared_field_order_not_alphabetical(schema):
+    assert schema.order[0] == "line_of_business"
+    assert schema.order != tuple(sorted(schema.order))
+
+
+def test_a_directory_with_no_egf_doc_fails_loudly(tmp_path):
+    with pytest.raises(SchemaSourceError, match="no egf-doc"):
+        load_mandate_schema(tmp_path)
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_schema_source.py -q --import-mode=importlib`
+Expected: FAIL — `ModuleNotFoundError: No module named 'locksmith.plugins.cuo.schema_source'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/locksmith/plugins/cuo/schema_source.py`:
+
+```python
+# -*- encoding: utf-8 -*-
+"""The `declare_product_mandate` command's payload schema, read from the EGF.
+
+Every control the form builds and every rule it enforces comes from here. Nothing
+about the mandate's shape is written in Python -- not the line-of-business enum,
+not the jurisdiction pattern, not the date format. `tests/plugins/cuo/
+test_no_schema_literals.py` enforces that.
+
+The resolution path uses no hardcoded SAID:
+
+    egf-doc  ->  micro_apps[role_id == "cuo"].said
+             ->  <said>.json  ->  commands[id == "declare_product_mandate"]
+             ->  payload_schema
+
+Fails LOUD at every step. A form that silently falls back to "no constraints" is
+worse than a form that refuses to open: it would accept anything and let the
+issuer reject it, which is the behaviour this plan replaces.
+"""
+from __future__ import annotations
+
+import json
+from dataclasses import dataclass
+from pathlib import Path
+from typing import Any
+
+CUO_ROLE_ID = "cuo"
+DECLARE_COMMAND_ID = "declare_product_mandate"
+
+_EGF_SPEC_VERSION = "egf-doc/0.1"
+
+
+class SchemaSourceError(RuntimeError):
+    """The EGF could not yield the mandate payload schema."""
+
+
+@dataclass(frozen=True)
+class FieldConstraints:
+    name: str
+    type: str
+    required: bool
+    enum: tuple[str, ...] | None
+    pattern: str | None
+    fmt: str | None
+    min_length: int | None
+    item_pattern: str | None
+    min_items: int | None
+    unique_items: bool
+    description: str
+
+
+@dataclass(frozen=True)
+class MandateSchema:
+    fields: dict[str, FieldConstraints]
+    order: tuple[str, ...]
+
+
+def _egf_doc(egf_dir: Path) -> dict[str, Any]:
+    for path in sorted(egf_dir.glob("E*.json")):
+        try:
+            doc = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            continue
+        if (isinstance(doc, dict)
+                and doc.get("spec_version") == _EGF_SPEC_VERSION
+                and "micro_apps" in doc):
+            return doc
+    raise SchemaSourceError(f"no egf-doc/0.1 with micro_apps in {egf_dir}")
+
+
+def _cuo_template(egf_dir: Path, doc: dict[str, Any]) -> dict[str, Any]:
+    said = next((m.get("said") for m in doc.get("micro_apps", [])
+                 if m.get("role_id") == CUO_ROLE_ID), None)
+    if not said:
+        raise SchemaSourceError(
+            f"the EGF declares no micro-app for role {CUO_ROLE_ID!r}")
+    path = egf_dir / f"{said}.json"
+    if not path.is_file():
+        raise SchemaSourceError(
+            f"the EGF references micro-app {said} but {path} is not published")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _payload_schema(template: dict[str, Any]) -> dict[str, Any]:
+    for command in template.get("commands", []):
+        if command.get("id") == DECLARE_COMMAND_ID:
+            schema = command.get("payload_schema")
+            if not isinstance(schema, dict) or "properties" not in schema:
+                raise SchemaSourceError(
+                    f"command {DECLARE_COMMAND_ID} has no usable payload_schema")
+            return schema
+    raise SchemaSourceError(
+        f"the CUO micro-app declares no command {DECLARE_COMMAND_ID!r}")
+
+
+def _constraints(name: str, sub: dict[str, Any], required: bool) -> FieldConstraints:
+    items = sub.get("items") or {}
+    return FieldConstraints(
+        name=name,
+        type=str(sub.get("type") or ""),
+        required=required,
+        enum=tuple(str(v) for v in sub["enum"]) if sub.get("enum") else None,
+        pattern=sub.get("pattern"),
+        fmt=sub.get("format"),
+        min_length=sub.get("minLength"),
+        item_pattern=items.get("pattern") if isinstance(items, dict) else None,
+        min_items=sub.get("minItems"),
+        unique_items=bool(sub.get("uniqueItems")),
+        description=str(sub.get("description") or ""),
+    )
+
+
+def load_mandate_schema(egf_dir: Path) -> MandateSchema:
+    """Parse the mandate payload schema out of the bundled EGF at `egf_dir`."""
+    schema = _payload_schema(_cuo_template(egf_dir, _egf_doc(egf_dir)))
+    required = set(schema.get("required") or ())
+    properties = schema.get("properties") or {}
+    fields, order = {}, []
+    for name, sub in properties.items():
+        if not isinstance(sub, dict):
+            continue
+        fields[name] = _constraints(name, sub, name in required)
+        order.append(name)
+    if not fields:
+        raise SchemaSourceError("payload_schema declares no properties")
+    return MandateSchema(fields=fields, order=tuple(order))
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_schema_source.py -q --import-mode=importlib`
+Expected: PASS — 8 passed
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/schema_source.py tests/plugins/cuo/
+git commit -m "feat(cuo): read the mandate payload schema from the EGF"
+```
+
+---
+
+## Task 2: Pure validation
+
+**Files:**
+- Create: `src/locksmith/plugins/cuo/validation.py`
+- Test: `tests/plugins/cuo/test_validation.py`
+
+**Interfaces:**
+- Consumes: `MandateSchema`, `FieldConstraints` from Task 1
+- Produces:
+  - `@dataclass(frozen=True) FieldError` with `field: str` and `message: str`
+  - `validate_payload(payload: dict, schema: MandateSchema, existing: Sequence[Mapping[str, Any]] = ()) -> list[FieldError]`
+  - `windows_overlap(a_opens: str, a_closes: str, b_opens: str, b_closes: str) -> bool`
+
+`existing` is a sequence of mappings each carrying `line_of_business`, `jurisdiction`, `window_opens`, `window_closes` — the mandates this vault already holds. Task 6 supplies it from `reger`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/test_validation.py`:
+
+```python
+"""Validation is pure and Qt-free, so every rule is testable without a widget.
+
+Rules come from two places, and the tests say which: the payload schema (enum,
+pattern, minItems, uniqueItems, minLength, format) and the micro-app template's two
+PRE-MINT gates (window ordering, scope overlap). The ordering gate matters most --
+per its own description nothing re-checks it after issuance, so this module is the
+last line of defence.
+"""
+import pytest
+
+from locksmith.core.branding import egf_local_dir
+from locksmith.plugins.cuo.schema_source import load_mandate_schema
+from locksmith.plugins.cuo.validation import (
+    FieldError,
+    validate_payload,
+    windows_overlap,
+)
+
+
+@pytest.fixture
+def schema():
+    return load_mandate_schema(egf_local_dir())
+
+
+def _good() -> dict:
+    return {
+        "line_of_business": "auto",
+        "jurisdiction": "US-UT",
+        "coverages": ["BI", "PD"],
+        "window_opens": "2027-01-01",
+        "window_closes": "2027-12-31",
+        "thesis": "Grow teen-driver share in Utah.",
+    }
+
+
+def _fields(errors: list[FieldError]) -> set[str]:
+    return {e.field for e in errors}
+
+
+def test_a_good_payload_has_no_errors(schema):
+    assert validate_payload(_good(), schema) == []
+
+
+def test_every_missing_required_field_is_reported_at_once(schema):
+    errors = validate_payload({}, schema)
+    assert _fields(errors) == {
+        "line_of_business", "jurisdiction", "coverages",
+        "window_opens", "window_closes", "thesis",
+    }, "the summary banner counts these, so all six must report together"
+
+
+def test_a_value_outside_the_enum_is_rejected(schema):
+    payload = _good() | {"line_of_business": "automobile"}
+    errors = validate_payload(payload, schema)
+    assert _fields(errors) == {"line_of_business"}
+
+
+def test_a_jurisdiction_that_fails_the_pattern_is_rejected(schema):
+    for bad in ("UTAH", "US-U", "us-ut", "UT"):
+        errors = validate_payload(_good() | {"jurisdiction": bad}, schema)
+        assert _fields(errors) == {"jurisdiction"}, bad
+
+
+def test_a_structurally_valid_but_fictional_jurisdiction_passes(schema):
+    """US-TU matches ^US-[A-Z]{2}$ and the EGF enumerates no subdivisions, so this
+    MUST pass here. It is caught by the human read-back, not by validation -- see
+    the design spec's jurisdiction decision. A test asserting otherwise would be
+    asserting a check the app cannot perform."""
+    assert validate_payload(_good() | {"jurisdiction": "US-TU"}, schema) == []
+
+
+def test_a_lowercase_coverage_is_rejected(schema):
+    errors = validate_payload(_good() | {"coverages": ["bi"]}, schema)
+    assert _fields(errors) == {"coverages"}
+
+
+def test_a_duplicate_coverage_is_rejected(schema):
+    errors = validate_payload(_good() | {"coverages": ["BI", "BI"]}, schema)
+    assert _fields(errors) == {"coverages"}
+    assert "BI" in errors[0].message, "the error must name the offending value"
+
+
+def test_an_empty_coverage_list_is_rejected(schema):
+    errors = validate_payload(_good() | {"coverages": []}, schema)
+    assert _fields(errors) == {"coverages"}
+
+
+def test_a_non_date_is_rejected(schema):
+    errors = validate_payload(_good() | {"window_opens": "01/01/2027"}, schema)
+    assert _fields(errors) == {"window_opens"}
+
+
+def test_a_window_that_closes_before_it_opens_is_rejected(schema):
+    payload = _good() | {"window_opens": "2027-12-31", "window_closes": "2027-01-01"}
+    errors = validate_payload(payload, schema)
+    assert _fields(errors) == {"window_closes"}
+
+
+def test_a_single_day_window_is_rejected_because_the_gate_is_strict(schema):
+    """`command.window_opens < command.window_closes` is strict, so equal dates
+    fail. The field help promises a two-day floor for exactly this reason."""
+    payload = _good() | {"window_opens": "2027-06-01", "window_closes": "2027-06-01"}
+    assert _fields(validate_payload(payload, schema)) == {"window_closes"}
+
+
+def test_an_overlapping_mandate_for_the_same_scope_is_rejected(schema):
+    existing = [{
+        "line_of_business": "auto", "jurisdiction": "US-UT",
+        "window_opens": "2027-06-01", "window_closes": "2028-06-01",
+    }]
+    errors = validate_payload(_good(), schema, existing=existing)
+    assert _fields(errors) == {"window_opens"}
+    assert "US-UT" in errors[0].message
+
+
+def test_a_different_line_or_jurisdiction_is_not_an_overlap(schema):
+    """'A further jurisdiction or a further line is NOT an overlap and is
+    accepted, which is how scope is added.'"""
+    for differing in ({"line_of_business": "property"}, {"jurisdiction": "US-NV"}):
+        existing = [{
+            "line_of_business": "auto", "jurisdiction": "US-UT",
+            "window_opens": "2027-06-01", "window_closes": "2028-06-01",
+        } | differing]
+        assert validate_payload(_good(), schema, existing=existing) == []
+
+
+def test_a_non_overlapping_window_for_the_same_scope_is_accepted(schema):
+    existing = [{
+        "line_of_business": "auto", "jurisdiction": "US-UT",
+        "window_opens": "2028-01-01", "window_closes": "2028-12-31",
+    }]
+    assert validate_payload(_good(), schema, existing=existing) == []
+
+
+@pytest.mark.parametrize("a,b,expected", [
+    (("2027-01-01", "2027-06-01"), ("2027-05-01", "2027-12-01"), True),
+    (("2027-01-01", "2027-06-01"), ("2027-06-01", "2027-12-01"), True),
+    (("2027-01-01", "2027-06-01"), ("2027-06-02", "2027-12-01"), False),
+])
+def test_overlap_is_the_standard_inclusive_interval_test(a, b, expected):
+    """'Overlap is the standard interval test -- each range starts on or before
+    the other ends.' Touching endpoints DO overlap; both dates are in force."""
+    assert windows_overlap(a[0], a[1], b[0], b[1]) is expected
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_validation.py -q --import-mode=importlib`
+Expected: FAIL — `ModuleNotFoundError: No module named 'locksmith.plugins.cuo.validation'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/locksmith/plugins/cuo/validation.py`:
+
+```python
+# -*- encoding: utf-8 -*-
+"""Validation of a mandate payload. Pure, Qt-free, and the only place rules live.
+
+Two sources, and the docstrings say which:
+
+* the payload schema (Task 1) -- enum, pattern, minItems, uniqueItems, minLength,
+  format: date;
+* the micro-app template's two PRE-MINT gates --
+  `mandate_window_opens_before_it_closes` and
+  `no_overlapping_mandate_for_this_scope`.
+
+The ordering gate is the reason this module is worth writing carefully. Its own
+description: "checked BEFORE the ACDC is anchored, which is the only point at which
+refusing costs nothing... nothing re-checks this after issuance" -- ACDC cannot
+constrain two values inside one container. If this function is wrong, a mandate
+whose window closes before it opens is anchored permanently.
+"""
+from __future__ import annotations
+
+import re
+from dataclasses import dataclass
+from datetime import date
+from typing import Any, Mapping, Sequence
+
+from locksmith.plugins.cuo import mandate_copy as copy
+from locksmith.plugins.cuo.schema_source import FieldConstraints, MandateSchema
+
+
+@dataclass(frozen=True)
+class FieldError:
+    field: str
+    message: str
+
+
+def _is_iso_date(value: str) -> bool:
+    try:
+        date.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    return True
+
+
+def windows_overlap(a_opens: str, a_closes: str,
+                    b_opens: str, b_closes: str) -> bool:
+    """The standard inclusive interval test, on ISO strings.
+
+    ISO-8601 dates sort lexicographically, so string comparison IS the check --
+    the same property the template's rules rely on. Touching endpoints overlap:
+    both dates count as in force.
+    """
+    return a_opens <= b_closes and b_opens <= a_closes
+
+
+def _empty(value: Any) -> bool:
+    if value is None:
+        return True
+    if isinstance(value, str):
+        return not value.strip()
+    if isinstance(value, (list, tuple, set)):
+        return len(value) == 0
+    return False
+
+
+def _scalar_errors(c: FieldConstraints, value: Any) -> list[str]:
+    out: list[str] = []
+    text = value if isinstance(value, str) else str(value)
+    if c.enum is not None and text not in c.enum:
+        out.append(copy.enum_error(c.name, text, c.enum))
+    if c.pattern is not None and not re.fullmatch(c.pattern, text):
+        out.append(copy.pattern_error(c.name))
+    if c.min_length is not None and len(text) < c.min_length:
+        out.append(copy.required_error(c.name))
+    if c.fmt == "date" and not _is_iso_date(text):
+        out.append(copy.date_error(c.name))
+    return out
+
+
+def _array_errors(c: FieldConstraints, value: Any) -> list[str]:
+    if not isinstance(value, (list, tuple)):
+        return [copy.required_error(c.name)]
+    items = list(value)
+    out: list[str] = []
+    if c.min_items is not None and len(items) < c.min_items:
+        out.append(copy.required_error(c.name))
+    if c.unique_items:
+        seen: set[str] = set()
+        for item in items:
+            if item in seen:
+                out.append(copy.COVERAGE_DUPLICATE.format(code=item))
+                break
+            seen.add(item)
+    if c.item_pattern is not None:
+        for item in items:
+            if not re.fullmatch(c.item_pattern, str(item)):
+                out.append(copy.COVERAGE_PATTERN.format(code=item))
+                break
+    return out
+
+
+def validate_payload(payload: Mapping[str, Any], schema: MandateSchema,
+                     existing: Sequence[Mapping[str, Any]] = ()) -> list[FieldError]:
+    """Every error in the payload, in the schema's own field order.
+
+    Returns ALL errors rather than the first: the summary banner counts them and
+    `ux-patterns.md:192` focuses the first invalid field, so both need the full set.
+    """
+    errors: list[FieldError] = []
+    for name in schema.order:
+        c = schema.fields[name]
+        value = payload.get(name)
+        if _empty(value):
+            if c.required:
+                errors.append(FieldError(name, copy.required_error(name)))
+            continue
+        messages = (_array_errors(c, value) if c.type == "array"
+                    else _scalar_errors(c, value))
+        errors.extend(FieldError(name, m) for m in messages)
+
+    already = {e.field for e in errors}
+    opens, closes = payload.get("window_opens"), payload.get("window_closes")
+    both_are_dates = (isinstance(opens, str) and isinstance(closes, str)
+                      and _is_iso_date(opens) and _is_iso_date(closes))
+    if both_are_dates and "window_closes" not in already:
+        # mandate_window_opens_before_it_closes -- STRICT, so equal dates fail.
+        if not opens < closes:
+            errors.append(FieldError("window_closes", copy.WINDOW_ORDER))
+        else:
+            # no_overlapping_mandate_for_this_scope. Reported against
+            # window_opens so the two window rules never collide on one field.
+            line = payload.get("line_of_business")
+            juris = payload.get("jurisdiction")
+            for other in existing:
+                if (other.get("line_of_business") != line
+                        or other.get("jurisdiction") != juris):
+                    continue
+                o_opens = str(other.get("window_opens") or "")
+                o_closes = str(other.get("window_closes") or "")
+                if not (o_opens and o_closes):
+                    continue
+                if windows_overlap(opens, closes, o_opens, o_closes):
+                    errors.append(FieldError("window_opens", copy.WINDOW_OVERLAP.format(
+                        line_of_business=line, jurisdiction=juris,
+                        existing_opens=o_opens, existing_closes=o_closes)))
+                    break
+    return errors
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_validation.py -q --import-mode=importlib`
+Expected: PASS — 20 passed. (Task 3 creates `mandate_copy`; implement Task 3 first if the import fails, or implement both before running.)
+
+**Note for the implementer:** this task imports `mandate_copy`, which Task 3 creates. Implement Task 3's module before running these tests. The two are separate tasks because they are separately reviewable, not because they are separately runnable.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/validation.py tests/plugins/cuo/test_validation.py
+git commit -m "feat(cuo): pure validation of a mandate payload, with both pre-mint gates"
+```
+
+---
+
+## Task 3: Copy, with a count-aware summary
+
+**Files:**
+- Create: `src/locksmith/plugins/cuo/mandate_copy.py`
+- Test: `tests/plugins/cuo/test_mandate_copy.py`
+
+**Interfaces:**
+- Consumes: nothing
+- Produces, all module-level unless noted:
+  - `PAGE_INTRO: tuple[str, str]`, `H1: str`
+  - `FIELD_LABEL: dict[str, str]`, `FIELD_HELP: dict[str, str]`, `FIELD_PLACEHOLDER: dict[str, str]`
+  - `REVIEW_TITLE`, `REVIEW_SIGNER`, `REVIEW_CAUTION`, `REVIEW_CONFIRM`, `REVIEW_BACK`
+  - `FORM_PRIMARY`, `FORM_CANCEL`, `IN_FLIGHT`
+  - `JURISDICTION_PATTERN`, `COVERAGE_PATTERN`, `COVERAGE_DUPLICATE`, `WINDOW_ORDER`, `WINDOW_OVERLAP`
+  - `error_summary(count: int) -> str`, `required_error(field: str) -> str`, `enum_error(field: str, value: str, allowed: tuple[str, ...]) -> str`, `pattern_error(field: str) -> str`, `date_error(field: str) -> str`
+  - `TOKENS: frozenset[str]` — the ratified interpolation tokens
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/test_mandate_copy.py`:
+
+```python
+"""Copy is data, and it has a contract: no forbidden words, no unratified tokens,
+and a summary that counts correctly at one.
+
+The count-aware summary exists because every draft of this copy shipped
+"Fix 1 errors before signing." -- the spec's own example string has the same bug.
+"""
+import re
+import string
+
+import pytest
+
+from locksmith.plugins.cuo import mandate_copy as copy
+
+_FORBIDDEN = ("please", "simply", "just ", "invalid input", "successfully")
+
+
+def _all_strings():
+    for name in dir(copy):
+        if name.startswith("_"):
+            continue
+        value = getattr(copy, name)
+        if isinstance(value, str):
+            yield name, value
+        elif isinstance(value, dict):
+            for key, item in value.items():
+                if isinstance(item, str):
+                    yield f"{name}[{key}]", item
+        elif isinstance(value, tuple):
+            for i, item in enumerate(value):
+                if isinstance(item, str):
+                    yield f"{name}[{i}]", item
+
+
+def test_no_forbidden_word_appears_anywhere():
+    for name, text in _all_strings():
+        lowered = text.lower()
+        for word in _FORBIDDEN:
+            assert word not in lowered, f"{name} contains {word!r}: {text!r}"
+
+
+def test_no_string_shouts():
+    for name, text in _all_strings():
+        assert "!" not in text, f"{name} uses an exclamation mark"
+
+
+def test_every_interpolation_token_is_ratified():
+    for name, text in _all_strings():
+        used = {f for _, f, _, _ in string.Formatter().parse(text) if f}
+        unknown = used - copy.TOKENS
+        assert not unknown, (
+            f"{name} uses unratified token(s) {unknown}; a token nobody fills "
+            f"renders as literal braces")
+
+
+def test_the_summary_counts_one_error_correctly():
+    assert copy.error_summary(1) == "Fix 1 error before signing."
+    assert copy.error_summary(3) == "Fix 3 errors before signing."
+
+
+def test_the_summary_refuses_a_nonsense_count():
+    with pytest.raises(ValueError):
+        copy.error_summary(0)
+
+
+def test_every_submitted_field_has_a_label_help_and_placeholder():
+    submitted = {"line_of_business", "jurisdiction", "coverages",
+                 "window_opens", "window_closes", "thesis"}
+    assert submitted <= set(copy.FIELD_LABEL)
+    assert submitted <= set(copy.FIELD_HELP)
+    assert submitted <= set(copy.FIELD_PLACEHOLDER), (
+        'ux-patterns.md: "No field should render without a placeholder"')
+
+
+def test_the_intro_states_both_irreversible_facts():
+    """The defect this copy replaces was prose that read as PRIVATE. Both facts
+    must survive any future edit for brevity."""
+    intro = " ".join(copy.PAGE_INTRO).lower()
+    assert "edited" in intro and "permanent" in intro
+    assert "anyone" in intro or "publish" in intro
+
+
+def test_the_caution_says_it_cannot_be_undone_in_some_form():
+    caution = copy.REVIEW_CAUTION.lower()
+    assert "final" in caution or "cannot be undone" in caution
+    assert "never be edited" in caution or "cannot be edited" in caution
+
+
+def test_the_enum_error_lists_what_is_allowed():
+    message = copy.enum_error("line_of_business", "automobile", ("auto", "property"))
+    assert "automobile" in message and "auto" in message
+
+
+def test_required_errors_exist_for_every_field_name_used():
+    for field in ("line_of_business", "coverages", "thesis", "window_opens"):
+        message = copy.required_error(field)
+        assert message and message[0].isupper() and message.endswith(".")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_mandate_copy.py -q --import-mode=importlib`
+Expected: FAIL — `ModuleNotFoundError: No module named 'locksmith.plugins.cuo.mandate_copy'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/locksmith/plugins/cuo/mandate_copy.py`. Strings are taken from
+`docs/superpowers/specs/assets/2026-08-08-cuo-mandate-copy.json`; the required-field
+messages, placeholders and count-aware summary are new (spec §5.2).
+
+```python
+# -*- encoding: utf-8 -*-
+"""Every user-visible string on the mandate form.
+
+Produced by three independent drafts judged against the brand voice pillars
+("Established and self-assured, never flashy") and `ux-patterns.md` §11: error text
+is specific and actionable, never "Invalid input."; help text carries format hints;
+sentence case throughout.
+
+The verb at the commit point is SIGN, deliberately, while the page H1 stays
+"Declare a product mandate" -- the page is named for the act, the button for the
+commitment. That is an owner decision (design spec §5.1); do not "fix" it into one
+vocabulary.
+"""
+from __future__ import annotations
+
+TOKENS = frozenset({
+    "code", "count", "cuo_name", "field", "line_of_business", "jurisdiction",
+    "existing_opens", "existing_closes", "allowed",
+})
+
+H1 = "Declare a product mandate"
+
+PAGE_INTRO = (
+    "Submitting signs this mandate with your chief underwriting authority and "
+    "adds it permanently to your own published record.",
+    "You are publishing, not filing: nothing here can be edited afterwards, and "
+    "anyone who asks reads all of it, your thesis word for word.",
+)
+
+FIELD_LABEL = {
+    "line_of_business": "Line of business",
+    "jurisdiction": "Jurisdiction",
+    "coverages": "Coverages",
+    "window_opens": "In force from",
+    "window_closes": "In force through",
+    "thesis": "Thesis",
+}
+
+FIELD_HELP = {
+    "line_of_business": "One line per mandate. A second line is a second mandate.",
+    "jurisdiction": (
+        "Format US-UT, one jurisdiction per mandate. Only the format is checked; "
+        "the app cannot tell US-UT from US-TU, so read your code back before you "
+        "sign."),
+    "coverages": (
+        "At least one code, uppercase, no repeats (BI, PD, COMP). These are the "
+        "coverages you are declaring, and they publish exactly as written."),
+    "window_opens": (
+        "Both dates count as in force. In force through must fall after in force "
+        "from, so the shortest window is two days."),
+    "window_closes": (
+        "Both dates count as in force. In force through must fall after in force "
+        "from, so the shortest window is two days."),
+    "thesis": (
+        "One sentence of business intent, in your own words. It publishes "
+        "verbatim, so write it for a reader outside the company."),
+}
+
+FIELD_PLACEHOLDER = {
+    "line_of_business": "Choose a line of business",
+    "jurisdiction": "US-UT",
+    "coverages": "BI",
+    "window_opens": "MM/DD/YYYY",
+    "window_closes": "MM/DD/YYYY",
+    "thesis": "One sentence of business intent",
+}
+
+FORM_PRIMARY = "Review mandate"
+FORM_CANCEL = "Cancel"
+IN_FLIGHT = "Signing…"
+
+REVIEW_TITLE = "Review this mandate before signing"
+REVIEW_SIGNER = (
+    "Signing as {cuo_name}, Chief Underwriting Officer, on the authority granted "
+    "to you by Usurance administration.")
+REVIEW_CAUTION = (
+    "Signing is final. These values can never be edited, and the whole mandate, "
+    "thesis included, goes to anyone who asks for it. To correct a mandate, "
+    "declare a new one. Withdrawing later records that you stopped pursuing it "
+    "and leaves what you declared readable.")
+REVIEW_CONFIRM = "Sign mandate"
+REVIEW_BACK = "Keep editing"
+
+JURISDICTION_PATTERN = (
+    "Jurisdiction must be US, a dash, then two uppercase letters. Enter it like "
+    "US-UT.")
+COVERAGE_PATTERN = (
+    "Coverage code {code} must use capital letters, digits and hyphens only, "
+    "starting with a letter or digit, as in BI or COMP-EXT. Retype it in that "
+    "form.")
+COVERAGE_DUPLICATE = (
+    "{code} is listed twice. Remove the second entry; each coverage is named "
+    "once.")
+WINDOW_ORDER = (
+    "In force through must fall after in force from, and a window of a single "
+    "day is not accepted. Move in force through to a later date.")
+WINDOW_OVERLAP = (
+    "You already have a mandate for {line_of_business} in {jurisdiction} in "
+    "force {existing_opens} through {existing_closes}. Withdraw that mandate or "
+    "set this window to start after it closes.")
+
+_REQUIRED = {
+    "line_of_business": "Choose a line of business.",
+    "jurisdiction": "Enter a jurisdiction, like US-UT.",
+    "coverages": "Add at least one coverage code.",
+    "window_opens": "Enter the date this mandate comes into force.",
+    "window_closes": "Enter the last date this mandate is in force.",
+    "thesis": "Write one sentence of business intent.",
+}
+
+
+def error_summary(count: int) -> str:
+    """The submit-time banner. Counts correctly at one.
+
+    Every draft of this copy shipped "Fix 1 errors before signing.", and so does
+    the spec's own example string, so the pluralisation lives here rather than in
+    a format call at the call site.
+    """
+    if count < 1:
+        raise ValueError(f"error_summary is for 1 or more errors, got {count}")
+    noun = "error" if count == 1 else "errors"
+    return f"Fix {count} {noun} before signing."
+
+
+def required_error(field: str) -> str:
+    return _REQUIRED.get(field, f"{FIELD_LABEL.get(field, field)} is required.")
+
+
+def enum_error(field: str, value: str, allowed: tuple[str, ...]) -> str:
+    label = FIELD_LABEL.get(field, field).lower()
+    return (f"{value} is not one of the available options for {label}. "
+            f"Choose from {', '.join(allowed)}.")
+
+
+def pattern_error(field: str) -> str:
+    if field == "jurisdiction":
+        return JURISDICTION_PATTERN
+    return f"{FIELD_LABEL.get(field, field)} is not in the required format."
+
+
+def date_error(field: str) -> str:
+    return f"Enter {FIELD_LABEL.get(field, field).lower()} as a date."
+```
+
+- [ ] **Step 4: Run both test modules to verify they pass**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/ -q --import-mode=importlib`
+Expected: PASS — Task 1, 2 and 3 modules all green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/mandate_copy.py tests/plugins/cuo/test_mandate_copy.py
+git commit -m "feat(cuo): the form's copy, with a count-aware error summary"
+```
+
+---
+
+## Task 4: A nullable date field
+
+**Files:**
+- Create: `src/locksmith/plugins/cuo/date_field.py`
+- Test: `tests/plugins/cuo/test_date_field.py`
+
+**Interfaces:**
+- Consumes: nothing from earlier tasks
+- Produces: `class MandateDateField(QWidget)` with `iso_value() -> str` (empty string when unset), `set_iso(value: str) -> None`, `clear() -> None`, `is_empty() -> bool`, and a `changed = Signal()`
+
+Nothing reusable exists: the toolkit has no date widget, and the app's only date input is a raw `QDateTimeEdit` hand-styled inline at `ui/vault/credentials/issued/issue.py:721`.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/test_date_field.py`:
+
+```python
+"""A date control that can be EMPTY, displays MM/DD/YYYY, and yields ISO.
+
+QDateEdit always holds some date, so "the user has not chosen yet" needs an
+explicit sentinel -- otherwise the form silently submits whatever date the widget
+happened to open on, which is the class of defect the whole plan is closing.
+
+Two formats is deliberate: MM/DD/YYYY in the form per the suite's date standard,
+ISO in the payload and in the read-back, so the read-back shows byte-for-byte what
+is signed.
+"""
+from locksmith.plugins.cuo.date_field import MandateDateField
+
+
+def test_a_fresh_field_is_empty_and_yields_no_value(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    assert field.is_empty() is True
+    assert field.iso_value() == ""
+
+
+def test_setting_an_iso_value_makes_it_non_empty(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("2027-01-01")
+    assert field.is_empty() is False
+    assert field.iso_value() == "2027-01-01"
+
+
+def test_the_display_format_is_month_day_year(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    assert field.display_format() == "MM/dd/yyyy"
+
+
+def test_clearing_returns_it_to_empty(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("2027-01-01")
+    field.clear()
+    assert field.is_empty() is True
+    assert field.iso_value() == ""
+
+
+def test_an_unparseable_value_leaves_the_field_empty(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("not-a-date")
+    assert field.is_empty() is True
+
+
+def test_changing_the_value_emits_changed(qtbot):
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    with qtbot.waitSignal(field.changed, timeout=1000):
+        field.set_iso("2027-03-04")
+
+
+def test_the_empty_sentinel_is_not_a_date_a_user_could_pick(qtbot):
+    """The sentinel must be unreachable by normal use, or a real date would read
+    as empty."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("1752-09-14")
+    assert field.iso_value() == "1752-09-14", (
+        "an early but legitimate date must not collide with the empty sentinel")
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_date_field.py -q --import-mode=importlib`
+Expected: FAIL — `ModuleNotFoundError: No module named 'locksmith.plugins.cuo.date_field'`
+
+- [ ] **Step 3: Write the implementation**
+
+Create `src/locksmith/plugins/cuo/date_field.py`:
+
+```python
+# -*- encoding: utf-8 -*-
+"""A nullable date control: MM/DD/YYYY on screen, ISO in the payload.
+
+Two problems Qt does not solve on its own:
+
+1. `QDateEdit` always holds a date, so there is no natural "unset". Without an
+   explicit empty state the form would submit whatever date the widget opened on
+   and the user would never have chosen it. The empty state is Qt's
+   `specialValueText` on `minimumDate` -- the documented idiom -- with the minimum
+   set far enough back that no legitimate mandate date can collide with it.
+2. Display and payload formats differ ON PURPOSE. `MM/dd/yyyy` is what the suite's
+   date standard specifies for display; the payload and the review read-back use
+   ISO, because `format: date` is ISO and the read-back's job is to show exactly
+   what will be signed.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import QDate, Signal
+from PySide6.QtWidgets import QDateEdit, QHBoxLayout, QWidget
+
+from locksmith.ui import colors
+
+_DISPLAY_FORMAT = "MM/dd/yyyy"
+#: The empty sentinel. 1 Jan 1900 is centuries before any plausible insurance
+#: mandate, so `specialValueText` can claim it without shadowing a real date.
+_EMPTY = QDate(1900, 1, 1)
+
+
+class MandateDateField(QWidget):
+    """A date input that can be empty. `iso_value()` is "" until one is chosen."""
+
+    changed = Signal()
+
+    def __init__(self, placeholder: str = _DISPLAY_FORMAT, parent=None):
+        super().__init__(parent)
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
+
+        self._edit = QDateEdit(self)
+        self._edit.setDisplayFormat(_DISPLAY_FORMAT)
+        self._edit.setCalendarPopup(True)
+        self._edit.setMinimumDate(_EMPTY)
+        self._edit.setSpecialValueText(placeholder)
+        self._edit.setDate(_EMPTY)
+        self._paint(invalid=False)
+        self._edit.dateChanged.connect(lambda _d: self.changed.emit())
+        layout.addWidget(self._edit)
+
+    def _paint(self, invalid: bool) -> None:
+        """Match `LocksmithLineEdit` exactly: 6px radius, 12px padding, 14px text,
+        and NO background-color -- that widget inherits the parent's via
+        `_get_parent_background_color`, so specifying one here would make the two
+        controls differ on any surface but the default one."""
+        border = colors.DANGER if invalid else colors.BORDER
+        self._edit.setStyleSheet(
+            f"QDateEdit {{ border: 1px solid {border}; border-radius: 6px;"
+            f" padding: 12px; font-size: 14px; color: {colors.TEXT_PRIMARY}; }}")
+
+    def display_format(self) -> str:
+        return self._edit.displayFormat()
+
+    def is_empty(self) -> bool:
+        return self._edit.date() == _EMPTY
+
+    def iso_value(self) -> str:
+        if self.is_empty():
+            return ""
+        return self._edit.date().toString("yyyy-MM-dd")
+
+    def set_iso(self, value: str) -> None:
+        parsed = QDate.fromString(value or "", "yyyy-MM-dd")
+        self._edit.setDate(parsed if parsed.isValid() else _EMPTY)
+
+    def clear(self) -> None:
+        self._edit.setDate(_EMPTY)
+
+    def set_invalid(self, invalid: bool) -> None:
+        self._paint(invalid)
+```
+
+**Verified colour tokens** (checked against `locksmith.ui.colors` 2026-08-08, so no
+substitution is needed): `BORDER`, `DANGER`, `TEXT_PRIMARY`, `TEXT_SECONDARY`,
+`WARNING_TEXT`, `BACKGROUND_HIGHLIGHT`, `BACKGROUND_ERROR`, `BACKGROUND_SUCCESS`
+all exist. `BACKGROUND_INPUT`, `BACKGROUND_WARNING` and `BACKGROUND_SECONDARY` do
+**not** — do not reach for them, and do not add them (Global Constraint 5 keeps this
+work inside `plugins/cuo/`). Never hardcode a hex.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_date_field.py -q --import-mode=importlib`
+Expected: PASS — 7 passed.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/date_field.py tests/plugins/cuo/test_date_field.py
+git commit -m "feat(cuo): a nullable date field, MM/DD/YYYY on screen and ISO in the payload"
+```
+
+---
+
+## Task 5: The review dialog
+
+**Files:**
+- Create: `src/locksmith/plugins/cuo/review_dialog.py`
+- Test: `tests/plugins/cuo/test_review_dialog.py`
+
+**Interfaces:**
+- Consumes: `mandate_copy` (Task 3)
+- Produces: `class MandateReviewDialog(LocksmithDialog)` constructed as
+  `MandateReviewDialog(payload: dict, signer_name: str, parent=None)`, with
+  `confirmed() -> bool`, a `confirm` `Signal()`, and objectNames
+  `mandateReviewDialog`, `mandateReviewDialog.summary`,
+  `mandateReviewDialog.caution`, `mandateReviewDialog.confirm`,
+  `mandateReviewDialog.back`
+- The dialog owns **no rules**. It renders the payload it is given.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/test_review_dialog.py`:
+
+```python
+"""The read-back. Its whole job is showing what will be SIGNED, not what was typed.
+
+`_build_payload` rewrites input -- lowercases the line, upper-cases coverages,
+prefixes US- -- so the canonical values are the only honest thing to display. This
+is also the only place a US-TU transposition can be caught: the jurisdiction is a
+pattern, the EGF enumerates no subdivisions, so no validation can reject it.
+"""
+from PySide6.QtWidgets import QPushButton
+
+from locksmith.plugins.cuo import mandate_copy as copy
+from locksmith.plugins.cuo.review_dialog import MandateReviewDialog
+
+_PAYLOAD = {
+    "line_of_business": "auto",
+    "jurisdiction": "US-UT",
+    "coverages": ["BI", "PD"],
+    "window_opens": "2027-01-01",
+    "window_closes": "2027-12-31",
+    "thesis": "Grow teen-driver share in Utah.",
+}
+
+
+def _text(dialog) -> str:
+    from PySide6.QtWidgets import QLabel
+    return "\n".join(w.text() for w in dialog.findChildren(QLabel) if w.text())
+
+
+def test_every_canonical_value_is_shown(qtbot):
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    shown = _text(dialog)
+    for value in ("auto", "US-UT", "BI", "PD", "Grow teen-driver share in Utah."):
+        assert value in shown, value
+
+
+def test_dates_are_shown_in_iso_not_month_day_year(qtbot):
+    """The form displays MM/DD/YYYY; the read-back shows ISO on purpose, so it is
+    byte-for-byte what goes into the credential."""
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    shown = _text(dialog)
+    assert "2027-01-01" in shown and "2027-12-31" in shown
+    assert "01/01/2027" not in shown
+
+
+def test_the_signer_is_named(qtbot):
+    """Nothing on the form today shows who is signing."""
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    assert "Dana Cole" in _text(dialog)
+
+
+def test_the_caution_is_present_verbatim(qtbot):
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    assert copy.REVIEW_CAUTION in _text(dialog)
+
+
+def test_it_starts_unconfirmed_and_confirms_on_the_primary(qtbot):
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    assert dialog.confirmed() is False
+    button = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    assert button is not None
+    with qtbot.waitSignal(dialog.confirm, timeout=1000):
+        button.click()
+    assert dialog.confirmed() is True
+
+
+def test_the_back_button_does_not_confirm(qtbot):
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    dialog.findChild(QPushButton, "mandateReviewDialog.back").click()
+    assert dialog.confirmed() is False
+
+
+def test_the_devctl_object_names_are_present(qtbot):
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    assert dialog.objectName() == "mandateReviewDialog"
+    for name in ("mandateReviewDialog.summary", "mandateReviewDialog.caution"):
+        assert dialog.findChild(object, name) is not None, name
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_review_dialog.py -q --import-mode=importlib`
+Expected: FAIL — `ModuleNotFoundError: No module named 'locksmith.plugins.cuo.review_dialog'`
+
+- [ ] **Step 3: Write the implementation**
+
+Read `src/locksmith/ui/toolkit/widgets/dialogs.py`'s `LocksmithDialog.__init__`
+signature before writing this — it takes `content=` and `buttons=`. Create
+`src/locksmith/plugins/cuo/review_dialog.py`:
+
+```python
+# -*- encoding: utf-8 -*-
+"""The read-back shown between filling the form and anchoring the credential.
+
+`ux-patterns.md:439` makes a confirmation modal the platform's irreversibility
+pattern, carrying "This cannot be undone" -- literally true here.
+
+It renders the CANONICAL payload, never the raw field text, because the payload
+builder rewrites input and the difference is exactly what a reader needs to see. It
+holds no rules: whatever it is handed, it shows.
+"""
+from __future__ import annotations
+
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+
+from locksmith.plugins.cuo import mandate_copy as copy
+from locksmith.ui import colors
+from locksmith.ui.toolkit.widgets.buttons import (
+    LocksmithButton,
+    LocksmithInvertedButton,
+)
+from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
+
+_ROWS = ("line_of_business", "jurisdiction", "coverages")
+
+
+def _row(label: str, value: str) -> QWidget:
+    row = QWidget()
+    layout = QHBoxLayout(row)
+    layout.setContentsMargins(0, 3, 0, 3)
+    name = QLabel(label)
+    name.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 14px;")
+    name.setFixedWidth(150)
+    shown = QLabel(value)
+    shown.setWordWrap(True)
+    shown.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 14px;")
+    layout.addWidget(name)
+    layout.addWidget(shown, 1)
+    return row
+
+
+class MandateReviewDialog(LocksmithDialog):
+    """Read back the canonical payload; confirm or go back."""
+
+    confirm = Signal()
+
+    def __init__(self, payload: dict, signer_name: str, parent=None):
+        self._confirmed = False
+
+        body = QWidget()
+        outer = QVBoxLayout(body)
+        outer.setContentsMargins(0, 0, 0, 0)
+        outer.setSpacing(10)
+
+        signer = QLabel(copy.REVIEW_SIGNER.format(cuo_name=signer_name))
+        signer.setObjectName("mandateReviewDialog.signer")
+        signer.setWordWrap(True)
+        signer.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+        outer.addWidget(signer)
+
+        summary = QWidget()
+        summary.setObjectName("mandateReviewDialog.summary")
+        rows = QVBoxLayout(summary)
+        rows.setContentsMargins(0, 0, 0, 0)
+        rows.setSpacing(0)
+        for field in _ROWS:
+            value = payload.get(field)
+            shown = ", ".join(value) if isinstance(value, list) else str(value or "")
+            rows.addWidget(_row(copy.FIELD_LABEL[field], shown))
+        # ISO on purpose -- see the module docstring.
+        rows.addWidget(_row("In force", (
+            f"{payload.get('window_opens', '')} through "
+            f"{payload.get('window_closes', '')}, inclusive")))
+        outer.addWidget(summary)
+
+        thesis_label = QLabel("Thesis, published in full")
+        thesis_label.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+        outer.addWidget(thesis_label)
+        thesis = QLabel(str(payload.get("thesis") or ""))
+        thesis.setObjectName("mandateReviewDialog.thesis")
+        thesis.setWordWrap(True)
+        thesis.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; padding: 10px 12px;"
+            f" background: {colors.BACKGROUND_HIGHLIGHT}; border-radius: 4px;")
+        outer.addWidget(thesis)
+
+        caution = QLabel(copy.REVIEW_CAUTION)
+        caution.setObjectName("mandateReviewDialog.caution")
+        caution.setWordWrap(True)
+        caution.setStyleSheet(
+            f"color: {colors.WARNING_TEXT}; background: {colors.BACKGROUND_HIGHLIGHT};"
+            f" border-radius: 4px; padding: 10px 12px; font-size: 13px;")
+        outer.addWidget(caution)
+
+        buttons = QHBoxLayout()
+        self._back = LocksmithInvertedButton(copy.REVIEW_BACK)
+        self._back.setObjectName("mandateReviewDialog.back")
+        self._confirm_button = LocksmithButton(copy.REVIEW_CONFIRM)
+        self._confirm_button.setObjectName("mandateReviewDialog.confirm")
+        buttons.addWidget(self._back)
+        buttons.addStretch(1)
+        buttons.addWidget(self._confirm_button)
+
+        super().__init__(parent=parent, title=copy.REVIEW_TITLE,
+                         content=body, buttons=buttons)
+        self.setObjectName("mandateReviewDialog")
+
+        self._back.clicked.connect(self.reject)
+        self._confirm_button.clicked.connect(self._on_confirm)
+
+    def _on_confirm(self) -> None:
+        self._confirmed = True
+        self._confirm_button.setEnabled(False)
+        self._confirm_button.setText(copy.IN_FLIGHT)
+        self.confirm.emit()
+
+    def confirmed(self) -> bool:
+        return self._confirmed
+
+    def fail(self, message: str) -> None:
+        """Re-enable the primary after a failed anchor, so a retry is possible."""
+        self._confirmed = False
+        self._confirm_button.setEnabled(True)
+        self._confirm_button.setText(copy.REVIEW_CONFIRM)
+        self.show_error(message)
+```
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_review_dialog.py -q --import-mode=importlib`
+Expected: PASS — 7 passed. The colour tokens are the verified set listed in Task 4.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/review_dialog.py tests/plugins/cuo/test_review_dialog.py
+git commit -m "feat(cuo): read-back dialog showing the canonical payload before signing"
+```
+
+---
+
+## Task 6: Rebuild the form page
+
+**Files:**
+- Modify (rewrite): `src/locksmith/plugins/cuo/page.py`
+- Test: `tests/plugins/cuo/test_page_form.py`
+
+**Interfaces:**
+- Consumes: everything from Tasks 1-5
+- Produces: `CuoMandatePage(app, parent=None)` keeping objectNames
+  `cuoMandatePage`, `cuoMandatePage.lineOfBusiness`, `.jurisdiction`, `.coverages`,
+  `.thesis`, `.submit`, `.errorBanner`, `.declaredBanner`; **new**
+  `.windowOpens`, `.windowCloses`; **removed** `.effectiveWindow`.
+  Public methods used by tests: `build_payload() -> dict`, `existing_mandates() -> list[dict]`,
+  `submit()`, `field_error(name) -> str`
+
+Keep the existing `_cuo_hab`, `_ensure_mandate_schema_pinned` and the
+`ServiceaidIssueDoer` submit machinery (`page.py:199-305`) — those are correct and
+out of scope. What changes is the form, the validation and the lifecycle around them.
+
+- [ ] **Step 1: Write the failing test**
+
+Create `tests/plugins/cuo/test_page_form.py`:
+
+```python
+"""The form's behaviour, especially the parts that are easy to get backwards.
+
+Timing is from ux-patterns.md:190-192 and is counter-intuitive: required errors
+appear on SUBMIT, format errors on blur but only AFTER a first submit. That is why
+the primary must stay ENABLED while the form is invalid -- a disabled button makes
+the submit that reveals the errors unreachable.
+"""
+from types import SimpleNamespace
+
+import pytest
+from PySide6.QtWidgets import QComboBox, QLabel, QWidget
+
+from locksmith.plugins.cuo import mandate_copy as copy
+from locksmith.plugins.cuo.page import CuoMandatePage
+
+
+@pytest.fixture
+def page(qtbot):
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    parent.app = SimpleNamespace(vault=None)
+    p = CuoMandatePage(app=parent.app, parent=parent)
+    qtbot.addWidget(p)
+    return p
+
+
+def _labels(page) -> list[str]:
+    return [w.text() for w in page.findChildren(QLabel) if w.text()]
+
+
+def test_the_line_of_business_control_is_a_combo_from_the_schema(page):
+    combo = page.findChild(QComboBox, "cuoMandatePage.lineOfBusiness")
+    assert combo is not None, "the enum must render as a dropdown, not free text"
+    assert combo.count() == 8
+    assert combo.currentIndex() == -1, "no line may be pre-selected for the user"
+
+
+def test_the_window_is_two_controls_not_one(page):
+    assert page.findChild(QWidget, "cuoMandatePage.windowOpens") is not None
+    assert page.findChild(QWidget, "cuoMandatePage.windowCloses") is not None
+    assert page.findChild(QWidget, "cuoMandatePage.effectiveWindow") is None, (
+        "one box holding two schema fields is the defect being removed")
+
+
+def test_the_primary_is_enabled_while_the_form_is_empty(page):
+    """The deadlock guard. Errors appear on submit, so submit must be reachable."""
+    assert page.findChild(QWidget, "cuoMandatePage.submit").isEnabled() is True
+
+
+def test_no_error_is_shown_before_the_first_submit(page):
+    page.set_field("jurisdiction", "UTAH")
+    page.blur_field("jurisdiction")
+    assert page.field_error("jurisdiction") == ""
+
+
+def test_submitting_an_empty_form_reports_every_required_field(page):
+    page.submit()
+    for field in ("line_of_business", "jurisdiction", "coverages",
+                  "window_opens", "window_closes", "thesis"):
+        assert page.field_error(field) != "", field
+    assert copy.error_summary(6) in _labels(page)
+
+
+def test_a_format_error_appears_on_blur_after_the_first_submit(page):
+    page.submit()
+    page.set_field("jurisdiction", "UTAH")
+    page.blur_field("jurisdiction")
+    assert copy.JURISDICTION_PATTERN in page.field_error("jurisdiction")
+
+
+def test_the_payload_is_canonical_not_raw(page):
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "ut")
+    page.set_field("coverages", ["bi", "pd"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "Grow share.")
+    payload = page.build_payload()
+    assert payload["jurisdiction"] == "US-UT"
+    assert payload["coverages"] == ["BI", "PD"]
+    assert payload["window_opens"] == "2027-01-01"
+
+
+def test_a_valid_form_opens_the_review_dialog_and_anchors_nothing_yet(page, qtbot):
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "US-UT")
+    page.set_field("coverages", ["BI"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "Grow share.")
+    anchored = []
+    page._anchor = lambda payload: anchored.append(payload)
+    page.submit()
+    assert page.review_dialog is not None
+    assert anchored == [], "nothing may be signed before the read-back is confirmed"
+
+
+def test_confirming_the_review_anchors_exactly_once_even_on_two_clicks(page):
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "US-UT")
+    page.set_field("coverages", ["BI"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "Grow share.")
+    anchored = []
+    page._anchor = lambda payload: anchored.append(payload)
+    page.submit()
+    dialog = page.review_dialog
+    dialog._on_confirm()
+    dialog._on_confirm()
+    assert len(anchored) == 1, (
+        "a second click must not mint a duplicate immutable mandate")
+
+
+def test_the_success_banner_clears_when_editing_resumes(page):
+    page.show_declared("E" + "A" * 43)
+    banner = page.findChild(QLabel, "cuoMandatePage.declaredBanner")
+    assert banner.isVisible() or banner.text()
+    page.set_field("thesis", "A new one.")
+    assert page.field_error("thesis") == ""
+    assert not banner.text(), (
+        "a stale SAID must not sit on screen while the next mandate is typed")
+
+
+def test_the_full_said_is_shown_not_a_truncation(page):
+    said = "E" + "A" * 43
+    page.show_declared(said)
+    assert said in " ".join(_labels(page))
+```
+
+- [ ] **Step 2: Run test to verify it fails**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_page_form.py -q --import-mode=importlib`
+Expected: FAIL — `AttributeError` / `TypeError` on `set_field`, `field_error`, `review_dialog`, which do not exist yet.
+
+- [ ] **Step 3: Write the implementation**
+
+Rewrite `src/locksmith/plugins/cuo/page.py`. Keep the module's existing
+`_cuo_hab`, `_ensure_mandate_schema_pinned`, and the `ServiceaidIssueDoer` wiring
+verbatim from the current file; replace the UI and validation with:
+
+- `LocksmithFormPage` as the base, `copy.H1` as the title, `copy.PAGE_INTRO` as two
+  wrapped paragraphs capped to the column measure.
+- A single 640px column. For each name in `schema.order`, one vertical group:
+  label above (`copy.FIELD_LABEL[name]` plus `" *"` when required), the control,
+  `copy.FIELD_HELP[name]` beneath in `colors.TEXT_SECONDARY`, and an error label
+  beneath that, hidden until it has text.
+- Control selection driven by constraints, never by field name:
+  `enum` → `QComboBox` with `setCurrentIndex(-1)` and
+  `insertItem(0, copy.FIELD_PLACEHOLDER[name])` as a non-selectable prompt;
+  `type == "array"` → `LocksmithTextListWidget`; `fmt == "date"` →
+  `MandateDateField`; `name == "thesis"` → `LocksmithPlainTextEdit` (3 rows);
+  otherwise `LocksmithLineEdit`.
+- `window_opens` and `window_closes` share one horizontal row.
+- `build_payload()` normalises: line lower-cased, jurisdiction upper-cased and
+  `US-`-prefixed when absent, coverages upper-cased and stripped, dates from
+  `iso_value()`, thesis verbatim.
+- `existing_mandates()` enumerates this vault's own mandates for the overlap rule:
+
+```python
+    def existing_mandates(self) -> list[dict]:
+        """The mandates this vault already holds, for the overlap gate.
+
+        Advisory by construction: the local view can be incomplete, and the
+        ledger's own `mandate_scopes_do_not_overlap` invariant is the real
+        enforcement. Mirrors how ProductDesignerPage enumerates attestations.
+        """
+        vault = getattr(self._app, "vault", None)
+        if vault is None:
+            return []
+        out = []
+        try:
+            reger = vault.rgy.reger
+            for saider in reger.schms.get(keys=(PRODUCT_MANDATE_SCHEMA_SAID,)):
+                creder = reger.creds.get(keys=(saider.qb64,))
+                if creder is None:
+                    continue
+                attrs = creder.sad.get("a") or {}
+                if isinstance(attrs, dict):
+                    out.append(attrs)
+        except Exception:                   # noqa: BLE001 -- advisory only
+            logger.debug("cuo.existing_mandates_unreadable", exc_info=True)
+        return out
+```
+
+- `submit()` implements the lifecycle: run `validate_payload(build_payload(),
+  schema, existing_mandates())`; set `self._submitted = True`; if errors, paint each
+  field, show `copy.error_summary(len(errors))` in the banner, focus the first
+  invalid control, and return without anchoring. If clean, clear the declared
+  banner, construct `MandateReviewDialog(payload, signer_name=...)`, store it as
+  `self.review_dialog`, connect its `confirm` to `self._anchor` **once**, and
+  `open()` it.
+- `_anchor(payload)` holds the existing `ServiceaidIssueDoer` scheduling. The
+  one-shot guard lives in the dialog (`_on_confirm` disables its own primary), and
+  Task 6's test asserts it.
+- Any edit to any control clears that field's error, clears the declared banner, and
+  — only when `self._submitted` — re-validates that one field on blur.
+- `show_declared(said)` shows the **full** SAID.
+- Test helpers `set_field`, `blur_field`, `field_error` are public methods on the
+  page, not test-only monkeypatching, so devctl and the tests drive one API.
+
+- [ ] **Step 4: Run test to verify it passes**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/ -q --import-mode=importlib`
+Expected: PASS — all Task 1-6 modules green.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add src/locksmith/plugins/cuo/page.py tests/plugins/cuo/test_page_form.py
+git commit -m "feat(cuo): rebuild the mandate form on the schema, with review before anchor"
+```
+
+---
+
+## Task 7: The two generator-level guards
+
+**Files:**
+- Test: `tests/plugins/cuo/test_no_schema_literals.py`
+- Test: `tests/plugins/cuo/test_schema_copies_agree.py`
+
+These are the durable tests. Everything else checks behaviour that exists; these two
+fail when someone reintroduces the defect class.
+
+**Interfaces:**
+- Consumes: `load_mandate_schema` (Task 1), `egf_local_dir`
+- Produces: nothing importable
+
+- [ ] **Step 1: Write both tests**
+
+Create `tests/plugins/cuo/test_no_schema_literals.py`:
+
+```python
+"""No schema value may be written into Python. This is what "from the EGF" means.
+
+If the enum is duplicated in source, the form and the credential can disagree, and
+the disagreement shows up as a mint failure the user cannot act on -- the exact
+loop this plan removes.
+"""
+from pathlib import Path
+
+import pytest
+
+from locksmith.core.branding import egf_local_dir
+from locksmith.plugins.cuo.schema_source import load_mandate_schema
+
+_SRC = Path(__file__).resolve().parents[3] / "src" / "locksmith" / "plugins" / "cuo"
+
+
+def _sources() -> list[Path]:
+    return sorted(p for p in _SRC.rglob("*.py") if "__pycache__" not in p.parts)
+
+
+def test_the_guard_has_sources_to_scan():
+    assert _sources(), f"no python found under {_SRC} -- retarget this guard"
+
+
+@pytest.mark.parametrize("literal", ["^US-[A-Z]{2}$", "^[A-Z0-9][A-Z0-9-]*$"])
+def test_no_schema_regex_appears_in_source(literal):
+    offenders = [str(p.name) for p in _sources() if literal in p.read_text()]
+    assert not offenders, (
+        f"{offenders} hardcode {literal!r}; read it from the schema instead")
+
+
+def test_no_enum_member_appears_in_source():
+    """The enum is the most tempting thing to paste into a dropdown."""
+    enum = load_mandate_schema(egf_local_dir()).fields["line_of_business"].enum
+    assert enum, "the schema has no enum -- this guard would be vacuous"
+    offenders = {}
+    for path in _sources():
+        text = path.read_text()
+        hits = [v for v in enum if f'"{v}"' in text or f"'{v}'" in text]
+        if hits:
+            offenders[path.name] = hits
+    assert not offenders, (
+        f"{offenders} hardcode line_of_business values; build the dropdown from "
+        f"the schema's enum")
+```
+
+Create `tests/plugins/cuo/test_schema_copies_agree.py`:
+
+```python
+"""The mandate's constraints exist TWICE -- in the command's payload_schema and in
+the ACDC schema. Two copies with no reconciler is how they drift; this is the
+reconciler.
+
+The form validates against payload_schema; the issuer validates against the ACDC
+schema. If they disagree, the form passes input the mint rejects, and the user sees
+a failure they cannot act on.
+"""
+import glob
+import json
+
+from locksmith.core.branding import egf_local_dir
+from locksmith.plugins.cuo.schema_source import load_mandate_schema
+
+_COMPARED = ("type", "enum", "pattern", "format", "minLength", "minItems",
+             "uniqueItems", "items")
+
+
+def _acdc_attribute_block() -> dict:
+    egf = egf_local_dir()
+    for path in glob.glob(f"{egf}/E*.json"):
+        doc = json.loads(open(path).read())
+        if doc.get("credentialType") != "UsuranceProductMandate":
+            continue
+        for option in doc["properties"]["a"].get("oneOf", []):
+            if option.get("type") == "object":
+                return option
+    raise AssertionError("no product-mandate ACDC schema in the bundle")
+
+
+def test_every_payload_field_matches_the_acdc_schema():
+    payload = load_mandate_schema(egf_local_dir())
+    acdc = _acdc_attribute_block()["properties"]
+    for name in payload.order:
+        assert name in acdc, f"{name} is in payload_schema but not the ACDC schema"
+    field = payload.fields
+    for name in payload.order:
+        a = acdc[name]
+        f = field[name]
+        assert (tuple(a["enum"]) if a.get("enum") else None) == f.enum, name
+        assert a.get("pattern") == f.pattern, name
+        assert a.get("format") == f.fmt, name
+        assert a.get("minLength") == f.min_length, name
+        assert a.get("minItems") == f.min_items, name
+        assert bool(a.get("uniqueItems")) == f.unique_items, name
+
+
+def test_required_sets_agree():
+    payload = load_mandate_schema(egf_local_dir())
+    acdc_required = set(_acdc_attribute_block().get("required") or ())
+    payload_required = {n for n, f in payload.fields.items() if f.required}
+    assert payload_required <= acdc_required, (
+        payload_required - acdc_required)
+```
+
+`credentialType == "UsuranceProductMandate"` is verified against the bundle
+(2026-08-08). Matching on `credentialType` rather than filename or SAID is
+deliberate: the SAID changes whenever the schema is re-SAIDed, and this guard must
+survive that.
+
+- [ ] **Step 2: Run both and confirm they pass**
+
+Run: `QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_no_schema_literals.py tests/plugins/cuo/test_schema_copies_agree.py -q --import-mode=importlib`
+Expected: PASS
+
+- [ ] **Step 3: Prove both guards discriminate**
+
+A guard nobody has watched fail is not a guard.
+
+```bash
+# 1. Paste an enum value into source -- the literals guard must fail.
+printf '\n_TEMP = "workers_compensation"\n' >> src/locksmith/plugins/cuo/mandate_copy.py
+QT_QPA_PLATFORM=offscreen .venv/bin/python -m pytest tests/plugins/cuo/test_no_schema_literals.py -q --import-mode=importlib
+# Expected: FAIL naming mandate_copy.py
+git checkout -- src/locksmith/plugins/cuo/mandate_copy.py
+```
+
+Then, for the agreement guard, temporarily change `_COMPARED`-driven assertion to
+compare `min_items` against `a.get("minItems", 99)` and confirm it fails, then
+revert. Record both observations in the commit message.
+
+- [ ] **Step 4: Commit**
+
+```bash
+git add tests/plugins/cuo/test_no_schema_literals.py tests/plugins/cuo/test_schema_copies_agree.py
+git commit -m "test(cuo): guard that no schema literal reaches Python and the two schema copies agree"
+```
+
+---
+
+## Task 8: Rewrite the integration helper and re-run the arc
+
+**Files:**
+- Modify: `tests/integration/roles/conftest.py:851-882` (`submit_mandate_form_via_ui`)
+
+**Interfaces:**
+- Consumes: the objectNames Task 6 produces
+- Produces: a `submit_mandate_form_via_ui(devctl, sock)` with the same signature, so
+  its two call sites are unchanged
+
+`locksmith-ui-tester` is now **0.2.0**, which changes this task for the better:
+`wait_for` accepts `condition="enabled"` and `"disabled"`, and `click` **refuses a
+disabled target** instead of reporting ok. Use both.
+
+- [ ] **Step 1: Read the current helper**
+
+Run: `sed -n 845,885p tests/integration/roles/conftest.py`
+
+Note what must change: `cuoMandatePage.effectiveWindow` no longer exists;
+`lineOfBusiness` is a combo so `type` will not work; the `is_checked` assertion is
+meaningless now that the button no longer encodes validity; and there is one extra
+click to confirm the read-back.
+
+- [ ] **Step 2: Write the replacement**
+
+Replace the body of `submit_mandate_form_via_ui` with:
+
+```python
+def submit_mandate_form_via_ui(devctl, sock) -> None:
+    """Fill and submit the CUO mandate form, through the review dialog.
+
+    Rewritten 2026-08-08 for the schema-driven form. Four things changed and each
+    is deliberate:
+
+    * `effectiveWindow` split into `windowOpens`/`windowCloses`, named for the
+      schema fields rather than the old fiction of one box holding two.
+    * `lineOfBusiness` is a combo, so it is driven with `select`, not `type`.
+    * The `is_checked` assertion is gone. The submit button no longer encodes
+      validity -- it stays ENABLED while the form is invalid, because
+      ux-patterns.md puts required errors on submit and a disabled button makes
+      that submit unreachable. Readiness is now asserted by the review dialog
+      opening.
+    * One extra click: the read-back must be confirmed before anything is signed.
+
+    A comma still commits a coverage token, so "BI,PD" keeps working.
+    """
+    r = devctl(sock, "wait_for", target="cuoMandatePage",
+               condition="visible", timeout_ms=5000)
+    assert r.get("ok"), r
+
+    r = devctl(sock, "select", target="cuoMandatePage.lineOfBusiness", value="auto")
+    assert r.get("ok"), f"choose the line of business: {r}"
+
+    for target, value in (
+        ("cuoMandatePage.jurisdiction", "US-UT"),
+        ("cuoMandatePage.coverages", "BI,PD"),
+        ("cuoMandatePage.windowOpens", "01/01/2027"),
+        ("cuoMandatePage.windowCloses", "12/31/2027"),
+        ("cuoMandatePage.thesis", "Rate adequacy restoration."),
+    ):
+        r = devctl(sock, "type", target=target, text=value)
+        assert r.get("ok"), (target, r)
+
+    # devctl 0.2.0 refuses a disabled target, so a click that reports ok landed.
+    r = devctl(sock, "click", target="cuoMandatePage.submit")
+    assert r.get("ok"), f"open the read-back: {r}"
+
+    r = devctl(sock, "wait_for", target="mandateReviewDialog.confirm",
+               condition="enabled", timeout_ms=5000)
+    assert r.get("ok"), (
+        f"the review dialog never opened, so the form still has errors: {r}")
+
+    r = devctl(sock, "click", target="mandateReviewDialog.confirm")
+    assert r.get("ok"), f"confirm the read-back: {r}"
+```
+
+- [ ] **Step 3: Run the actuary test, which drives this helper**
+
+Run: `QT_QPA_PLATFORM= LOCKSMITH_TEST_VISIBLE=1 .venv/bin/python -m pytest tests/integration/roles/test_actuary_observes_and_attests_via_ui.py -q --import-mode=importlib -p no:randomly`
+Expected: PASS (~20s). If the date fields reject `01/01/2027`, check
+`MandateDateField.display_format()` and whether `type` can drive a `QDateEdit` —
+if it cannot, add `set_iso` support via a `select`-style op or set the date through
+a dedicated objectName on the inner `QDateEdit`, and say so in the commit.
+
+- [ ] **Step 4: Run the four-window arc**
+
+Run: `QT_QPA_PLATFORM= LOCKSMITH_TEST_VISIBLE=1 .venv/bin/python -m pytest tests/integration/roles/test_admin_grants_to_hoas_via_ui.py::test_the_admin_issues_and_grants_both_roles_live -q --import-mode=importlib -p no:randomly`
+Expected: PASS in roughly 150-170s. This is the acceptance gate for the whole plan.
+
+- [ ] **Step 5: Commit**
+
+```bash
+git add tests/integration/roles/conftest.py
+git commit -m "test(roles): drive the rebuilt mandate form, through the read-back"
+```
+
+---
+
+## Self-review
+
+**Spec coverage.** §1.1's D1-D11: D1/D2 Task 6 (labels above, bounded column);
+D3 Task 6 (combo from enum); D4 Tasks 4+6 (two date fields); D5 Task 2 (strict
+ordering); D6 Tasks 2+6 (overlap, with `existing_mandates`); D7 Task 6
+(`LocksmithPlainTextEdit`); D8 Tasks 5+6 (one-shot confirm); D9 Task 6 (banner
+clears, full SAID); D10 Task 3 (copy); D11 Task 5 (canonical read-back). §1.2 is
+Global Constraint 4. §2 is Task 1. §2.1 is Task 2. §3.1 Task 6, §3.2 Tasks 4-6,
+§3.3 Global Constraint 5. §4.1 Task 6, §4.2 Task 5, §4.3 Tasks 5+6. §5 Task 3,
+§5.2 Task 3. §6 Tasks 7+8.
+
+**Gap found and closed:** the spec's §5.2 token-contract ratification had no task;
+it is now `TOKENS` in Task 3 with `test_every_interpolation_token_is_ratified`.
+
+**Placeholder scan.** No TBD/TODO. Task 6's step 3 is prose-plus-code rather than
+one literal file, because it rewrites a 250-line file while preserving three
+existing methods verbatim; the two blocks that carry real logic
+(`existing_mandates`, the lifecycle) are given in full, and every name it must
+produce is listed in the Interfaces block.
+
+**Type consistency.** `MandateSchema.fields`/`.order`, `FieldConstraints.fmt` (not
+`format` — it would shadow the builtin), `FieldError.field`/`.message`,
+`MandateDateField.iso_value`/`set_iso`/`is_empty`/`display_format`,
+`MandateReviewDialog.confirmed()`/`confirm`/`fail()`, and
+`CuoMandatePage.set_field`/`blur_field`/`field_error`/`build_payload`/
+`existing_mandates`/`review_dialog`/`show_declared` are used with the same names in
+every task that references them.
+
+**Known risk, flagged not hidden:** Task 8 step 3 may find that devctl's `type`
+cannot drive a `QDateEdit`. The step says what to do if so rather than assuming it
+works.
+
+**One deviation from the design spec, deliberate.** The spec asks for the review
+caution to be warning-tinted rather than error-red, so a normal irreversible action
+does not cry wolf in the same colour as a mistake. `locksmith.ui.colors` has
+`WARNING_TEXT` but **no warning background token** — only `BACKGROUND_ERROR`,
+`BACKGROUND_SUCCESS`, `BACKGROUND_DANGER` and neutrals. Rather than reach for a
+danger tint (wrong meaning) or add a token outside `plugins/cuo/` (Global Constraint
+5), the caution uses `BACKGROUND_HIGHLIGHT` with `WARNING_TEXT`: a neutral emphasis
+block with warning-coloured text. Promoting a real warning tint into the shared
+palette is a follow-up, alongside consolidating the date field and
+`SchemaFormBuilder` (spec §3.3).
