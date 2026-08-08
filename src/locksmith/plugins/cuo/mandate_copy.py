@@ -1,0 +1,155 @@
+# -*- encoding: utf-8 -*-
+"""Every user-visible string on the mandate form.
+
+Produced by three independent drafts judged against the brand voice pillars
+("Established and self-assured, never flashy") and `ux-patterns.md` §11: error text
+is specific and actionable, never "Invalid input."; help text carries format hints;
+sentence case throughout.
+
+The verb at the commit point is SIGN, deliberately, while the page H1 stays
+"Declare a product mandate" -- the page is named for the act, the button for the
+commitment. That is an owner decision (design spec §5.1); do not "fix" it into one
+vocabulary.
+"""
+from __future__ import annotations
+
+TOKENS = frozenset({
+    "code", "count", "cuo_name", "field", "line_of_business", "jurisdiction",
+    "existing_opens", "existing_closes", "allowed",
+})
+
+#: Field sequence for the form AND for error reporting. Deliberately NOT read from
+#: the schema. Measured during execution: the bundled template's
+#: `payload_schema.properties` block is ALPHABETIZED, and while its `required` array
+#: happens to carry the authored order, `required` is a JSON-Schema *set* -- nothing
+#: distinguishes "authored order" from "incidentally alphabetical", and something has
+#: already alphabetized `properties` in that very file. Presentation order is a UI
+#: decision; keeping it here means a re-serialized schema cannot silently reorder the
+#: form. `MandateSchema.order` remains a canary, not an authority.
+FIELD_ORDER = (
+    "line_of_business", "jurisdiction", "coverages",
+    "window_opens", "window_closes", "thesis",
+)
+
+H1 = "Declare a product mandate"
+
+PAGE_INTRO = (
+    "Submitting signs this mandate with your chief underwriting authority and "
+    "adds it permanently to your own published record.",
+    "You are publishing, not filing: nothing here can be edited afterwards, and "
+    "anyone who asks reads all of it, your thesis word for word.",
+)
+
+FIELD_LABEL = {
+    "line_of_business": "Line of business",
+    "jurisdiction": "Jurisdiction",
+    "coverages": "Coverages",
+    "window_opens": "In force from",
+    "window_closes": "In force through",
+    "thesis": "Thesis",
+}
+
+FIELD_HELP = {
+    "line_of_business": "One line per mandate. A second line is a second mandate.",
+    "jurisdiction": (
+        "Format US-UT, one jurisdiction per mandate. Only the format is checked; "
+        "the app cannot tell US-UT from US-TU, so read your code back before you "
+        "sign."),
+    "coverages": (
+        "At least one code, uppercase, no repeats (BI, PD, COMP). These are the "
+        "coverages you are declaring, and they publish exactly as written."),
+    "window_opens": (
+        "Both dates count as in force. In force through must fall after in force "
+        "from, so the shortest window is two days."),
+    "window_closes": (
+        "Both dates count as in force. In force through must fall after in force "
+        "from, so the shortest window is two days."),
+    "thesis": (
+        "One sentence of business intent, in your own words. It publishes "
+        "verbatim, so write it for a reader outside the company."),
+}
+
+FIELD_PLACEHOLDER = {
+    "line_of_business": "Choose a line of business",
+    "jurisdiction": "US-UT",
+    "coverages": "BI",
+    "window_opens": "MM/DD/YYYY",
+    "window_closes": "MM/DD/YYYY",
+    "thesis": "One sentence of business intent",
+}
+
+FORM_PRIMARY = "Review mandate"
+FORM_CANCEL = "Cancel"
+IN_FLIGHT = "Signing…"
+
+REVIEW_TITLE = "Review this mandate before signing"
+REVIEW_SIGNER = (
+    "Signing as {cuo_name}, Chief Underwriting Officer, on the authority granted "
+    "to you by Usurance administration.")
+REVIEW_CAUTION = (
+    "Signing is final. These values can never be edited, and the whole mandate, "
+    "thesis included, goes to anyone who asks for it. To correct a mandate, "
+    "declare a new one. Withdrawing later records that you stopped pursuing it "
+    "and leaves what you declared readable.")
+REVIEW_CONFIRM = "Sign mandate"
+REVIEW_BACK = "Keep editing"
+
+JURISDICTION_PATTERN = (
+    "Jurisdiction must be US, a dash, then two uppercase letters. Enter it like "
+    "US-UT.")
+COVERAGE_PATTERN = (
+    "Coverage code {code} must use capital letters, digits and hyphens only, "
+    "starting with a letter or digit, as in BI or COMP-EXT. Retype it in that "
+    "form.")
+COVERAGE_DUPLICATE = (
+    "{code} is listed twice. Remove the second entry; each coverage is named "
+    "once.")
+WINDOW_ORDER = (
+    "In force through must fall after in force from, and a window of a single "
+    "day is not accepted. Move in force through to a later date.")
+WINDOW_OVERLAP = (
+    "You already have a mandate for {line_of_business} in {jurisdiction} in "
+    "force {existing_opens} through {existing_closes}. Withdraw that mandate or "
+    "set this window to start after it closes.")
+
+_REQUIRED = {
+    "line_of_business": "Choose a line of business.",
+    "jurisdiction": "Enter a jurisdiction, like US-UT.",
+    "coverages": "Add at least one coverage code.",
+    "window_opens": "Enter the date this mandate comes into force.",
+    "window_closes": "Enter the last date this mandate is in force.",
+    "thesis": "Write one sentence of business intent.",
+}
+
+
+def error_summary(count: int) -> str:
+    """The submit-time banner. Counts correctly at one.
+
+    Every draft of this copy shipped "Fix 1 errors before signing.", and so does
+    the spec's own example string, so the pluralisation lives here rather than in
+    a format call at the call site.
+    """
+    if count < 1:
+        raise ValueError(f"error_summary is for 1 or more errors, got {count}")
+    noun = "error" if count == 1 else "errors"
+    return f"Fix {count} {noun} before signing."
+
+
+def required_error(field: str) -> str:
+    return _REQUIRED.get(field, f"{FIELD_LABEL.get(field, field)} is required.")
+
+
+def enum_error(field: str, value: str, allowed: tuple[str, ...]) -> str:
+    label = FIELD_LABEL.get(field, field).lower()
+    return (f"{value} is not one of the available options for {label}. "
+            f"Choose from {', '.join(allowed)}.")
+
+
+def pattern_error(field: str) -> str:
+    if field == "jurisdiction":
+        return JURISDICTION_PATTERN
+    return f"{FIELD_LABEL.get(field, field)} is not in the required format."
+
+
+def date_error(field: str) -> str:
+    return f"Enter {FIELD_LABEL.get(field, field).lower()} as a date."
