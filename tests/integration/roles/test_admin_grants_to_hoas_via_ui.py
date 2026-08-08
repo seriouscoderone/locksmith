@@ -241,3 +241,63 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_pa
 
     parse_dir = _run_ipd_parse(tmp_path / "parse", product_mandate=mandate_said)
     attest_rate_program_via_ui(devctl, actuary, parse_dir)
+
+    # ---- the designer receives the program and ASSEMBLES -------------------
+    #
+    # Paired at BOTH the actuary and the CUO, and one-way at each. The actuary
+    # is where the attestation is anchored; the CUO is where the mandate it
+    # chains to is anchored, and `Verifier.verifyChain` needs that node in this
+    # wallet's own `reger.saved` before an edge may point at it. A designer
+    # watching only the actuary would retrieve the program and be unable to
+    # verify it.
+    designer = admin_then_two_hoas["product_designer"]["sock"]
+    for label, sock in (("actuary", actuary), ("cuo", cuo)):
+        import_peer_blob_via_ui(devctl, designer,
+                                _export_current_blob(devctl, sock, label),
+                                label=label)
+    wait_for_peer_reachable(devctl, designer, count=2)
+
+    devctl(designer, "click", target="Insurance Product Design")
+    deadline, programs = time.time() + 150.0, None
+    while time.time() < deadline:
+        r = devctl(designer, "get_table_rows",
+                   target="designerPage.receivedPrograms")
+        programs = r.get("rows") or []
+        if programs:
+            break
+        time.sleep(3.0)
+
+    assert programs, (
+        "the designer never received the rate program. Nothing pushed it — the "
+        "designer's own watch has to find the attestation anchored in the "
+        "ACTUARY's KEL, retrieve the body, fetch its TEL, and then chain it to "
+        "the mandate anchored in the CUO's. The page reads `reger.schms` and "
+        "requires `reger.saved`, so a body held but not indexed is invisible "
+        "here.\n"
+        f"  designer: {admin_then_two_hoas['product_designer']['log']}\n"
+        f"  actuary:  {admin_then_two_hoas['actuary']['log']}")
+
+    # `click_table_row` matches a row by any CELL'S TEXT, not by index — there
+    # is no `row=` selector. Passing one selected nothing, which left
+    # `designerPage.assemble` disabled (it starts that way and is enabled by
+    # `_on_row_clicked`), and devctl reported the resulting click on a DISABLED
+    # button as `ok` — so the whole leg looked driven and did nothing.
+    cell = next((str(v) for v in programs[0].values() if str(v).strip()), "")
+    assert cell, f"the received-programs row has no text to select by: {programs[0]}"
+    r = devctl(designer, "click_table_row",
+               target="designerPage.receivedPrograms", text=cell)
+    assert r.get("ok"), f"select the received program row ({cell!r}): {r}"
+
+    r = devctl(designer, "click", target="designerPage.assemble")
+    assert r.get("ok"), f"click Assemble: {r}"
+    # devctl clicks whatever it finds, enabled or not, and still says ok. Assert
+    # on what it reports back, or a disabled button reads as a successful click.
+    assert (r.get("clicked") or {}).get("enabled"), (
+        f"Assemble was DISABLED when clicked, so nothing ran — the row "
+        f"selection did not take: {r}")
+    r = devctl(designer, "wait_for", target="designerPage.bundleSaid",
+               condition="visible", timeout_ms=4000)
+    assert r.get("ok"), f"no bundle SAID after Assemble: {r}"
+    said = (devctl(designer, "get_text",
+                   target="designerPage.bundleSaid").get("text") or "")
+    assert "E" in said, f"bundle SAID field is empty after Assemble: {said!r}"
