@@ -24,7 +24,17 @@ def _egf() -> dict:
 
 def test_egf_references_resolve_in_bundle_and_brand_pin_matches():
     egf = _egf()
-    refs = {c["schema_said"] for c in egf["credentials"]} | {m["said"] for m in egf["micro_apps"]}
+    # accepted_schema_saids joined this set on 2026-08-08. Without it the guard
+    # walked credentials[].schema_said | micro_apps[].said, and neither field names a
+    # schema that no role credential is issued against -- so the three CREDENTIAL
+    # schemas (product mandate, rate program attestation, product bundle) were only
+    # ever in this directory because the plugin commits that needed them put them
+    # here by hand, and ugard's canonical bundle shipped three of six for eleven
+    # days. An accepted schema absent from the bundle means a validator trusting
+    # this EGF cannot check the credential it is handed.
+    refs = ({c["schema_said"] for c in egf["credentials"]}
+            | {m["said"] for m in egf["micro_apps"]}
+            | set(egf["accepted_schema_saids"]))
     on_disk = {p.stem for p in BUNDLE.glob("E*.json")}
     assert refs <= on_disk, refs - on_disk
     toml = tomllib.loads(pathlib.Path("brands/usurance/brand.toml").read_text())
