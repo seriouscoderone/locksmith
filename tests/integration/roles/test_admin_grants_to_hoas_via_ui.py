@@ -288,37 +288,44 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_pa
                target="designerPage.receivedPrograms", text=cell)
     assert r.get("ok"), f"select the received program row ({cell!r}): {r}"
 
-    # RETRY the assemble, do not click once and wait.
+    # WAIT FOR THE GATE, then click once.
     #
     # A program row appears as soon as the ATTESTATION is retrieved and indexed.
-    # The bundle, though, chains to the MANDATE, and `Verifier.verifyChain`
-    # needs that node in this wallet's own `reger.saved` WITH a current TEL
-    # state — two more asynchronous arrivals from a DIFFERENT peer. So Assemble
-    # becomes clickable strictly before it can succeed.
+    # The bundle, though, chains to the MANDATE, and `Verifier.verifyChain` needs
+    # that node in this wallet's own `reger.saved` WITH a current TEL state — two
+    # more asynchronous arrivals from a DIFFERENT peer.
     #
-    # Measured, one run of each outcome: the mandate's TEL landed in time and
-    # the bundle minted; the next run it had not, and the issuance died with
-    # `Failure to verify credential ... chain mandate(...)` /
-    # `TEL event ... did not complete`. Nothing is minted on that path, so
-    # re-clicking cannot double-issue.
-    #
-    # (The enabled-state assertion stays inside the loop: devctl reports a click
-    # on a DISABLED button as ok, so without it a failed row selection reads as
-    # a successful click.)
-    deadline, said = time.time() + 120.0, ""
-    while time.time() < deadline:
-        r = devctl(designer, "click", target="designerPage.assemble")
-        assert r.get("ok"), f"click Assemble: {r}"
-        assert (r.get("clicked") or {}).get("enabled"), (
-            f"Assemble was DISABLED when clicked, so nothing ran — the row "
-            f"selection did not take: {r}")
-        if devctl(designer, "wait_for", target="designerPage.bundleSaid",
-                  condition="visible", timeout_ms=4000).get("ok"):
-            said = (devctl(designer, "get_text",
-                           target="designerPage.bundleSaid").get("text") or "")
-            if "E" in said:
-                break
-        time.sleep(4.0)
+    # This used to be a click-retry loop, because Assemble became clickable
+    # strictly before it could succeed (measured, one run of each outcome: the
+    # mandate's TEL landed in time and the bundle minted; the next run it had not,
+    # and issuance died with `Failure to verify credential ... chain mandate(...)`
+    # / `TEL event ... did not complete`). The button is now gated on
+    # `_mandate_blocker`, so the readiness signal is real and the retry loop is
+    # gone: `designerPage.assembleBlocker` is visible while the gate is closed and
+    # hidden once it opens. Waiting for it to go hidden waits for exactly the
+    # arrivals above — and if it never does, its text names which one is missing.
+    blocker_text = (devctl(designer, "get_text",
+                           target="designerPage.assembleBlocker").get("text") or "")
+    gate = devctl(designer, "wait_for", target="designerPage.assembleBlocker",
+                  condition="hidden", timeout_ms=120_000)
+    assert gate.get("ok"), (
+        "the Assemble gate never opened — the mandate did not become verifiable "
+        f"as a chain node in this wallet. Last blocker text: {blocker_text!r}\n"
+        f"  designer: {admin_then_two_hoas['product_designer']['log']}\n"
+        f"  cuo:      {admin_then_two_hoas['cuo']['log']}")
+
+    # devctl reports a click on a DISABLED button as ok, so assert the enabled
+    # state or a failed row selection reads as a successful click.
+    r = devctl(designer, "click", target="designerPage.assemble")
+    assert r.get("ok"), f"click Assemble: {r}"
+    assert (r.get("clicked") or {}).get("enabled"), (
+        f"Assemble was DISABLED when clicked, so nothing ran — the row "
+        f"selection did not take: {r}")
+    assert devctl(designer, "wait_for", target="designerPage.bundleSaid",
+                  condition="visible", timeout_ms=60_000).get("ok"), (
+        "Assemble ran on an open gate but produced no bundle SAID")
+    said = (devctl(designer, "get_text",
+                   target="designerPage.bundleSaid").get("text") or "")
 
     assert "E" in said, (
         "Assemble never produced a bundle SAID. The program row was there, so "

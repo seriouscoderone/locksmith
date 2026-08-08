@@ -180,6 +180,17 @@ class ProductDesignerPage(QWidget):
         self._assemble.clicked.connect(self.assemble)
         form.addRow(self._assemble)
 
+        # Why the button is disabled, when a row IS selected. Without this the
+        # only feedback for "the mandate has not arrived from the CUO yet" was a
+        # raw keripy failure after the click ("Failure to verify credential ...
+        # chain mandate(...)"), which names nothing the user can act on.
+        self._assemble_blocker = QLabel("")
+        self._assemble_blocker.setObjectName("designerPage.assembleBlocker")
+        self._assemble_blocker.setWordWrap(True)
+        self._assemble_blocker.setStyleSheet(f"color: {colors.TEXT_SECONDARY};")
+        self._assemble_blocker.setVisible(False)
+        form.addRow(self._assemble_blocker)
+
         self._bundle_said = QLabel("")
         self._bundle_said.setObjectName("designerPage.bundleSaid")
         self._bundle_said.setWordWrap(True)
@@ -288,6 +299,12 @@ class ProductDesignerPage(QWidget):
         if changed:
             self._refresh_received_table()
 
+        # Re-evaluate every tick, not only on `changed`: the thing the gate waits
+        # for is the MANDATE's arrival, which adds no row to this table (a mandate
+        # is not a rate program), so `changed` stays False for the exact event that
+        # should enable the button.
+        self._refresh_assemble_gate()
+
     def _envelope_row(self, creder) -> dict | None:
         """Read `creder`'s envelope via C1's shared producer -- the same function
         `admit_grant` and `sealed_retrieval` call -- rather than re-parsing the `e`
@@ -333,7 +350,77 @@ class ProductDesignerPage(QWidget):
         record = self._received.get(said, {})
         self._selected_label.setText(
             f"Selected: {said} — mandate {record.get('mandate_said', '')}")
-        self._assemble.setEnabled(True)
+        self._refresh_assemble_gate()
+
+    # -- the assemble gate ----------------------------------------------------------
+
+    def _mandate_blocker(self, mandate_said: str) -> str | None:
+        """None when the mandate can serve as this bundle's NI2I edge node;
+        otherwise a plain-language reason, naming the SAID being waited on.
+
+        The authority is `Verifier.verifyChain` itself — the very call the issuance
+        makes — so the gate cannot drift from what actually succeeds. The granular
+        checks in front of it exist only to turn its single `return None` into a
+        specific message, mapped to the point it would have bailed at
+        (`keripy vdr/verifying.py:336-380`):
+
+          - no body            -> the mandate has not been disclosed to us yet
+          - body but not saved -> held but not indexed as a chain node, the state
+                                  `_index_disclosed` exists to fix
+          - no TEL / no state  -> the registry state is still out-of-band; the
+                                  spec allows the state proof attached OR
+                                  out-of-band, and this ecosystem chose
+                                  out-of-band, so peer_sync must fetch it
+
+        Fails toward BLOCKED: anything unreadable disables the button rather than
+        letting a click produce a raw keripy traceback in the banner.
+        """
+        if not mandate_said:
+            return ("This program's mandate edge did not resolve, so there is "
+                    "nothing to assemble against.")
+
+        vault = getattr(self._app, "vault", None)
+        hab = self._designer_hab(vault) if vault is not None else None
+        if vault is None or hab is None:
+            return "No open vault or identifier to assemble from."
+
+        short = f"{mandate_said[:12]}…"
+        try:
+            reger = vault.rgy.reger
+            if reger.creds.get(keys=(mandate_said,)) is None:
+                return (f"Waiting for mandate {short} to arrive from the CUO — "
+                        f"it has not been disclosed to this application yet.")
+            if reger.saved.get(keys=mandate_said) is None:
+                return (f"Mandate {short} is held but not yet usable as a chain "
+                        f"node — still being indexed.")
+            if reger.tels.get(keys=mandate_said, on=0) is None:
+                return (f"Waiting for mandate {short}'s registry state (its TEL) "
+                        f"from the CUO — without it, issued-vs-revoked is unknown.")
+
+            from keri.vdr import verifying
+            verifier = verifying.Verifier(hby=vault.hby, reger=reger)
+            if verifier.verifyChain(mandate_said, "NI2I", hab.pre) is None:
+                return (f"Mandate {short} is not yet verifiable as a chain node.")
+        except Exception:                   # noqa: BLE001
+            logger.debug("designer.gate.unreadable said=%s", short, exc_info=True)
+            return f"Cannot yet verify mandate {short}."
+        return None
+
+    def _refresh_assemble_gate(self) -> None:
+        """Set the button's enabled state and the blocker text from the currently
+        selected row. Called on selection AND on every scan tick, so a mandate that
+        lands while a row is already selected enables the button on its own instead
+        of making the user re-click."""
+        said = self._selected_said
+        if not said or said not in self._received:
+            self._assemble.setEnabled(False)
+            self._assemble_blocker.setVisible(False)
+            return
+        blocker = self._mandate_blocker(
+            self._received[said].get("mandate_said", ""))
+        self._assemble.setEnabled(blocker is None)
+        self._assemble_blocker.setText(blocker or "")
+        self._assemble_blocker.setVisible(blocker is not None)
 
     # -- assemble / issuance --------------------------------------------------------
 
@@ -358,10 +445,12 @@ class ProductDesignerPage(QWidget):
             return
 
         mandate_said = self._received[self._selected_said]["mandate_said"]
-        if not mandate_said:
-            self._show_error(
-                "The selected program's mandate edge did not resolve — cannot "
-                "assemble.")
+        # The same gate the button is disabled by, re-checked here so a programmatic
+        # call (or a click that races the scan tick) reports the plain-language
+        # reason rather than a raw keripy MissingChainError from deep in issuance.
+        blocker = self._mandate_blocker(mandate_said)
+        if blocker is not None:
+            self._show_error(blocker)
             return
 
         # The COMPLETE set of received programs under this mandate — not just the
