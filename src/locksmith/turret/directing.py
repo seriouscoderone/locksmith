@@ -704,6 +704,31 @@ class Reactant(doing.DoDoer):
 
                 self.sendMessage(msg, label="chit or receipt or replay")
                 yield  # throttle just do one cue at a time
+
+            # The TEVERY's cues, which nothing drained.
+            #
+            # A `qry` on the `tels` route is answered by Tevery, not Kevery:
+            # `Tevery.processQuery` pushes `dict(kin="replay", msgs=[...])` onto
+            # its OWN deck. The loop above drains `self.kevery.cues` only, so
+            # the reply was built and then discarded — the same shape as the
+            # `prod` cue that `processCuesIter` silently dropped, and just as
+            # invisible: the asker sees no answer and no error.
+            #
+            # Why it matters: a reader that has the ACDC body and the KEL seal
+            # still cannot say issued-vs-revoked without the Transaction Event
+            # the seal commits to (acdc-specification.md:3636-3651). This is the
+            # only path by which a peer can hand one over.
+            if self.tevery is not None:
+                while self.tevery.cues:
+                    cue = self.tevery.cues.popleft()
+                    if cue.get("kin") != "replay":
+                        continue
+                    out = bytearray()
+                    for m in cue.get("msgs") or []:
+                        out.extend(m)
+                    if out:
+                        self.sendMessage(out, label="tel replay")
+                    yield
             while self.cues:
                 msg = self.cues.popleft()
                 data = json.dumps(msg).encode("utf-8")

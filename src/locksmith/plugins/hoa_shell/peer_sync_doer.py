@@ -123,7 +123,7 @@ class PeerSyncDoer(doing.Doer):
     def _sync_peer(self, vault, hab, peer_pre: str) -> None:
         from keri_serviceaid.providers.peer_sync import (
             anchored_saids, body_request, introduced, kel_sync_request,
-            missing_bodies,
+            missing_bodies, registry_of, tel_sync_request,
         )
 
         # 1. Ask the peer to replay its own KEL. Anchors we have never seen
@@ -150,6 +150,57 @@ class PeerSyncDoer(doing.Doer):
             self._ask(vault, peer_pre,
                       introduced(hab, body_request(hab, said, peer_pre=peer_pre)),
                       f"pro/sealed {said[:12]}…", announce=True)
+
+        # 3. Ask for the TEL of every body we now hold but cannot place in a
+        #    registry state.
+        #
+        #    A `bar` discloses a SAD and nothing else. The ACDC spec keeps the
+        #    two apart: the Registry inception's SAID "MUST be anchored in the
+        #    Issuer's KEL as the Registry proof seal", update events "MUST also
+        #    be anchored", and a validator "can look up the seal in the Issuer's
+        #    KEL and verify that the SAID of the Transaction Event is the SAID
+        #    in the seal" (acdc-specification.md:3636-3651). The seal is in the
+        #    KEL, which step 1 syncs; the Transaction Event is in the TEL, which
+        #    nothing fetched. A reader holding body + seal still cannot say
+        #    issued-vs-revoked, so it correctly refuses to act — measured, as
+        #    `MissingEntryError: Missing TEL event ... at sn=0` on a mandate
+        #    that had been disclosed, stored and verified.
+        #
+        #    The spec allows the state proof attached OR out-of-band; this is
+        #    the out-of-band half, so a `bar` stays a pure disclosure and the
+        #    reader does its own asking.
+        for said in self._tel_gaps(vault, saids):
+            self._ask(vault, peer_pre,
+                      tel_sync_request(hab, peer_pre, registry_of(
+                          vault.rgy.reger.creds.get(keys=(said,)).sad), said),
+                      f"qry/tels {said[:12]}…", announce=True)
+
+    def _tel_gaps(self, vault, saids) -> list:
+        """SAIDs whose body we hold, whose registry we can name, and whose TEL
+        we do not have. Asked once per tick until the TEL lands.
+
+        Fails toward NOT asking: anything unreadable is skipped rather than
+        re-queried forever, mirroring `missing_bodies`' own posture.
+        """
+        from keri_serviceaid.providers.peer_sync import (
+            registry_of as registry_of_sad,
+        )
+
+        reger = vault.rgy.reger
+        out = []
+        for said in saids:
+            try:
+                creder = reger.creds.get(keys=(said,))
+                if creder is None:
+                    continue                 # no body yet — step 2 owns that
+                if not registry_of_sad(creder.sad):
+                    continue                 # not registry-backed; no TEL to want
+                if reger.tels.get(keys=said, on=0) is not None:
+                    continue                 # already have it
+                out.append(said)
+            except Exception:                # noqa: BLE001
+                logger.debug("peer_sync.tel_gap_unreadable said=%s", said[:12])
+        return out
 
     def _ask(self, vault, peer_pre: str, raw: bytes, label: str,
              announce: bool = False) -> None:
