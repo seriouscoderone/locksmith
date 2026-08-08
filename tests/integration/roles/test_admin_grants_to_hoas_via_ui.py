@@ -30,7 +30,8 @@ from tests.integration.peer.conftest import (  # noqa: F401 (fixture)
     open_workspace_via_hoa_setup, set_peer_mode_via_ui, wait_for_peer_reachable,
 )
 from tests.integration.roles.conftest import (
-    ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, _export_current_blob,
+    ACTUARY_ROLE_SCHEMA_SAID, CUO_ROLE_SCHEMA_SAID, PD_ROLE_SCHEMA_SAID,
+    _export_current_blob,
     _expose_and_export, issue_and_grant_role_via_admin_ui,
     load_issuable_schema_via_admin_ui, request_role_via_hoa_ui,
     submit_mandate_form_via_ui, wait_for_admin_notifications,
@@ -83,6 +84,8 @@ def test_the_admin_pairs_outward_with_both_hoas(admin_then_two_hoas):
         f"admin should have paired with both HOAs; peers list shows {items}")
 
 
+@pytest.mark.parametrize("admin_then_two_hoas",
+                         [["cuo", "actuary", "product_designer"]], indirect=True)
 def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
     """Leg 3 — the whole membrane, with nothing hand-delivered.
 
@@ -107,6 +110,12 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
          "Usurance Chief Underwriting Officer Role", "Underwriting"),
         ("actuary", "arcactuary", ACTUARY_ROLE_SCHEMA_SAID,
          "Usurance Actuary Role", "Actuarial"),
+        # Named for the EGF ROLE ID, not the persona's nickname. The first
+        # element is used three ways — wallet key, pairing label, and the role
+        # requested via `roleCard.requestButton.<role_id>` — so "designer" fails
+        # at the third: the EGF calls this role `product_designer`.
+        ("product_designer", "arcdesigner", PD_ROLE_SCHEMA_SAID,
+         "Usurance Insurance Product Designer Role", "Insurance Product Design"),
     )
 
     for name, vault, schema_said, schema_title, section in roles:

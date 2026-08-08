@@ -810,7 +810,7 @@ def _spawn_one(name: str, root: Path, brand: Path | None, idx: int):
 
 
 @pytest.fixture
-def admin_then_two_hoas():
+def admin_then_two_hoas(request):
     """A vanilla admin, then two HOAs that TRUST IT — spawned in that order.
 
     They cannot be spawned together. A branded HOA trusts exactly the authority
@@ -834,7 +834,20 @@ def admin_then_two_hoas():
             f"needs {USURANCE_BRAND} (gitignored; build with "
             f"scripts/brand_apply.py usurance) as the template brand")
 
-    root = Path(tempfile.mkdtemp(prefix="lsarc-"))
+    # Parameterizable HOA set: `@pytest.mark.parametrize("admin_then_two_hoas",
+    # [["cuo", "actuary", "designer"]], indirect=True)`. Defaults to the pair,
+    # so every existing caller is unchanged.
+    hoas = getattr(request, "param", None) or ["cuo", "actuary"]
+
+    # dir="/tmp", like `_spawn_wallets` — NOT the default temp dir. macOS puts
+    # that under /private/var/folders/<40 chars>/T/, and a UNIX socket path is
+    # capped near 104 bytes, so
+    #   /private/var/folders/tx/wt8hz3j117jb3v6cj7_8blqc0000gn/T/lsarc-xxxxxxxx/
+    #   product_designer/.locksmith-control.sock
+    # is over the limit and the wallet's socket never appears — reported as a
+    # bare TimeoutError naming a path that looks perfectly fine. It only showed
+    # up on the third HOA because "product_designer" is longer than "cuo".
+    root = Path(tempfile.mkdtemp(prefix="lsarc-", dir="/tmp"))
     keep = os.environ.get("LOCKSMITH_KEEP_TEST_HOMES")
     try:
         with _spawn_one("admin", root, None, 0) as admin:
@@ -847,9 +860,18 @@ def admin_then_two_hoas():
                                      admin_oobi_token=token,
                                      src_brand=USURANCE_BRAND)
 
-            with _spawn_one("cuo", root, brand, 1) as cuo, \
-                    _spawn_one("actuary", root, brand, 2) as actuary:
-                yield {"admin": admin, "cuo": cuo, "actuary": actuary,
+            # contextlib.ExitStack rather than nested `with`s, so the HOA
+            # count is a list length and not a code shape. The two-phase spawn
+            # above is not negotiable: the EGF cannot be derived until the
+            # admin is running and holds an AID, so every HOA has to wait for
+            # a brand that does not exist yet when the admin starts.
+            with contextlib.ExitStack() as stack:
+                spawned = {
+                    name: stack.enter_context(
+                        _spawn_one(name, root, brand, idx + 1))
+                    for idx, name in enumerate(hoas)
+                }
+                yield {"admin": admin, **spawned,
                        "devctl": _devctl, "admin_aid": aid, "brand": brand}
     finally:
         if keep:
