@@ -1,0 +1,29 @@
+{
+  "page_intro": [
+    "Submitting signs this mandate with your chief underwriting authority and adds it permanently to your own published record.",
+    "You are publishing, not filing: nothing here can be edited afterwards, and anyone who asks reads all of it, your thesis word for word."
+  ],
+  "field_help": {
+    "line_of_business": "One line per mandate. A second line is a second mandate.",
+    "jurisdiction": "Format US-UT, one jurisdiction per mandate. Only the format is checked; the app cannot tell US-UT from US-TU, so read your code back before you sign.",
+    "coverages": "At least one code, uppercase, no repeats (BI, PD, COMP). These are the coverages you are declaring, and they publish exactly as written.",
+    "window": "Both dates count as in force. In force through must fall after in force from, so the shortest window is two days.",
+    "thesis": "One sentence of business intent, in your own words. It publishes verbatim, so write it for a reader outside the company."
+  },
+  "review": {
+    "title": "Review this mandate before signing",
+    "signer_line": "Signing as {cuo_name}, Chief Underwriting Officer, on the authority granted to you by Usurance administration.",
+    "caution": "Signing is final. These values can never be edited, and the whole mandate, thesis included, goes to anyone who asks for it. To correct a mandate, declare a new one. Withdrawing later records that you stopped pursuing it and leaves what you declared readable.",
+    "confirm_button": "Sign mandate",
+    "back_button": "Keep editing"
+  },
+  "errors": {
+    "jurisdiction_pattern": "Jurisdiction must be US, a dash, then two uppercase letters. Enter it like US-UT.",
+    "coverage_pattern": "Coverage code {code} must use capital letters, digits and hyphens only, starting with a letter or digit, as in BI or COMP-EXT. Retype it in that form.",
+    "coverage_duplicate": "{code} is listed twice. Remove the second entry; each coverage is named once.",
+    "window_order": "In force through must fall after in force from, and a window of a single day is not accepted. Move in force through to a later date.",
+    "window_overlap": "You already have a mandate for {line_of_business} in {jurisdiction} in force {existing_opens} through {existing_closes}. Withdraw that mandate or set this window to start after it closes.",
+    "summary": "Fix {count} errors before signing."
+  },
+  "rationale": "Optimised for criterion 1 first: the reader must not be able to leave this screen thinking the declaration is private or amendable. Both intro lines and the review caution now carry permanence and full publicity in non-protocol words \u2014 \"published record\", \"publishing, not filing\", \"anyone who asks reads all of it\", \"goes to anyone who asks for it\". Every line that reached for KERI vocabulary to establish those facts was cut, because that vocabulary is what produced the original wrong inference: \"anchors it to your own identifier's log\" and \"writes it into your own identifier's log\" both name a private-sounding container, and \"the full credential\" invites the reader to picture a document she holds. The winning intro never says where the mandate goes, only that it cannot be taken back and cannot be kept quiet.\n\nCriterion 2 drove the error set toward the draft that names the offending value and the next move in the same sentence, matching the spec's exemplar shape (\"NAIC number must be exactly 5 digits\"). Rule, then imperative: \"Retype it in that form\", \"Remove the second entry\", \"Move in force through to a later date\", \"Withdraw that mandate or set this window to start after it closes\". No error opens with a verdict on the value's validity, so nothing needs the reader to infer the fix. There is no jurisdiction-validity error, because the app cannot raise one honestly; that limit is disclosed as help text with the tell that makes it concrete (US-UT versus US-TU) and an instruction she can act on.\n\nCriterion 3 broke the near-ties: the shortest line that lost nothing won, which is why the jurisdiction format error, the review title, the caution, the summary banner and the line-of-business help come from the terser drafts. Criterion 4 settled voice: short declaratives, no reassurance, no flourish, one idea per sentence, matching the brand pillars' \"established carrier you can rely on\" rather than a product tour.\n\nConsistency edits, all mechanical and disclosed rather than rewrites: dropped two commas from the first intro line; deleted the redundant clause \"the first day through the last\" from the window help, which restated its own first sentence; changed \"before submitting\" to \"before you sign\" in the jurisdiction help so the whole screen uses one verb for the irreversible act (title, signer line, caution, button, summary all say sign); title-cased Chief Underwriting Officer to match the review title's register; and renamed the overlap error's date tokens to {existing_opens}/{existing_closes} so they cannot be confused with the values in the form the reader is looking at.\n\nDeliberately left out: KERI, ACDC, credential, anchor, SAID, log, witness, watching, and any account of how a reader discovers the mandate \u2014 she acts on none of it. Also left out: any softening of withdrawal into removal, any reassurance placed ahead of the permanence warning, and \"please\", which the spec's own banner example uses and the voice rules forbid."
+}
