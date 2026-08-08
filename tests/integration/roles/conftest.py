@@ -612,20 +612,23 @@ def grant_actuary_role_to_cuo_wallet(devctl, sock, admin_state: dict) -> None:
 
     Runs a SECOND "Accept Credential Issuance" -> "Accept Credential Grant"
     cycle on this wallet (the first was cuo's own grant, inside
-    `open_vault_holding_cuo_role`). Both dialogs are `LocksmithDialog`
-    subclasses whose `.close()`/`.accept()` HIDE rather than destroy (no
-    `WA_DeleteOnClose` -- see `dialogs.py`'s `showEvent`/`closeEvent`), so
-    the first cycle's now-hidden instances are still in the tree when this
-    second cycle opens its own -- the SAME not-destroyed-on-close shape as
-    `ViewIdentifierDialog`/`AddPeerDialog` elsewhere in this file. `wait_for`
-    (visibility-UNFILTERED `_find_widget_any`) therefore needs an
-    `occurrence` override to select the live (second-created) instance --
-    see the two wait_for calls below for the EXACT index each selector
-    needs (they differ: a label-text selector matches twice per dialog
-    instance, an objectName/button-text selector once). `type`/`click`
-    (visibility-FILTERED `_find_widget`, and with NO occurrence support at
-    all -- see `_export_current_blob`'s docstring) already exclude the
-    hidden stale ones, so they need no override.
+    `open_vault_holding_cuo_role`).
+
+    HISTORY, same as `_export_current_blob`'s: both dialogs are `LocksmithDialog`
+    subclasses, and `LocksmithDialog.close()/accept()` used to HIDE rather than
+    destroy, so the first cycle's instances were still in the tree when the second
+    opened its own. The two `wait_for` calls below therefore carried `occurrence`
+    overrides to reach the live copy, at DIFFERENT indices -- a label-text selector
+    matches twice per dialog instance (`_find_widget_any` checks the inner QLabel's
+    `.text()` AND `FloatingLabelLineEdit`'s own `_label_text`) while a button-text
+    selector matches once.
+
+    `LocksmithDialog.__init__` now sets `WA_DeleteOnClose`
+    (`ui/toolkit/widgets/dialogs.py:125`), so the stale instances are gone and every
+    one of those indices shifted to 0 -- which made them select nothing, failing as
+    "timeout waiting for 'File Path' to be visible". The overrides are removed
+    rather than renumbered: there is one dialog alive, so the default is correct and
+    stays correct.
 
     Leaves the wallet navigated to `actuaryPage` (mirrors
     `open_vault_holding_actuary_role`'s own tail poll). Does NOT close
@@ -694,19 +697,12 @@ def grant_actuary_role_to_cuo_wallet(devctl, sock, admin_state: dict) -> None:
     assert r.get("ok"), f"navigate to Received Credentials (sibling grant): {r}"
     r = devctl(sock, "click", target="Accept Credential Issuance")
     assert r.get("ok"), f"open Accept Credential dialog (sibling grant): {r}"
-    # occurrence=2, NOT 1: "File Path" is a plain LABEL-TEXT selector (no
-    # objectName), and FloatingLabelLineEdit yields TWO matches per dialog
-    # instance for such a selector -- the inner QLabel's `.text()` AND the
-    # wrapper widget's own `_label_text` attribute (`_find_widget_any`
-    # checks both) -- so ONE stale AcceptCredentialDialog (cuo's own, from
-    # `open_vault_holding_cuo_role`) contributes matches at indices 0-1, and
-    # this second, live dialog's own pair starts at index 2 (measured: a
-    # `count`/`is_visible` sweep showed occurrence 0 and 1 both
-    # `visible=False`, occurrence 2 `visible=True`). objectName-selected
-    # targets elsewhere in this file (e.g. `viewIdentifierDialog.aidField`)
-    # only ever get ONE match per instance, hence occurrence=1 there.
+    # No occurrence override: with WA_DeleteOnClose there is exactly one live
+    # AcceptCredentialDialog, so this label-text selector's own pair of matches
+    # starts at index 0. (It was occurrence=2, skipping the stale dialog's pair --
+    # see the docstring.)
     r = devctl(sock, "wait_for", target="File Path", condition="visible",
-              timeout_ms=3000, occurrence=2)
+              timeout_ms=3000)
     assert r.get("ok"), f"Accept Credential dialog (sibling grant) never appeared: {r}"
     r = devctl(sock, "type", target="File Path", text=cesr_path)
     assert r.get("ok"), f"type grant file path (sibling grant): {r}"
@@ -714,10 +710,11 @@ def grant_actuary_role_to_cuo_wallet(devctl, sock, admin_state: dict) -> None:
     assert r.get("ok"), f"click Load (sibling grant): {r}"
 
     # "Admit" is a plain LocksmithButton (`.text()` only, no label_text
-    # duplicate), so it gets exactly ONE match per instance -- occurrence=1
-    # skips cuo's own now-stale AcceptGrantDialog and lands on this live one.
+    # duplicate), so ONE match per instance -- and with only the live
+    # AcceptGrantDialog in the tree, that match is index 0. (It was occurrence=1,
+    # skipping cuo's stale dialog.)
     r = devctl(sock, "wait_for", target="Admit", condition="visible",
-              timeout_ms=5000, occurrence=1)
+              timeout_ms=5000)
     assert r.get("ok"), f"AcceptGrantDialog (sibling grant) never opened: {r}"
     r = devctl(sock, "click", target="Admit")
     assert r.get("ok"), f"click Admit (sibling grant): {r}"
