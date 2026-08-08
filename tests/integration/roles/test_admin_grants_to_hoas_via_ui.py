@@ -35,6 +35,7 @@ from tests.integration.roles.conftest import (
     _expose_and_export, issue_and_grant_role_via_admin_ui,
     load_issuable_schema_via_admin_ui, request_role_via_hoa_ui,
     submit_mandate_form_via_ui, wait_for_admin_notifications,
+    _run_ipd_parse, attest_rate_program_via_ui,
 )
 
 pytestmark = pytest.mark.integration
@@ -86,7 +87,7 @@ def test_the_admin_pairs_outward_with_both_hoas(admin_then_two_hoas):
 
 @pytest.mark.parametrize("admin_then_two_hoas",
                          [["cuo", "actuary", "product_designer"]], indirect=True)
-def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
+def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_path):
     """Leg 3 — the whole membrane, with nothing hand-delivered.
 
     Each HOA ASKS for its role from its own onboarding home; the applications
@@ -225,3 +226,18 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas):
         "'Prod: disclosing'. Whichever is missing names the half that broke.\n"
         f"  actuary: {admin_then_two_hoas['actuary']['log']}\n"
         f"  cuo:     {admin_then_two_hoas['cuo']['log']}")
+
+    # ---- the actuary ATTESTS, against the mandate it actually observed -----
+    #
+    # The SAID comes off the list row's UserRole data, not its label: the label
+    # is elided to 12 chars for reading, and `ipd-parse` needs the whole thing
+    # (`--product-mandate <SAID>`, writing to `<out>/<lob>/<juris>/<said>`).
+    # A parse answers ONE mandate, so parsing against a placeholder would attest
+    # to a program that answers nothing this CUO declared.
+    mandate_said = (rows[0].get("data") or "").strip()
+    assert mandate_said.startswith("E"), (
+        f"the observed row carries no mandate SAID in its UserRole data: "
+        f"{rows[0]}")
+
+    parse_dir = _run_ipd_parse(tmp_path / "parse", product_mandate=mandate_said)
+    attest_rate_program_via_ui(devctl, actuary, parse_dir)
