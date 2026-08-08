@@ -288,16 +288,42 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_pa
                target="designerPage.receivedPrograms", text=cell)
     assert r.get("ok"), f"select the received program row ({cell!r}): {r}"
 
-    r = devctl(designer, "click", target="designerPage.assemble")
-    assert r.get("ok"), f"click Assemble: {r}"
-    # devctl clicks whatever it finds, enabled or not, and still says ok. Assert
-    # on what it reports back, or a disabled button reads as a successful click.
-    assert (r.get("clicked") or {}).get("enabled"), (
-        f"Assemble was DISABLED when clicked, so nothing ran — the row "
-        f"selection did not take: {r}")
-    r = devctl(designer, "wait_for", target="designerPage.bundleSaid",
-               condition="visible", timeout_ms=4000)
-    assert r.get("ok"), f"no bundle SAID after Assemble: {r}"
-    said = (devctl(designer, "get_text",
-                   target="designerPage.bundleSaid").get("text") or "")
-    assert "E" in said, f"bundle SAID field is empty after Assemble: {said!r}"
+    # RETRY the assemble, do not click once and wait.
+    #
+    # A program row appears as soon as the ATTESTATION is retrieved and indexed.
+    # The bundle, though, chains to the MANDATE, and `Verifier.verifyChain`
+    # needs that node in this wallet's own `reger.saved` WITH a current TEL
+    # state — two more asynchronous arrivals from a DIFFERENT peer. So Assemble
+    # becomes clickable strictly before it can succeed.
+    #
+    # Measured, one run of each outcome: the mandate's TEL landed in time and
+    # the bundle minted; the next run it had not, and the issuance died with
+    # `Failure to verify credential ... chain mandate(...)` /
+    # `TEL event ... did not complete`. Nothing is minted on that path, so
+    # re-clicking cannot double-issue.
+    #
+    # (The enabled-state assertion stays inside the loop: devctl reports a click
+    # on a DISABLED button as ok, so without it a failed row selection reads as
+    # a successful click.)
+    deadline, said = time.time() + 120.0, ""
+    while time.time() < deadline:
+        r = devctl(designer, "click", target="designerPage.assemble")
+        assert r.get("ok"), f"click Assemble: {r}"
+        assert (r.get("clicked") or {}).get("enabled"), (
+            f"Assemble was DISABLED when clicked, so nothing ran — the row "
+            f"selection did not take: {r}")
+        if devctl(designer, "wait_for", target="designerPage.bundleSaid",
+                  condition="visible", timeout_ms=4000).get("ok"):
+            said = (devctl(designer, "get_text",
+                           target="designerPage.bundleSaid").get("text") or "")
+            if "E" in said:
+                break
+        time.sleep(4.0)
+
+    assert "E" in said, (
+        "Assemble never produced a bundle SAID. The program row was there, so "
+        "the attestation arrived — the bundle additionally chains to the "
+        "MANDATE, which must be in this wallet's own reger.saved with a current "
+        "TEL state. Check the designer log for 'chain mandate(' and "
+        f"'did not complete'.\n"
+        f"  designer: {admin_then_two_hoas['product_designer']['log']}")
