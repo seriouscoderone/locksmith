@@ -386,3 +386,68 @@ TWICE (154.67s, then 153.84s truly visible) / actuary UI 1/1 in 19.31s.
   interpretation lives in a third module, and `date_field` fixes what a date IS.
 - COLLATERAL: none. tests/plugins/roles 24 passed/1 skipped; no stale `effectiveWindow`
   selector anywhere; sitecustomize's `_show_declared` wrapper still lines up.
+
+## BLOCKERS CLOSED 2026-08-08 — commits 282fbf96, 838ed129, 2afd05f1
+
+All three fixed inline (no SDD dispatch — the review had already named the exact
+change for each). Every claim below was measured, not reasoned: **14 of the new
+tests fail against the pre-fix source with `__pycache__` cleared, 0 after.**
+
+**1. `_current_dialog` — CLOSED (282fbf96).** Probed the base class first, on Qt
+6.10.3:
+
+    close   -> _current_dialog None,  closeEvent ran
+    reject  -> set, valid=False,      closeEvent did NOT run
+    accept  -> set, valid=False,      closeEvent did NOT run
+    Escape  -> same as reject
+
+`_release_current_dialog()` now runs from `closeEvent`, `reject` AND `accept`;
+`showEvent` discards a dead pointer via `Shiboken.isValid` instead of
+dereferencing it (measured: `!=` against a deleted object does NOT raise, so the
+guard is safe). Read-back takes `show_close_button=False` and refuses `reject()`
+while an anchor is in flight — verified `close()` returns False there too, since
+`QDialog::closeEvent` routes through `reject()`. Not implemented by routing
+`reject` through `close` (that recurses).
+
+*The 42-site audit the backlog item asked for is DONE and clean:* all seven
+`closeEvent` overrides in `src/` also connect `QDialog.finished`, which fires on
+reject/accept, so `_current_dialog` was the only `closeEvent`-only cleanup in the
+app. Nothing else to fix. The backlog item can be closed with the fix, not
+reopened as its own project.
+
+**2. Overlap remedy — CLOSED (838ed129).** Filtered, not re-worded: the spec keeps
+withdrawal "named without a route" (design §5.1, owner declined the route twice),
+so trimming the copy would have contradicted an owner ruling. Grounded in the
+vendored ACDC v1.1 spec rather than convention — for the indirect case the ACDC's
+states "are either *issued* or *revoked*", and § *Transaction state, `ts` field*
+fixes that set at two values. The four ilks are keripy's, not the spec's (spec:
+`ts` + `rip`; keripy: `et` + `vcp`/`vrt`) and that is now said out loud in the
+constant's comment. keripy's `vcstate` REFUSES any ilk outside
+`iss`/`bis`/`rev`/`brv` — a test drives it with all four plus three rejects, so
+"not revoked" is sound by construction and a keripy change fails here.
+
+**3. Vacuous overlap gate — CLOSED (2afd05f1).** The review's instruction ("add it
+to `test_schema_pins_match_egf_catalog`") could not be followed: measured, that
+test resolves `egf["credentials"]` by id and the catalog holds exactly
+cuo_role/actuary_role/product_designer_role. The mandate is declared by the CUO
+template as what `declare_product_mandate` mints. Two new tests walk the real
+chain (EGF doc -> cuo micro-app -> minting command -> exported credential) and
+compute the bundled schema's SAID with `Schemer`; both catch a one-character pin
+mutation. Also fixed the fake that ignored `keys` — it now discriminates, with a
+self-test proving it.
+
+### Method note worth keeping
+
+Two gates were vacuous on their first pass and only measurement found it:
+
+- `test_a_dialog_still_opens_after_the_previous_one_exited` PASSED against the bug
+  on three of four exits, because `WA_DeleteOnClose` POSTS the deletion and the
+  corpse was still valid; it now waits for the delete.
+- Restoring a mutated `page.py` wrote an identical-SIZE file inside the same mtime
+  second, so Python reused the `.pyc` from the mutated source and two tests
+  "failed" against correct code. **Clear `__pycache__` between mutation runs** —
+  a same-size edit defeats mtime+size invalidation.
+
+### Still open (not blockers)
+
+The four owner rulings and the 18 triaged deferred findings above stand unchanged.
