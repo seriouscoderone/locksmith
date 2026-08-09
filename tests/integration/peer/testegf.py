@@ -75,15 +75,19 @@ def build_test_brand(dest: Path, *, admin_aid: str, admin_oobi_token: str,
         shutil.rmtree(egf_dir)
     shutil.copytree(UGARD_EGF, egf_dir)
 
-    # Overlay schemas the ugard copy does not carry. The two sources have
-    # drifted: `brands/usurance/egf/` holds ten documents, ugard's holds eight,
-    # and the three extra ones include `product_mandate`
-    # (EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5). Without it the CUO cannot
-    # declare anything — `CuoMandatePage._ensure_mandate_schema_pinned` raises
-    # "mandate schema not bundled at …", the form silently never confirms, and
-    # the failure surfaces as a missing `declaredBanner` with nothing to explain
-    # it. (`roles/_bootstrap/sitecustomize.py` already documents this drift for
-    # its own scratch bundle; this is the same fact, for a brand the suite owns.)
+    # Safety net, not an active overlay. The two sources used to drift --
+    # `brands/usurance/egf/` held ten documents while ugard's held only eight,
+    # missing `product_mandate`
+    # (EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5) among them. Without it the
+    # CUO could not declare anything -- `CuoMandatePage.
+    # _ensure_mandate_schema_pinned` raises "mandate schema not bundled at …",
+    # the form silently never confirms, and the failure surfaces as a missing
+    # `declaredBanner` with nothing to explain it. An EGF publish fix landed
+    # 2026-08-08 gave ugard's copy all ten documents, verified by counting
+    # `E*.json` in both trees, so today every file this loop considers already
+    # exists at `target` and the loop copies nothing. It stays here as a
+    # safety net against the two copies drifting apart again, not because it
+    # is doing anything right now.
     #
     # Guarded, not blind: an existing file always wins, and anything naming the
     # real admin is refused outright — the whole point of this brand is that it

@@ -849,8 +849,8 @@ def declare_mandate_via_ui(devctl, sock) -> None:
 
 
 def submit_mandate_form_via_ui(devctl, sock) -> None:
-    """Fill and submit the CUO's mandate form on a wallet that ALREADY holds
-    the role.
+    """Fill and submit the CUO mandate form, through the review dialog, and
+    wait for the mandate to actually finish issuing.
 
     Split out of `declare_mandate_via_ui`, which begins by calling
     `open_vault_holding_cuo_role` — the legacy recipe: an in-process fake admin
@@ -858,30 +858,72 @@ def submit_mandate_form_via_ui(devctl, sock) -> None:
     socket. A CUO that got its role the real way (applied, was granted, admitted)
     must not run that again; it would mint a SECOND cuo_role from a different
     issuer. So the form-filling lives here and both paths share one copy.
+
+    Rewritten 2026-08-08 for the schema-driven form. Four things changed and
+    each is deliberate:
+
+    * `effectiveWindow` split into `windowOpens`/`windowCloses`, named for the
+      schema fields rather than the old fiction of one box holding two.
+    * `lineOfBusiness` is a combo, so it is driven with `select`, not `type`.
+    * The `is_checked` assertion is gone. The submit button no longer encodes
+      validity -- it stays ENABLED while the form is invalid, because
+      ux-patterns.md puts required errors on submit and a disabled button makes
+      that submit unreachable. Readiness is now asserted by the review dialog
+      opening.
+    * One extra click: the read-back must be confirmed before anything is
+      signed.
+
+    A comma still commits a coverage token, so "BI,PD" keeps working.
+
+    One thing did NOT change, and must not be dropped even though it looks
+    redundant with the confirm click: the final wait on
+    `cuoMandatePage.declaredBanner`. `mandateReviewDialog.confirm` only STARTS
+    the anchor -- `CuoMandatePage._confirm_review` schedules a
+    `ServiceaidIssueDoer` on the vault's doer bus and returns immediately; the
+    credential is actually issued on later ticks of the Qt/hio event loop, and
+    only `_show_declared` (fired off the doer's `credential_issued` event)
+    paints the banner and closes the review dialog. Two of this helper's
+    callers only get away without waiting for that by accident:
+    `watch_cuo_mandate_via_peer` and the admin-grants-both-roles arc each poll
+    a slower downstream effect (an exported artifact file, the actuary's
+    observed-mandates list) for many seconds afterward, and that poll happens
+    to absorb the issuance delay too. `test_cuo_mandate_via_ui.py` has no such
+    poll -- it calls this helper and asserts nothing else -- so without this
+    wait it would report green even if the mandate never finished issuing at
+    all.
     """
     r = devctl(sock, "wait_for", target="cuoMandatePage",
                condition="visible", timeout_ms=5000)
     assert r.get("ok"), r
 
-    for target, value in [
-        ("cuoMandatePage.lineOfBusiness", "Auto"),
-        ("cuoMandatePage.jurisdiction", "UT"),
+    r = devctl(sock, "select", target="cuoMandatePage.lineOfBusiness", value="auto")
+    assert r.get("ok"), f"choose the line of business: {r}"
+
+    for target, value in (
+        ("cuoMandatePage.jurisdiction", "US-UT"),
         ("cuoMandatePage.coverages", "BI,PD"),
-        ("cuoMandatePage.effectiveWindow", "2027-01-01/2027-12-31"),
+        ("cuoMandatePage.windowOpens", "01/01/2027"),
+        ("cuoMandatePage.windowCloses", "12/31/2027"),
         ("cuoMandatePage.thesis", "Rate adequacy restoration."),
-    ]:
+    ):
         r = devctl(sock, "type", target=target, text=value)
         assert r.get("ok"), (target, r)
 
-    r = devctl(sock, "is_checked", target="cuoMandatePage.submit")
-    assert r.get("ok"), r
-
+    # devctl 0.2.0 refuses a disabled target, so a click that reports ok landed.
     r = devctl(sock, "click", target="cuoMandatePage.submit")
-    assert r.get("ok"), r
+    assert r.get("ok"), f"open the read-back: {r}"
+
+    r = devctl(sock, "wait_for", target="mandateReviewDialog.confirm",
+               condition="enabled", timeout_ms=5000)
+    assert r.get("ok"), (
+        f"the review dialog never opened, so the form still has errors: {r}")
+
+    r = devctl(sock, "click", target="mandateReviewDialog.confirm")
+    assert r.get("ok"), f"confirm the read-back: {r}"
 
     r = devctl(sock, "wait_for", target="cuoMandatePage.declaredBanner",
                condition="visible", timeout_ms=10000)
-    assert r.get("ok"), r
+    assert r.get("ok"), f"the mandate never finished issuing after confirm: {r}"
 
 
 def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
