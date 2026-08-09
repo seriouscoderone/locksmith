@@ -333,8 +333,34 @@ class AttestReviewDrawer(QWidget):
         that reports the outcome."""
         if self._confirmed and not self._finished:
             return
+        if not self._open:
+            return
         self._open = False
+        # Slide OUT, 200ms ease-in (ux-patterns.md:30). `_SLIDE_OUT_MS` was
+        # defined and never used -- the drawer animated in and then vanished, so
+        # the exit read as a glitch rather than as the reverse of the entrance.
+        # The backdrop goes at once: it is the thing making the page unusable,
+        # and there is no reason to hold it for the length of the animation.
         self._backdrop.hide()
+        self._animation.stop()
+        self._animation.setDuration(_SLIDE_OUT_MS)
+        self._animation.setEasingCurve(QEasingCurve.Type.InCubic)
+        self._animation.setStartValue(self.geometry())
+        self._animation.setEndValue(
+            self.geometry().adjusted(self.width(), 0, self.width(), 0))
+        try:
+            self._animation.finished.disconnect(self._after_close)
+        except (RuntimeError, TypeError):
+            pass
+        self._animation.finished.connect(self._after_close)
+        self._animation.start()
+
+    def _after_close(self) -> None:
+        """Hide and report, once the slide-out has finished."""
+        try:
+            self._animation.finished.disconnect(self._after_close)
+        except (RuntimeError, TypeError):
+            pass
         self.hide()
         self.cancelled.emit()
 

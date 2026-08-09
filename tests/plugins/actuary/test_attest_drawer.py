@@ -122,7 +122,9 @@ def test_escape_closes_before_signing_and_is_refused_after(qtbot):
     assert drawer.isVisible() is True, "Escape destroyed an in-flight read-back"
 
     drawer.finish()
-    assert drawer.isVisible() is False
+    # WAIT: closing is a 200ms ease-in slide now, not an instant hide, so the
+    # widget is still visible for the length of the animation.
+    qtbot.waitUntil(lambda: not drawer.isVisible(), timeout=2000)
     shell.hide()
 
 
@@ -139,7 +141,7 @@ def test_the_drawer_closes_when_the_attestation_resolves(qtbot):
 
         page._close_drawer()
 
-        assert drawer.isVisible() is False, f"still open after {outcome}"
+        qtbot.waitUntil(lambda: not drawer.isVisible(), timeout=2000)
         assert page.attest_drawer is None
         shell.hide()
 
@@ -168,4 +170,58 @@ def test_the_drawer_is_the_suites_md_width(qtbot):
     shell, page = _armed_page(qtbot)
     page.review_attestation()
     assert page.attest_drawer.width() == 600
+    shell.hide()
+
+
+def test_the_drawer_slides_in_and_out_rather_than_snapping(qtbot):
+    """ux-patterns.md:29-30 — "Slide in from the right. Duration: 300ms.
+    Easing: ease-out" and "Slide out to the right. Duration: 200ms."
+
+    `_SLIDE_OUT_MS` was defined and never used: the drawer animated IN and then
+    vanished, so the exit read as a glitch rather than the reverse of the
+    entrance. Samples the geometry over time, because the durations and easing
+    curves can all be set correctly on an animation that never runs.
+    """
+    shell, page = _armed_page(qtbot)
+    page.review_attestation()
+    drawer = page.attest_drawer
+
+    opening = []
+    for _ in range(12):
+        qtbot.wait(25)
+        opening.append(drawer.geometry().x())
+    assert len(set(opening)) > 3, f"the drawer snapped open: {opening}"
+    assert opening[0] > opening[-1], "it did not travel leftwards"
+    assert drawer._animation.duration() == 300
+
+    qtbot.waitUntil(lambda: drawer._animation.state().name == "Stopped",
+                    timeout=2000)
+    settled = drawer.geometry().x()
+
+    drawer.close_drawer()
+    closing = []
+    for _ in range(8):
+        qtbot.wait(25)
+        closing.append(drawer.geometry().x())
+    assert len(set(closing)) > 3, f"the drawer snapped shut: {closing}"
+    assert closing[-1] > settled, "it did not travel back rightwards"
+    assert drawer._animation.duration() == 200
+
+    qtbot.waitUntil(lambda: not drawer.isVisible(), timeout=2000)
+    shell.hide()
+
+
+def test_the_backdrop_goes_the_moment_the_drawer_starts_closing(qtbot):
+    """It is the thing making the page unusable; there is no reason to hold it
+    for the 200ms of the slide."""
+    shell, page = _armed_page(qtbot)
+    page.review_attestation()
+    drawer = page.attest_drawer
+    assert drawer._backdrop.isVisible() is True
+
+    drawer.close_drawer()
+    assert drawer._backdrop.isVisible() is False, (
+        "the backdrop lingers over a page the actuary can already use")
+
+    qtbot.waitUntil(lambda: not drawer.isVisible(), timeout=2000)
     shell.hide()
