@@ -141,3 +141,71 @@ def test_clearing_an_already_empty_field_does_not_emit_changed(qtbot):
     assert field.is_empty() is True
     with qtbot.assertNotEmitted(field.changed):
         field.clear()
+
+
+# --- The keyboard. Every test above drives the field with set_iso/setText, which
+# --- is exactly why a field nobody could TYPE into passed all of them.
+
+
+def _typed(qtbot, seed_iso=None):
+    """A shown, focused field after keying `03152028` the way a user does.
+
+    Keys go to the QDateEdit, not to its line edit: the line edit's focus PROXY
+    is the spinbox (measured), so real keystrokes arrive there. Sending them to
+    the line edit instead only exercises QLineEdit's own insertion, which
+    QDateTimeEdit's validator rejects -- a test that does that reports nothing
+    about what a user experiences.
+    """
+    field = MandateDateField(placeholder="MM/DD/YYYY")
+    qtbot.addWidget(field)
+    field.show()
+    qtbot.waitExposed(field)
+    if seed_iso:
+        field.set_iso(seed_iso)
+        field._edit.setSelectedSection(field._edit.sectionAt(0))
+    field._edit.setFocus()
+    QTest.keyClicks(field._edit, "03152028")
+    return field
+
+
+def test_a_date_can_be_TYPED_into_an_empty_field(qtbot):
+    """The state every declaration starts in.
+
+    `specialValueText` leaves the placeholder in the line edit for real, and
+    QDateTimeEdit's validator rejects a digit inserted into it -- so the CUO typed
+    both required dates, watched the text revert, and was told the fields are
+    required. Measured before the fix: `iso_value()` "" with the line edit reading
+    `MM/DD/YYYY3152028`.
+    """
+    field = _typed(qtbot)
+    assert field.iso_value() == "2028-03-15"
+    assert field.is_empty() is False
+
+
+def test_typing_into_an_empty_field_matches_typing_into_a_filled_one(qtbot):
+    """The A/B that says the empty state is no longer special to the keyboard."""
+    assert _typed(qtbot).iso_value() == _typed(qtbot, seed_iso="2027-05-05").iso_value()
+
+
+def test_typing_a_date_emits_changed_so_the_form_hears_it(qtbot):
+    field = MandateDateField(placeholder="MM/DD/YYYY")
+    qtbot.addWidget(field)
+    field.show()
+    qtbot.waitExposed(field)
+    seen = []
+    field.changed.connect(lambda: seen.append(field.iso_value()))
+    field._edit.setFocus()
+    QTest.keyClicks(field._edit, "03152028")
+    assert seen and seen[-1] == "2028-03-15"
+
+
+def test_a_non_digit_key_does_not_drag_an_empty_field_out_of_the_empty_state(qtbot):
+    """Only a digit is a deliberate act. Tab, backspace and letters are not."""
+    for keys in ("\t", "\b", "abc"):
+        field = MandateDateField(placeholder="MM/DD/YYYY")
+        qtbot.addWidget(field)
+        field.show()
+        qtbot.waitExposed(field)
+        field._edit.setFocus()
+        QTest.keyClicks(field._edit, keys)
+        assert field.iso_value() == "", keys

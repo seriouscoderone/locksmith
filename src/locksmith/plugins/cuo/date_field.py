@@ -56,6 +56,35 @@ class _SentinelGuardedDateEdit(QDateEdit):
     wheel path; no separate `wheelEvent` override is needed.
     """
 
+    def keyPressEvent(self, event) -> None:
+        """A typed digit LEAVES the empty state deliberately, then types.
+
+        `specialValueText` only changes what is PAINTED -- the line edit really
+        holds that placeholder string, and `QDateTimeEdit`'s own validator rejects
+        a digit inserted into it. So on a fresh form (the state every declaration
+        starts in) the CUO typed the date, watched the text revert, and was then
+        told the field is required; the calendar popup worked, which made it a
+        dead end rather than a visible block. Measured on the assembled page:
+        keying `03152028` into an empty field left `iso_value()` "" with the line
+        edit reading `MM/DD/YYYY3152028`.
+
+        Seeding a date and selecting the first section reproduces exactly what
+        focus-in does to a field that already holds one, so the same keystrokes
+        then produce the same date as the non-empty control (both `2028-03-15`,
+        measured). Neither half is sufficient alone: seeding without selecting
+        leaves the insertion invalid and the keystrokes are swallowed silently,
+        and clearing the line edit instead of selecting behaves the same way.
+        Both measured against real PySide6 6.10.3 -- do not "simplify" this to
+        one call.
+
+        Only digits do this. Arrow keys and the wheel still route through
+        `stepBy`, which stays a no-op while empty.
+        """
+        if self.date() == _EMPTY and event.text()[:1].isdigit():
+            self.setDate(QDate.currentDate())
+            self.setSelectedSection(self.sectionAt(0))
+        super().keyPressEvent(event)
+
     def stepBy(self, steps: int) -> None:
         """No-op while empty; normal once a date is chosen.
 
