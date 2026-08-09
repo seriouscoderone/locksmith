@@ -754,8 +754,62 @@ class CuoMandatePage(LocksmithFormPage):
         """
         return {name: control.read() for name, control in self._controls.items()}
 
+    #: TEL event types that mean REVOKED, per keripy's `vdr.eventing.vcstate`,
+    #: which raises unless the event ilk is one of `iss`/`bis`/`rev`/`brv` and
+    #: chooses the pair by whether the registry has backers (`iss`/`rev` for a
+    #: no-backer registry, `bis`/`brv` with backers). Because that set is closed
+    #: at the source, "not in this pair" is a sound reading of *issued*.
+    #:
+    #: Those four ilks are keripy's, NOT ACDC v1.1's: the spec models the same
+    #: thing as a `ts` (transaction state) string and names `rip` for registry
+    #: inception, where keripy uses `et` plus `vcp`/`vrt`. The vendored spec is
+    #: ground truth for the SEMANTICS below; keripy is what this code reads.
+    _REVOKED_TEL_ILKS = ("rev", "brv")
+
+    @staticmethod
+    def _is_withdrawn(reger, creder) -> bool:
+        """Does the TEL say this mandate has been withdrawn?
+
+        Why the TEL is the authority, from the vendored ACDC v1.1 spec
+        (`ugard/docs/acdc-specification.md`): in the indirect case "the state of
+        the ACDC is maintained by a Transaction Event Log (TEL) ... where the
+        states of the ACDC are either *issued* or *revoked*", and § *Transaction
+        state, `ts` field* fixes that set at two values for an
+        issuance/revocation Registry. `product_mandate` is exactly that case --
+        its EGF export carries `ri` and declares two lifecycle states, `declared`
+        and `withdrawn` (Amendment C §14.1). A revocation is a TEL update event,
+        anchored in the issuer's KEL; it does not remove anything. So
+        `reger.creds` still returns a withdrawn mandate forever, and only
+        `tevers[...].vcState(...)` can tell the two states apart.
+
+        Answers False whenever the TEL cannot be read, which keeps a mandate IN
+        the overlap warning rather than out of it: an unreadable TEL must not
+        quietly turn the gate off. `actuary/page.py` and `plugins/manager.py`
+        read `vcState` the same way.
+        """
+        try:
+            tever = reger.tevers.get(creder.regid)
+            if tever is None:
+                return False
+            state = tever.vcState(creder.said)
+        except Exception:                   # noqa: BLE001 -- see docstring
+            logger.warning("cuo.mandate_tel_unreadable said=%s (counted as live)",
+                           str(getattr(creder, "said", ""))[:12])
+            return False
+        # `vcState` returns None for a credential this registry never issued.
+        return getattr(state, "et", None) in CuoMandatePage._REVOKED_TEL_ILKS
+
     def existing_mandates(self) -> list[dict]:
-        """The mandates this vault already holds, for the overlap gate.
+        """The LIVE mandates this vault already holds, for the overlap gate.
+
+        Withdrawn ones are filtered out, because `copy.WINDOW_OVERLAP` offers
+        withdrawal as one of the two remedies ("Withdraw that mandate or set this
+        window to start after it closes") and enumerating `reger.schms` alone
+        never stops naming a mandate that has been withdrawn. The CUO would
+        withdraw it, be told the same thing again, and have no way to tell that
+        the remedy had worked. The spec keeps that copy deliberately -- withdrawal
+        is "named without a route" (design §5.1), reached from elsewhere -- so the
+        code has to make the named remedy actually take effect here.
 
         Advisory by construction: the local view can be incomplete, and the
         ledger's own `mandate_scopes_do_not_overlap` invariant is the real
@@ -771,11 +825,17 @@ class CuoMandatePage(LocksmithFormPage):
                 creder = reger.creds.get(keys=(saider.qb64,))
                 if creder is None:
                     continue
+                if self._is_withdrawn(reger, creder):
+                    continue
                 attrs = creder.sad.get("a") or {}
                 if isinstance(attrs, dict):
                     out.append(attrs)
         except Exception:                   # noqa: BLE001 -- advisory only
-            logger.debug("cuo.existing_mandates_unreadable", exc_info=True)
+            # WARNING, not debug: an empty list is indistinguishable from "this
+            # vault holds no mandates", so a read that fails here silently turns
+            # the overlap gate off. The pin it reads with is guarded structurally
+            # by tests/plugins/roles/test_pin_regression.py.
+            logger.warning("cuo.existing_mandates_unreadable", exc_info=True)
         return out
 
     # -- lifecycle ---------------------------------------------------------------

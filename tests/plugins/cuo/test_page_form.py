@@ -225,16 +225,53 @@ def test_the_declared_banner_is_hidden_until_a_mandate_exists(page, qtbot):
     window.hide()
 
 
+_HELD = {"line_of_business": "auto", "jurisdiction": "US-UT",
+         "window_opens": "2027-06-01", "window_closes": "2027-12-31"}
+
+
+def _vault_holding(*mandates, tel="iss"):
+    """A reger shaped like the real one, for `existing_mandates`.
+
+    Two details are load-bearing and were both missing from the first version of
+    this fake:
+
+    * `schms.get` HONOURS `keys`. Ignoring it made every assertion below pass for
+      any value of `PRODUCT_MANDATE_SCHEMA_SAID` -- a mistyped pin would have read
+      an empty registry, reported no mandates, and turned the overlap gate off
+      with nothing failing.
+    * credentials carry `said` and `regid`, so the TEL lookup that decides whether
+      a mandate is withdrawn has something to look up.
+    """
+    from locksmith.plugins.cuo.page import PRODUCT_MANDATE_SCHEMA_SAID
+
+    creds = {f"EMandate{i}": SimpleNamespace(
+        sad={"a": attrs}, said=f"EMandate{i}", regid="ERegistry")
+        for i, attrs in enumerate(mandates)}
+
+    def schms_get(keys=None):
+        wanted = keys[0] if isinstance(keys, (tuple, list)) else keys
+        if wanted != PRODUCT_MANDATE_SCHEMA_SAID:
+            return []
+        return [SimpleNamespace(qb64=said) for said in creds]
+
+    def creds_get(keys=None):
+        wanted = keys[0] if isinstance(keys, (tuple, list)) else keys
+        return creds.get(wanted)
+
+    tever = SimpleNamespace(vcState=lambda said: SimpleNamespace(et=tel))
+    reger = SimpleNamespace(
+        schms=SimpleNamespace(get=schms_get),
+        creds=SimpleNamespace(get=creds_get),
+        tevers=SimpleNamespace(get=lambda regid: tever),
+    )
+    return SimpleNamespace(vault=SimpleNamespace(rgy=SimpleNamespace(reger=reger)))
+
+
 def test_the_overlap_gate_reads_this_vault_s_own_mandates(qtbot):
     """`existing_mandates` is only useful if it reaches the validator. Nothing
     above proves the page passes it, because the fixture has no vault."""
-    held = {"line_of_business": "auto", "jurisdiction": "US-UT",
-            "window_opens": "2027-06-01", "window_closes": "2027-12-31"}
-    reger = SimpleNamespace(
-        schms=SimpleNamespace(get=lambda keys=None: [SimpleNamespace(qb64="E1")]),
-        creds=SimpleNamespace(get=lambda keys=None: SimpleNamespace(sad={"a": held})),
-    )
-    app = SimpleNamespace(vault=SimpleNamespace(rgy=SimpleNamespace(reger=reger)))
+    held = dict(_HELD)
+    app = _vault_holding(held)
     parent = QWidget()
     qtbot.addWidget(parent)
     page = CuoMandatePage(app=app, parent=parent)
@@ -250,6 +287,98 @@ def test_the_overlap_gate_reads_this_vault_s_own_mandates(qtbot):
     assert page.review_dialog is None, (
         "an overlapping window must not reach the read-back")
     assert "2027-06-01" in page.field_error("window_opens")
+
+
+def test_the_registry_fake_honours_the_schema_key():
+    """A guard on the guard. The first version of this fake was
+    `get=lambda keys=None: [...]` -- it ignored `keys`, so every assertion in this
+    file passed for ANY value of `PRODUCT_MANDATE_SCHEMA_SAID`. A mistyped pin
+    reads an EMPTY registry, reports no mandates, and turns the overlap gate off
+    with nothing failing anywhere."""
+    from locksmith.plugins.cuo.page import PRODUCT_MANDATE_SCHEMA_SAID
+
+    reger = _vault_holding(dict(_HELD)).vault.rgy.reger
+    assert reger.schms.get(keys=(PRODUCT_MANDATE_SCHEMA_SAID,)) != []
+    assert reger.schms.get(keys=("E" + "Z" * 43,)) == []
+
+
+def test_a_withdrawn_mandate_no_longer_blocks_an_overlapping_window(qtbot):
+    """`copy.WINDOW_OVERLAP` offers withdrawal as one of two remedies, and the
+    spec keeps it deliberately named without a route (design §5.1). Enumerating
+    `reger.schms` alone never stops reporting a withdrawn mandate -- a revocation
+    is a TEL update event, so the credential itself stays in the registry forever
+    (ACDC v1.1: the states of a dynamically-revocable ACDC "are either *issued*
+    or *revoked*"). The CUO would withdraw the mandate, be told the same thing
+    again, and have no way to tell the remedy had worked."""
+    app = _vault_holding(dict(_HELD), tel="rev")
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    page = CuoMandatePage(app=app, parent=parent)
+    assert page.existing_mandates() == []
+
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "US-UT")
+    page.set_field("coverages", ["BI"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "The overlapping mandate was withdrawn.")
+    page.submit()
+    assert page.review_dialog is not None, (
+        "a withdrawn mandate must not block the window it used to occupy")
+
+
+@pytest.mark.parametrize("ilk,blocks", [("iss", True), ("bis", True),
+                                        ("rev", False), ("brv", False)])
+def test_each_tel_event_type_keripy_can_report_is_classified(ilk, blocks, qtbot):
+    """`iss`/`rev` are what a no-backer registry reports; `bis`/`brv` are the
+    with-backers pair. Checking only `rev` would leave `brv` -- the one this
+    ecosystem reaches the moment a registry gains a backer -- unclassified, and
+    a withdrawn mandate would silently keep blocking."""
+    app = _vault_holding(dict(_HELD), tel=ilk)
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    page = CuoMandatePage(app=app, parent=parent)
+    assert bool(page.existing_mandates()) is blocks
+
+
+def test_the_classified_ilks_are_exactly_the_ones_keripy_will_emit():
+    """Pin the constant to the protocol rather than to my reading of it: keripy's
+    `vdr.eventing.vcstate` REFUSES any other event type, so the four below are
+    the complete input domain and "not revoked" is a sound reading of issued.
+    Measured against keripy itself, so a keripy change fails here."""
+    from keri.vdr.eventing import vcstate
+
+    from locksmith.plugins.cuo.page import CuoMandatePage
+
+    said = "E" + "A" * 43
+    accepted = []
+    for ilk in ("iss", "bis", "rev", "brv", "vcp", "ixn", ""):
+        try:
+            vcstate(vcpre=said, said=said, sn=0, ri=said, eilk=ilk,
+                    a=dict(s=0, d=said))
+        except ValueError:
+            continue
+        accepted.append(ilk)
+    assert accepted == ["iss", "bis", "rev", "brv"], (
+        f"keripy now accepts {accepted} as TEL event types; "
+        "_REVOKED_TEL_ILKS classifies only a subset of that")
+    assert set(CuoMandatePage._REVOKED_TEL_ILKS) <= set(accepted)
+    assert set(accepted) - set(CuoMandatePage._REVOKED_TEL_ILKS) == {"iss", "bis"}
+
+
+def test_an_unreadable_tel_keeps_the_mandate_in_the_gate(qtbot):
+    """Fail toward warning, not toward silence. A TEL that cannot be read is not
+    evidence of withdrawal, and dropping the mandate would turn the overlap gate
+    off for exactly the vault whose registry is broken."""
+    def boom(regid):
+        raise RuntimeError("tel is gone")
+
+    app = _vault_holding(dict(_HELD))
+    app.vault.rgy.reger.tevers = SimpleNamespace(get=boom)
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    page = CuoMandatePage(app=app, parent=parent)
+    assert page.existing_mandates() == [_HELD]
 
 
 def test_an_unreadable_registry_is_advisory_not_fatal(qtbot):
