@@ -1011,7 +1011,26 @@ def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
                   target="actuaryPage.rateTable")["visible"] is False, \
         "no rate table may be rendered in any HOA surface"
 
+    # The page primary now opens the READ-BACK; it no longer mints. Nothing on
+    # the page can reach `vault.extend` any more, which is the point of the gate.
     r = devctl(sock, "click", target="actuaryPage.attest")
+    assert r.get("ok"), f"open the attestation read-back: {r}"
+
+    r = devctl(sock, "wait_for", target="attestDrawer.ack",
+               condition="visible", timeout_ms=5000)
+    assert r.get("ok"), f"the read-back drawer never opened: {r}"
+
+    # Acknowledge, exactly as an actuary must. The assertion below is what proves
+    # the gate is real rather than decorative: the confirm is unreachable until
+    # this lands.
+    r = devctl(sock, "click", target="attestDrawer.ack")
+    assert r.get("ok"), f"acknowledge before attesting: {r}"
+
+    r = devctl(sock, "wait_for", target="attestDrawer.confirm",
+               condition="enabled", timeout_ms=5000)
+    assert r.get("ok"), f"the acknowledgement did not release the confirm: {r}"
+
+    r = devctl(sock, "click", target="attestDrawer.confirm")
     assert r.get("ok"), r
 
     # See the observedMandates comment above for why this polls in short

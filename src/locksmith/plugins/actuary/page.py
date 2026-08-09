@@ -59,6 +59,7 @@ from keri.kering import Ilks
 
 from locksmith.core.branding import brand, egf_local_dir
 from locksmith.core.serviceaid_bridge import ServiceaidIssueDoer
+from locksmith.plugins.actuary.attest_drawer import AttestReviewDrawer
 from locksmith.ui import colors
 from locksmith.ui.styles import get_monospace_font_family
 from locksmith.ui.toolkit.widgets import LocksmithButton
@@ -179,6 +180,7 @@ class ActuaryPage(QWidget):
 
         # attest state
         self._selected_mandate_said: str | None = None
+        self.attest_drawer: AttestReviewDrawer | None = None
         # One-shot guard: an attestation is under way. `attest()` reaches
         # `vault.extend` with no natural barrier, so without this a double-click
         # schedules TWO `ServiceaidIssueDoer`s and mints two permanent, public
@@ -378,10 +380,14 @@ class ActuaryPage(QWidget):
             "actuaryPage.workbookDigest")
         form.addRow("Workbook digest", self._workbook_digest_label)
 
-        self._attest = LocksmithButton("Attest Rate Program")
+        # "Review…", not "Attest": the page primary opens the read-back, and the
+        # commit verb lives on the drawer's own confirm. Two-stage vocabulary,
+        # matching the sibling flow -- the button that mints must be the one that
+        # says so, and it must not be reachable from the page.
+        self._attest = LocksmithButton("Review attestation…")
         self._attest.setObjectName("actuaryPage.attest")
         self._attest.setEnabled(False)
-        self._attest.clicked.connect(self.attest)
+        self._attest.clicked.connect(self.review_attestation)
         self._attest.setSizePolicy(QSizePolicy.Policy.Maximum,
                                    QSizePolicy.Policy.Fixed)
 
@@ -662,10 +668,20 @@ class ActuaryPage(QWidget):
             return False
 
         attrs = creder.sad.get("a", {}) or {}
+        # The whole mandate, not three fields of it. The attestation's edge
+        # asserts "my rate program answers THAT mandate", and until the read-back
+        # existed there was nowhere to show what "that" is: the window and thesis
+        # were never even read, the coverages were stored and rendered nowhere,
+        # and the issuer was dropped entirely -- so two different AIDs declaring
+        # `auto / US-UT` produced indistinguishable rows.
         self._observed[creder.said] = {
             "line_of_business": attrs.get("line_of_business", ""),
             "jurisdiction": attrs.get("jurisdiction", ""),
             "coverages": list(attrs.get("coverages", []) or []),
+            "window_opens": attrs.get("window_opens", ""),
+            "window_closes": attrs.get("window_closes", ""),
+            "thesis": attrs.get("thesis", ""),
+            "issuer": getattr(creder, "issuer", "") or "",
         }
         return True
 
@@ -855,6 +871,53 @@ class ActuaryPage(QWidget):
 
     # -- attest / issuance --------------------------------------------------------
 
+    def _attestation_attributes(self) -> dict:
+        """The ACDC attribute block. Built HERE rather than inline in `attest()`
+        so the read-back can show exactly what will be committed -- three of
+        these are asserted on the actuary's behalf and were previously invisible.
+        One source, so the drawer cannot drift from the mint."""
+        return {
+            "manifest_said": self._parse_manifest_said,
+            "version": "1.0",
+            "filing_date": _dt.date.today().isoformat(),
+            "action": "Sandbox",
+        }
+
+    def review_attestation(self, *_qt_args) -> None:
+        """Open the read-back. Nothing is minted until its own confirm."""
+        if self._attesting or self.attest_drawer is not None:
+            return
+        if not self._selected_mandate_said or self._parse_manifest_said is None:
+            self._show_error("Select an observed mandate and load a parse first.")
+            return
+
+        drawer = AttestReviewDrawer(
+            mandate_said=self._selected_mandate_said,
+            mandate=self._observed.get(self._selected_mandate_said, {}),
+            manifest_said=self._parse_manifest_said,
+            workbook_digest=(self._parse_manifest or {}).get("workbook_digest", ""),
+            attributes=self._attestation_attributes(),
+            parent=self)
+        self.attest_drawer = drawer
+        drawer.confirm.connect(self.attest)
+        drawer.cancelled.connect(self._forget_drawer)
+        drawer.open_drawer()
+
+    def _forget_drawer(self) -> None:
+        self.attest_drawer = None
+
+    def _close_drawer(self) -> None:
+        drawer, self.attest_drawer = self.attest_drawer, None
+        if drawer is None:
+            return
+        try:
+            # `finish()`, NOT `close_drawer()`: the drawer refuses to close while
+            # an attestation is in flight, so a plain close is ignored and the
+            # read-back survives its own success.
+            drawer.finish()
+        except RuntimeError:                # already destroyed by Qt
+            pass
+
     def attest(self, *_qt_args) -> None:
         """Issue the `rate_program_attestation` ACDC, NI2I-edged to the selected
         mandate. See the module docstring for the issuance mechanic; mirrors
@@ -894,12 +957,7 @@ class ActuaryPage(QWidget):
         # so explicitly ("INPUT to the consistency check... deliberately NOT
         # an attestation attribute" -- the manifest_said the ACDC DOES carry
         # is what a consumer re-derives to learn the real coverage set).
-        payload = {
-            "manifest_said": self._parse_manifest_said,
-            "version": "1.0",
-            "filing_date": _dt.date.today().isoformat(),
-            "action": "Sandbox",
-        }
+        payload = self._attestation_attributes()
         # NI2I: the mandate is untargeted, and per the ACDC spec an edge to an
         # untargeted far node MUST NOT be I2I/DI2I. "NI2I" (not "references",
         # the micro-app-template's own authoring-layer vocabulary for this
@@ -937,12 +995,14 @@ class ActuaryPage(QWidget):
             if event_type == "credential_issuance_failed":
                 self._retire_listener(_on_issue_event)
                 self._release_attest()
+                self._close_drawer()
                 self._show_error(data.get("error", "Attestation failed."))
                 return
             if event_type != "credential_issued":
                 return
             self._retire_listener(_on_issue_event)
             self._release_attest()
+            self._close_drawer()
             self._show_attested(data.get("said", ""))
 
         self._pending_listener = _on_issue_event
