@@ -114,20 +114,21 @@ class MandateReviewDialog(LocksmithDialog):
         buttons.addStretch(1)
         buttons.addWidget(self._confirm_button)
 
+        # No header X. A confirmation modal has exactly two answers and both are
+        # buttons; a third, unlabelled way out of the last screen before an
+        # irreversible act is not an affordance, it is an accident waiting for a
+        # mis-aimed click. It is also the one exit `_on_confirm` cannot disable.
         super().__init__(parent=parent, title=copy.REVIEW_TITLE,
-                         content=body, buttons=buttons)
+                         content=body, buttons=buttons,
+                         show_close_button=False)
         self.setObjectName("mandateReviewDialog")
 
-        # `close()`, not `reject()`: `WA_DeleteOnClose` destroys a REJECTED dialog
-        # without ever running `closeEvent`, and `closeEvent` is the only place
-        # `LocksmithDialog` clears its CLASS-level `_current_dialog`. One "Keep
-        # editing" therefore left a dangling pointer behind that made every later
-        # dialog's `showEvent` raise -- any dialog, on any parent, for the life of
-        # the process. `close()` runs `closeEvent` first and Qt's own
-        # `QDialog::closeEvent` still rejects, so the semantics are unchanged.
-        # The proper fix is in `LocksmithDialog` (clear the pointer in `reject`
-        # and `accept` too); that base class is shared by the whole app and
-        # outside this plan.
+        # `close()`, not `reject()`. `LocksmithDialog` now releases its class-level
+        # `_current_dialog` on every exit path, so this is no longer load-bearing --
+        # it stays because `close()` is the one exit that runs `closeEvent`, and any
+        # future `closeEvent` cleanup on this dialog should run when the CUO backs
+        # out. See `LocksmithDialog._release_current_dialog` for what went wrong
+        # when `closeEvent` was the only place the pointer was cleared.
         self._back.clicked.connect(self.close)
         self._confirm_button.clicked.connect(self._on_confirm)
 
@@ -143,6 +144,21 @@ class MandateReviewDialog(LocksmithDialog):
         self._confirm_button.setDefault(False)
         self._confirm_button.setAutoDefault(False)
         self._back.setFocus()
+
+    def reject(self):
+        """Escape must not destroy this modal once signing has begun.
+
+        `_on_confirm` disables both buttons, but Escape reaches `QDialog::reject`
+        through Qt's own key handling and no `setEnabled(False)` stands in its
+        way. The issuance carries on regardless -- destroying the dialog only
+        removes the surface that reports the outcome, and leaves `fail()` with
+        nothing to re-arm. Refusing the reject also stops `close()`:
+        `QDialog::closeEvent` calls `reject()` and ignores the close event unless
+        the dialog actually hid, so there is one rule here, not two.
+        """
+        if self._confirmed:
+            return
+        super().reject()
 
     def _on_confirm(self) -> None:
         self._confirmed = True

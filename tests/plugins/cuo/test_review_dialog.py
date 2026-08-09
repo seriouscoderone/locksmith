@@ -267,3 +267,64 @@ def test_keep_editing_is_refused_once_signing_has_started(qtbot):
     assert back.isEnabled() is False
     dialog.fail("boom")
     assert back.isEnabled() is True, "a failed anchor must let the CUO back out"
+
+
+# --- the two exits no `setEnabled(False)` can reach -------------------------------
+
+
+def test_the_read_back_has_no_header_close_button(qtbot):
+    """A confirmation modal has exactly two answers and both are labelled buttons.
+    The header X was a third, unlabelled way off the last screen before an
+    irreversible act -- and the only exit `_on_confirm` could not disable.
+    Identified the way the base class builds it: a 32x32 icon-only QPushButton."""
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    unlabelled = [b for b in dialog.findChildren(QPushButton)
+                  if not b.text() and b.size().width() == 32]
+    assert unlabelled == [], (
+        f"{len(unlabelled)} icon-only buttons in the read-back; pass "
+        "show_close_button=False so the X is never built")
+    assert sorted(b.text() for b in dialog.findChildren(QPushButton) if b.text()) \
+        == [copy.REVIEW_BACK, copy.REVIEW_CONFIRM]
+
+
+def test_escape_backs_out_before_signing(qtbot):
+    """The guard below must not cost the CUO the ordinary way out."""
+    import shiboken6
+
+    from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
+    LocksmithDialog._current_dialog = None
+    host = QWidget()
+    qtbot.addWidget(host)
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole", parent=host)
+    dialog.open()
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not shiboken6.Shiboken.isValid(dialog), timeout=2000)
+    assert LocksmithDialog._current_dialog is None
+
+
+def test_escape_cannot_destroy_the_read_back_mid_signing(qtbot):
+    """`_on_confirm` disables both buttons, but Escape reaches `QDialog::reject`
+    through Qt's key handling and no `setEnabled(False)` stands in its way. The
+    issuance carries on either way, so destroying the dialog would remove the only
+    surface that reports the outcome and leave `fail()` with nothing to re-arm."""
+    import shiboken6
+
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    dialog.show()
+    dialog.findChild(QPushButton, "mandateReviewDialog.confirm").click()
+
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    assert shiboken6.Shiboken.isValid(dialog), "Escape destroyed an in-flight modal"
+    assert dialog.isVisible()
+
+    # `close()` is refused too, not just Escape: QDialog::closeEvent calls
+    # reject(), and ignores the close event unless the dialog actually hid. One
+    # rule, not two. Measured: close() returns False here.
+    assert dialog.close() is False
+    assert shiboken6.Shiboken.isValid(dialog) and dialog.isVisible()
+
+    dialog.fail("boom")
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    qtbot.waitUntil(lambda: not shiboken6.Shiboken.isValid(dialog), timeout=2000)

@@ -13,6 +13,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton
 )
 from keri import help
+from shiboken6 import Shiboken
 
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import LocksmithButton
@@ -493,8 +494,19 @@ class LocksmithDialog(QDialog):
     def showEvent(self, event):
         """Override showEvent to trigger fade-in animation."""
         # Close any existing dialog before showing this one
-        if LocksmithDialog._current_dialog is not None and LocksmithDialog._current_dialog != self:
-            LocksmithDialog._current_dialog.close()
+        current = LocksmithDialog._current_dialog
+        if current is not None and current is not self:
+            if Shiboken.isValid(current):
+                current.close()
+            else:
+                # Belt-and-braces: `_release_current_dialog` runs on every exit
+                # path below, so a dead pointer here means a new path was added
+                # that does not release it. Touching it anyway is what made the
+                # original defect permanent -- `close()` raises RuntimeError
+                # inside `showEvent`, PySide's excepthook swallows it, and the
+                # assignment below never runs, so the SAME dead pointer greets
+                # every later dialog in the process.
+                logger.debug("dialog.discarded_stale_current_dialog_pointer")
 
         # Track this as the current dialog
         LocksmithDialog._current_dialog = self
@@ -529,11 +541,38 @@ class LocksmithDialog(QDialog):
         self.setWindowOpacity(0.0)
         self.fade_animation.start()
 
+    def _release_current_dialog(self):
+        """Drop the class-level pointer if it names THIS dialog.
+
+        `__init__` sets `WA_DeleteOnClose`, so every exit destroys the dialog --
+        but only `close()` runs `closeEvent`. `QDialog::reject`/`accept` go
+        through `done()`, which deletes without it. Measured on Qt 6.10.3, on
+        the bare base class:
+
+            close   -> _current_dialog None,  closeEvent ran
+            reject  -> _current_dialog set, valid=False, closeEvent did NOT run
+            accept  -> _current_dialog set, valid=False, closeEvent did NOT run
+            Escape  -> same as reject (Escape IS QDialog's reject)
+
+        In each of the last three the next dialog's `showEvent` raised "Internal
+        C++ object (LocksmithDialog) already deleted" -- any dialog, on any
+        parent, for the life of the process, because the failed `showEvent`
+        never reassigns the pointer either. So a single Escape anywhere in the
+        app used to disable every dialog until restart, silently: PySide's
+        excepthook logs the RuntimeError and carries on.
+
+        Every destruction path must release the pointer, not just the one that
+        happens to run `closeEvent`. Do NOT "simplify" this by routing
+        `reject()` through `close()`: `QDialog::closeEvent` calls `reject()`,
+        so that recurses.
+        """
+        if LocksmithDialog._current_dialog is self:
+            LocksmithDialog._current_dialog = None
+
     def closeEvent(self, event):
         """Override closeEvent to clean up overlay."""
         # Clear the current dialog reference if this is it
-        if LocksmithDialog._current_dialog == self:
-            LocksmithDialog._current_dialog = None
+        self._release_current_dialog()
 
         # Hide overlay
         if self.overlay:
@@ -545,12 +584,14 @@ class LocksmithDialog(QDialog):
         """Override reject to ensure overlay cleanup."""
         if self.overlay:
             self.overlay.hide()
+        self._release_current_dialog()
         super().reject()
 
     def accept(self):
         """Override accept to ensure overlay cleanup."""
         if self.overlay:
             self.overlay.hide()
+        self._release_current_dialog()
         super().accept()
 
     @Property(int)
