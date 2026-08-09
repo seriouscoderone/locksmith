@@ -241,11 +241,24 @@ def test_the_evidence_values_are_monospaced_and_not_truncated(qtbot):
     proportional face `l`/`I`/`1` and `O`/`0` are the same shape."""
     from locksmith.ui.styles import get_monospace_font_family
 
+    from PySide6.QtGui import QFontInfo, QFontMetrics
+
     shell, page = _page(qtbot)
     family = get_monospace_font_family()
     for label in (page._manifest_said_label, page._workbook_digest_label):
         assert family in label.styleSheet()
         assert label.text() == "—", "the unloaded state must not be a blank"
+
+        # The string being right proves nothing: the module default is the
+        # literal "monospace", which is NOT a registered family on macOS, and an
+        # unresolvable family falls back SILENTLY to the proportional system
+        # face. Measured before quoting + a real fallback were added: resolved
+        # .AppleSystemUIFont, fixedPitch False, `I` 3px against `W` 12px.
+        metrics = QFontMetrics(label.font())
+        assert metrics.horizontalAdvance("I") == metrics.horizontalAdvance("W"), (
+            f"{label.objectName()} resolved to "
+            f"{QFontInfo(label.font()).family()!r}, which is proportional — "
+            "the digests are not actually proof-readable")
 
     _loaded(page)
     assert page._manifest_said_label.text() == _MANIFEST, "truncated or altered"

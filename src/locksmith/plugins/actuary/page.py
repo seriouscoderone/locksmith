@@ -95,6 +95,20 @@ _TEL_STATE_LABELS = {
 }
 
 
+def _mono_css() -> str:
+    """A monospace `font-family` value that survives the font not being loaded.
+
+    QUOTED and with a real fallback, matching `styles.py`'s own global rule. The
+    bare form has two silent failure modes: the loaded family is "Source Code
+    Pro", whose space breaks an unquoted CSS family name, and the module default
+    is the literal string "monospace", which is NOT a registered family on macOS
+    -- measured, it resolves to .AppleSystemUIFont with fixedPitch False and `I`
+    at 3px against `W` at 12px. Proportional, on the two 44-character digests
+    this page exists to make proof-readable.
+    """
+    return f'"{get_monospace_font_family()}", Menlo, monospace'
+
+
 def _digest(raw: bytes) -> str:
     """qb64 digest of raw bytes -- byte-identical to `ipd.manifest._digest`
     and to keripy's own `Diger(ser=raw)` default, including on an empty
@@ -685,6 +699,10 @@ class ActuaryPage(QWidget):
         from PySide6.QtGui import QFont
 
         font = QFont(get_monospace_font_family())
+        # A QFont given a family Qt does not know falls back SILENTLY to the
+        # default proportional face. The style hint is what makes the fallback
+        # itself monospaced.
+        font.setStyleHint(QFont.StyleHint.Monospace)
         font.setPixelSize(13)
         return font
 
@@ -810,7 +828,7 @@ class ActuaryPage(QWidget):
             Qt.TextInteractionFlag.TextSelectableByMouse)
         label.setStyleSheet(
             f"color: {colors.TEXT_PRIMARY}; font-size: 14px;"
-            f" font-family: {get_monospace_font_family()};")
+            f" font-family: {_mono_css()};")
         return label
 
     def _attest_blocker_text(self) -> str:
@@ -962,7 +980,7 @@ class ActuaryPage(QWidget):
             f"color: {colors.SUCCESS_TEXT};"
             f" background-color: {colors.BACKGROUND_SUCCESS};"
             f" border-radius: 6px; padding: 8px 12px; font-size: 14px;"
-            f" font-family: {get_monospace_font_family()};")
+            f" font-family: {_mono_css()};")
         self._attested_banner.setText(
             f"Rate program attested. {said}" if said else "Rate program attested.")
         self._attested_banner.setVisible(True)
