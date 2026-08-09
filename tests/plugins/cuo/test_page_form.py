@@ -549,9 +549,13 @@ def test_the_read_back_shows_the_payload_that_gets_anchored(page, monkeypatch):
     real_dialog = page_module.MandateReviewDialog
 
     class Spy(real_dialog):
-        def __init__(self, payload, signer_name, parent=None):
+        # **kwargs, not a fixed signature: this spy exists to capture the PAYLOAD,
+        # and pinning the constructor's other arguments here made an unrelated
+        # change to the dialog (adding `signer_aid`) fail this test with a
+        # TypeError that says nothing about payloads.
+        def __init__(self, payload, *args, **kwargs):
             shown.append(payload)
-            super().__init__(payload, signer_name, parent=parent)
+            super().__init__(payload, *args, **kwargs)
 
     monkeypatch.setattr(page_module, "MandateReviewDialog", Spy)
 

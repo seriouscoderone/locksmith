@@ -13,7 +13,9 @@ from __future__ import annotations
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
+    QCheckBox,
     QFrame,
+    QScrollArea,
     QHBoxLayout,
     QLabel,
     QSizePolicy,
@@ -27,9 +29,13 @@ from locksmith.ui.toolkit.widgets.buttons import (
     LocksmithButton,
     LocksmithInvertedButton,
 )
+from locksmith.ui.styles import get_monospace_font_family
 from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
 
 _ROWS = ("line_of_business", "jurisdiction", "coverages")
+#: Rendered in the monospace face — see `_row`. Codes and dates, not prose: these
+#: are the values a human has to proof-read character by character.
+_MONO_FIELDS = frozenset({"jurisdiction", "coverages"})
 
 #: ux-patterns.md:82 "Max width: `sm: 400px`, `md: 560px`", and :674 builds its
 #: worked modal at `md`.
@@ -39,9 +45,37 @@ _MODAL_WIDTH = 560
 _FOOTER_WIDTH = _MODAL_WIDTH - 32
 #: ux-patterns.md:80 "Backdrop: Dark overlay (`bg-black/50`)" — 50% of 255.
 _BACKDROP_ALPHA = 128
+#: Header + pinned caution + acknowledgement + button row, i.e. everything the
+#: body does NOT get. Measured on the built dialog rather than derived.
+_DIALOG_CHROME_HEIGHT = 300
+#: Never squeeze the body below this, however small the window.
+_MIN_BODY_HEIGHT = 180
+#: The width a body label actually wraps at: the modal less the base class's
+#: 20px content-area side margins (dialogs.py:436), less the thesis rail's own
+#: 15px of border and padding.
+_BODY_WIDTH = _MODAL_WIDTH - 40 - 15
 
 
-def _row(label: str, value: str) -> QWidget:
+def _fit_wrapped(label: QLabel, width: int) -> None:
+    """Give a word-wrapping QLabel the height it will actually paint at `width`.
+
+    `sizeHint()` is computed at the label's NATURAL width -- one line -- so a
+    label that wraps reports less height than it needs and the layout hands it
+    exactly that. Measured: the thesis at four wrapped lines reported 80px and
+    painted its last line underneath the pinned caution, while `visibleRegion()`
+    still claimed 80 of 80. `page._fit` has the same blind spot; it works there
+    only because those labels wrap at their natural width.
+
+    `heightForWidth` is the only call that asks the real question.
+    """
+    if not label.text():
+        label.setMinimumHeight(0)
+        return
+    label.setMinimumHeight(max(label.heightForWidth(width),
+                               label.sizeHint().height()))
+
+
+def _row(label: str, value: str, mono: bool = False) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
     # 4px, not 3: design-system.md:140 sets the base unit at 4px and the scale
@@ -76,7 +110,19 @@ def _row(label: str, value: str) -> QWidget:
     # layer's patterns holding. Force plain text so a value can never render as
     # markup regardless of what upstream validation does or stops doing.
     shown.setTextFormat(Qt.TextFormat.PlainText)
-    shown.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 14px;")
+    # Machine-shaped values go in the monospace face. `US-AB` and `US-AU`, or
+    # `2026-08-19` and `2026-08-91`, are near-identical shapes in a proportional
+    # UI face at 14px -- and a transposed jurisdiction is precisely the error no
+    # validation can catch, which is why the form's own help text delegates it to
+    # this screen. Mono makes the substitution visible and signals "this is a
+    # literal string, not prose".
+    #
+    # Resolved through `get_monospace_font_family()`, never a hardcoded stack: the
+    # app picks the family centrally, and the suite's "SF Mono"/"Menlo" are its
+    # FALLBACKS (design-system.md:94), not the face.
+    face = f" font-family: {get_monospace_font_family()};" if mono else ""
+    shown.setStyleSheet(
+        f"color: {colors.TEXT_PRIMARY}; font-size: 14px;{face}")
     layout.addWidget(name)
     layout.addWidget(shown, 1)
     return row
@@ -87,7 +133,8 @@ class MandateReviewDialog(LocksmithDialog):
 
     confirm = Signal()
 
-    def __init__(self, payload: dict, signer_name: str, parent=None):
+    def __init__(self, payload: dict, signer_name: str, signer_aid: str = "",
+                 parent=None):
         self._confirmed = False
         self._finished = False
 
@@ -100,11 +147,13 @@ class MandateReviewDialog(LocksmithDialog):
         outer.setContentsMargins(0, 16, 0, 0)
         outer.setSpacing(16)
 
-        signer = QLabel(copy.REVIEW_SIGNER.format(cuo_name=signer_name))
-        signer.setObjectName("mandateReviewDialog.signer")
-        signer.setWordWrap(True)
-        signer.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-        outer.addWidget(signer)
+        # FIRST, above the values. A prompt to check that arrives after the thing
+        # to be checked is a prompt to check nothing.
+        intro = QLabel(copy.REVIEW_INTRO)
+        intro.setObjectName("mandateReviewDialog.intro")
+        intro.setWordWrap(True)
+        intro.setStyleSheet(f"color: {colors.TEXT_PRIMARY}; font-size: 14px;")
+        outer.addWidget(intro)
 
         summary = QWidget()
         summary.setObjectName("mandateReviewDialog.summary")
@@ -114,12 +163,26 @@ class MandateReviewDialog(LocksmithDialog):
         for field in _ROWS:
             value = payload.get(field)
             shown = ", ".join(value) if isinstance(value, list) else str(value or "")
-            rows.addWidget(_row(copy.FIELD_LABEL[field], shown))
+            rows.addWidget(_row(copy.FIELD_LABEL[field], shown,
+                                mono=field in _MONO_FIELDS))
         # ISO on purpose -- see the module docstring.
         rows.addWidget(_row(copy.REVIEW_IN_FORCE_LABEL, (
             f"{payload.get('window_opens', '')} through "
-            f"{payload.get('window_closes', '')}, inclusive")))
+            f"{payload.get('window_closes', '')}, inclusive"), mono=True))
+        # The signer is a ROW, not prose: a label in front of the value stops a
+        # keystore alias like "default" reading as an adverb. The AID rides with
+        # it because the alias is a local label and the prefix is what signs.
+        signed_by = signer_name if not signer_aid else f"{signer_name}\n{signer_aid}"
+        signer_row = _row(copy.REVIEW_SIGNER_LABEL, signed_by, mono=bool(signer_aid))
+        signer_row.setObjectName("mandateReviewDialog.signer")
+        rows.addWidget(signer_row)
         outer.addWidget(summary)
+
+        authority = QLabel(copy.REVIEW_AUTHORITY)
+        authority.setObjectName("mandateReviewDialog.authority")
+        authority.setWordWrap(True)
+        authority.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        outer.addWidget(authority)
 
         thesis_label = QLabel(copy.REVIEW_THESIS_LABEL)
         # design-system.md:260 "Section header | text-lg font-semibold
@@ -164,9 +227,34 @@ class MandateReviewDialog(LocksmithDialog):
             f" border-left: 3px solid {colors.BORDER_DARK};")
         outer.addWidget(thesis)
 
-        caution = QLabel(copy.REVIEW_CAUTION)
+        # Split into a lede and a body inside ONE amber frame. 44 words at a
+        # single size is texture by the fifth mandate of the day; the lede is the
+        # whole decision and the body is the detail behind it. The frame carries
+        # the fill so the two labels read as one block.
+        caution = QFrame()
         caution.setObjectName("mandateReviewDialog.caution")
-        caution.setWordWrap(True)
+        caution_column = QVBoxLayout(caution)
+        caution_column.setContentsMargins(12, 10, 12, 10)
+        caution_column.setSpacing(4)
+
+        caution_head = QLabel(copy.REVIEW_CAUTION_HEAD)
+        caution_head.setObjectName("mandateReviewDialog.cautionHead")
+        caution_head.setWordWrap(True)
+        # 14px/600, not bold: design-system.md:118 reserves "bold" for 700, and
+        # WCAG's 3:1 relaxation for large-bold text therefore does NOT apply here
+        # -- this has to clear 4.5:1 on the amber fill, which WARNING_TEXT does.
+        caution_head.setStyleSheet(
+            f"color: {colors.WARNING_TEXT}; font-size: 14px; font-weight: 600;"
+            f" background: transparent; border: none; padding: 0;")
+        caution_column.addWidget(caution_head)
+
+        caution_body = QLabel(copy.REVIEW_CAUTION)
+        caution_body.setObjectName("mandateReviewDialog.cautionBody")
+        caution_body.setWordWrap(True)
+        caution_body.setStyleSheet(
+            f"color: {colors.WARNING_TEXT}; font-size: 12px;"
+            f" background: transparent; border: none; padding: 0;")
+        caution_column.addWidget(caution_body)
         # Was WARNING_TEXT on BACKGROUND_HIGHLIGHT: the SAME grey chip as the
         # thesis directly above it, differing only in text colour, so nothing
         # marked the one sentence that says "Signing is final." as a warning at
@@ -178,15 +266,34 @@ class MandateReviewDialog(LocksmithDialog):
         # The suite defines no token for "caution before an irreversible act":
         # its Error is scoped to validation failures and its Warning to pending
         # actions and deadlines. This is a judgment call, not a citation.
+        # objectName-scoped so the fill and rule land on the FRAME only. An
+        # unscoped rule cascades to both child labels, and each would then paint
+        # its own amber box with its own left rule inside the outer one.
         caution.setStyleSheet(
-            f"color: {colors.WARNING_TEXT}; background: {colors.BACKGROUND_WARNING};"
+            f"QFrame#mandateReviewDialog\\.caution {{"
+            f" background: {colors.BACKGROUND_WARNING};"
             f" border-left: 4px solid {colors.WARNING_BORDER};"
-            f" border-radius: 4px; padding: 10px 12px; font-size: 12px;")
+            f" border-radius: 4px; }}")
 
         self._back = LocksmithInvertedButton(copy.REVIEW_BACK)
         self._back.setObjectName("mandateReviewDialog.back")
         self._confirm_button = LocksmithButton(copy.REVIEW_CONFIRM)
         self._confirm_button.setObjectName("mandateReviewDialog.confirm")
+
+        # The affirmative act. Signing used to be two clicks in a straight line
+        # from a filled form, the second landing on an already-enabled primary, so
+        # what stood between a mandate and the world was the ABSENCE of an
+        # objection. The modal's opening state is now non-signable.
+        #
+        # Honest about what this does and does not buy: it will not make anyone
+        # read. What it buys is that a fast stray click cannot land on an enabled
+        # primary, and that publishing requires an action taken on purpose.
+        self._ack = QCheckBox(copy.REVIEW_ACK)
+        self._ack.setObjectName("mandateReviewDialog.ack")
+        self._ack.setStyleSheet(
+            f"QCheckBox {{ color: {colors.TEXT_PRIMARY}; font-size: 12px; }}")
+        self._confirm_button.setEnabled(False)
+        self._ack.toggled.connect(self._confirm_button.setEnabled)
 
         # ux-patterns.md:288-289 puts the secondary on the LEFT of the footer and
         # the primary on the RIGHT. The obvious `addStretch(1)` between them does
@@ -220,6 +327,7 @@ class MandateReviewDialog(LocksmithDialog):
         footer_column.setContentsMargins(0, 0, 0, 0)
         footer_column.setSpacing(16)
         footer_column.addWidget(caution)
+        footer_column.addWidget(self._ack)
 
         footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
@@ -235,17 +343,64 @@ class MandateReviewDialog(LocksmithDialog):
         # buttons; a third, unlabelled way out of the last screen before an
         # irreversible act is not an affordance, it is an accident waiting for a
         # mis-aimed click. It is also the one exit `_on_confirm` cannot disable.
-        # `show_overlay=True` is what makes this actually modal. Measured before:
-        # `isModal() False`, `self.overlay None` -- the base class defaults
-        # show_overlay False (dialogs.py:87) and only calls `setModal(True)` when
-        # it is on, so the app's one irreversibility confirmation left the whole
-        # window visible and clickable behind it. ux-patterns.md:80 requires a
-        # backdrop; its "clicking backdrop closes modal (except destructive
-        # confirmations)" carve-out is why nothing here dismisses on scrim click.
+        # NO `show_overlay`. ux-patterns.md:80 asks for a `bg-black/50` backdrop
+        # and this dialog carried one for two commits -- but NOTHING else in the
+        # application does (`AppSettingsDialog` and the rest all take the
+        # show_overlay=False default), and the owner, looking at the CUO modal
+        # beside Settings and the vault drawer, found this one visibly darker than
+        # every other dialog in the product. It was two layers: the app already
+        # reads as dimmed behind a modal, and this added a second scrim over it.
+        #
+        # The suite is a web spec and its backdrop rule assumes it is the only
+        # dimming mechanism. House consistency wins over a rule that produces a
+        # dialog unlike every other one. Owner decision, 2026-08-08.
+        #
+        # Modality is NOT lost with it: the page calls `dialog.open()`, which sets
+        # WindowModal on its own -- measured, `isModal() True`. `show_overlay` was
+        # only ever an additional `setModal(True)` (dialogs.py:105-106), i.e.
+        # APPLICATION modality, which is also what greyed the window's own title
+        # bar and made this dialog look different from Settings.
         super().__init__(parent=parent, title=copy.REVIEW_TITLE,
                          content=body, buttons=buttons,
-                         show_close_button=False, show_overlay=True)
+                         show_close_button=False)
         self.setObjectName("mandateReviewDialog")
+
+        # Grow to fit rather than scroll. Measured after the caution moved to the
+        # footer: the scroll viewport was 238px against 345px of content, so the
+        # THESIS -- the thing actually being signed -- was below the fold on open,
+        # which is a worse failure than the clipped caution that prompted the
+        # move. Nothing was forcing the dialog taller: the base class already
+        # allowed 1000px (`_max_dialog_height`) and the dialog was using 533.
+        #
+        # Bounded, not unbounded: `_max_dialog_height` is the window's own height
+        # less a margin, and the chrome allowance keeps the header, the pinned
+        # caution and the buttons on screen. Past that the body scrolls again,
+        # which is the correct behaviour for a genuinely long thesis.
+        # Before measuring the body: every wrapping label must first know the
+        # height it will really paint at this width, or the body's own height is
+        # computed from labels that are each a line short.
+        for wrapped in body.findChildren(QLabel):
+            if wrapped.wordWrap():
+                _fit_wrapped(wrapped, _BODY_WIDTH)
+        body.adjustSize()
+
+        scroll = self.findChild(QScrollArea)
+        if scroll is not None:
+            # `_max_dialog_height` is populated in the base class's showEvent and
+            # is still None here, so ask the calculator directly.
+            ceiling = self._calculate_max_dialog_height() or 1000
+            budget = max(_MIN_BODY_HEIGHT, ceiling - _DIALOG_CHROME_HEIGHT)
+            # heightForWidth at the REAL width, not sizeHint. A word-wrapped
+            # QLabel's sizeHint is computed at its natural width and
+            # under-reports once it wraps -- measured, the long thesis's last
+            # line painted underneath the pinned caution while Qt reported
+            # content and viewport both 402px and showed no scrollbar.
+            width = _FOOTER_WIDTH
+            layout = body.layout()
+            wanted = (layout.heightForWidth(width) if layout is not None
+                      and layout.hasHeightForWidth() else body.sizeHint().height())
+            scroll.setMinimumHeight(min(max(wanted, body.sizeHint().height()),
+                                        budget))
 
         # ux-patterns.md:82 "Max width: sm: 400px, md: 560px" and :674 builds its
         # worked modal at `md`. This dialog set no width at all and came out at
@@ -272,11 +427,10 @@ class MandateReviewDialog(LocksmithDialog):
             divider.setFrameShape(QFrame.Shape.NoFrame)
             divider.setFixedHeight(1)
 
-        # ux-patterns.md:80 specifies the backdrop as `bg-black/50` -- alpha 128 of
-        # 255. The base class paints `rgba(0, 0, 0, 150)` (dialogs.py:479), which
-        # is 59%, and the difference is visible: the owner's first reaction to the
-        # scrim landing was that it looked too dark. Restyled here rather than in
-        # the base class, which every dialog in the app inherits.
+        # Kept, and harmless, for whenever a scrim is switched back on: the base
+        # class paints `rgba(0, 0, 0, 150)` = 59% (dialogs.py:479) where
+        # ux-patterns.md:80 says `bg-black/50` = 128. `self.overlay` is None while
+        # `show_overlay` stays off, so this is a no-op today.
         if self.overlay is not None:
             self.overlay.setStyleSheet(
                 f"background-color: rgba(0, 0, 0, {_BACKDROP_ALPHA});")
@@ -301,7 +455,12 @@ class MandateReviewDialog(LocksmithDialog):
         self._back.setAutoDefault(True)
         self._confirm_button.setDefault(False)
         self._confirm_button.setAutoDefault(False)
-        self._back.setFocus()
+        # ux-patterns.md:426 puts opening focus on the first interactive element,
+        # which is now the acknowledgement. The safety property is unchanged and
+        # is what matters here: Space toggles a focused checkbox, Return still
+        # activates the DEFAULT button, which is "Keep editing" -- so no single
+        # keystroke on the freshly-opened dialog can sign.
+        self._ack.setFocus()
 
     def finish(self) -> None:
         """The outcome has arrived; release the in-flight guard and close.
@@ -349,9 +508,15 @@ class MandateReviewDialog(LocksmithDialog):
         return self._confirmed
 
     def fail(self, message: str) -> None:
-        """Re-enable the primary after a failed anchor, so a retry is possible."""
+        """Re-enable the primary after a failed anchor, so a retry is possible.
+
+        The acknowledgement is not re-demanded: the CUO already gave it for these
+        exact values, which have not changed, and clearing it would read as the
+        app doubting them rather than as a fresh decision. The primary comes back
+        only if it is still ticked.
+        """
         self._confirmed = False
-        self._confirm_button.setEnabled(True)
+        self._confirm_button.setEnabled(self._ack.isChecked())
         self._confirm_button.setText(copy.REVIEW_CONFIRM)
         self._back.setEnabled(True)
         self.show_error(message)

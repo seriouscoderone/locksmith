@@ -14,7 +14,9 @@ vocabulary.
 from __future__ import annotations
 
 TOKENS = frozenset({
-    "code", "cuo_name", "line_of_business", "jurisdiction",
+    # `cuo_name` retired with REVIEW_SIGNER: the signer became a read-back ROW,
+    # so the alias is a value now and no longer interpolated into prose.
+    "code", "line_of_business", "jurisdiction",
     "existing_opens", "existing_closes", "said",
 })
 
@@ -133,14 +135,44 @@ ANCHOR_TIMEOUT = (
     "before declaring this one a second time.")
 
 REVIEW_TITLE = "Review this mandate before signing"
-REVIEW_SIGNER = (
-    "Signing as {cuo_name}, Chief Underwriting Officer, on the authority granted "
-    "to you by Usurance administration.")
+
+#: The screen never asked the reader to do the one thing only a human can do.
+#: `FIELD_HELP["jurisdiction"]` on the form explicitly delegates the catch to this
+#: screen ("the app cannot tell US-UT from US-TU, so read your code back before
+#: you sign") and this screen then said nothing. Named as the FIRST thing under
+#: the title, because a prompt to check that arrives after the values is a prompt
+#: to check nothing.
+REVIEW_INTRO = (
+    "Read every value. This is exactly what gets signed, after the app's own "
+    "reformatting — and no check can tell US-UT from US-TU.")
+
+#: Signer as a read-back ROW, not prose. As a sentence it read "Signing as
+#: default, Chief Underwriting Officer" whenever the keystore alias was the
+#: default one -- which parses aloud as "signing, by default", the opposite of
+#: what this screen exists to prove. A label in front of the value stops the alias
+#: acting as an adverb. The AID rides alongside because the alias is local
+#: decoration and the prefix is what actually signs.
+REVIEW_SIGNER_LABEL = "Signed by"
+REVIEW_AUTHORITY = (
+    "Signing as Chief Underwriting Officer, on the authority granted to you by "
+    "Usurance administration.")
+
+#: The caution, split. 44 words at one size read as texture by the fifth mandate
+#: of the day; the lede is the whole decision and the body is the detail behind
+#: it. Both are rendered inside one amber block.
+REVIEW_CAUTION_HEAD = "Signing is final, and public."
 REVIEW_CAUTION = (
-    "Signing is final. These values can never be edited, and the whole mandate, "
-    "thesis included, goes to anyone who asks for it. To correct a mandate, "
-    "declare a new one. Withdrawing later records that you stopped pursuing it "
-    "and leaves what you declared readable.")
+    "These values can never be edited, and the whole mandate, thesis included, "
+    "goes to anyone who asks for it. To correct a mandate, declare a new one. "
+    "Withdrawing later records that you stopped pursuing it and leaves what you "
+    "declared readable.")
+
+#: The affirmative act. Signing was two clicks in a straight line from a filled
+#: form, with the second one landing on an already-enabled primary; this makes the
+#: modal's opening state non-signable, so what stands between a mandate and the
+#: world is an action rather than the absence of an objection.
+REVIEW_ACK = "I have read this mandate and intend it to be published."
+
 REVIEW_CONFIRM = "Sign mandate"
 REVIEW_BACK = "Keep editing"
 REVIEW_IN_FORCE_LABEL = "In force"

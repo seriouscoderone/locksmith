@@ -122,7 +122,9 @@ def test_the_intro_states_both_irreversible_facts():
 
 
 def test_the_caution_says_it_cannot_be_undone_in_some_form():
-    caution = copy.REVIEW_CAUTION.lower()
+    """Reads the lede AND the body: the caution is two strings now and "final"
+    lives in the lede, so checking one half would let the other be emptied."""
+    caution = f"{copy.REVIEW_CAUTION_HEAD} {copy.REVIEW_CAUTION}".lower()
     assert "final" in caution or "cannot be undone" in caution
     assert "never be edited" in caution or "cannot be edited" in caution
 

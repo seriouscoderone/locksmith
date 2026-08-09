@@ -21,6 +21,17 @@ _PAYLOAD = {
 }
 
 
+def _ack(dialog):
+    """Tick the acknowledgement, which now gates the primary.
+
+    A helper rather than a fixture: several tests below assert on the state
+    BEFORE it is given, so the ticking has to be explicit and visible at each
+    call site.
+    """
+    dialog._ack.setChecked(True)
+    return dialog
+
+
 def _text(dialog) -> str:
     from PySide6.QtWidgets import QLabel
     return "\n".join(w.text() for w in dialog.findChildren(QLabel) if w.text())
@@ -63,6 +74,8 @@ def test_it_starts_unconfirmed_and_confirms_on_the_primary(qtbot):
     assert dialog.confirmed() is False
     button = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
     assert button is not None
+    assert button.isEnabled() is False, "the primary must start un-signable"
+    _ack(dialog)
     with qtbot.waitSignal(dialog.confirm, timeout=1000):
         button.click()
     assert dialog.confirmed() is True
@@ -92,6 +105,7 @@ def test_a_second_click_cannot_emit_confirm_again(qtbot):
     button = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
     emitted = []
     dialog.confirm.connect(lambda: emitted.append(1))
+    _ack(dialog)
     button.click()
     button.click()
     assert emitted == [1]
@@ -105,6 +119,7 @@ def test_fail_reenables_the_primary_for_a_retry(qtbot):
     dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
     qtbot.addWidget(dialog)
     button = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    _ack(dialog)
     button.click()
     assert dialog.confirmed() is True
 
@@ -191,7 +206,12 @@ def test_the_irreversible_primary_is_neither_the_default_nor_focused(qtbot):
     back = dialog.findChild(QPushButton, "mandateReviewDialog.back")
     assert confirm.isDefault() is False and confirm.autoDefault() is False
     assert back.isDefault() is True
-    assert dialog.focusWidget() is back
+    # Opening focus is now the acknowledgement, not "Keep editing":
+    # ux-patterns.md:426 puts it on the first interactive element. The property
+    # this test exists for is unchanged and asserted above -- the irreversible
+    # primary is neither the default nor focused.
+    assert dialog.focusWidget() is dialog._ack
+    assert dialog.focusWidget() is not confirm
 
 
 def test_one_return_keystroke_does_not_sign(qtbot):
@@ -263,6 +283,7 @@ def test_keep_editing_is_refused_once_signing_has_started(qtbot):
     qtbot.addWidget(dialog)
     back = dialog.findChild(QPushButton, "mandateReviewDialog.back")
     assert back.isEnabled() is True
+    _ack(dialog)
     dialog.findChild(QPushButton, "mandateReviewDialog.confirm").click()
     assert back.isEnabled() is False
     dialog.fail("boom")
@@ -313,6 +334,7 @@ def test_escape_cannot_destroy_the_read_back_mid_signing(qtbot):
     dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
     qtbot.addWidget(dialog)
     dialog.show()
+    _ack(dialog)
     dialog.findChild(QPushButton, "mandateReviewDialog.confirm").click()
 
     qtbot.keyClick(dialog, Qt.Key.Key_Escape)
@@ -345,19 +367,28 @@ def _built(qtbot):
     return host, dialog
 
 
-def test_the_read_back_is_actually_modal_and_has_a_backdrop(qtbot):
-    """ux-patterns.md:80 requires a backdrop. `show_overlay` defaults False and
-    the plugin never passed it, so `setModal(True)` never ran either -- measured
-    `isModal() False`, `overlay None`. The app's one irreversibility confirmation
-    left the whole window visible and clickable behind it."""
+def test_the_read_back_is_modal_but_carries_no_extra_scrim(qtbot):
+    """Two properties, and the second is an owner decision that overrides the suite.
+
+    MODAL: `show_overlay` defaults False and the plugin never passed it, so
+    `setModal(True)` never ran -- measured `isModal() False`. The page calls
+    `dialog.open()`, which sets WindowModal on its own, and that is what makes the
+    app's one irreversibility confirmation actually block.
+
+    NO SCRIM: ux-patterns.md:80 asks for a `bg-black/50` backdrop and this dialog
+    carried one for two commits. Nothing else in the application does --
+    `AppSettingsDialog` and the rest take the show_overlay=False default -- and
+    the owner, comparing the CUO modal with Settings and the vault drawer, found
+    this one visibly darker than every other dialog in the product: the app
+    already reads as dimmed behind a modal, and the scrim was a second layer on
+    top. The suite's rule assumes it is the only dimming mechanism. Owner
+    decision, 2026-08-08.
+    """
     host, dialog = _built(qtbot)
     assert dialog.isModal() is True
-    assert dialog.overlay is not None, "no scrim behind an irreversible confirmation"
-    # ux-patterns.md:80 fixes the scrim at `bg-black/50` = alpha 128 of 255. The
-    # base class paints 150 (59%), and the difference is visible -- the owner's
-    # first reaction to the scrim landing was that it read too dark.
-    assert "rgba(0, 0, 0, 128)" in dialog.overlay.styleSheet(), (
-        f"backdrop is not bg-black/50: {dialog.overlay.styleSheet().strip()!r}")
+    assert dialog.overlay is None, (
+        "a scrim is back; it double-dims, because the app already dims behind a "
+        "modal and no other dialog adds one")
     dialog._finished = True
     dialog.close()
     host.hide()
@@ -427,7 +458,11 @@ def test_the_caution_is_not_the_same_chip_as_the_thesis(qtbot):
     from locksmith.ui import colors
 
     host, dialog = _built(qtbot)
-    caution = dialog.findChild(QLabel, "mandateReviewDialog.caution").styleSheet()
+    from PySide6.QtWidgets import QFrame
+
+    # A QFrame now, not a QLabel: the caution is a lede plus a body inside one
+    # amber block, and the frame carries the fill so the two read as one.
+    caution = dialog.findChild(QFrame, "mandateReviewDialog.caution").styleSheet()
     thesis = dialog.findChild(QLabel, "mandateReviewDialog.thesis").styleSheet()
     assert colors.BACKGROUND_WARNING.lower() in caution.lower()
     assert colors.BACKGROUND_HIGHLIGHT.lower() not in caution.lower(), (
@@ -484,7 +519,7 @@ def test_the_caution_can_never_scroll_out_of_view(qtbot):
     The one block carrying irreversibility must not be scrollable on the screen
     whose entire job is to make irreversibility land before the click.
     """
-    from PySide6.QtWidgets import QScrollArea
+    from PySide6.QtWidgets import QFrame, QScrollArea
 
     long_thesis = (
         "Grow teen-driver share in Utah by pricing telematics-verified low-mileage "
@@ -501,7 +536,7 @@ def test_the_caution_can_never_scroll_out_of_view(qtbot):
     dialog.open()
     qtbot.waitUntil(dialog.isVisible, timeout=2000)
 
-    caution = dialog.findChild(QLabel, "mandateReviewDialog.caution")
+    caution = dialog.findChild(QFrame, "mandateReviewDialog.caution")
     scroll = dialog.findChild(QScrollArea)
     assert scroll is not None, "retarget this guard — the base class stopped scrolling"
     assert not scroll.isAncestorOf(caution), (
@@ -513,6 +548,174 @@ def test_the_caution_can_never_scroll_out_of_view(qtbot):
         "the caution extends past the bottom of the dialog")
     assert caution.visibleRegion().boundingRect().height() == caution.height(), (
         "part of the caution is not actually painted")
+
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+# --- what the UX panel changed, pinned -------------------------------------------
+
+
+def test_the_screen_asks_the_reader_to_check_before_showing_the_values(qtbot):
+    """The form's own help text delegates the catch to this screen ("the app
+    cannot tell US-UT from US-TU, so read your code back before you sign") and
+    this screen then said nothing at all. Position matters as much as presence: a
+    prompt to check that arrives after the values is a prompt to check nothing."""
+    host, dialog = _built(qtbot)
+    intro = dialog.findChild(QLabel, "mandateReviewDialog.intro")
+    assert intro is not None and intro.text() == copy.REVIEW_INTRO
+
+    summary = dialog.findChild(QWidget, "mandateReviewDialog.summary")
+    assert intro.mapTo(dialog, intro.rect().topLeft()).y() < \
+        summary.mapTo(dialog, summary.rect().topLeft()).y()
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_signer_is_a_row_with_its_aid_not_prose(qtbot):
+    """As a sentence it read "Signing as default, Chief Underwriting Officer" --
+    which parses aloud as "signing, by default", the opposite of what a screen
+    about authority is establishing. A label in front of the value stops the alias
+    acting as an adverb, and the AID is what actually signs."""
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(1280, 900)
+    host.show()
+    qtbot.waitExposed(host)
+    aid = "EGjm-X1JMz-yKFeumEZ9meSVNvnV8VTXmjJMlyBVMMTO"
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole",
+                                 signer_aid=aid, parent=host)
+    dialog.open()
+    qtbot.waitUntil(dialog.isVisible, timeout=2000)
+
+    shown = _text(dialog)
+    assert copy.REVIEW_SIGNER_LABEL.upper() in shown.upper()
+    assert "Dana Cole" in shown
+    assert aid in shown, "the identifier that actually signs is not on screen"
+    assert not hasattr(copy, "REVIEW_SIGNER"), (
+        "the prose signer line is back; it is what let an alias read as an adverb")
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_machine_shaped_values_are_monospaced(qtbot):
+    """`US-AB` vs `US-AU`, `2026-08-19` vs `2026-08-91`: near-identical shapes in
+    a proportional face, and a transposition here is exactly the error no
+    validation can catch. Prose is NOT monospaced -- the line of business is a
+    word, not a code."""
+    from locksmith.ui.styles import get_monospace_font_family
+
+    host, dialog = _built(qtbot)
+    family = get_monospace_font_family()
+    by_text = {w.text(): w for w in dialog.findChildren(QLabel) if w.text()}
+
+    assert family in by_text["US-UT"].styleSheet()
+    assert family in by_text["BI, PD"].styleSheet()
+    assert family in by_text["2027-01-01 through 2027-12-31, inclusive"].styleSheet()
+    assert family not in by_text["auto"].styleSheet(), (
+        "the line of business is a word, not a code")
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_caution_leads_with_the_decision(qtbot):
+    """44 words at one size is texture by the fifth mandate of the day. The lede
+    carries the decision; the body carries the detail."""
+    host, dialog = _built(qtbot)
+    head = dialog.findChild(QLabel, "mandateReviewDialog.cautionHead")
+    body = dialog.findChild(QLabel, "mandateReviewDialog.cautionBody")
+    assert head is not None and body is not None
+    assert head.text() == copy.REVIEW_CAUTION_HEAD
+    assert len(head.text().split()) <= 8, "a lede nobody can take in at a glance"
+    assert "font-weight: 600" in head.styleSheet()
+    assert "14px" in head.styleSheet() and "12px" in body.styleSheet(), (
+        "the lede must outrank the body")
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_signing_requires_an_affirmative_act(qtbot):
+    """Signing was two clicks in a straight line from a filled form, the second
+    landing on an already-enabled primary -- so what stood between a mandate and
+    the world was the ABSENCE of an objection. Honest about what this buys: not
+    that anyone reads, but that publishing takes an action taken on purpose."""
+    host, dialog = _built(qtbot)
+    confirm = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    ack = dialog.findChild(QWidget, "mandateReviewDialog.ack")
+    assert ack is not None
+
+    assert confirm.isEnabled() is False, "the opening state must be non-signable"
+    qtbot.keyClick(ack, Qt.Key.Key_Space)
+    assert ack.isChecked() is True
+    assert confirm.isEnabled() is True
+    qtbot.keyClick(ack, Qt.Key.Key_Space)
+    assert confirm.isEnabled() is False, "un-acknowledging must re-lock the primary"
+
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_a_failed_anchor_does_not_re_demand_the_acknowledgement(qtbot):
+    """The CUO already gave it, for these exact values, which have not changed.
+    Clearing it would read as the app doubting them rather than as a fresh
+    decision."""
+    host, dialog = _built(qtbot)
+    confirm = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    _ack(dialog)
+    confirm.click()
+    dialog.fail("boom")
+    assert dialog._ack.isChecked() is True
+    assert confirm.isEnabled() is True, "the retry is blocked behind a re-tick"
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_no_wrapping_label_is_shorter_than_the_text_it_paints(qtbot):
+    """The wrapped-QLabel trap, pinned across every label at once.
+
+    `sizeHint()` is computed at a label's NATURAL width -- one line -- so a label
+    that wraps reports less height than it needs and the layout hands it exactly
+    that. Measured on the long thesis: 80px reported, 99px required, and the last
+    line ("alone.") painted underneath the pinned caution. `visibleRegion()` still
+    claimed 80 of 80, which is why this asserts against `heightForWidth` instead.
+
+    `page._fit` shares the blind spot; it survives there only because those labels
+    wrap at their natural width.
+    """
+    long_thesis = (
+        "Grow teen-driver share in Utah by pricing telematics-verified low-mileage "
+        "risk below the market, accepting a thinner margin for two years to build a "
+        "book we can defend on loss ratio rather than on price alone.")
+    payload = dict(_PAYLOAD, thesis=long_thesis)
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(1280, 900)
+    host.show()
+    qtbot.waitExposed(host)
+    dialog = MandateReviewDialog(payload, signer_name="Dana Cole",
+                                 signer_aid="E" + "A" * 43, parent=host)
+    dialog.open()
+    qtbot.waitUntil(dialog.isVisible, timeout=2000)
+
+    squeezed = []
+    for label in dialog.findChildren(QLabel):
+        if not label.wordWrap() or not label.text() or label.width() <= 0:
+            continue
+        needed = label.heightForWidth(label.width())
+        if needed > label.height():
+            squeezed.append(
+                f"{label.objectName() or label.text()[:24]!r}: "
+                f"{label.height()}px for {needed}px of text")
+    assert not squeezed, "labels painting outside their own height:\n  " + \
+        "\n  ".join(squeezed)
 
     dialog._finished = True
     dialog.close()

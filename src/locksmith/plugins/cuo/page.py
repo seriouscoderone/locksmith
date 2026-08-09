@@ -928,7 +928,7 @@ class CuoMandatePage(LocksmithFormPage):
             return
 
         dialog = MandateReviewDialog(payload, signer_name=self._signer_name(),
-                                     parent=self)
+                                     signer_aid=self._signer_aid(), parent=self)
         self.review_dialog = dialog
         # Connected ONCE, and guarded on the page side as well: the dialog
         # disables its own primary after a click, but nothing stops a second
@@ -973,13 +973,21 @@ class CuoMandatePage(LocksmithFormPage):
         self._enter_flight()
         self._anchor(payload)
 
+    #: Keystore aliases that name nobody. `hab.name` is a LOCAL label the vault
+    #: chose, not an identity, and on a fresh install it is "default" -- which the
+    #: read-back rendered as "Signing as default, Chief Underwriting Officer",
+    #: parsing aloud as "signing, by default": the opposite of what a screen about
+    #: authority is trying to establish. Compared case-folded and stripped.
+    _PLACEHOLDER_ALIASES = frozenset({"", "default", "main", "primary", "test"})
+
     def _signer_name(self) -> str:
-        """Who the read-back says is signing.
+        """The name the read-back shows for the signer.
 
         The `cuo_role` credential carries protocol fields only (`d`, `i`, `dt`) --
-        there is no personal name anywhere in the ecosystem to read -- so the
-        signer is named by their identifier's local alias, falling back to its
-        prefix.
+        there is no personal name anywhere in the ecosystem to read -- so this is
+        the identifier's local alias, and `UNNAMED_SIGNER` when that alias names
+        nobody. The AID is carried separately by `_signer_aid`; an alias is
+        decoration, and the prefix is what actually signs.
         """
         try:
             hab = self._cuo_hab()
@@ -987,8 +995,24 @@ class CuoMandatePage(LocksmithFormPage):
             hab = None
         if hab is None:
             return copy.UNNAMED_SIGNER
-        return getattr(hab, "name", None) or getattr(hab, "pre", None) or (
-            copy.UNNAMED_SIGNER)
+        alias = (getattr(hab, "name", None) or "").strip()
+        if alias.lower() in self._PLACEHOLDER_ALIASES:
+            return copy.UNNAMED_SIGNER
+        return alias or copy.UNNAMED_SIGNER
+
+    def _signer_aid(self) -> str:
+        """The identifier prefix that will actually sign, or "" if unresolvable.
+
+        Shown beside the alias because the alias is a local label anyone can
+        change and the AID is the thing a verifier will see. On a screen whose job
+        is proving what gets signed and by whom, leaving it off meant the only
+        identity on display was one the vault made up.
+        """
+        try:
+            hab = self._cuo_hab()
+        except Exception:                   # noqa: BLE001 -- no vault, no prefix
+            return ""
+        return (getattr(hab, "pre", None) or "") if hab is not None else ""
 
     #: How long the read-back may stay un-dismissable while an anchor is in
     #: flight. Issuance here is LOCAL -- an untargeted mint, no network leg -- so

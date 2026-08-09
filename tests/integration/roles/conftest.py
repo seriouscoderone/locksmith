@@ -913,11 +913,27 @@ def submit_mandate_form_via_ui(devctl, sock) -> None:
     r = devctl(sock, "click", target="cuoMandatePage.submit")
     assert r.get("ok"), f"open the read-back: {r}"
 
-    r = devctl(sock, "wait_for", target="mandateReviewDialog.confirm",
-               condition="enabled", timeout_ms=5000)
+    # The read-back is open once the acknowledgement is there. Waiting on the
+    # PRIMARY here would be wrong now: it is deliberately disabled until the
+    # acknowledgement is given, so "disabled" no longer means "the form still has
+    # errors" -- it is the modal's correct opening state.
+    r = devctl(sock, "wait_for", target="mandateReviewDialog.ack",
+               condition="visible", timeout_ms=5000)
     assert r.get("ok"), (
         f"the review dialog never opened, so the form still has errors: {r}")
 
+    # Give the acknowledgement, exactly as a CUO must. This is the step that makes
+    # the primary reachable at all; the assertion below is what proves the gate is
+    # real rather than decorative.
+    r = devctl(sock, "click", target="mandateReviewDialog.ack")
+    assert r.get("ok"), f"acknowledge before signing: {r}"
+
+    r = devctl(sock, "wait_for", target="mandateReviewDialog.confirm",
+               condition="enabled", timeout_ms=5000)
+    assert r.get("ok"), (
+        f"the acknowledgement did not release the primary: {r}")
+
+    # devctl 0.2.0 refuses a disabled target, so a click that reports ok landed.
     r = devctl(sock, "click", target="mandateReviewDialog.confirm")
     assert r.get("ok"), f"confirm the read-back: {r}"
 
