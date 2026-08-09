@@ -6,7 +6,7 @@ is also the only place a US-TU transposition can be caught: the jurisdiction is 
 pattern, the EGF enumerates no subdivisions, so no validation can reject it.
 """
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QLabel, QPushButton
+from PySide6.QtWidgets import QLabel, QPushButton, QWidget
 
 from locksmith.plugins.cuo import mandate_copy as copy
 from locksmith.plugins.cuo.review_dialog import MandateReviewDialog
@@ -174,3 +174,96 @@ def test_row_values_render_literally_even_if_upstream_patterns_ever_allow_markup
 
     assert value_label.sizeHint() == plain_twin.sizeHint()
     assert plain_twin.sizeHint() != rich_twin.sizeHint()
+
+
+# --- The friction is the point. A confirmation modal that a stray keystroke can
+# --- resolve, or that poisons every later dialog, is worse than none.
+
+
+def test_the_irreversible_primary_is_neither_the_default_nor_focused(qtbot):
+    """`LocksmithDialog._build_button_section` makes the LAST LocksmithButton in
+    the row the default and focuses it, and the primary is last -- so a single
+    Return keystroke on an UNREAD read-back anchored a permanent, publicly
+    readable credential. Measured before the fix."""
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    confirm = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    back = dialog.findChild(QPushButton, "mandateReviewDialog.back")
+    assert confirm.isDefault() is False and confirm.autoDefault() is False
+    assert back.isDefault() is True
+    assert dialog.focusWidget() is back
+
+
+def test_one_return_keystroke_does_not_sign(qtbot):
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+
+    # The dialog is owned by a host that qtbot cleans up, and is NOT registered
+    # itself: Return activates "Keep editing", which closes it, and a teardown
+    # that closes an already-destroyed dialog reports a RuntimeError against
+    # whatever test runs next instead of against the behaviour under test.
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(900, 700)
+    host.show()
+    qtbot.waitExposed(host)
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole", parent=host)
+    dialog.show()
+    emitted = []
+    dialog.confirm.connect(lambda: emitted.append(1))
+    QTest.keyClick(dialog, Qt.Key.Key_Return)
+    # Asserted on the SIGNAL only: Return now activates "Keep editing", which
+    # closes (and Qt destroys) the dialog, so touching it afterwards would be
+    # reporting on a deleted object rather than on the behaviour.
+    assert emitted == [], "Return on the read-back must not sign anything"
+
+
+def test_keep_editing_does_not_poison_every_later_dialog(qtbot, monkeypatch):
+    """"Keep editing" used to route to `reject()`, which `WA_DeleteOnClose`
+    destroys WITHOUT running `closeEvent` -- and `closeEvent` is the only place
+    `LocksmithDialog` clears its CLASS-level `_current_dialog`. The dangling
+    pointer then made every later dialog's `showEvent` raise, anywhere in the
+    process. Measured: the next `open()` raised
+    `RuntimeError: Internal C++ object (MandateReviewDialog) already deleted`.
+
+    `_current_dialog` is class state shared by the whole app, so it is reset here
+    on both sides -- otherwise this test either inherits a leak or leaves one, and
+    in both cases it reports on the wrong dialog.
+    """
+    from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
+
+    monkeypatch.setattr(LocksmithDialog, "_current_dialog", None, raising=False)
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(900, 700)
+    host.show()
+    qtbot.waitExposed(host)
+
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole", parent=host)
+    dialog.open()
+    assert LocksmithDialog._current_dialog is dialog, (
+        "precondition: an open dialog registers itself, or this proves nothing")
+
+    dialog.findChild(QPushButton, "mandateReviewDialog.back").click()
+    assert LocksmithDialog._current_dialog is None, (
+        "a closed dialog must not stay registered as the current one")
+
+    second = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole", parent=host)
+    qtbot.addWidget(second)
+    second.open()                      # raised before the fix
+    assert second.isVisible()
+    second.close()
+    host.hide()
+
+
+def test_keep_editing_is_refused_once_signing_has_started(qtbot):
+    """Clicking back mid-flight destroyed the modal while the issuance carried
+    on, leaving nothing to report success or failure on."""
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole")
+    qtbot.addWidget(dialog)
+    back = dialog.findChild(QPushButton, "mandateReviewDialog.back")
+    assert back.isEnabled() is True
+    dialog.findChild(QPushButton, "mandateReviewDialog.confirm").click()
+    assert back.isEnabled() is False
+    dialog.fail("boom")
+    assert back.isEnabled() is True, "a failed anchor must let the CUO back out"

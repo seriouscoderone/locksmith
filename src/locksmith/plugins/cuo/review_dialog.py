@@ -118,13 +118,40 @@ class MandateReviewDialog(LocksmithDialog):
                          content=body, buttons=buttons)
         self.setObjectName("mandateReviewDialog")
 
-        self._back.clicked.connect(self.reject)
+        # `close()`, not `reject()`: `WA_DeleteOnClose` destroys a REJECTED dialog
+        # without ever running `closeEvent`, and `closeEvent` is the only place
+        # `LocksmithDialog` clears its CLASS-level `_current_dialog`. One "Keep
+        # editing" therefore left a dangling pointer behind that made every later
+        # dialog's `showEvent` raise -- any dialog, on any parent, for the life of
+        # the process. `close()` runs `closeEvent` first and Qt's own
+        # `QDialog::closeEvent` still rejects, so the semantics are unchanged.
+        # The proper fix is in `LocksmithDialog` (clear the pointer in `reject`
+        # and `accept` too); that base class is shared by the whole app and
+        # outside this plan.
+        self._back.clicked.connect(self.close)
         self._confirm_button.clicked.connect(self._on_confirm)
+
+        # A confirmation modal exists to ADD friction, so the irreversible button
+        # must be neither the default nor focused.
+        # `LocksmithDialog._build_button_section` makes the LAST `LocksmithButton`
+        # in the row the default and focuses it, and the primary is last -- which
+        # put a single Return keystroke between an unread mandate and a permanent,
+        # publicly-readable credential. Measured: one `Key_Return` on the freshly
+        # opened dialog anchored.
+        self._back.setDefault(True)
+        self._back.setAutoDefault(True)
+        self._confirm_button.setDefault(False)
+        self._confirm_button.setAutoDefault(False)
+        self._back.setFocus()
 
     def _on_confirm(self) -> None:
         self._confirmed = True
         self._confirm_button.setEnabled(False)
         self._confirm_button.setText(copy.IN_FLIGHT)
+        # Nothing can be kept-editing once it is being signed: clicking back
+        # mid-flight destroyed the modal while the issuance carried on, leaving
+        # no surface to report success or failure on. `fail()` re-arms it.
+        self._back.setEnabled(False)
         self.confirm.emit()
 
     def confirmed(self) -> bool:
@@ -135,4 +162,5 @@ class MandateReviewDialog(LocksmithDialog):
         self._confirmed = False
         self._confirm_button.setEnabled(True)
         self._confirm_button.setText(copy.REVIEW_CONFIRM)
+        self._back.setEnabled(True)
         self.show_error(message)
