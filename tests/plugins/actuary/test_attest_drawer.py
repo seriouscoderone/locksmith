@@ -41,6 +41,7 @@ def _armed_page(qtbot):
     page._selected_mandate_said = _MANDATE_SAID
     page._parse_manifest = {"workbook_digest": _DIGEST}
     page._parse_manifest_said = _MANIFEST
+    page._version.setText("2027.1")
     page._update_attest_enabled()
     return shell, page
 
@@ -224,4 +225,57 @@ def test_the_backdrop_goes_the_moment_the_drawer_starts_closing(qtbot):
         "the backdrop lingers over a page the actuary can already use")
 
     qtbot.waitUntil(lambda: not drawer.isVisible(), timeout=2000)
+    shell.hide()
+
+
+# --- the three the app used to assert on the actuary's behalf ---------------------
+
+
+def test_the_actuary_chooses_the_three_required_attributes(qtbot):
+    """`version`, `filing_date` and `action` are all `required` by the
+    attestation schema, and all three were hardcoded — "1.0", today, and
+    "Sandbox" — so the app made permanent public assertions the actuary never
+    saw. The schema is explicit that they are the actuary's: version is "a
+    human-chosen label", filing_date is "an attribute the actuary asserts", and
+    action is "the IPD retention contract the parse was run under"."""
+    from PySide6.QtCore import QDate
+
+    shell, page = _armed_page(qtbot)
+    page._version.setText("2027.2")
+    page._filing_date.setDate(QDate(2027, 3, 15))
+    page._action.setCurrentText("Publish")
+
+    committed = page._attestation_attributes()
+    assert committed["version"] == "2027.2"
+    assert committed["filing_date"] == "2027-03-15"
+    assert committed["action"] == "Publish"
+
+    page.review_attestation()
+    shown = _text(page.attest_drawer)
+    for value in ("2027.2", "2027-03-15", "Publish"):
+        assert value in shown, f"{value} is committed but not shown"
+    shell.hide()
+
+
+def test_retention_offers_exactly_the_schemas_enum(qtbot):
+    """`Sandbox` is a retention CONTRACT, not a test mode — the schema says so in
+    capitals — so a value outside the enum, or a missing choice, is a permanent
+    misstatement about how the parse is retained."""
+    shell, page = _armed_page(qtbot)
+    values = [page._action.itemText(i) for i in range(page._action.count())]
+    assert values == ["Publish", "Sandbox"]
+    shell.hide()
+
+
+def test_attesting_is_blocked_until_the_version_is_given(qtbot):
+    """The one required field with no defensible default. Today is a reasonable
+    default for a date and the enum has a first member, but nobody but the
+    actuary can name their own rate program."""
+    shell, page = _armed_page(qtbot)
+    assert page._attest.isEnabled() is True
+
+    page._version.clear()
+
+    assert page._attest.isEnabled() is False
+    assert "version" in page._attest_blocker.text().lower()
     shell.hide()

@@ -1011,6 +1011,15 @@ def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
                   target="actuaryPage.rateTable")["visible"] is False, \
         "no rate table may be rendered in any HOA surface"
 
+    # The three the actuary asserts. All schema-required; `version` has no
+    # default, so the gate holds until it is given.
+    r = devctl(sock, "type", target="actuaryPage.version", text="2027.1")
+    assert r.get("ok"), f"name the rate program version: {r}"
+
+    r = devctl(sock, "wait_for", target="actuaryPage.attest",
+               condition="enabled", timeout_ms=5000)
+    assert r.get("ok"), f"the version did not release the review gate: {r}"
+
     # The page primary now opens the READ-BACK; it no longer mints. Nothing on
     # the page can reach `vault.extend` any more, which is the point of the gate.
     r = devctl(sock, "click", target="actuaryPage.attest")

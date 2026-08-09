@@ -32,6 +32,8 @@ def _loaded(page):
     page._manifest_said_label.setText(_MANIFEST)
     page._workbook_digest_label.setText("EWorkbookDigest")
     page._selected_mandate_said = _MANDATE
+    # Schema-required and the actuary's own label, so the gate holds without it.
+    page._version.setText("2027.1")
     page._update_attest_enabled()
 
 

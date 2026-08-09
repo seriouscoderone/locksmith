@@ -47,10 +47,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtWidgets import (
-    QFormLayout, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QComboBox, QDateEdit, QFormLayout, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -89,6 +89,11 @@ _WATCH_POLL_MS = 1000
 #: to. Excluded by name from the manifest's own shard walk (below) so it is never
 #: mistaken for parser output.
 _WORKBOOK_SIDECAR_NAME = ".workbook_source.json"
+
+#: The attestation schema's own enum for `action` -- the IPD retention contract.
+#: Read from the schema at load time would be better; pinned here because this
+#: page already pins the schema SAID and a drifted enum fails loudly at issuance.
+_ACTION_VALUES = ("Publish", "Sandbox")
 
 _TEL_STATE_LABELS = {
     Ilks.iss: "issued", Ilks.bis: "issued",
@@ -384,6 +389,46 @@ class ActuaryPage(QWidget):
         # commit verb lives on the drawer's own confirm. Two-stage vocabulary,
         # matching the sibling flow -- the button that mints must be the one that
         # says so, and it must not be reachable from the page.
+        # THE THREE THE ACTUARY ASSERTS. All three are `required` by the
+        # attestation schema and all three were hardcoded -- `version="1.0"`,
+        # `filing_date=today`, `action="Sandbox"` -- so the app was making
+        # permanent, public assertions on the actuary's behalf that they never
+        # saw. The schema is explicit that they are theirs: version is "a
+        # human-chosen label", filing_date is "the filing date the actuary
+        # recorded at parse time ... an attribute the actuary asserts", and
+        # action is "the IPD retention contract the parse was run under".
+        #
+        # `Sandbox` in particular is a retention CONTRACT, not a test mode -- the
+        # schema says so in capitals -- so defaulting every attestation to it
+        # silently claimed exploratory retention for filed work.
+        self._version = LocksmithLineEdit(placeholder_text="e.g. 2027.1")
+        self._version.setObjectName("actuaryPage.version")
+        self._version.textChanged.connect(lambda _t: self._update_attest_enabled())
+        form.addRow("Rate program version", self._version)
+
+        self._filing_date = QDateEdit()
+        self._filing_date.setObjectName("actuaryPage.filingDate")
+        self._filing_date.setDisplayFormat("MM/dd/yyyy")
+        self._filing_date.setCalendarPopup(True)
+        # Today is a DEFAULT, not an assertion the app makes: the field is
+        # editable, and the read-back shows whatever it holds.
+        self._filing_date.setDate(QDate.currentDate())
+        self._filing_date.setStyleSheet(
+            f"QDateEdit {{ border: 1px solid {colors.BORDER_DARK};"
+            f" border-radius: 6px; padding: 12px; font-size: 14px;"
+            f" color: {colors.TEXT_PRIMARY}; }}")
+        form.addRow("Filing date", self._filing_date)
+
+        self._action = QComboBox()
+        self._action.setObjectName("actuaryPage.action")
+        # From the schema's own enum, not a hand-kept list.
+        self._action.addItems(_ACTION_VALUES)
+        self._action.setStyleSheet(
+            f"QComboBox {{ border: 1px solid {colors.BORDER_DARK};"
+            f" border-radius: 6px; padding: 12px; font-size: 14px;"
+            f" color: {colors.TEXT_PRIMARY}; }}")
+        form.addRow("Retention", self._action)
+
         self._attest = LocksmithButton("Review attestation…")
         self._attest.setObjectName("actuaryPage.attest")
         self._attest.setEnabled(False)
@@ -860,6 +905,10 @@ class ActuaryPage(QWidget):
             return "Select an observed mandate to attest against."
         if self._parse_manifest_said is None:
             return "Load a parse directory to attest."
+        if not self._version.text().strip():
+            # Schema-required, and the one field with no defensible default: it
+            # is the actuary's own label for this rate program.
+            return "Give the rate program a version to attest."
         return ""
 
     def _update_attest_enabled(self) -> None:
@@ -878,9 +927,9 @@ class ActuaryPage(QWidget):
         One source, so the drawer cannot drift from the mint."""
         return {
             "manifest_said": self._parse_manifest_said,
-            "version": "1.0",
-            "filing_date": _dt.date.today().isoformat(),
-            "action": "Sandbox",
+            "version": self._version.text().strip(),
+            "filing_date": self._filing_date.date().toString("yyyy-MM-dd"),
+            "action": self._action.currentText(),
         }
 
     def review_attestation(self, *_qt_args) -> None:
