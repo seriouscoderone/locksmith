@@ -166,7 +166,7 @@ class LocksmithButton(QPushButton):
         self.setCursor(Qt.CursorShape.PointingHandCursor)
         self.setStyleSheet(f"""
             QPushButton {{
-                background-color: {colors.PRIMARY};
+                background-color: {colors.PRIMARY_BUTTON};
                 color: white;
                 border-radius: 6px;
                 font-size: 14px;
@@ -174,14 +174,14 @@ class LocksmithButton(QPushButton):
                 padding-bottom: 12px;
                 padding-left: 25px;
                 padding-right: 25px;
-                border: 1px solid {colors.PRIMARY};
+                border: 1px solid {colors.PRIMARY_BUTTON};
             }}
             QPushButton:hover {{
-                background-color: {colors.PRIMARY_HOVER};
-                border: 1px solid {colors.PRIMARY_HOVER};
+                background-color: {colors.PRIMARY_BUTTON_HOVER};
+                border: 1px solid {colors.PRIMARY_BUTTON_HOVER};
             }}
             QPushButton:pressed {{
-                background-color: {colors.PRIMARY_HOVER};
+                background-color: {colors.PRIMARY_BUTTON_PRESSED};
             }}
             QPushButton:disabled {{
                 background-color: {colors.BACKGROUND_DISABLED};

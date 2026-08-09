@@ -124,6 +124,31 @@ TOOLBAR_DARK = "#1A252C"  # Dark toolbar button background
 
 
 # =============================================================================
+# Primary button fill — separate from PRIMARY on purpose
+# =============================================================================
+# PRIMARY is the brand accent: links, focus rings, avatars, badges, selection.
+# It is judged against the page, where it only has to clear 3:1 as a graphical
+# object. A FILLED BUTTON is different -- it carries white label text, so it has
+# to clear 4.5:1 as normal text, and no accent bright enough to work as an accent
+# also clears that. Measured: white on Usurance Teal 600 #2AABB3 is 2.77:1 and
+# white on vanilla orange #F57B03 is 2.72:1 -- both fail, in both brands.
+#
+# This is a contradiction in the suite, not a defect in either brand:
+# design-system.md:218 mandates "Primary = Teal 600 filled, White text" while
+# :296-300 mandates 4.5:1 for normal text and 3:1 even for large buttons, so the
+# mandated pairing fails the mandated floor. Splitting the token is how both
+# rules can hold at once -- the accent stays the accent, and the button fill is
+# darkened until white is legible on it.
+#
+# Defaults preserve today's appearance exactly. `apply_theme_overrides` falls
+# these back to the brand's own PRIMARY when a brand does not opt in, so a brand
+# that sets `primary` alone never inherits another brand's button colour.
+PRIMARY_BUTTON = "#F57B03"          # Filled-primary background
+PRIMARY_BUTTON_HOVER = "#D66A02"    # ...darker on hover
+PRIMARY_BUTTON_PRESSED = "#E67E00"  # ...and on press
+
+
+# =============================================================================
 # Per-brand theme overrides
 # =============================================================================
 # Maps brand.toml [theme] keys → the module-level accent constants above. Only
@@ -133,7 +158,20 @@ _THEME_KEY_TO_CONST = {
     "primary": "PRIMARY",
     "primary_hover": "PRIMARY_HOVER",
     "primary_pressed": "PRIMARY_PRESSED",
+    "primary_button": "PRIMARY_BUTTON",
+    "primary_button_hover": "PRIMARY_BUTTON_HOVER",
+    "primary_button_pressed": "PRIMARY_BUTTON_PRESSED",
     "toolbar_dark": "TOOLBAR_DARK",
+}
+
+#: Button fills fall back to the brand's own accent, NOT to the module default.
+#: Without this a brand that overrides `primary` and nothing else would keep the
+#: vanilla orange button fill -- the module default is orange, so the fallback
+#: has to be computed after the overrides land, not before.
+_BUTTON_FALLBACKS = {
+    "PRIMARY_BUTTON": "PRIMARY",
+    "PRIMARY_BUTTON_HOVER": "PRIMARY_HOVER",
+    "PRIMARY_BUTTON_PRESSED": "PRIMARY_PRESSED",
 }
 
 
@@ -144,3 +182,11 @@ def apply_theme_overrides(theme: dict) -> None:
         value = theme.get(key)
         if value:
             g[const_name] = value
+    # Then the button fills, for any brand that did not name them. Computed
+    # AFTER the loop so the fallback is this brand's accent rather than the
+    # module default -- otherwise a brand overriding `primary` alone would keep
+    # the vanilla orange button fill.
+    for const_name, accent_name in _BUTTON_FALLBACKS.items():
+        theme_key = next(k for k, v in _THEME_KEY_TO_CONST.items() if v == const_name)
+        if not theme.get(theme_key):
+            g[const_name] = g[accent_name]
