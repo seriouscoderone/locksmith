@@ -12,9 +12,17 @@ one control per constraint set (`enum` -> a dropdown, `type: array` -> a token l
 payload is acceptable. Nothing about the mandate's shape is written here: no enum, no
 pattern, not even the country prefix the jurisdiction demands — that is derived from
 the field's own pattern (see `_pattern_prefix`).
-`tests/plugins/cuo/test_no_schema_literals.py` (Task 7, not yet written) enforces
-that by grepping this package for schema values; it reads whole files, so a schema
-value is banned from a COMMENT here too, not only from code.
+`tests/plugins/cuo/test_no_schema_literals.py` enforces that. A schema value
+written as a quoted Python string literal is banned everywhere in this
+package, comments and docstrings included -- an enum member sitting in a
+comment, quoted the way Python would quote it, is still a restatement of the
+schema (which is exactly why this paragraph does not write that example out
+with quote marks around it -- doing so would BE the restatement, and the
+guard would be correct to fail this file). A bare, unquoted occurrence of the
+same word is checked in executable code only, never in a comment or
+docstring: `review_dialog.py` says "for the life of" and `schema_source.py`
+says "any property the schema" -- both ordinary English, and both would be
+false positives if bare prose were in scope the way a quoted literal is.
 
 **Validation timing is counter-intuitive and deliberate** (`ux-patterns.md:190-192`):
 required errors appear on SUBMIT, format errors on blur and only after a first submit
