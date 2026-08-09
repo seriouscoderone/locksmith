@@ -1101,9 +1101,20 @@ from PySide6.QtWidgets import QDateEdit, QHBoxLayout, QWidget
 from locksmith.ui import colors
 
 _DISPLAY_FORMAT = "MM/dd/yyyy"
-#: The empty sentinel. 1 Jan 1900 is centuries before any plausible insurance
-#: mandate, so `specialValueText` can claim it without shadowing a real date.
-_EMPTY = QDate(1900, 1, 1)
+#: The empty sentinel. Year 1 -- below every date a mandate could plausibly carry.
+#: (NOT "Qt's earliest representable date": QDate accepts BCE years. That claim was
+#: in an earlier draft of this plan and was disproved in execution.)
+#:
+#: TWO Qt traps, both measured against real PySide6, both of which cost a round:
+#: 1. `setMinimumDate` CLAMPS -- any `setDate` earlier than the minimum is silently
+#:    pulled up to it. A sentinel at 1900-01-01 turned 1752-09-14 into 1900-01-01,
+#:    which compared equal to the sentinel, so a legitimate date read back as EMPTY.
+#: 2. `setMinimumDate` alone will NOT go below QDateEdit's own default floor of
+#:    1752-09-14. Only `setDateRange(min, max)` lowers it. Use setDateRange.
+#: And note the sentinel's cost: `specialValueText` leaves the placeholder IN the
+#: line edit, so typed digits append to it and never interpret -- leaving the empty
+#: state needs `setSelectedSection(0)` after seeding, not merely clearing the text.
+_EMPTY = QDate(1, 1, 1)
 
 
 class MandateDateField(QWidget):
