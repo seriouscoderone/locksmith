@@ -11,7 +11,15 @@ holds no rules: whatever it is handed, it shows.
 from __future__ import annotations
 
 from PySide6.QtCore import Qt, Signal
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtGui import QFont
+from PySide6.QtWidgets import (
+    QFrame,
+    QHBoxLayout,
+    QLabel,
+    QSizePolicy,
+    QVBoxLayout,
+    QWidget,
+)
 
 from locksmith.plugins.cuo import mandate_copy as copy
 from locksmith.ui import colors
@@ -23,13 +31,39 @@ from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
 
 _ROWS = ("line_of_business", "jurisdiction", "coverages")
 
+#: ux-patterns.md:82 "Max width: `sm: 400px`, `md: 560px`", and :674 builds its
+#: worked modal at `md`.
+_MODAL_WIDTH = 560
+#: `LocksmithDialog._build_button_section` gives the footer container 16px side
+#: margins (dialogs.py:452), so this is the width the button row can occupy.
+_FOOTER_WIDTH = _MODAL_WIDTH - 32
+
 
 def _row(label: str, value: str) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
     layout.setContentsMargins(0, 3, 0, 3)
     name = QLabel(label)
-    name.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 14px;")
+    # design-system.md:261 "Data label | text-sm font-medium uppercase
+    # tracking-wide text-gray-500 | 12px medium, uppercase". Label and value were
+    # both 14px regular, so the read-back rendered as two columns of body text
+    # rather than as label/value pairs.
+    #
+    # Two deliberate departures, both measured:
+    # * the spec's own `text-gray-500` (#9CA3AF) scores 2.54:1 on this surface and
+    #   FAILS WCAG AA, which ui-conventions.md:69 requires. TEXT_SECONDARY is the
+    #   Locksmith token playing the "secondary text, labels" role and passes.
+    # * colours come from `colors.*`, never from the suite's literal greys:
+    #   `apply_theme_overrides` rewrites these constants per brand, so a pasted
+    #   hex would silently stop tracking the brand.
+    name.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+    label_font = name.font()
+    label_font.setWeight(QFont.Weight.Medium)
+    # `letter-spacing` is NOT a Qt Style Sheet property -- it is silently ignored
+    # there. QFont is the only way to get the spec's tracking.
+    label_font.setLetterSpacing(QFont.SpacingType.PercentageSpacing, 105)
+    label_font.setCapitalization(QFont.Capitalization.AllUppercase)
+    name.setFont(label_font)
     name.setFixedWidth(150)
     shown = QLabel(value)
     shown.setWordWrap(True)
@@ -55,13 +89,17 @@ class MandateReviewDialog(LocksmithDialog):
 
         body = QWidget()
         outer = QVBoxLayout(body)
-        outer.setContentsMargins(0, 0, 0, 0)
-        outer.setSpacing(10)
+        # The base class's content area has NO top padding (dialogs.py:436
+        # margins are 20,0,20,0), so the signer line sat 3px under the header
+        # divider -- measured, divider bottom y=70, signer top y=70. 16px is the
+        # suite's `gap-4`, which ux-patterns.md:296 sets between fields.
+        outer.setContentsMargins(0, 16, 0, 0)
+        outer.setSpacing(16)
 
         signer = QLabel(copy.REVIEW_SIGNER.format(cuo_name=signer_name))
         signer.setObjectName("mandateReviewDialog.signer")
         signer.setWordWrap(True)
-        signer.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+        signer.setStyleSheet(f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
         outer.addWidget(signer)
 
         summary = QWidget()
@@ -80,8 +118,12 @@ class MandateReviewDialog(LocksmithDialog):
         outer.addWidget(summary)
 
         thesis_label = QLabel(copy.REVIEW_THESIS_LABEL)
+        # design-system.md:260 "Section header | text-lg font-semibold
+        # text-gray-700 | 16px semibold". At 13px/400 it was pixel-identical to
+        # the signer line and the caution text, so nothing on screen said it was
+        # a heading.
         thesis_label.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+            f"color: {colors.TEXT_SECONDARY}; font-size: 16px; font-weight: 600;")
         outer.addWidget(thesis_label)
         thesis = QLabel(str(payload.get("thesis") or ""))
         thesis.setObjectName("mandateReviewDialog.thesis")
@@ -94,35 +136,101 @@ class MandateReviewDialog(LocksmithDialog):
         # signed, so this must be plain text, unconditionally.
         thesis.setTextFormat(Qt.TextFormat.PlainText)
         thesis.setStyleSheet(
-            f"color: {colors.TEXT_PRIMARY}; font-size: 15px; padding: 10px 12px;"
+            f"color: {colors.TEXT_PRIMARY}; font-size: 16px; padding: 10px 12px;"
             f" background: {colors.BACKGROUND_HIGHLIGHT}; border-radius: 4px;")
         outer.addWidget(thesis)
 
         caution = QLabel(copy.REVIEW_CAUTION)
         caution.setObjectName("mandateReviewDialog.caution")
         caution.setWordWrap(True)
+        # Was WARNING_TEXT on BACKGROUND_HIGHLIGHT: the SAME grey chip as the
+        # thesis directly above it, differing only in text colour, so nothing
+        # marked the one sentence that says "Signing is final." as a warning at
+        # all. Measured 3.83:1 -- below the 4.5:1 that ui-conventions.md:69
+        # requires at this size. The amber fill with a 4px left rule takes it to
+        # 4.65:1 and reuses the vocabulary `LocksmithDialog._build_warning_banner`
+        # already ships, so it reads as caution rather than as a validation error.
+        #
+        # The suite defines no token for "caution before an irreversible act":
+        # its Error is scoped to validation failures and its Warning to pending
+        # actions and deadlines. This is a judgment call, not a citation.
         caution.setStyleSheet(
-            f"color: {colors.WARNING_TEXT}; background: {colors.BACKGROUND_HIGHLIGHT};"
-            f" border-radius: 4px; padding: 10px 12px; font-size: 13px;")
+            f"color: {colors.WARNING_TEXT}; background: {colors.BACKGROUND_WARNING};"
+            f" border-left: 4px solid {colors.WARNING_BORDER};"
+            f" border-radius: 4px; padding: 10px 12px; font-size: 12px;")
         outer.addWidget(caution)
 
-        buttons = QHBoxLayout()
         self._back = LocksmithInvertedButton(copy.REVIEW_BACK)
         self._back.setObjectName("mandateReviewDialog.back")
         self._confirm_button = LocksmithButton(copy.REVIEW_CONFIRM)
         self._confirm_button.setObjectName("mandateReviewDialog.confirm")
-        buttons.addWidget(self._back)
-        buttons.addStretch(1)
-        buttons.addWidget(self._confirm_button)
+
+        # ux-patterns.md:288-289 puts the secondary on the LEFT of the footer and
+        # the primary on the RIGHT. The obvious `addStretch(1)` between them does
+        # NOT achieve that: `_build_button_section` wraps whatever layout it is
+        # given in `addStretch()` on BOTH sides (dialogs.py:453, 465), and those
+        # outer stretches absorb the space, so the pair rendered centred and
+        # TOUCHING -- measured, a 0px gap between "Keep editing" and the
+        # irreversible "Sign mandate". Handing the base class a single expanding
+        # widget instead lets the inner stretch do its job.
+        footer = QWidget()
+        footer.setSizePolicy(QSizePolicy.Policy.Expanding,
+                             QSizePolicy.Policy.Preferred)
+        # An Expanding size policy is NOT enough on its own: the base class puts a
+        # stretch on either side of whatever layout it is handed, and a widget
+        # with no minimum simply gets its sizeHint and sits centred between them
+        # -- measured, 138px of dead space on each side. A minimum width is what
+        # actually pushes the two buttons to the footer's edges.
+        footer.setMinimumWidth(_FOOTER_WIDTH)
+        footer_row = QHBoxLayout(footer)
+        footer_row.setContentsMargins(0, 0, 0, 0)
+        footer_row.addWidget(self._back)
+        footer_row.addStretch(1)
+        footer_row.addWidget(self._confirm_button)
+
+        buttons = QHBoxLayout()
+        buttons.addWidget(footer)
 
         # No header X. A confirmation modal has exactly two answers and both are
         # buttons; a third, unlabelled way out of the last screen before an
         # irreversible act is not an affordance, it is an accident waiting for a
         # mis-aimed click. It is also the one exit `_on_confirm` cannot disable.
+        # `show_overlay=True` is what makes this actually modal. Measured before:
+        # `isModal() False`, `self.overlay None` -- the base class defaults
+        # show_overlay False (dialogs.py:87) and only calls `setModal(True)` when
+        # it is on, so the app's one irreversibility confirmation left the whole
+        # window visible and clickable behind it. ux-patterns.md:80 requires a
+        # backdrop; its "clicking backdrop closes modal (except destructive
+        # confirmations)" carve-out is why nothing here dismisses on scrim click.
         super().__init__(parent=parent, title=copy.REVIEW_TITLE,
                          content=body, buttons=buttons,
-                         show_close_button=False)
+                         show_close_button=False, show_overlay=True)
         self.setObjectName("mandateReviewDialog")
+
+        # ux-patterns.md:82 "Max width: sm: 400px, md: 560px" and :674 builds its
+        # worked modal at `md`. This dialog set no width at all and came out at
+        # 368px on sizeHint -- narrower than either token, which cost real
+        # legibility: measured, the caution wrapped to 6 lines (116px, 23% of the
+        # dialog) and the in-force dates wrapped to two. At 560 the caution is
+        # 84px and the dates fit one line.
+        #
+        # MINIMUM, not fixed: the base class's `dialogHeight` setter calls
+        # `setFixedSize(current_width, ...)` (dialogs.py:606) the first time any
+        # banner animates, so the width freezes itself on first `show_error`.
+        self.setMinimumWidth(_MODAL_WIDTH)
+
+        # The header divider paints a pure BLACK line. `setFrameShape(HLine)`
+        # (dialogs.py) makes Qt draw a frame in the palette's WindowText ON TOP of
+        # the #E8E8E8 the stylesheet asks for. Measured by pixel scan: rows 67/68/69
+        # read #e8e8e8 / #000000 / #e8e8e8. At 19.99:1 it was the highest-contrast
+        # element in a dialog whose caution text sat at 3.83:1.
+        #
+        # Fixed here rather than in the base class, which every dialog in the app
+        # inherits. The base class is where this belongs -- see the backlog item.
+        divider = self.findChild(QFrame, "header-divider")
+        if divider is not None:
+            divider.setFrameShape(QFrame.Shape.NoFrame)
+            divider.setFixedHeight(1)
 
         # `close()`, not `reject()`. `LocksmithDialog` now releases its class-level
         # `_current_dialog` on every exit path, so this is no longer load-bearing --

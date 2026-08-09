@@ -104,6 +104,13 @@ WARNING_BUTTON = "#EA580C"  # Orange-600 for warning buttons
 # Warning yellow
 WARNING_YELLOW = "#FFC107"
 
+# The caution-block pair. Named here rather than left as literals because
+# `LocksmithDialog._build_warning_banner` already ships exactly these two values
+# hardcoded (the only hardcoded colours in that file), and a second consumer was
+# about to paste them a second time.
+BACKGROUND_WARNING = "#FEF3C7"  # Amber-100 warning fill
+WARNING_BORDER = "#F59E0B"      # Amber-500 warning accent/left rule
+
 # =============================================================================
 # Contrast Colors
 # =============================================================================

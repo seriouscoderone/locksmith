@@ -328,3 +328,142 @@ def test_escape_cannot_destroy_the_read_back_mid_signing(qtbot):
     dialog.fail("boom")
     qtbot.keyClick(dialog, Qt.Key.Key_Escape)
     qtbot.waitUntil(lambda: not shiboken6.Shiboken.isValid(dialog), timeout=2000)
+
+
+# --- the suite's modal standards, pinned where they were measurably violated ---
+
+
+def _built(qtbot):
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(1280, 900)
+    host.show()
+    qtbot.waitExposed(host)
+    dialog = MandateReviewDialog(_PAYLOAD, signer_name="Dana Cole", parent=host)
+    dialog.open()
+    qtbot.waitUntil(dialog.isVisible, timeout=2000)
+    return host, dialog
+
+
+def test_the_read_back_is_actually_modal_and_has_a_backdrop(qtbot):
+    """ux-patterns.md:80 requires a backdrop. `show_overlay` defaults False and
+    the plugin never passed it, so `setModal(True)` never ran either -- measured
+    `isModal() False`, `overlay None`. The app's one irreversibility confirmation
+    left the whole window visible and clickable behind it."""
+    host, dialog = _built(qtbot)
+    assert dialog.isModal() is True
+    assert dialog.overlay is not None, "no scrim behind an irreversible confirmation"
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_read_back_is_the_suites_md_modal_width(qtbot):
+    """ux-patterns.md:82 "Max width: sm: 400px, md: 560px". It set no width at
+    all and came out at 368px on sizeHint -- narrower than either token, which
+    wrapped the caution to six lines and the in-force dates to two."""
+    host, dialog = _built(qtbot)
+    assert dialog.width() >= 560
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_footer_puts_the_secondary_left_and_the_primary_right(qtbot):
+    """ux-patterns.md:288-289. The obvious `addStretch(1)` between the two does
+    NOT do this: `_build_button_section` wraps the given layout in stretches on
+    BOTH sides, which absorb it -- measured, the pair rendered centred and
+    TOUCHING, a 0px gap between "Keep editing" and the irreversible primary."""
+    host, dialog = _built(qtbot)
+    back = dialog.findChild(QPushButton, "mandateReviewDialog.back")
+    confirm = dialog.findChild(QPushButton, "mandateReviewDialog.confirm")
+    back_x = back.mapTo(dialog, back.rect().topLeft()).x()
+    confirm_x = confirm.mapTo(dialog, confirm.rect().topLeft()).x()
+
+    assert back_x < confirm_x, "the primary must be the right-hand button"
+    gap = confirm_x - (back_x + back.width())
+    assert gap >= 16, f"only {gap}px between Keep editing and the irreversible primary"
+    left_margin = back_x
+    right_margin = dialog.width() - (confirm_x + confirm.width())
+    assert left_margin <= 24 and right_margin <= 24, (
+        f"the row is not spanning the footer: {left_margin}px / {right_margin}px")
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_header_divider_is_not_a_black_rule(qtbot):
+    """`setFrameShape(HLine)` makes Qt paint a frame line in the palette's
+    WindowText ON TOP of the #E8E8E8 the stylesheet asks for. Measured by pixel
+    scan: rows 67/68/69 read #e8e8e8 / #000000 / #e8e8e8 -- a pure black line at
+    19.99:1, the highest-contrast element in the dialog."""
+    from PySide6.QtWidgets import QFrame
+
+    host, dialog = _built(qtbot)
+    divider = dialog.findChild(QFrame, "header-divider")
+    assert divider is not None
+    assert divider.frameShape() == QFrame.Shape.NoFrame, (
+        "an HLine frameShape paints a palette-coloured rule over the stylesheet")
+
+    image = dialog.grab().toImage()
+    top = divider.mapTo(dialog, divider.rect().topLeft()).y()
+    rows = [image.pixelColor(dialog.width() // 2, y).name()
+            for y in range(top - 1, top + divider.height() + 1)]
+    assert "#000000" not in rows, f"a black rule survives in the header: {rows}"
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_the_caution_is_not_the_same_chip_as_the_thesis(qtbot):
+    """Both rendered as the SAME grey #DCDDE5 chip, differing only in text
+    colour, so nothing marked the sentence that says "Signing is final." as a
+    warning. Its 3.83:1 also failed the AA floor ui-conventions.md:69 sets."""
+    from locksmith.ui import colors
+
+    host, dialog = _built(qtbot)
+    caution = dialog.findChild(QLabel, "mandateReviewDialog.caution").styleSheet()
+    thesis = dialog.findChild(QLabel, "mandateReviewDialog.thesis").styleSheet()
+    assert colors.BACKGROUND_WARNING.lower() in caution.lower()
+    assert colors.BACKGROUND_HIGHLIGHT.lower() not in caution.lower(), (
+        "the caution still wears the thesis's grey chip")
+    assert "border-left" in caution, "no rule marks it as a warning block"
+    assert colors.BACKGROUND_WARNING.lower() not in thesis.lower()
+    dialog._finished = True
+    dialog.close()
+    host.hide()
+
+
+def test_every_font_size_is_on_the_suites_type_scale(qtbot):
+    """design-system.md:98 "xs 11 · sm 12 · base 14 · lg 16 · xl 18 · 2xl 20 ·
+    3xl 24 · 4xl 30" and :105 "Do not add a separate `md` size." The dialog
+    carried 13px and 15px, neither of which is a step.
+
+    Scoped to what THIS module styles. The base class's error/warning/success
+    banner labels are also 13px and live in every dialog in the application --
+    measured, they are what an unscoped sweep reports. Changing them is an
+    app-wide decision, so asserting on them here would either fail forever or
+    push a core change through a plugin's test.
+    """
+    import re
+
+    from PySide6.QtWidgets import QFrame
+
+    host, dialog = _built(qtbot)
+    scale = {11, 12, 14, 16, 18, 20, 24, 30}
+    base_banners = [dialog.findChild(QFrame, name)
+                    for name in ("error-banner", "warning-banner", "success-banner")]
+    inherited = {label for banner in base_banners if banner is not None
+                 for label in banner.findChildren(QLabel)}
+
+    offenders = []
+    for widget in dialog.findChildren(QLabel):
+        if widget in inherited:
+            continue
+        for size in re.findall(r"font-size:\s*(\d+)px", widget.styleSheet()):
+            if int(size) not in scale:
+                offenders.append((widget.objectName() or widget.text()[:24], size))
+    assert not offenders, f"off-scale font sizes: {offenders}"
+    dialog._finished = True
+    dialog.close()
+    host.hide()
