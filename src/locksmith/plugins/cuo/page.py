@@ -12,9 +12,9 @@ one control per constraint set (`enum` -> a dropdown, `type: array` -> a token l
 payload is acceptable. Nothing about the mandate's shape is written here: no enum, no
 pattern, not even the country prefix the jurisdiction demands — that is derived from
 the field's own pattern (see `_pattern_prefix`).
-`tests/plugins/cuo/test_no_schema_literals.py` enforces that, by grepping this
-package for schema values; it reads whole files, so a schema value is banned from a
-COMMENT here too, not only from code.
+`tests/plugins/cuo/test_no_schema_literals.py` (Task 7, not yet written) enforces
+that by grepping this package for schema values; it reads whole files, so a schema
+value is banned from a COMMENT here too, not only from code.
 
 **Validation timing is counter-intuitive and deliberate** (`ux-patterns.md:190-192`):
 required errors appear on SUBMIT, format errors on blur and only after a first submit
@@ -68,13 +68,12 @@ from dataclasses import dataclass, field as dc_field
 from pathlib import Path
 from typing import Any, Callable, Iterable
 
-from PySide6.QtCore import QEvent, Qt
+from PySide6.QtCore import QEvent, Qt, QTimer
 from PySide6.QtWidgets import (
     QComboBox,
     QHBoxLayout,
     QLabel,
     QLineEdit,
-    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -120,13 +119,6 @@ _COLUMN_WIDTH = 640
 _ROW_SPACING = 16
 _THESIS_ROWS = 3
 _ICON = ":/assets/material-icons/balance.svg"
-
-#: Shown in `REVIEW_SIGNER` when no identifier can be resolved (a page built without
-#: an open vault -- unit tests, and the defensive path). The mandate schema's own
-#: `cuo_role` credential carries protocol fields only, so no personal name exists
-#: anywhere in the ecosystem to read; the signer is named by their identifier's
-#: local alias.
-_UNNAMED_SIGNER = "this identifier"
 
 #: The literal characters a `pattern` demands at the start of a value. The second
 #: group is whatever follows, so a quantifier that applies to the last literal
@@ -291,6 +283,7 @@ class CuoMandatePage(LocksmithFormPage):
         self._anchoring = False        # one-shot guard: an anchor is under way
         self._committing_tokens = False
         self.review_dialog: MandateReviewDialog | None = None
+        self._review_serial = 0        # see _forget_review
         self._controls: dict[str, _Control] = {}
 
         self.setObjectName(_PAGE_NAME)
@@ -308,24 +301,22 @@ class CuoMandatePage(LocksmithFormPage):
                 f"the mandate schema declares {sorted(unrendered)}, which "
                 f"mandate_copy.FIELD_ORDER does not render")
 
+        # The column's measure is enforced by what it CONTAINS: every group gets
+        # `_COLUMN_WIDTH` (or half of it, in the window's shared row) and every
+        # wrapping label inside them is given that same width explicitly, because
+        # a word-wrapped QLabel with a free width reports a one-line minimum --
+        # inside `LocksmithFormPage`'s `setWidgetResizable(True)` scroll area the
+        # layout then SQUEEZES the groups below their real height instead of
+        # scrolling, and the help text is painted over the control above it
+        # (measured: ~40px per group). The window's own minimum is 1280 wide
+        # (`ui/window.py:73`), so a 640 column cannot be clipped.
+        #
+        # A `setFixedWidth` and a `Fixed` size policy on this widget were both
+        # measured INERT once the labels' minimums were honest -- zero change to
+        # squeeze, overlap or width at five window sizes -- so they are not here.
+        # `test_no_help_text_is_painted_over_its_own_control` and
+        # `test_the_column_keeps_its_measure_in_a_narrow_window` hold the outcome.
         column = QWidget()
-        # FIXED, not merely capped. Every wrapping label in this column is given
-        # that same width explicitly (see `_wrapped`), because a word-wrapped
-        # QLabel with a free width reports a one-line minimum: inside
-        # `LocksmithFormPage`'s `setWidgetResizable(True)` scroll area, the layout
-        # then SQUEEZES the field groups below their real height instead of
-        # scrolling, and the help text is painted over the control above it.
-        # Measured -- every group came out ~40px shorter than its own sizeHint.
-        # The window's minimum is 1280 wide (`ui/window.py:73`), so a fixed 640
-        # column cannot be clipped.
-        column.setFixedWidth(_COLUMN_WIDTH)
-        # ...and unsqueezable vertically, for the same reason. The scroll area
-        # sizes its content to `max(viewport, minimum)`, and a column that can
-        # report a smaller minimum than it needs gets compressed instead of
-        # scrolled -- which is what the overlap above actually looked like.
-        # `Fixed` makes the layout honour sizeHint exactly, and sizeHint GROWS
-        # when an error label appears, so the scrollbar arrives on cue.
-        column.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         body = QVBoxLayout(column)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(20)
@@ -427,7 +418,7 @@ class CuoMandatePage(LocksmithFormPage):
         row.addWidget(self._declared, 1)
 
         self._declared_copy = LocksmithCopyButton(
-            tooltip="Copy the mandate SAID", icon_size=18,
+            tooltip=copy.DECLARED_COPY, icon_size=18,
             icon_color=colors.SUCCESS_TEXT)
         self._declared_copy.setObjectName(f"{_PAGE_NAME}.declaredBannerCopy")
         row.addWidget(self._declared_copy)
@@ -684,10 +675,11 @@ class CuoMandatePage(LocksmithFormPage):
         one write, and a form that swallowed the second half would publish half a
         mandate.
         """
-        items = list(listing.get_items())
-        for token in tokens:
-            if token and token not in items:
-                items.append(token)
+        # No de-duplication here: `uniqueItems` is `validation.py`'s rule and
+        # `COVERAGE_DUPLICATE` is its message. A filter on this line was a second
+        # copy of that rule, and it silently swallowed the duplicate the CUO
+        # typed instead of letting them be told about it.
+        items = list(listing.get_items()) + [t for t in tokens if t]
         self._write_tokens(listing, items, tail=tail)
 
     # -- public control API (tests and devctl drive the same methods) -----------
@@ -717,8 +709,13 @@ class CuoMandatePage(LocksmithFormPage):
             return
         errors = validate_payload(self.build_payload(), self._schema,
                                  self.existing_mandates())
-        self._set_field_error(control, [error for error in errors
-                                        if error.field == name])
+        # FORMAT errors only. Global Constraint 8 puts required errors on submit
+        # alone, so emptying a field and tabbing away must not accuse the CUO of
+        # anything -- and the validator returns every error, required included.
+        required = copy.required_error(name)
+        self._set_field_error(control, [
+            error for error in errors
+            if error.field == name and error.message != required])
 
     def field_error(self, name: str) -> str:
         """What the named field is currently telling the CUO. "" when clean."""
@@ -828,7 +825,12 @@ class CuoMandatePage(LocksmithFormPage):
             first = self._controls.get(errors[0].field)
             if first is not None:
                 first.focus_widget.setFocus()
-                self.scroll_area.ensureWidgetVisible(first.widget)
+                # DEFERRED on purpose. The error labels that just appeared are
+                # what make the column tall enough to scroll, and that relayout
+                # happens on the next event-loop pass -- scrolling now is a no-op
+                # against a viewport that still thinks everything fits. Measured:
+                # the first invalid field sat at y=648 in a 590px viewport.
+                QTimer.singleShot(0, lambda name=first.name: self._reveal(name))
             return
 
         dialog = MandateReviewDialog(payload, signer_name=self._signer_name(),
@@ -838,7 +840,37 @@ class CuoMandatePage(LocksmithFormPage):
         # disables its own primary after a click, but nothing stops a second
         # emission from another path, and a duplicate mandate is immutable.
         dialog.confirm.connect(lambda: self._confirm_review(payload))
+        # Qt destroys this dialog on close (`WA_DeleteOnClose`), and "Keep
+        # editing" is a close. Without this the attribute the plan's own contract
+        # exposes became a DANGLING wrapper: `is None` False, `Shiboken.isValid`
+        # False, and touching it raised. Both signals, because `finished` clears
+        # it synchronously on the user's path while `destroyed` catches every
+        # other route to destruction.
+        self._review_serial += 1
+        serial = self._review_serial
+        dialog.finished.connect(lambda *_a, s=serial: self._forget_review(s))
+        dialog.destroyed.connect(lambda *_a, s=serial: self._forget_review(s))
         dialog.open()
+
+    def _forget_review(self, serial: int) -> None:
+        """Drop the handle to a dialog Qt has closed or destroyed.
+
+        Serial-guarded: `deleteLater` means an old dialog's `destroyed` can arrive
+        after a new read-back has already been opened, and clearing the live
+        handle would be worse than keeping the dead one.
+        """
+        if serial == self._review_serial:
+            self.review_dialog = None
+
+    def _reveal(self, name: str) -> None:
+        """Scroll the named field into view, once the layout has settled."""
+        control = self._controls.get(name)
+        if control is None:
+            return
+        try:
+            self.scroll_area.ensureWidgetVisible(control.widget)
+        except RuntimeError:            # the page was destroyed before the tick
+            logger.debug("cuo.reveal_after_teardown", exc_info=True)
 
     def _confirm_review(self, payload: dict) -> None:
         if self._anchoring:
@@ -860,9 +892,9 @@ class CuoMandatePage(LocksmithFormPage):
         except Exception:                   # noqa: BLE001 -- no vault, no name
             hab = None
         if hab is None:
-            return _UNNAMED_SIGNER
+            return copy.UNNAMED_SIGNER
         return getattr(hab, "name", None) or getattr(hab, "pre", None) or (
-            _UNNAMED_SIGNER)
+            copy.UNNAMED_SIGNER)
 
     def _enter_flight(self) -> None:
         self._submit.setEnabled(False)
@@ -880,6 +912,17 @@ class CuoMandatePage(LocksmithFormPage):
             dialog.close()
         except RuntimeError:                # already destroyed by Qt
             pass
+
+    def clear_error(self) -> None:
+        """Also clear the text, which the base class leaves behind.
+
+        `LocksmithFormPage.clear_error` animates the banner shut but keeps the
+        message, so its hover copy button went on offering "Fix 6 errors before
+        signing." long after the errors were fixed and the mandate signed.
+        """
+        super().clear_error()
+        self.error_label.setText("")
+        self.error_copy_button.set_copy_content("")
 
     def _clear_declared(self) -> None:
         self._declared.setText("")
@@ -1023,8 +1066,7 @@ class CuoMandatePage(LocksmithFormPage):
         self._anchoring = False
         self._leave_flight()
         self._close_review()
-        self._declared.setText(
-            f"Mandate declared. {said}" if said else "Mandate declared.")
+        self._declared.setText(copy.DECLARED.format(said=said).strip())
         _fit(self._declared)
         self._declared_copy.set_copy_content(said)
         self._declared_row.setVisible(True)

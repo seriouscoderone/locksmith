@@ -15,7 +15,7 @@ from __future__ import annotations
 
 TOKENS = frozenset({
     "code", "cuo_name", "line_of_business", "jurisdiction",
-    "existing_opens", "existing_closes",
+    "existing_opens", "existing_closes", "said",
 })
 
 #: Field sequence for the form AND for error reporting. Deliberately NOT read from
@@ -81,6 +81,17 @@ FIELD_PLACEHOLDER = {
 FORM_PRIMARY = "Review mandate"
 FORM_CANCEL = "Cancel"
 IN_FLIGHT = "Signing…"
+
+#: The declared state. The SAID appears in FULL, never truncated: it is the
+#: handle a reader uses to fetch the mandate, and half of one is no handle.
+DECLARED = "Mandate declared. {said}"
+DECLARED_COPY = "Copy the mandate SAID"
+
+#: Reaches the CUO through `REVIEW_SIGNER` when no identifier can be resolved.
+#: The `cuo_role` credential carries protocol fields only, so no personal name
+#: exists anywhere in the ecosystem to read; the signer is normally named by
+#: their identifier's own local alias.
+UNNAMED_SIGNER = "this identifier"
 
 REVIEW_TITLE = "Review this mandate before signing"
 REVIEW_SIGNER = (
