@@ -68,7 +68,6 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
-    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -88,6 +87,7 @@ from locksmith.ui.onboarding.form_builder import SchemaFormBuilder
 from locksmith.ui.onboarding.role_states import RoleStatus, derive_role_states
 from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
 
 
@@ -139,7 +139,7 @@ class RoleCard(QFrame):
 
     request_clicked = Signal(str)
     open_clicked = Signal(str)
-    startup_toggled = Signal(str, bool)
+    default_toggled = Signal(str, bool)
 
     _STATUS_COPY = {
         RoleStatus.AVAILABLE: ("Available", "Request access to add this role."),
@@ -157,7 +157,8 @@ class RoleCard(QFrame):
         self.status = status
         self.open_button: Optional[LocksmithButton] = None
         self.request_button: Optional[LocksmithButton] = None
-        self.startup_toggle: Optional[QCheckBox] = None
+        self.default_button: Optional[LocksmithInvertedButton] = None
+        self.default_badge: Optional[QLabel] = None
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(f"""
@@ -201,7 +202,23 @@ class RoleCard(QFrame):
             f"background-color: {colors.BACKGROUND_HOVER}; color: {colors.TEXT_SECONDARY}; "
             "border-radius: 8px; font-size: 11px; font-weight: 600; padding: 1px 8px;"
         )
-        layout.addWidget(badge)
+        badge_row = QHBoxLayout()
+        badge_row.setContentsMargins(0, 0, 0, 0)
+        badge_row.setSpacing(6)
+        badge_row.addWidget(badge)
+        if opens_at_startup:
+            # The card says what it is, at a glance. A control alone left the SET
+            # state invisible until you went looking for a ticked box -- the owner
+            # read the whole affordance as missing.
+            self.default_badge = QLabel("DEFAULT")
+            self.default_badge.setObjectName(f"roleCard.defaultBadge.{self.role_id}")
+            self.default_badge.setStyleSheet(
+                f"background-color: {colors.PRIMARY}; color: {colors.WHITE};"
+                " border-radius: 8px; font-size: 11px; font-weight: 600;"
+                " padding: 1px 8px;")
+            badge_row.addWidget(self.default_badge)
+        badge_row.addStretch(1)
+        layout.addLayout(badge_row)
 
         detail = QLabel(status_detail)
         detail.setWordWrap(True)
@@ -240,19 +257,30 @@ class RoleCard(QFrame):
             # registered -- the same two conditions as Open. Pinning a surface
             # you cannot open would be a preference with nowhere to go.
             #
-            # "Open at startup", not "default role": a role is not more-granted
-            # than another, and "default" drifts toward "primary permission",
-            # which is app-layer language. This setting is about where the app
-            # opens, nothing more.
-            self.startup_toggle = QCheckBox("Open at startup")
-            self.startup_toggle.setObjectName(
-                f"roleCard.startupToggle.{self.role_id}")
-            self.startup_toggle.setToolTip(
-                "Open this role's page when you unlock this vault.")
-            self.startup_toggle.setChecked(opens_at_startup)
-            self.startup_toggle.toggled.connect(
-                lambda on: self.startup_toggled.emit(self.role_id, on))
-            buttons_row.addWidget(self.startup_toggle)
+            # A named action, not a checkbox. The first build put an "Open at
+            # startup" checkbox beside Open and the owner reported the affordance
+            # as absent: a small box riding a button row does not announce what
+            # it does, and the SET state was invisible until you noticed a tick.
+            # A button says what will happen, and the DEFAULT badge above says
+            # what is true now.
+            #
+            # "Default" is the owner's word, taken over the design panel's
+            # objection that it drifts toward "primary permission" -- their
+            # concern is real (a role is not more-granted than another) but the
+            # product's voice is the owner's call, and the badge sits beside a
+            # status badge that already says what is granted.
+            self.default_button = LocksmithInvertedButton(
+                "Clear default" if opens_at_startup else "Set as default")
+            self.default_button.setObjectName(
+                f"roleCard.defaultButton.{self.role_id}")
+            self.default_button.setToolTip(
+                "Open this role when you unlock this vault."
+                if not opens_at_startup else
+                "Stop opening this role first; go to Roles instead.")
+            self.default_button.clicked.connect(
+                lambda: self.default_toggled.emit(
+                    self.role_id, not opens_at_startup))
+            buttons_row.addWidget(self.default_button)
         if self.request_button is not None or self.open_button is not None:
             layout.addLayout(buttons_row)
 
@@ -672,7 +700,7 @@ class OnboardingHomePage(BasePage):
                             opens_at_startup=(self._startup_key() == role.id))
             card.request_clicked.connect(self._on_card_request)
             card.open_clicked.connect(self._open_role)
-            card.startup_toggled.connect(self._on_startup_toggled)
+            card.default_toggled.connect(self._on_default_toggled)
             self._role_cards.append(card)
             self._overview_cards_layout.addWidget(card)
 
@@ -688,7 +716,7 @@ class OnboardingHomePage(BasePage):
             logger.debug("onboarding.startup_pref_unreadable", exc_info=True)
             return None
 
-    def _on_startup_toggled(self, role_id: str, on: bool) -> None:
+    def _on_default_toggled(self, role_id: str, on: bool) -> None:
         """Pin or clear the startup page, then rebuild so exactly one card can
         show as ticked -- the preference is single-valued, and two ticked boxes
         would be a lie about what happens next."""
