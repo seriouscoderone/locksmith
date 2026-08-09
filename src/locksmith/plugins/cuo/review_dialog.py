@@ -160,7 +160,6 @@ class MandateReviewDialog(LocksmithDialog):
             f"color: {colors.WARNING_TEXT}; background: {colors.BACKGROUND_WARNING};"
             f" border-left: 4px solid {colors.WARNING_BORDER};"
             f" border-radius: 4px; padding: 10px 12px; font-size: 12px;")
-        outer.addWidget(caution)
 
         self._back = LocksmithInvertedButton(copy.REVIEW_BACK)
         self._back.setObjectName("mandateReviewDialog.back")
@@ -184,11 +183,28 @@ class MandateReviewDialog(LocksmithDialog):
         # -- measured, 138px of dead space on each side. A minimum width is what
         # actually pushes the two buttons to the footer's edges.
         footer.setMinimumWidth(_FOOTER_WIDTH)
-        footer_row = QHBoxLayout(footer)
+
+        # The caution is PINNED here, not added to `outer`, because the body is
+        # inside `LocksmithDialog`'s QScrollArea. Measured with a three-line
+        # thesis: content 397px in a 360px viewport, and the caution's own bottom
+        # 37px below the fold -- the finality sentence was cut off mid-word at "To
+        # correct a mandate, declare a", behind a scrollbar. The one block that
+        # carries irreversibility could scroll out of view on the screen whose
+        # entire job is to make irreversibility land before the click. Three
+        # independent UX reviews each found this first.
+        #
+        # Everything above it may scroll. This may not.
+        footer_column = QVBoxLayout(footer)
+        footer_column.setContentsMargins(0, 0, 0, 0)
+        footer_column.setSpacing(16)
+        footer_column.addWidget(caution)
+
+        footer_row = QHBoxLayout()
         footer_row.setContentsMargins(0, 0, 0, 0)
         footer_row.addWidget(self._back)
         footer_row.addStretch(1)
         footer_row.addWidget(self._confirm_button)
+        footer_column.addLayout(footer_row)
 
         buttons = QHBoxLayout()
         buttons.addWidget(footer)

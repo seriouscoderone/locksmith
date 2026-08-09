@@ -472,3 +472,48 @@ def test_every_font_size_is_on_the_suites_type_scale(qtbot):
     dialog._finished = True
     dialog.close()
     host.hide()
+
+
+def test_the_caution_can_never_scroll_out_of_view(qtbot):
+    """Found independently by three UX reviews, and it is a bug rather than a
+    style gap: the body sits inside `LocksmithDialog`'s QScrollArea, so with a
+    three-line thesis the caution's bottom fell 37px below the fold (content
+    397px in a 360px viewport) and the finality sentence was cut mid-word at "To
+    correct a mandate, declare a", behind a scrollbar.
+
+    The one block carrying irreversibility must not be scrollable on the screen
+    whose entire job is to make irreversibility land before the click.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    long_thesis = (
+        "Grow teen-driver share in Utah by pricing telematics-verified low-mileage "
+        "risk below the market, accepting a thinner margin for two years to build a "
+        "book we can defend on loss ratio rather than on price alone.")
+    payload = dict(_PAYLOAD, thesis=long_thesis, coverages=["BI", "PD", "COMP"])
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(1280, 900)
+    host.show()
+    qtbot.waitExposed(host)
+    dialog = MandateReviewDialog(payload, signer_name="Dana Reyes", parent=host)
+    dialog.open()
+    qtbot.waitUntil(dialog.isVisible, timeout=2000)
+
+    caution = dialog.findChild(QLabel, "mandateReviewDialog.caution")
+    scroll = dialog.findChild(QScrollArea)
+    assert scroll is not None, "retarget this guard — the base class stopped scrolling"
+    assert not scroll.isAncestorOf(caution), (
+        "the caution is back inside the scroll area, where a long thesis pushes it "
+        "below the fold")
+
+    top = caution.mapTo(dialog, caution.rect().topLeft()).y()
+    assert top + caution.height() <= dialog.height(), (
+        "the caution extends past the bottom of the dialog")
+    assert caution.visibleRegion().boundingRect().height() == caution.height(), (
+        "part of the caution is not actually painted")
+
+    dialog._finished = True
+    dialog.close()
+    host.hide()
