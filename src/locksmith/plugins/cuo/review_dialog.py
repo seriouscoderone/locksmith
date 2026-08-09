@@ -37,6 +37,8 @@ _MODAL_WIDTH = 560
 #: `LocksmithDialog._build_button_section` gives the footer container 16px side
 #: margins (dialogs.py:452), so this is the width the button row can occupy.
 _FOOTER_WIDTH = _MODAL_WIDTH - 32
+#: ux-patterns.md:80 "Backdrop: Dark overlay (`bg-black/50`)" — 50% of 255.
+_BACKDROP_ALPHA = 128
 
 
 def _row(label: str, value: str) -> QWidget:
@@ -231,6 +233,15 @@ class MandateReviewDialog(LocksmithDialog):
         if divider is not None:
             divider.setFrameShape(QFrame.Shape.NoFrame)
             divider.setFixedHeight(1)
+
+        # ux-patterns.md:80 specifies the backdrop as `bg-black/50` -- alpha 128 of
+        # 255. The base class paints `rgba(0, 0, 0, 150)` (dialogs.py:479), which
+        # is 59%, and the difference is visible: the owner's first reaction to the
+        # scrim landing was that it looked too dark. Restyled here rather than in
+        # the base class, which every dialog in the app inherits.
+        if self.overlay is not None:
+            self.overlay.setStyleSheet(
+                f"background-color: rgba(0, 0, 0, {_BACKDROP_ALPHA});")
 
         # `close()`, not `reject()`. `LocksmithDialog` now releases its class-level
         # `_current_dialog` on every exit path, so this is no longer load-bearing --

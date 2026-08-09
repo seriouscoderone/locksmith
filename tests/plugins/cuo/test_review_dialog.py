@@ -353,6 +353,11 @@ def test_the_read_back_is_actually_modal_and_has_a_backdrop(qtbot):
     host, dialog = _built(qtbot)
     assert dialog.isModal() is True
     assert dialog.overlay is not None, "no scrim behind an irreversible confirmation"
+    # ux-patterns.md:80 fixes the scrim at `bg-black/50` = alpha 128 of 255. The
+    # base class paints 150 (59%), and the difference is visible -- the owner's
+    # first reaction to the scrim landing was that it read too dark.
+    assert "rgba(0, 0, 0, 128)" in dialog.overlay.styleSheet(), (
+        f"backdrop is not bg-black/50: {dialog.overlay.styleSheet().strip()!r}")
     dialog._finished = True
     dialog.close()
     host.hide()
