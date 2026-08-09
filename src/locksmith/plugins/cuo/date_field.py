@@ -20,7 +20,8 @@ Two problems Qt does not solve on its own:
 """
 from __future__ import annotations
 
-from PySide6.QtCore import QDate, Signal
+from PySide6.QtCore import QDate, QEvent, Qt, Signal
+from PySide6.QtGui import QColor, QFont, QTextCharFormat
 from PySide6.QtWidgets import QDateEdit, QHBoxLayout, QWidget
 
 from locksmith.ui import colors
@@ -123,9 +124,136 @@ class MandateDateField(QWidget):
         self._edit.setDateRange(_EMPTY, _MAX)
         self._edit.setSpecialValueText(placeholder)
         self._edit.setDate(_EMPTY)
+        # The calendar popup syncs to `date()`, which on an empty field is the
+        # year-1 sentinel -- so opening the picker landed on January of year 1 and
+        # asked the CUO to page back through two millennia. Measured on the built
+        # field: `calendarWidget().yearShown()` was 1. Show it today's month
+        # instead, WITHOUT selecting a day: nothing may be chosen on the user's
+        # behalf on a form that mints a permanent credential. Today is already this
+        # field's anchor for leaving the empty state -- `keyPressEvent` seeds
+        # `QDate.currentDate()` when a digit is typed -- so the picker and the
+        # keyboard now agree.
+        self._calendar = self._edit.calendarWidget()
+        self._today_marked: QDate | None = None
+        if self._calendar is not None:
+            self._calendar.installEventFilter(self)
+            self._style_calendar()
         self._paint(invalid=False)
         self._edit.dateChanged.connect(lambda _d: self.changed.emit())
         layout.addWidget(self._edit)
+
+    def _style_calendar(self) -> None:
+        """Dress the popup, which inherits nothing from the field's stylesheet.
+
+        `QDateEdit.calendarWidget()` is a separate top-level popup, so the
+        `QDateEdit { ... }` rule in `_paint` never reaches it: it opened as raw Qt
+        chrome -- dark panel, `#ff0000` weekend columns -- inside a light app.
+
+        Built HERE and not at import time. `colors.apply_theme_overrides()`
+        rewrites the accent constants IN PLACE from the active brand
+        (`PRIMARY` is `#F57B03` vanilla, `#2AABB3` under usurance), so an
+        f-string evaluated at module scope would bake the wrong brand's colour
+        into every build.
+
+        Tokens are the suite's, not invented: Gray 300 `#E5E7EB` for the border
+        (`BORDER_TABLE`), the content surface for the panel, and Teal 600
+        `#2AABB3` for selection -- the same value ui-conventions names for focus
+        indicators, and what `theme.primary` resolves to here.
+        """
+        cal = self._calendar
+        cal.setStyleSheet(f"""
+            QCalendarWidget {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 6px;
+            }}
+            QCalendarWidget QWidget {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                alternate-background-color: {colors.BACKGROUND_CONTENT};
+            }}
+            QCalendarWidget QWidget#qt_calendar_navigationbar {{
+                background-color: {colors.BACKGROUND_TABLE_HEADER};
+                border-bottom: 1px solid {colors.BORDER_TABLE};
+            }}
+            QCalendarWidget QToolButton {{
+                color: {colors.TEXT_PRIMARY};
+                background-color: transparent;
+                border: none;
+                border-radius: 4px;
+                padding: 4px 10px;
+                font-size: 13px;
+            }}
+            QCalendarWidget QToolButton:hover {{
+                background-color: {colors.BACKGROUND_HOVER};
+            }}
+            QCalendarWidget QMenu {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER_TABLE};
+            }}
+            QCalendarWidget QSpinBox {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                color: {colors.TEXT_PRIMARY};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 4px;
+            }}
+            QCalendarWidget QAbstractItemView:enabled {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                color: {colors.TEXT_PRIMARY};
+                selection-background-color: {colors.PRIMARY};
+                selection-color: #FFFFFF;
+                outline: none;
+            }}
+            QCalendarWidget QAbstractItemView:disabled {{
+                color: {colors.TEXT_MUTED};
+            }}
+        """)
+
+        # Qt sets Saturday and Sunday to a literal #ff0000 QTextCharFormat
+        # foreground -- measured. That is a CHAR FORMAT, not a style rule, so no
+        # amount of QSS above touches it. In this system red is semantic (Error /
+        # Red #E74C3C: "Error states, validation failures"), and a Saturday is
+        # neither an error nor destructive, so the weekend colouring has to go
+        # rather than be re-tinted. All seven days read the same.
+        weekday = QTextCharFormat()
+        weekday.setForeground(QColor(colors.TEXT_PRIMARY))
+        for day in Qt.DayOfWeek:
+            cal.setWeekdayTextFormat(day, weekday)
+
+    def _mark_today(self) -> None:
+        """ux-patterns: "Today's date must always be highlighted in the calendar,
+        even when it is not the selected date."
+
+        Weight and colour, never a filled cell -- a fill is how the SELECTED day
+        reads, and on a form that mints a permanent credential the two must not be
+        confusable. Recomputed on each open, and the previous mark cleared, because
+        `setDateTextFormat` persists and an app left running overnight would
+        otherwise highlight yesterday.
+        """
+        if self._today_marked is not None:
+            self._calendar.setDateTextFormat(self._today_marked, QTextCharFormat())
+        today = QDate.currentDate()
+        fmt = QTextCharFormat()
+        fmt.setFontWeight(QFont.Weight.Bold)
+        fmt.setForeground(QColor(colors.PRIMARY))
+        self._calendar.setDateTextFormat(today, fmt)
+        self._today_marked = today
+
+    def eventFilter(self, obj, event):
+        """Point an empty field's calendar at today, each time it opens.
+
+        On `Show` rather than once at construction: `QDateEdit` re-syncs the
+        calendar to `date()` every time the popup opens, so a page set earlier is
+        overwritten. Re-checking `is_empty()` on each open is also what keeps this
+        from fighting the user -- once a real date is chosen the popup must open
+        on THAT date, not on today.
+        """
+        if obj is self._calendar and event.type() == QEvent.Type.Show:
+            self._mark_today()
+            if self.is_empty():
+                today = QDate.currentDate()
+                self._calendar.setCurrentPage(today.year(), today.month())
+        return super().eventFilter(obj, event)
 
     def _paint(self, invalid: bool) -> None:
         """Match `LocksmithLineEdit` exactly: 6px radius, 12px padding, 14px text,

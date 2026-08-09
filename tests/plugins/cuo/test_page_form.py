@@ -830,3 +830,19 @@ def test_the_column_keeps_its_measure_in_a_narrow_window(qtbot):
     column = page._controls["thesis"].widget.parentWidget().parentWidget()
     assert column.width() == page_module._COLUMN_WIDTH
     shell.hide()
+
+
+def test_the_coverages_entry_is_labelled_not_seeded_with_an_example(page):
+    """The widget-level half of the same defect. `LocksmithTextListWidget` is the
+    ONLY control in this form built on `FloatingLabelLineEdit`, whose text
+    animates up into the border as the field's name. Jurisdiction and Thesis use
+    `LocksmithLineEdit` / `LocksmithPlainTextEdit` -- "a simplified styled
+    QLineEdit without floating label animations" -- so only this one promotes
+    whatever it is handed to a label. It was handed "BI"."""
+    from locksmith.plugins.cuo import mandate_copy as copy
+
+    entry = page.findChild(QWidget, "cuoMandatePage.coverages")
+    assert entry is not None, "the coverages entry lost its devctl objectName"
+    assert entry._label_text == copy.FIELD_ENTRY_LABEL["coverages"]
+    assert entry._label_text != copy.FIELD_PLACEHOLDER["coverages"], (
+        "the example value is floating in the border as the field's name again")

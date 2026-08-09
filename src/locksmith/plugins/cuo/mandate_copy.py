@@ -55,9 +55,15 @@ FIELD_HELP = {
         "Format US-UT, one jurisdiction per mandate. Only the format is checked; "
         "the app cannot tell US-UT from US-TU, so read your code back before you "
         "sign."),
+    # The parenthesised examples used to read as the allowed set -- the first CUO
+    # to see this screen went looking for the autocomplete. There is no allowed
+    # set: the payload schema puts no `enum` on `coverages.items`, only the shape
+    # `^[A-Z0-9][A-Z0-9-]*$`, and its own description says the coverages are
+    # declared "in her own language". So the copy has to say so out loud.
     "coverages": (
-        "At least one code, uppercase, no repeats (BI, PD, COMP). These are the "
-        "coverages you are declaring, and they publish exactly as written."),
+        "At least one code, uppercase, no repeats — for example BI, PD or COMP. "
+        "There is no fixed list: these are the coverages you are declaring, in "
+        "your own words, and they publish exactly as written."),
     "window_opens": (
         "Both dates count as in force. In force through must fall after in force "
         "from, so the shortest window is two days."),
@@ -76,6 +82,26 @@ FIELD_PLACEHOLDER = {
     "window_opens": "MM/DD/YYYY",
     "window_closes": "MM/DD/YYYY",
     "thesis": "One sentence of business intent",
+}
+
+#: A LABEL, not a placeholder, for the entry box inside a list control.
+#:
+#: `LocksmithTextListWidget` is built on `FloatingLabelLineEdit`, whose own
+#: docstring says the text "animates up to become an inline label when focused or
+#: filled". Feeding it `FIELD_PLACEHOLDER["coverages"]` therefore promoted the
+#: EXAMPLE VALUE "BI" to the field's permanent name: at rest the box read "BI",
+#: and on focus "BI" floated into the border notch beside the real "Coverages *"
+#: label above it. Measured on the live app -- it reads as either "this field is
+#: called BI" or "BI is already entered", and it is why the first CUO to use the
+#: screen went looking for an autocomplete.
+#:
+#: A placeholder is an example of the VALUE and disappears on typing; a floating
+#: label is the field's NAME and persists. They are not interchangeable, and this
+#: is the only control in the form that takes the second kind. The outer label
+#: names the list, this one names one entry to add -- which is also what makes
+#: the neighbouring "+" button legible.
+FIELD_ENTRY_LABEL = {
+    "coverages": "Coverage code",
 }
 
 FORM_PRIMARY = "Review mandate"

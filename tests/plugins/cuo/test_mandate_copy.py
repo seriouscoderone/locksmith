@@ -84,6 +84,33 @@ def test_every_submitted_field_has_a_label_help_and_placeholder():
         'ux-patterns.md: "No field should render without a placeholder"')
 
 
+def test_a_list_entry_label_is_a_name_not_an_example_value():
+    """The shipped defect, pinned. `LocksmithTextListWidget` floats whatever it is
+    given into the border as the field's NAME, and it was handed
+    `FIELD_PLACEHOLDER["coverages"]` -- so the example value "BI" became the
+    field's label, next to the real "Coverages *" label above it."""
+    for name, entry_label in copy.FIELD_ENTRY_LABEL.items():
+        assert entry_label != copy.FIELD_PLACEHOLDER.get(name), (
+            f"FIELD_ENTRY_LABEL[{name!r}] is the placeholder. A placeholder is an "
+            "example of the VALUE and vanishes on typing; this slot is the field's "
+            "NAME and persists in the border. They are not interchangeable.")
+        assert entry_label != copy.FIELD_LABEL.get(name), (
+            f"FIELD_ENTRY_LABEL[{name!r}] repeats the outer field label. The outer "
+            "one names the list, this one names a single entry to add.")
+
+
+def test_the_coverages_help_denies_a_fixed_list():
+    """A CUO reading "(BI, PD, COMP)" went looking for the autocomplete. There is
+    no allowed set -- the payload schema puts no `enum` on `coverages.items`, only
+    a shape -- so the copy has to say so rather than leave examples looking
+    exhaustive."""
+    help_text = copy.FIELD_HELP["coverages"].lower()
+    assert "no fixed list" in help_text or "not a fixed list" in help_text, (
+        f"coverages help does not deny a fixed list: {copy.FIELD_HELP['coverages']!r}")
+    assert "for example" in help_text or "e.g." in help_text, (
+        "the example codes must be marked as examples")
+
+
 def test_the_intro_states_both_irreversible_facts():
     """The defect this copy replaces was prose that read as PRIVATE. Both facts
     must survive any future edit for brevity."""

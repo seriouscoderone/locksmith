@@ -574,7 +574,12 @@ class CuoMandatePage(LocksmithFormPage):
             )
 
         if constraints.type == "array":
-            listing = LocksmithTextListWidget(label=placeholder, max_height=120)
+            # A LABEL, not `placeholder`. This widget floats whatever it is given
+            # into the border as the field's name (see FIELD_ENTRY_LABEL), so the
+            # example value that suits every other control here is exactly wrong
+            # for this one.
+            listing = LocksmithTextListWidget(
+                label=copy.FIELD_ENTRY_LABEL[name], max_height=120)
             listing.setObjectName(f"{object_name}List")
             # The objectName rides on the INPUT, not the container: the container
             # has no setText, so devctl's `type` cannot drive it, and typing is

@@ -209,3 +209,86 @@ def test_a_non_digit_key_does_not_drag_an_empty_field_out_of_the_empty_state(qtb
         field._edit.setFocus()
         QTest.keyClicks(field._edit, keys)
         assert field.iso_value() == "", keys
+
+
+# --- the calendar POPUP, which inherits nothing from the field's stylesheet -----
+
+
+def _open_popup(field, qtbot):
+    from PySide6.QtCore import QPoint, Qt
+    from PySide6.QtTest import QTest
+    field.resize(240, 46)
+    field.show()
+    qtbot.waitExposed(field)
+    QTest.mouseClick(field._edit, Qt.MouseButton.LeftButton,
+                     pos=QPoint(field._edit.width() - 10, field._edit.height() // 2))
+    qtbot.waitUntil(lambda: field._edit.calendarWidget().isVisible(), timeout=2000)
+    return field._edit.calendarWidget()
+
+
+def test_an_empty_fields_picker_opens_on_today_not_on_the_sentinel(qtbot):
+    """The popup syncs to `date()`, which is the year-1 empty sentinel -- so it
+    opened on January of YEAR 1 and asked the CUO to page back two millennia.
+    Measured on the built field: `yearShown()` was 1."""
+    from PySide6.QtCore import QDate
+
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    cal = _open_popup(field, qtbot)
+    today = QDate.currentDate()
+    assert (cal.yearShown(), cal.monthShown()) == (today.year(), today.month())
+
+
+def test_opening_the_picker_chooses_nothing_for_the_user(qtbot):
+    """Navigating to today must not SELECT today. This form mints a permanent,
+    publicly-readable credential; a date nobody picked must never become one."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    _open_popup(field, qtbot)
+    assert field.is_empty() is True
+    assert field.iso_value() == ""
+
+
+def test_a_filled_fields_picker_still_opens_on_its_own_date(qtbot):
+    """The today-page must not fight a date already chosen."""
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    field.set_iso("2027-06-15")
+    cal = _open_popup(field, qtbot)
+    assert (cal.yearShown(), cal.monthShown()) == (2027, 6)
+
+
+def test_today_is_highlighted_even_though_it_is_not_selected(qtbot):
+    """ux-patterns.md §19: "Always highlight today's date in the calendar, even
+    when it is not the selected date." Weight and colour, never a filled cell --
+    a fill is how the SELECTED day reads and the two must not be confusable."""
+    from PySide6.QtCore import QDate
+    from PySide6.QtGui import QFont
+
+    from locksmith.ui import colors
+
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    cal = _open_popup(field, qtbot)
+    fmt = cal.dateTextFormat(QDate.currentDate())
+    assert fmt.fontWeight() >= QFont.Weight.Bold
+    assert fmt.foreground().color().name().lower() == colors.PRIMARY.lower()
+
+
+def test_no_day_of_the_week_is_coloured_like_an_error(qtbot):
+    """Qt sets Saturday and Sunday to a literal #ff0000 QTextCharFormat
+    foreground. That is a CHAR FORMAT, not a style rule, so no stylesheet touches
+    it -- and in this system red is semantic (Error / Red #E74C3C: "Error states,
+    validation failures"). A Saturday is neither an error nor destructive."""
+    from PySide6.QtCore import Qt
+
+    from locksmith.ui import colors
+
+    field = MandateDateField()
+    qtbot.addWidget(field)
+    cal = _open_popup(field, qtbot)
+    for day in Qt.DayOfWeek:
+        shown = cal.weekdayTextFormat(day).foreground().color().name().lower()
+        assert shown == colors.TEXT_PRIMARY.lower(), (
+            f"{day.name} renders {shown}; all seven days must read the same")
+        assert shown not in ("#ff0000", colors.DANGER.lower())
