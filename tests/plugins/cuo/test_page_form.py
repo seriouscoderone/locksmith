@@ -843,6 +843,17 @@ def test_the_coverages_entry_is_labelled_not_seeded_with_an_example(page):
 
     entry = page.findChild(QWidget, "cuoMandatePage.coverages")
     assert entry is not None, "the coverages entry lost its devctl objectName"
-    assert entry._label_text == copy.FIELD_ENTRY_LABEL["coverages"]
+    assert entry._label_text == copy.FIELD_ENTRY_PROMPT["coverages"]
     assert entry._label_text != copy.FIELD_PLACEHOLDER["coverages"], (
-        "the example value is floating in the border as the field's name again")
+        "the example value is being used as the entry prompt again")
+
+    # ...and it must not FLOAT. This control already carries a visible
+    # "Coverages *" label above it; a second name notched into the entry's own
+    # border reads as though the field were already filled. Asserted three ways
+    # because each is separately load-bearing: the flag, the retired QLabel, and
+    # the real Qt placeholder that replaces it and vanishes on typing.
+    assert entry._float_label is False
+    assert entry.label.isVisible() is False
+    assert entry.line_edit.placeholderText() == copy.FIELD_ENTRY_PROMPT["coverages"]
+    entry.line_edit.setText("BI")
+    assert entry._is_floating is False, "nothing may float once text is typed"

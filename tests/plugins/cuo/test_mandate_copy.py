@@ -84,18 +84,20 @@ def test_every_submitted_field_has_a_label_help_and_placeholder():
         'ux-patterns.md: "No field should render without a placeholder"')
 
 
-def test_a_list_entry_label_is_a_name_not_an_example_value():
-    """The shipped defect, pinned. `LocksmithTextListWidget` floats whatever it is
-    given into the border as the field's NAME, and it was handed
-    `FIELD_PLACEHOLDER["coverages"]` -- so the example value "BI" became the
-    field's label, next to the real "Coverages *" label above it."""
-    for name, entry_label in copy.FIELD_ENTRY_LABEL.items():
-        assert entry_label != copy.FIELD_PLACEHOLDER.get(name), (
-            f"FIELD_ENTRY_LABEL[{name!r}] is the placeholder. A placeholder is an "
-            "example of the VALUE and vanishes on typing; this slot is the field's "
-            "NAME and persists in the border. They are not interchangeable.")
-        assert entry_label != copy.FIELD_LABEL.get(name), (
-            f"FIELD_ENTRY_LABEL[{name!r}] repeats the outer field label. The outer "
+def test_a_list_entry_prompt_is_not_an_example_value():
+    """The shipped defect, pinned. `LocksmithTextListWidget` was handed
+    `FIELD_PLACEHOLDER["coverages"]` while it still floated its text into the
+    border as the field's NAME, so the example value "BI" became the field's
+    label, beside the real "Coverages *" above it. The page now also passes
+    `float_label=False`, but the copy rule outlives that: this slot names what is
+    being ADDED, and an example value in it is wrong either way -- floated as a
+    name, or sat in the box implying the field is already filled."""
+    for name, prompt in copy.FIELD_ENTRY_PROMPT.items():
+        assert prompt != copy.FIELD_PLACEHOLDER.get(name), (
+            f"FIELD_ENTRY_PROMPT[{name!r}] is the example VALUE. This slot names "
+            "the thing being added, singular.")
+        assert prompt != copy.FIELD_LABEL.get(name), (
+            f"FIELD_ENTRY_PROMPT[{name!r}] repeats the outer field label. The outer "
             "one names the list, this one names a single entry to add.")
 
 

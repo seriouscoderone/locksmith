@@ -253,18 +253,27 @@ class FloatingLabelLineEdit(QWidget):
     """
 
     def __init__(self, label_text: str = "", parent=None, password_mode: bool = False, leading_icon: str | None = None,
-                 font_family: str = "none"):
+                 font_family: str = "none", float_label: bool = True):
         """
         Initialize the FloatingLabelLineEdit.
 
         Args:
-            label_text: The placeholder/label text.
+            label_text: The floating LABEL — the field's name, which persists in
+                the border once the field is focused or filled. With
+                float_label=False it is instead Qt's own placeholder, which
+                vanishes as soon as there is text.
             parent: Parent widget.
             password_mode: If True, display text as password dots.
             leading_icon: Path to icon file to display on the left side (optional).
+            float_label: Keep the default True where the text names the field.
+                Pass False where the text is a prompt that should get out of the
+                way — a control that already carries a visible label above it
+                would otherwise show two names at once, one of them notched into
+                its own border.
         """
 
         self._label_text = label_text
+        self._float_label = float_label
         self._is_floating = False
         self._label_y_pos = 21  # Start position (centered in input) - adjusted from 35
         self._password_mode = password_mode
@@ -355,6 +364,15 @@ class FloatingLabelLineEdit(QWidget):
         self.label.move(label_x_pos, int(self._label_y_pos))
         self.label.raise_()  # Bring label to front
         self.label.show()  # Explicitly show the label
+
+        if not self._float_label:
+            # Placeholder semantics instead: the prompt sits inside the field and
+            # disappears the moment there is text. Qt's own placeholder already
+            # does exactly that, so the floating QLabel is retired rather than
+            # animated -- it is hidden (not destroyed) so `self.label` stays a
+            # live attribute for every other method here.
+            self.label.hide()
+            self.line_edit.setPlaceholderText(self._label_text)
 
         # Connect signals
         self.line_edit.focusInEvent = self._on_focus_in  # type: ignore
@@ -458,7 +476,10 @@ class FloatingLabelLineEdit(QWidget):
 
     def _animate_label_up(self):
         """Animate label to floating position."""
-        if self._is_floating:
+        # The two animate methods are the ONLY places the label moves, so gating
+        # them here is what makes `float_label=False` total -- every caller of
+        # either (focus in, focus out, text changed, setText) is covered at once.
+        if not self._float_label or self._is_floating:
             return
         self._is_floating = True
         self.label_animation.setStartValue(self._label_y_pos)
@@ -473,7 +494,7 @@ class FloatingLabelLineEdit(QWidget):
 
     def _animate_label_down(self):
         """Animate label to default position."""
-        if not self._is_floating:
+        if not self._float_label or not self._is_floating:
             return
         self._is_floating = False
         self.label_animation.setStartValue(self._label_y_pos)

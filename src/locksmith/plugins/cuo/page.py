@@ -574,12 +574,16 @@ class CuoMandatePage(LocksmithFormPage):
             )
 
         if constraints.type == "array":
-            # A LABEL, not `placeholder`. This widget floats whatever it is given
-            # into the border as the field's name (see FIELD_ENTRY_LABEL), so the
-            # example value that suits every other control here is exactly wrong
-            # for this one.
+            # `float_label=False`: this control already carries its own visible
+            # "Coverages *" label above it, so a second name notched into the
+            # entry's border reads as though the field were already filled. With
+            # the float off the prompt behaves as a placeholder and gets out of
+            # the way the moment the CUO types. The other two consumers of this
+            # widget (identifiers/create.py, credentials/issued/issue.py) keep the
+            # default: for them the text IS the field's name.
             listing = LocksmithTextListWidget(
-                label=copy.FIELD_ENTRY_LABEL[name], max_height=120)
+                label=copy.FIELD_ENTRY_PROMPT[name], max_height=120,
+                float_label=False)
             listing.setObjectName(f"{object_name}List")
             # The objectName rides on the INPUT, not the container: the container
             # has no setText, so devctl's `type` cannot drive it, and typing is

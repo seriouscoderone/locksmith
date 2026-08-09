@@ -35,14 +35,21 @@ class LocksmithTextListWidget(QWidget):
     itemRemoved = Signal(str)    # Emitted when item is removed
     itemsChanged = Signal(list)  # Emitted when list changes
 
-    def __init__(self, label: str = "Enter text", parent=None, max_height: int = 300):
+    def __init__(self, label: str = "Enter text", parent=None, max_height: int = 300,
+                 float_label: bool = True):
         """
         Initialize the text list widget.
 
         Args:
-            label: Placeholder/label text for input field
+            label: Text for the entry field. With float_label=True (the default)
+                this is the field's NAME and persists, floating into the border
+                once focused or filled. With float_label=False it is a prompt that
+                vanishes as soon as there is text.
             parent: Parent widget
             max_height: Maximum height for scrollable list area
+            float_label: Pass False when this widget already sits under its own
+                visible label — two names at once, one notched into the entry's
+                border, reads as though the field were already filled.
         """
         super().__init__(parent)
 
@@ -51,10 +58,10 @@ class LocksmithTextListWidget(QWidget):
         self._max_height = max_height
         self._dialog = None  # For dialog integration
 
-        self._setup_ui(label)
+        self._setup_ui(label, float_label)
         self._apply_styling()
 
-    def _setup_ui(self, label: str):
+    def _setup_ui(self, label: str, float_label: bool = True):
         """Setup the UI structure."""
         # Main layout
         main_layout = QVBoxLayout(self)
@@ -65,7 +72,7 @@ class LocksmithTextListWidget(QWidget):
         input_row = QHBoxLayout()
         input_row.setSpacing(8)
 
-        self.text_input = FloatingLabelLineEdit(label)
+        self.text_input = FloatingLabelLineEdit(label, float_label=float_label)
         self.text_input.line_edit.returnPressed.connect(self._add_item)
         input_row.addWidget(self.text_input)
 

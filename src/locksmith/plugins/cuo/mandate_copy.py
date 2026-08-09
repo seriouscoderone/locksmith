@@ -84,23 +84,27 @@ FIELD_PLACEHOLDER = {
     "thesis": "One sentence of business intent",
 }
 
-#: A LABEL, not a placeholder, for the entry box inside a list control.
+#: The prompt inside a list control's entry box — what to add, singular.
 #:
-#: `LocksmithTextListWidget` is built on `FloatingLabelLineEdit`, whose own
-#: docstring says the text "animates up to become an inline label when focused or
-#: filled". Feeding it `FIELD_PLACEHOLDER["coverages"]` therefore promoted the
-#: EXAMPLE VALUE "BI" to the field's permanent name: at rest the box read "BI",
-#: and on focus "BI" floated into the border notch beside the real "Coverages *"
-#: label above it. Measured on the live app -- it reads as either "this field is
-#: called BI" or "BI is already entered", and it is why the first CUO to use the
-#: screen went looking for an autocomplete.
+#: Distinct from `FIELD_PLACEHOLDER`, which holds example VALUES. This names the
+#: thing being added, because the outer label names the LIST: "Coverages *" above,
+#: "Coverage code" in the box, and a "+" beside it, so the three read as one
+#: sentence.
 #:
-#: A placeholder is an example of the VALUE and disappears on typing; a floating
-#: label is the field's NAME and persists. They are not interchangeable, and this
-#: is the only control in the form that takes the second kind. The outer label
-#: names the list, this one names one entry to add -- which is also what makes
-#: the neighbouring "+" button legible.
-FIELD_ENTRY_LABEL = {
+#: It shipped as `FIELD_PLACEHOLDER["coverages"]`, i.e. the example value "BI",
+#: fed to `LocksmithTextListWidget` — which is built on `FloatingLabelLineEdit`,
+#: whose text "animates up to become an inline label when focused or filled". So
+#: "BI" became the field's permanent NAME, notched into the border beside the real
+#: label. On the live app it read as "this field is called BI" or "BI is already
+#: entered", and it is why the first CUO to use the screen went looking for an
+#: autocomplete that does not exist.
+#:
+#: The page now passes `float_label=False`, so this renders as Qt's own
+#: placeholder and vanishes as soon as there is text — hence PROMPT rather than
+#: LABEL in the name. The distinction that caused the defect still holds: a
+#: placeholder is an example of the value, a floating label is the field's name,
+#: and neither may be fed to the slot meant for the other.
+FIELD_ENTRY_PROMPT = {
     "coverages": "Coverage code",
 }
 
