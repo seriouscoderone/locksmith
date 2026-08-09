@@ -8,7 +8,7 @@ the submit that reveals the errors unreachable.
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtCore import QEvent
+from PySide6.QtCore import QEvent, Qt
 from PySide6.QtGui import QFocusEvent
 from PySide6.QtWidgets import (
     QApplication,
@@ -857,3 +857,68 @@ def test_the_coverages_entry_is_labelled_not_seeded_with_an_example(page):
     assert entry.line_edit.placeholderText() == copy.FIELD_ENTRY_PROMPT["coverages"]
     entry.line_edit.setText("BI")
     assert entry._is_floating is False, "nothing may float once text is typed"
+
+
+def test_the_read_back_closes_when_the_mandate_actually_signs(page, qtbot):
+    """The modal survived its own success. `_close_review` called `close()`, the
+    dialog refuses to `reject()` while an anchor is in flight, and `close()` is
+    implemented in terms of `reject()` -- so the close was silently IGNORED. On
+    the live app the mandate signed, the SAID banner appeared behind the dialog,
+    and the dialog sat on "Signing..." for the life of the process.
+
+    Drives the whole success path, not `_close_review` in isolation: the defect
+    lived in the seam between the page and the dialog, so a unit test of either
+    half alone reproduces nothing."""
+    import shiboken6
+
+    _fill(page)
+    page._anchor = lambda payload: None          # issuance is not what is on trial
+    page.submit()
+    dialog = page.review_dialog
+    assert dialog is not None
+    dialog._on_confirm()
+    assert dialog.confirmed() is True
+
+    # Escape STILL must not dismiss it -- the guard being fixed must survive.
+    qtbot.keyClick(dialog, Qt.Key.Key_Escape)
+    assert shiboken6.Shiboken.isValid(dialog) and dialog.isVisible(), (
+        "the in-flight guard was removed rather than given an exception")
+
+    page._show_declared("E" + "A" * 43)          # the credential resolves
+
+    qtbot.waitUntil(lambda: not shiboken6.Shiboken.isValid(dialog)
+                    or not dialog.isVisible(), timeout=2000)
+    assert page.review_dialog is None
+
+
+def test_a_silent_doer_cannot_strand_the_read_back_forever(page, qtbot):
+    """The valve. The read-back refuses Escape while confirmed and carries no
+    close button, so if the doer emits NEITHER `credential_issued` nor
+    `credential_issuance_failed`, nothing calls `_show_declared` or
+    `_fail_anchor` and the modal is un-dismissable for the life of the process --
+    the whole app, since it is app-modal, so even the window's close button is
+    swallowed. Reported from the live app. No in-flight guard may be unbounded."""
+    import shiboken6
+
+    page._ANCHOR_TIMEOUT_MS = 120          # the bound, not the duration, is the point
+    _fill(page)
+    page._anchor = lambda payload: None    # a doer that never answers
+    page.submit()
+    dialog = page.review_dialog
+    dialog._on_confirm()
+    assert dialog.isVisible()
+
+    qtbot.waitUntil(lambda: not shiboken6.Shiboken.isValid(dialog)
+                    or not dialog.isVisible(), timeout=3000)
+    assert page.review_dialog is None
+    assert page.findChild(QWidget, "cuoMandatePage.submit").isEnabled() is True, (
+        "the form must be usable again")
+
+
+def test_the_timeout_does_not_claim_the_mandate_failed(page):
+    """It may have signed. Saying otherwise on a permanent-credential form is the
+    one message that must never be wrong."""
+    text = copy.ANCHOR_TIMEOUT.lower()
+    assert "may or may not" in text
+    for lie in ("failed", "was not signed", "did not sign", "no mandate"):
+        assert lie not in text, f"ANCHOR_TIMEOUT asserts {lie!r} without knowing"

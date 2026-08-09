@@ -51,6 +51,7 @@ class MandateReviewDialog(LocksmithDialog):
 
     def __init__(self, payload: dict, signer_name: str, parent=None):
         self._confirmed = False
+        self._finished = False
 
         body = QWidget()
         outer = QVBoxLayout(body)
@@ -145,6 +146,21 @@ class MandateReviewDialog(LocksmithDialog):
         self._confirm_button.setAutoDefault(False)
         self._back.setFocus()
 
+    def finish(self) -> None:
+        """The outcome has arrived; release the in-flight guard and close.
+
+        REQUIRED, not a convenience: `reject()` refuses while `_confirmed`, and
+        `QWidget.close()` routes through `closeEvent` -> `QDialog::reject`, so a
+        plain `close()` on a confirmed dialog is IGNORED. Shipped exactly that
+        way for one commit -- the mandate signed, the SAID banner appeared behind
+        the modal, and the modal sat on "Signing..." for the life of the process.
+
+        So the guard yields to exactly one caller: the page, once issuance has
+        actually resolved. Escape and the header X still cannot reach this.
+        """
+        self._finished = True
+        self.close()
+
     def reject(self):
         """Escape must not destroy this modal once signing has begun.
 
@@ -152,11 +168,13 @@ class MandateReviewDialog(LocksmithDialog):
         through Qt's own key handling and no `setEnabled(False)` stands in its
         way. The issuance carries on regardless -- destroying the dialog only
         removes the surface that reports the outcome, and leaves `fail()` with
-        nothing to re-arm. Refusing the reject also stops `close()`:
-        `QDialog::closeEvent` calls `reject()` and ignores the close event unless
-        the dialog actually hid, so there is one rule here, not two.
+        nothing to re-arm.
+
+        `_finished` is the deliberate exception. Without it this guard also
+        blocks the page's own completion path, because `close()` is implemented
+        in terms of `reject()`.
         """
-        if self._confirmed:
+        if self._confirmed and not self._finished:
             return
         super().reject()
 

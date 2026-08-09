@@ -306,6 +306,10 @@ class CuoMandatePage(LocksmithFormPage):
         self.review_dialog: MandateReviewDialog | None = None
         self._review_serial = 0        # see _forget_review
         self._controls: dict[str, _Control] = {}
+        # Bounds the un-dismissable read-back — see `_on_flight_timeout`.
+        self._flight_timeout = QTimer(self)
+        self._flight_timeout.setSingleShot(True)
+        self._flight_timeout.timeout.connect(self._on_flight_timeout)
 
         self.setObjectName(_PAGE_NAME)
         # The base's banner is the page's error surface; keep the objectName the
@@ -986,20 +990,57 @@ class CuoMandatePage(LocksmithFormPage):
         return getattr(hab, "name", None) or getattr(hab, "pre", None) or (
             copy.UNNAMED_SIGNER)
 
+    #: How long the read-back may stay un-dismissable while an anchor is in
+    #: flight. Issuance here is LOCAL -- an untargeted mint, no network leg -- so
+    #: this is not a latency budget; it is the bound on how long the modal may
+    #: refuse to close. Everything below is generous by comparison.
+    _ANCHOR_TIMEOUT_MS = 30_000
+
     def _enter_flight(self) -> None:
         self._submit.setEnabled(False)
         self._submit.setText(copy.IN_FLIGHT)
+        # A safety valve, because the read-back refuses Escape while confirmed and
+        # carries no close button: if the doer emits NEITHER `credential_issued`
+        # nor `credential_issuance_failed`, nothing calls `_show_declared` or
+        # `_fail_anchor` and the modal is un-dismissable for the life of the
+        # process -- the whole application, since it is app-modal, so even the
+        # window's own close button is swallowed. Reported from the live app.
+        # No in-flight guard may be unbounded.
+        self._flight_timeout.start(self._ANCHOR_TIMEOUT_MS)
 
     def _leave_flight(self) -> None:
+        self._flight_timeout.stop()
         self._submit.setEnabled(True)
         self._submit.setText(copy.FORM_PRIMARY)
+
+    def _on_flight_timeout(self) -> None:
+        """Neither outcome arrived. Say so honestly and give the CUO the screen
+        back.
+
+        Deliberately does not claim the mandate failed: the doer may yet be
+        working, and this form's output is a permanent credential, so the one
+        thing that must not happen is telling the CUO nothing was signed when
+        something was. `_fail_anchor` restores an editable form with the typed
+        values intact.
+        """
+        if not self._anchoring:
+            return
+        logger.warning("cuo.mandate.anchor_timed_out after_ms=%d",
+                       self._ANCHOR_TIMEOUT_MS)
+        self._retire_pending_listener()
+        self._fail_anchor(copy.ANCHOR_TIMEOUT)
 
     def _close_review(self) -> None:
         dialog, self.review_dialog = self.review_dialog, None
         if dialog is None:
             return
         try:
-            dialog.close()
+            # `finish()`, NOT `close()`: the read-back refuses to reject while an
+            # anchor is in flight (so Escape cannot destroy the surface that has
+            # to report the outcome), and `close()` is implemented in terms of
+            # `reject()`. A plain `close()` here is silently ignored and leaves
+            # the modal reading "Signing..." over a mandate that already signed.
+            dialog.finish()
         except RuntimeError:                # already destroyed by Qt
             pass
 
@@ -1132,6 +1173,21 @@ class CuoMandatePage(LocksmithFormPage):
         signals.doer_event.disconnect(listener)
         if self._pending_listener is listener:
             self._pending_listener = None
+
+    def _retire_pending_listener(self) -> None:
+        """Disconnect whatever issue listener is still connected, if any.
+
+        `_retire_listener` needs the exact callable, which its own caller holds by
+        closure. The timeout path knows only that SOMETHING may still be wired,
+        and must not raise on the way to freeing a stuck modal.
+        """
+        listener, self._pending_listener = self._pending_listener, None
+        if listener is None:
+            return
+        try:
+            self._app.vault.signals.doer_event.disconnect(listener)
+        except (RuntimeError, TypeError, AttributeError):   # already gone
+            logger.debug("cuo.retire_pending_listener_noop", exc_info=True)
 
     def _fail_anchor(self, message: str) -> None:
         """The mint refused, or could not be attempted. The modal closes, the

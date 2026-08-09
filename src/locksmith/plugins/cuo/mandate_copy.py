@@ -123,6 +123,15 @@ DECLARED_COPY = "Copy the mandate SAID"
 #: their identifier's own local alias.
 UNNAMED_SIGNER = "this identifier"
 
+#: Shown when neither outcome arrives before `_ANCHOR_TIMEOUT_MS`. Deliberately
+#: does NOT claim the mandate failed: the doer may still be working, and on a form
+#: whose output is a permanent credential the one unacceptable message is "nothing
+#: was signed" when something was.
+ANCHOR_TIMEOUT = (
+    "Declaring is taking longer than expected, so the form is yours again. The "
+    "mandate may or may not have been signed — check your issued credentials "
+    "before declaring this one a second time.")
+
 REVIEW_TITLE = "Review this mandate before signing"
 REVIEW_SIGNER = (
     "Signing as {cuo_name}, Chief Underwriting Officer, on the authority granted "
