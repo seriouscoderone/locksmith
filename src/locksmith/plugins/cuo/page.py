@@ -528,7 +528,10 @@ class CuoMandatePage(LocksmithFormPage):
             def write_tokens(value: Any) -> None:
                 items = (_split_tokens(value) if isinstance(value, str)
                          else [str(item) for item in (value or ())])
-                self._commit_tokens(listing, items, tail="")
+                # REPLACES, like every other control's write. Appending here
+                # instead made `set_field` merge into whatever was already
+                # committed, and made `clear()` a no-op -- measured.
+                self._write_tokens(listing, items)
 
             def commit_typed(text: str) -> None:
                 if self._committing_tokens or "," not in text:
@@ -547,7 +550,7 @@ class CuoMandatePage(LocksmithFormPage):
             return _Control(
                 name=name, widget=listing, focus_widget=line, error=error,
                 read=read_tokens, write=write_tokens,
-                clear=lambda: self._commit_tokens(listing, [], tail=""),
+                clear=lambda: self._write_tokens(listing, ()),
                 paint=lambda invalid: _paint_toolkit_field(
                     listing.text_input, invalid),
                 flush=flush_typed,
@@ -599,27 +602,37 @@ class CuoMandatePage(LocksmithFormPage):
             changed=(edit.textChanged,),
         )
 
-    def _commit_tokens(self, listing: LocksmithTextListWidget,
-                       tokens: Iterable[str], *, tail: str) -> None:
-        """Turn `tokens` into committed chips and leave `tail` in the input.
+    def _write_tokens(self, listing: LocksmithTextListWidget,
+                      tokens: Iterable[str], *, tail: str = "") -> None:
+        """REPLACE the committed tokens, leaving `tail` in the input box.
 
-        `LocksmithTextListWidget` commits on Enter or the add button and knows
-        nothing about commas -- measured, and the reason this exists: the
-        integration harness fills this field by typing `BI,PD` in one write, and
-        a form that swallowed `PD` would publish half a mandate.
+        Reentrancy-guarded because `set_items` emits `itemsChanged` and the
+        write is triggered from a `textChanged` handler.
         """
         if self._committing_tokens:
             return
         self._committing_tokens = True
         try:
-            items = list(listing.get_items())
-            for token in tokens:
-                if token and token not in items:
-                    items.append(token)
-            listing.set_items(items)
+            listing.set_items(list(tokens))
             listing.text_input.setText(tail)
         finally:
             self._committing_tokens = False
+
+    def _commit_tokens(self, listing: LocksmithTextListWidget,
+                       tokens: Iterable[str], *, tail: str) -> None:
+        """APPEND `tokens` as committed chips, leaving `tail` in the input.
+
+        `LocksmithTextListWidget` commits on Enter or the add button and knows
+        nothing about commas -- measured, and the reason this exists: the
+        integration harness fills this field by typing a comma-separated pair in
+        one write, and a form that swallowed the second half would publish half a
+        mandate.
+        """
+        items = list(listing.get_items())
+        for token in tokens:
+            if token and token not in items:
+                items.append(token)
+        self._write_tokens(listing, items, tail=tail)
 
     # -- public control API (tests and devctl drive the same methods) -----------
 
@@ -735,6 +748,10 @@ class CuoMandatePage(LocksmithFormPage):
         payload opens `MandateReviewDialog`; only its confirmation reaches
         `_anchor`.
         """
+        if self._anchoring:
+            # The primary is disabled for exactly this reason; this is the same
+            # refusal for a caller that reaches the method directly.
+            return
         for control in self._controls.values():
             control.flush()
         self.clear_error()

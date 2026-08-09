@@ -8,14 +8,24 @@ the submit that reveals the errors unreachable.
 from types import SimpleNamespace
 
 import pytest
-from PySide6.QtWidgets import QComboBox, QLabel, QWidget
+from PySide6.QtCore import QEvent
+from PySide6.QtGui import QFocusEvent
+from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QWidget
 
 from locksmith.plugins.cuo import mandate_copy as copy
 from locksmith.plugins.cuo.page import CuoMandatePage
+from locksmith.ui import colors
 
 
 @pytest.fixture
 def page(qtbot):
+    """A page under a parent that OUTLIVES the test.
+
+    `yield`, not `return`: the fixture's frame is what holds the only reference
+    to `parent`, and a collected parent takes its child page's C++ object with
+    it -- every test then errored in pytest-qt's teardown with "Internal C++
+    object (CuoMandatePage) already deleted". Measured; keep the yield.
+    """
     parent = QWidget()
     qtbot.addWidget(parent)
     parent.app = SimpleNamespace(vault=None)
@@ -126,3 +136,172 @@ def test_the_full_said_is_shown_not_a_truncation(page):
     said = "E" + "A" * 43
     page.show_declared(said)
     assert said in " ".join(_labels(page))
+
+
+# --- Found by hand-driving the built page, not by the tests above -------------
+# Each of these covers something a green run of the suite above could not see:
+# a defect that shipped past it, a Qt behaviour it never exercises, or a
+# contract another task depends on.
+
+
+def _coverages_input(page):
+    return page.findChild(QWidget, "cuoMandatePage.coverages").line_edit
+
+
+def test_a_comma_commits_a_coverage_token(page):
+    """`LocksmithTextListWidget` commits on Enter or the add button and knows
+    nothing about commas -- measured. Task 8's integration helper fills this
+    field by typing "BI,PD" in ONE write, so both halves must land."""
+    _coverages_input(page).setText("BI,PD")
+    listing = page._controls["coverages"].widget
+    # The comma itself committed BI, live, leaving PD being typed.
+    assert listing.get_items() == ["BI"]
+    assert _coverages_input(page).text() == "PD"
+    # ...and the token still being typed is not lost from the payload.
+    assert page.build_payload()["coverages"] == ["BI", "PD"]
+    page.submit()          # commits the pending token so the screen agrees
+    assert listing.get_items() == ["BI", "PD"]
+    assert _coverages_input(page).text() == ""
+
+
+def test_setting_the_coverages_replaces_them_rather_than_merging(page):
+    """The regression. `set_field` appended, so a second call merged into the
+    first and `reset_form` cleared nothing at all."""
+    page.set_field("coverages", ["BI"])
+    page.set_field("coverages", ["PD"])
+    assert page.build_payload()["coverages"] == ["PD"]
+    page.reset_form()
+    assert page.build_payload()["coverages"] == []
+
+
+def test_an_invalid_border_survives_the_next_focus_change(page):
+    """`LocksmithLineEdit` and friends REBUILD their whole stylesheet on focus
+    in and out, so a red border painted with `setStyleSheet` is erased by the
+    next click -- the error message would remain with no control marked."""
+    page.submit()
+    edit = page._controls["jurisdiction"].widget
+    assert page.field_error("jurisdiction") != ""
+    assert colors.DANGER.lower() in edit.styleSheet().lower()
+    edit.focusInEvent(QFocusEvent(QEvent.Type.FocusIn))
+    edit.focusOutEvent(QFocusEvent(QEvent.Type.FocusOut))
+    assert colors.DANGER.lower() in edit.styleSheet().lower()
+
+
+def test_a_focus_out_is_what_actually_triggers_the_blur_check(page):
+    """`blur_field` is public, but the CUO never calls it -- a focus change
+    does. This pins the event filter that connects the two."""
+    page.submit()
+    page.set_field("jurisdiction", "UTAH")
+    assert page.field_error("jurisdiction") == ""
+    control = page._controls["jurisdiction"]
+    QApplication.sendEvent(control.focus_widget,
+                           QFocusEvent(QEvent.Type.FocusOut))
+    assert copy.JURISDICTION_PATTERN in page.field_error("jurisdiction")
+
+
+def test_the_declared_banner_is_hidden_until_a_mandate_exists(page, qtbot):
+    """`wait_for cuoMandatePage.declaredBanner condition=visible` is how the
+    integration arc knows the issuance finished. `LocksmithFormPage`'s own
+    success banner collapses to zero height WITHOUT hiding, so `isVisible()`
+    would stay true and that wait would return before anything was signed."""
+    window = page.window()
+    qtbot.addWidget(window)
+    window.resize(900, 900)
+    window.show()
+    qtbot.waitExposed(window)
+    banner = page.findChild(QLabel, "cuoMandatePage.declaredBanner")
+    assert banner.isVisible() is False
+    page.show_declared("E" + "A" * 43)
+    assert banner.isVisible() is True
+    page.set_field("thesis", "Editing resumes.")
+    assert banner.isVisible() is False
+    window.hide()
+
+
+def test_the_overlap_gate_reads_this_vault_s_own_mandates(qtbot):
+    """`existing_mandates` is only useful if it reaches the validator. Nothing
+    above proves the page passes it, because the fixture has no vault."""
+    held = {"line_of_business": "auto", "jurisdiction": "US-UT",
+            "window_opens": "2027-06-01", "window_closes": "2027-12-31"}
+    reger = SimpleNamespace(
+        schms=SimpleNamespace(get=lambda keys=None: [SimpleNamespace(qb64="E1")]),
+        creds=SimpleNamespace(get=lambda keys=None: SimpleNamespace(sad={"a": held})),
+    )
+    app = SimpleNamespace(vault=SimpleNamespace(rgy=SimpleNamespace(reger=reger)))
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    page = CuoMandatePage(app=app, parent=parent)
+    assert page.existing_mandates() == [held]
+
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "US-UT")
+    page.set_field("coverages", ["BI"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "Overlapping on purpose.")
+    page.submit()
+    assert page.review_dialog is None, (
+        "an overlapping window must not reach the read-back")
+    assert "2027-06-01" in page.field_error("window_opens")
+
+
+def test_an_unreadable_registry_is_advisory_not_fatal(qtbot):
+    """The ledger enforces the real invariant; a local read that fails must not
+    stop the CUO from declaring anything at all."""
+    def boom(keys=None):
+        raise RuntimeError("lmdb is gone")
+
+    reger = SimpleNamespace(schms=SimpleNamespace(get=boom),
+                            creds=SimpleNamespace(get=boom))
+    app = SimpleNamespace(vault=SimpleNamespace(rgy=SimpleNamespace(reger=reger)))
+    parent = QWidget()
+    qtbot.addWidget(parent)
+    page = CuoMandatePage(app=app, parent=parent)
+    assert page.existing_mandates() == []
+
+
+def _fill(page):
+    page.set_field("line_of_business", "auto")
+    page.set_field("jurisdiction", "ut")
+    page.set_field("coverages", ["bi"])
+    page.set_field("window_opens", "2027-01-01")
+    page.set_field("window_closes", "2027-12-31")
+    page.set_field("thesis", "One sentence of intent.")
+
+
+def test_the_primary_disables_for_exactly_one_reason_an_anchor_in_flight(page):
+    _fill(page)
+    page._anchor = lambda payload: None
+    page.submit()
+    assert page.findChild(QWidget, "cuoMandatePage.submit").isEnabled() is True
+    page.review_dialog._on_confirm()
+    submit = page.findChild(QWidget, "cuoMandatePage.submit")
+    assert submit.isEnabled() is False and submit.text() == copy.IN_FLIGHT
+
+
+def test_a_failed_anchor_leaves_the_form_editable_and_says_why(page):
+    """Design §4.3's Failed row: the modal closes, the typed values survive,
+    and a retry is possible -- a one-shot guard that never re-armed would trap
+    the CUO behind a permanently in-flight button."""
+    _fill(page)
+    page._anchor = lambda payload: None
+    page.submit()
+    page.review_dialog._on_confirm()
+    page._fail_anchor("the mint refused")
+    submit = page.findChild(QWidget, "cuoMandatePage.submit")
+    assert page.review_dialog is None
+    assert submit.isEnabled() is True and submit.text() == copy.FORM_PRIMARY
+    assert page.error_label.text() == "the mint refused"
+    assert page.build_payload()["thesis"] == "One sentence of intent."
+    page.submit()
+    assert page.review_dialog is not None, "the CUO must be able to retry"
+
+
+def test_a_schema_field_the_form_cannot_render_fails_loudly(page, monkeypatch):
+    """A new required field with no control would be dropped from every payload
+    and rejected by the mint with nothing the CUO could act on."""
+    from locksmith.plugins.cuo import page as page_module
+
+    monkeypatch.setattr(page_module.copy, "FIELD_ORDER", ("jurisdiction",))
+    with pytest.raises(RuntimeError, match="FIELD_ORDER does not render"):
+        CuoMandatePage(app=None)
