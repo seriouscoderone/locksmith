@@ -44,7 +44,9 @@ _BACKDROP_ALPHA = 128
 def _row(label: str, value: str) -> QWidget:
     row = QWidget()
     layout = QHBoxLayout(row)
-    layout.setContentsMargins(0, 3, 0, 3)
+    # 4px, not 3: design-system.md:140 sets the base unit at 4px and the scale
+    # (:144-160) has no 3px step.
+    layout.setContentsMargins(0, 4, 0, 4)
     name = QLabel(label)
     # design-system.md:261 "Data label | text-sm font-medium uppercase
     # tracking-wide text-gray-500 | 12px medium, uppercase". Label and value were
@@ -137,9 +139,29 @@ class MandateReviewDialog(LocksmithDialog):
         # This dialog's entire reason for existing is showing what will be
         # signed, so this must be plain text, unconditionally.
         thesis.setTextFormat(Qt.TextFormat.PlainText)
+        # A quote rail, NOT a filled box. The grey chip it replaces was the one
+        # element on this screen that looked like a form field, on the one screen
+        # in the product where nothing is editable -- and that is a rule, not a
+        # preference: ux-patterns.md:241 "Read-only | Plain text (not a disabled
+        # input) ... Never render as a greyed-out input" and :463, while a
+        # 4px-radius filled rect IS the design system's input token
+        # (design-system.md:196, :206).
+        #
+        # Two further things the fill cost, both visible in renders: with a
+        # one-word thesis it banded a 520px grey slab around three characters, and
+        # at three lines it became a peer of the amber caution below it, so the
+        # CUO's own declaration read as a second alert. With the fill gone, the
+        # caution is the ONLY filled block -- fill now means "stop and read".
+        #
+        # BORDER_DARK, not BORDER: measured on this surface, #D0D5DD is ~1.4:1 and
+        # fails the 3:1 that ui-conventions.md:77 requires of a non-text graphical
+        # object; #757575 is ~4.5:1. The rail is load-bearing -- it is the only
+        # thing on screen saying "these exact bytes are what publishes" -- so it
+        # has to be visible.
         thesis.setStyleSheet(
-            f"color: {colors.TEXT_PRIMARY}; font-size: 16px; padding: 10px 12px;"
-            f" background: {colors.BACKGROUND_HIGHLIGHT}; border-radius: 4px;")
+            f"color: {colors.TEXT_PRIMARY}; font-size: 16px;"
+            f" padding: 2px 0 2px 12px;"
+            f" border-left: 3px solid {colors.BORDER_DARK};")
         outer.addWidget(thesis)
 
         caution = QLabel(copy.REVIEW_CAUTION)
