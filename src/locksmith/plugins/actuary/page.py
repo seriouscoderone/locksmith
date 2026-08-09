@@ -307,6 +307,14 @@ class ActuaryPage(QWidget):
         # page reads down, and it is what squeezed the parse-directory field to
         # ~145px in the built page -- narrower than the paths it accepts.
         form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        # EXPLICIT, because the default is style-dependent and the two styles
+        # disagree: Fusion (what offscreen tests and every screenshot I take run
+        # under) defaults to AllNonFixedFieldsGrow, while the macOS style defaults
+        # to FieldsStayAtSizeHint. So the parse-directory field rendered full
+        # width in every render I checked and ~150px on the owner's actual Mac --
+        # narrower than the absolute paths it exists to accept.
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
         form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
         form.setHorizontalSpacing(0)
         form.setVerticalSpacing(8)

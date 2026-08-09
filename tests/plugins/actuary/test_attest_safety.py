@@ -250,3 +250,28 @@ def test_the_evidence_values_are_monospaced_and_not_truncated(qtbot):
     _loaded(page)
     assert page._manifest_said_label.text() == _MANIFEST, "truncated or altered"
     shell.hide()
+
+
+def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
+    """A defect no offscreen render could show.
+
+    `QFormLayout.fieldGrowthPolicy` has a STYLE-DEPENDENT default, and the two
+    styles disagree: Fusion — which the offscreen platform selects, so every test
+    and every screenshot runs under it — defaults to `AllNonFixedFieldsGrow`,
+    while the macOS style defaults to `FieldsStayAtSizeHint`. Measured under the
+    macOS style: the parse-directory field was 151px of an 1180px page, narrower
+    than the absolute paths it exists to accept, while every render I checked
+    showed it full width.
+
+    Asserts the POLICY, not a rendered width: the width is style-dependent by
+    definition, so a width assertion would pass here and still ship the bug.
+    """
+    from PySide6.QtWidgets import QFormLayout
+
+    shell, page = _page(qtbot)
+    form = next(child for child in page.findChildren(QFormLayout))
+    assert form.fieldGrowthPolicy() == \
+        QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow, (
+            "the field growth policy is back to the style default, which is "
+            "FieldsStayAtSizeHint on macOS")
+    shell.hide()
