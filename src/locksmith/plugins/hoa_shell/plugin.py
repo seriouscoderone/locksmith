@@ -151,6 +151,9 @@ class HoaShellPlugin(VaultPlugin):
                 on_apply=self._request_role,
                 open_role=lambda rid: vault_page._show_vault_page(rid),
                 page_available=lambda rid: rid in vault_page.registered_page_keys(),
+                startup_provider=vault_page.pinned_landing_key,
+                on_set_startup=lambda rid, on: vault_page.set_pinned_landing_key(
+                    rid if on else None),
                 micro_app_resolver=resolver.resolve_micro_app,
                 accept_phases=brand().egf_accept_phases,
                 parent=vault_page,
@@ -343,7 +346,14 @@ class HoaShellPlugin(VaultPlugin):
         QTimer.singleShot(0, self._home_page.refresh)
 
         if self._vault_page is not None:
-            self._vault_page._current_page_key = "home"
+            # Was `_current_page_key = "home"` -- a plugin reaching into a private
+            # attribute to hardcode the landing. It also could not be right: this
+            # runs inside `PluginManager.on_vault_opened`, BEFORE
+            # `reevaluate_role_gates`, so no role surface is registered yet and
+            # there is nothing to choose between. Clearing instead defers the
+            # decision to `VaultPage.on_show`, which runs after the gates and asks
+            # `preferred_default_page_keys()`.
+            self._vault_page.reset_landing()
 
     def _bring_up_direct_transport(self, oobi_source, attempt: int = 0,
                                    max_attempts: int = 40) -> None:

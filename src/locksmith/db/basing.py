@@ -14,6 +14,26 @@ from locksmith.peer.records import PeerHealth, PeerModeSettings, PeerRecord
 
 
 @dataclass
+class LandingPrefs:
+    """Where this vault opens, and how often we have explained it.
+
+    Per VAULT, not per app. A vault holds the credentials, so the role set is a
+    property of the vault; and `QSettings` is brand-scoped, so putting it there
+    would leak one person's landing choice onto another person's vault on a
+    shared machine.
+
+    `pinned_page_key` is a PAGE KEY, never a role name -- the framework does not
+    know what a role is. It is applied only when that key is currently
+    registered, so a pin naming a revoked surface degrades on its own. It is kept
+    rather than cleared on revocation: revoke -> re-grant is a real arc, and
+    silently forgetting the choice would make the re-grant a mystery.
+    """
+
+    pinned_page_key: str = ""
+    notice_count: int = 0
+
+
+@dataclass
 class OTPSecret:
     vault: str
     secret: str
@@ -95,6 +115,7 @@ class LocksmithBaser(dbing.LMDBer):
 
         # Peer-mode allowlist + listener settings
         self.peerAllowlist = None
+        self.landing = None
         self.peerSettings = None
         self.peerHealth = None
 
@@ -122,6 +143,9 @@ class LocksmithBaser(dbing.LMDBer):
         # Peer-mode storage
         self.peerAllowlist = koming.Komer(
             db=self, subkey='peer.', klas=PeerRecord
+        )
+        self.landing = koming.Komer(
+            db=self, subkey='landing.', klas=LandingPrefs
         )
         self.peerSettings = koming.Komer(
             db=self, subkey='peerSettings.', klas=PeerModeSettings

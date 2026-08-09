@@ -815,7 +815,15 @@ class VaultNavMenu(QFrame):
             self.nav_buttons[0].set_active(True)
             self.active_nav_button = self.nav_buttons[0]
 
-        self.identifiers_clicked.emit()
+        # `identifiers` is a CORE wallet page. A peeled HOA builds no core nav
+        # items (`include_core_items=False`) and registers no such page, so
+        # emitting here asked the vault page to route to a key that does not
+        # exist -- the measured "No page registered for key 'identifiers'" ERROR
+        # on every unlock and every menu reset. The intent above is "activate the
+        # first nav item", which the two lines before this already did; the emit
+        # is only how the CORE wallet follows through on it.
+        if self.include_core_items:
+            self.identifiers_clicked.emit()
 
         logger.info("Switched back to vault menu from credentials")
 
@@ -1054,6 +1062,14 @@ class VaultNavMenu(QFrame):
             self.nav_buttons[0].set_active(True)
             self.active_nav_button = self.nav_buttons[0]
 
-        self.identifiers_clicked.emit()
+        # `identifiers` is a CORE wallet page. A peeled HOA builds no core nav
+        # items (`include_core_items=False`) and registers no such page, so
+        # emitting here asked the vault page to route to a key that does not
+        # exist -- the measured "No page registered for key 'identifiers'" ERROR
+        # on every unlock and every menu reset. The intent above is "activate the
+        # first nav item", which the two lines before this already did; the emit
+        # is only how the CORE wallet follows through on it.
+        if self.include_core_items:
+            self.identifiers_clicked.emit()
 
         logger.info("Menu reset to vault state")

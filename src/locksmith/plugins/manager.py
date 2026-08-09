@@ -362,6 +362,28 @@ class PluginManager:
 
     # ------------------- Role-activation (credential gate) ---------
 
+    def active_role_page_keys(self) -> list[str]:
+        """Landing page keys for the role surfaces currently revealed.
+
+        `_active_roles` is the manager's own record of which gates are satisfied,
+        so this asks the question the landing decision actually has -- "which role
+        surfaces exist right now" -- without any caller re-deriving it from
+        credentials. Order follows plugin registration, so it is stable.
+        """
+        keys = []
+        for plugin in self._plugins.values():
+            if plugin.plugin_id not in self._active_roles:
+                continue
+            try:
+                key = plugin.landing_page_key()
+            except Exception:               # noqa: BLE001 -- a landing hint only
+                logger.debug("plugin.landing_page_key_failed id=%s",
+                             plugin.plugin_id, exc_info=True)
+                continue
+            if key:
+                keys.append(key)
+        return keys
+
     def reevaluate_role_gates(self, vault: Any) -> None:
         """Recompute every gated plugin's gate against the vault's held
         credentials and drive the activation strategy on state transitions.

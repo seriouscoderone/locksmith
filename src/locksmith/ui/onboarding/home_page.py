@@ -68,6 +68,7 @@ from typing import Any, Callable, Dict, Iterable, List, Optional
 
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtWidgets import (
+    QCheckBox,
     QComboBox,
     QFormLayout,
     QFrame,
@@ -138,6 +139,7 @@ class RoleCard(QFrame):
 
     request_clicked = Signal(str)
     open_clicked = Signal(str)
+    startup_toggled = Signal(str, bool)
 
     _STATUS_COPY = {
         RoleStatus.AVAILABLE: ("Available", "Request access to add this role."),
@@ -148,12 +150,14 @@ class RoleCard(QFrame):
     }
 
     def __init__(self, role: Role, status: RoleStatus, *,
-                page_available: bool = False, parent: Optional[QWidget] = None):
+                page_available: bool = False, opens_at_startup: bool = False,
+                parent: Optional[QWidget] = None):
         super().__init__(parent)
         self.role_id = role.id
         self.status = status
         self.open_button: Optional[LocksmithButton] = None
         self.request_button: Optional[LocksmithButton] = None
+        self.startup_toggle: Optional[QCheckBox] = None
 
         self.setFrameShape(QFrame.Shape.StyledPanel)
         self.setStyleSheet(f"""
@@ -221,11 +225,34 @@ class RoleCard(QFrame):
                 lambda: self.request_clicked.emit(self.role_id))
             buttons_row.addWidget(self.request_button)
         if status is RoleStatus.ACTIVE and page_available:
+            # Per-role objectName, for the reason the request button's comment
+            # above already gives: every Open button carried the SAME name, so
+            # with three roles on the page "open the actuary role" was
+            # unexpressible to a test, a script or an accessibility client --
+            # name lookup returns the first match.
             self.open_button = LocksmithButton("Open")
-            self.open_button.setObjectName("roleCard.openButton")
+            self.open_button.setObjectName(f"roleCard.openButton.{self.role_id}")
             self.open_button.clicked.connect(
                 lambda: self.open_clicked.emit(self.role_id))
             buttons_row.addWidget(self.open_button)
+
+            # Offered only on a role that is ACTIVE and whose page is really
+            # registered -- the same two conditions as Open. Pinning a surface
+            # you cannot open would be a preference with nowhere to go.
+            #
+            # "Open at startup", not "default role": a role is not more-granted
+            # than another, and "default" drifts toward "primary permission",
+            # which is app-layer language. This setting is about where the app
+            # opens, nothing more.
+            self.startup_toggle = QCheckBox("Open at startup")
+            self.startup_toggle.setObjectName(
+                f"roleCard.startupToggle.{self.role_id}")
+            self.startup_toggle.setToolTip(
+                "Open this role's page when you unlock this vault.")
+            self.startup_toggle.setChecked(opens_at_startup)
+            self.startup_toggle.toggled.connect(
+                lambda on: self.startup_toggled.emit(self.role_id, on))
+            buttons_row.addWidget(self.startup_toggle)
         if self.request_button is not None or self.open_button is not None:
             layout.addLayout(buttons_row)
 
@@ -332,6 +359,8 @@ class OnboardingHomePage(BasePage):
         applies_provider: Callable[[], list] = lambda: [],
         on_apply: Optional[Callable[[str], None]] = None,
         open_role: Optional[Callable[[str], None]] = None,
+        startup_provider: Optional[Callable[[], Optional[str]]] = None,
+        on_set_startup: Optional[Callable[[str, bool], None]] = None,
         page_available: Callable[[str], bool] = lambda rid: False,
         micro_app_resolver: Optional[Callable[[str], dict]] = None,
         accept_phases: Iterable[str] = ("production",),
@@ -344,6 +373,8 @@ class OnboardingHomePage(BasePage):
         self._on_submit = on_submit
         self._on_apply = on_apply
         self._open_role_cb = open_role
+        self._startup_provider = startup_provider
+        self._on_set_startup = on_set_startup
         self._page_available = page_available
         self._micro_app_resolver = micro_app_resolver
         self._accept_phases = tuple(accept_phases)
@@ -636,11 +667,35 @@ class OnboardingHomePage(BasePage):
         self._role_cards = []
         for role in self._egf.personas():
             status = self.role_states.get(role.id, RoleStatus.AVAILABLE)
-            card = RoleCard(role, status, page_available=self._page_available(role.id))
+            card = RoleCard(role, status,
+                            page_available=self._page_available(role.id),
+                            opens_at_startup=(self._startup_key() == role.id))
             card.request_clicked.connect(self._on_card_request)
             card.open_clicked.connect(self._open_role)
+            card.startup_toggled.connect(self._on_startup_toggled)
             self._role_cards.append(card)
             self._overview_cards_layout.addWidget(card)
+
+    def _startup_key(self) -> Optional[str]:
+        """Which role currently opens at startup, or None. None-guarded like
+        every other provider here: this page is constructed before a vault
+        exists."""
+        if self._startup_provider is None:
+            return None
+        try:
+            return self._startup_provider()
+        except Exception:               # noqa: BLE001 -- a preference, not state
+            logger.debug("onboarding.startup_pref_unreadable", exc_info=True)
+            return None
+
+    def _on_startup_toggled(self, role_id: str, on: bool) -> None:
+        """Pin or clear the startup page, then rebuild so exactly one card can
+        show as ticked -- the preference is single-valued, and two ticked boxes
+        would be a lie about what happens next."""
+        if self._on_set_startup is None:
+            return
+        self._on_set_startup(role_id, on)
+        self._rebuild_overview()
 
     def _on_card_request(self, role_id: str) -> None:
         """A card's Request/Request-again button was clicked. Routes on the

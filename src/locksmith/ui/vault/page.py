@@ -97,6 +97,16 @@ class VaultPage(BasePage):
         restore. Overridable hook; the stock wallet wants "identifiers"."""
         return ("identifiers",)
 
+    def reset_landing(self) -> None:
+        """Forget the current sub-page so the next show re-decides.
+
+        The public form of what `hoa_shell` used to do by assigning
+        `_current_page_key` directly. Callers run during vault-open, before role
+        gates are evaluated, so they cannot know the answer -- they can only say
+        "do not restore the last vault's page, work it out again".
+        """
+        self._current_page_key = None
+
     def default_page_key(self) -> str | None:
         """The first *registered* key from ``preferred_default_page_keys``,
         falling back to any registered page and finally to None.
@@ -158,6 +168,18 @@ class VaultPage(BasePage):
         widget.setParent(None)
         widget.deleteLater()
         logger.debug(f"Unregistered page '{key}'")
+
+        # If the user was STANDING on it, they are now on a destroyed widget and
+        # `_current_page_key` still names it -- so the next `on_show` would try to
+        # restore a key that no longer resolves. This is the live-revocation path:
+        # the role-gate strategy calls here the moment a credential flips
+        # satisfied -> unsatisfied, with the page open. Move them somewhere real.
+        if self._current_page_key == key:
+            self._current_page_key = None
+            fallback = self.default_page_key()
+            logger.info("vault.page.current_unregistered key=%s -> %s", key, fallback)
+            if fallback is not None:
+                self._show_page(fallback)
 
     def add_menu_entry(self, plugin_id: str, entry_button, submenu_items=None) -> None:
         """Reveal a plugin's nav-menu section. Thin host wrapper over the nav

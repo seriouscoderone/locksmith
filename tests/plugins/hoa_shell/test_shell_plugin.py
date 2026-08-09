@@ -40,6 +40,25 @@ class _FakeHoaVaultPage(QWidget):
         super().__init__()
         self.register_page = MagicMock(name="register_page")
         self.add_menu_entry = MagicMock(name="add_menu_entry")
+        # The landing contract, implemented rather than stubbed. The plugin
+        # hands these to OnboardingHomePage as providers, so a MagicMock would
+        # make every card render "opens at startup" (a Mock is truthy) and the
+        # toggle would assert nothing. An in-memory pin is the real semantics at
+        # this seam: pin a key, read it back, clear it with None.
+        self._pinned_landing_key = None
+        self._landing_reset = 0
+
+    def pinned_landing_key(self):
+        return self._pinned_landing_key
+
+    def set_pinned_landing_key(self, key):
+        self._pinned_landing_key = key or None
+
+    def reset_landing(self):
+        self._landing_reset += 1
+
+    def registered_page_keys(self):
+        return [c.args[0] for c in self.register_page.call_args_list]
 
 
 def test_shell_is_ungated_and_contributes_no_static_surfaces():

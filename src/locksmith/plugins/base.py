@@ -148,6 +148,22 @@ class VaultPlugin(PluginCore):
 
     # Optional hooks — defaults are no-ops; override only when applicable.
 
+    def landing_page_key(self) -> str | None:
+        """The page a user lands on when this plugin's surface is where they go.
+
+        Declares a convention the codebase already relies on but only ever wrote
+        in a comment -- `cuo/plugin.py` returns `{"cuo": page}` under
+        "page key == plugin_id == EGF role id", and `hoa_shell` opens a role by
+        guessing `_show_vault_page(role_id)`. Stating it here means a plugin with
+        several pages can name its primary one instead of the framework picking.
+
+        Returns None when the plugin registers no pages at all.
+        """
+        pages = self.get_pages()
+        if self.plugin_id in pages:
+            return self.plugin_id
+        return next(iter(pages), None)
+
     def get_doers(self) -> list["doing.Doer"]:
         """Return background doers appended to vault.doers on open.
 
