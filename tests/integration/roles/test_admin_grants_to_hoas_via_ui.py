@@ -306,8 +306,14 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_pa
     # arrivals above — and if it never does, its text names which one is missing.
     blocker_text = (devctl(designer, "get_text",
                            target="designerPage.assembleBlocker").get("text") or "")
-    gate = devctl(designer, "wait_for", target="designerPage.assembleBlocker",
-                  condition="hidden", timeout_ms=120_000)
+    # Waits on the BUTTON, not on the blocker going hidden. The blocker is
+    # always visible now -- it explains the empty and unselected states too, and
+    # hiding it was suppressing the page's best writing exactly when it was
+    # needed -- so "hidden" stopped being a readiness signal. The button's
+    # enabled state is the gate itself, which is a more direct thing to wait on
+    # anyway; the blocker's TEXT stays the diagnostic when it never opens.
+    gate = devctl(designer, "wait_for", target="designerPage.assemble",
+                  condition="enabled", timeout_ms=120_000)
     assert gate.get("ok"), (
         "the Assemble gate never opened — the mandate did not become verifiable "
         f"as a chain node in this wallet. Last blocker text: {blocker_text!r}\n"
@@ -318,6 +324,18 @@ def test_the_admin_issues_and_grants_both_roles_live(admin_then_two_hoas, tmp_pa
     # state or a failed row selection reads as a successful click.
     r = devctl(designer, "click", target="designerPage.assemble")
     assert r.get("ok"), f"click Assemble: {r}"
+
+    # The mint is behind a read-back now: `assemble` opens a confirmation naming
+    # the mandate and every program in the set, because assembly acts on a
+    # mandate GROUP and the row highlight never showed that. Non-modal on
+    # purpose -- a modal `exec()` blocks the Qt main-thread stack devctl
+    # dispatches on, which is the deadlock this package's conftest already
+    # documents for the accept-grant dialogs.
+    assert devctl(designer, "wait_for", target="designerPage.confirmAssemble",
+                  condition="enabled", timeout_ms=15000).get("ok"), (
+        "the assembly read-back never opened")
+    r = devctl(designer, "click", target="designerPage.confirmAssemble")
+    assert r.get("ok"), f"confirm the assembly read-back: {r}"
     assert (r.get("clicked") or {}).get("enabled"), (
         f"Assemble was DISABLED when clicked, so nothing ran — the row "
         f"selection did not take: {r}")

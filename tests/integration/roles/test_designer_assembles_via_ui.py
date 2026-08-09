@@ -65,6 +65,18 @@ def test_the_designer_assembles_a_bundle_from_a_received_program(two_wallets):
     assert r.get("ok"), r
     r = devctl(b["sock"], "click", target="designerPage.assemble")
     assert r.get("ok"), r
+
+    # The mint is behind a read-back now: `assemble` opens a confirmation naming
+    # the mandate and every program in the set, because assembly acts on a
+    # mandate GROUP and the row highlight never showed that. Non-modal on
+    # purpose -- a modal `exec()` blocks the Qt main-thread stack devctl
+    # dispatches on, which is the deadlock this package's conftest already
+    # documents for the accept-grant dialogs.
+    assert devctl(b["sock"], "wait_for", target="designerPage.confirmAssemble",
+                  condition="enabled", timeout_ms=15000).get("ok"), (
+        "the assembly read-back never opened")
+    r = devctl(b["sock"], "click", target="designerPage.confirmAssemble")
+    assert r.get("ok"), f"confirm the assembly read-back: {r}"
     r = devctl(b["sock"], "wait_for", target="designerPage.bundleSaid",
                condition="visible", timeout_ms=15000)
     assert r.get("ok"), r

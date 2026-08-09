@@ -4,7 +4,7 @@ locksmith.ui.toolkit.widgets.buttons module
 
 This module contains reusable custom button widget components.
 """
-from PySide6.QtCore import Qt, QSize, Signal, QPoint, QTimer
+from PySide6.QtCore import Qt, QEvent, QSize, Signal, QPoint, QTimer
 from PySide6.QtGui import QIcon, QColor, QPixmap, QPainter, QCursor
 from PySide6.QtWidgets import QToolButton, QVBoxLayout, QPushButton, QRadioButton, QCheckBox, QApplication, QHBoxLayout, \
     QLabel, QFrame, QGraphicsOpacityEffect, QWidget
@@ -183,7 +183,32 @@ class LocksmithButton(QPushButton):
             QPushButton:pressed {{
                 background-color: {colors.PRIMARY_HOVER};
             }}
+            QPushButton:disabled {{
+                background-color: {colors.BACKGROUND_DISABLED};
+                color: {colors.TEXT_MUTED};
+                border: 1px solid {colors.BORDER_NEUTRAL};
+            }}
         """)
+        # An inline sheet that names QPushButton at all overrides Qt's disabled
+        # PALETTE, so without an explicit `:disabled` rule an insensitive button
+        # rendered byte-for-byte like a live one -- measured, identical pixel
+        # histograms in both states, app-wide. A primary CTA that looks clickable
+        # and is not is worse than no button.
+        #
+        # design-system.md:231 specifies `opacity-50` for this state; `opacity` is
+        # not a Qt Style Sheet property, so the deviation is a token substitution
+        # that reaches the same end.
+        self.setCursor(Qt.CursorShape.ForbiddenCursor if not self.isEnabled()
+                       else Qt.CursorShape.PointingHandCursor)
+
+    def changeEvent(self, event):
+        """Keep the cursor honest when enabled-ness changes after construction --
+        which is the normal case here: gated buttons are built enabled and
+        disabled a moment later."""
+        if event.type() == QEvent.Type.EnabledChange:
+            self.setCursor(Qt.CursorShape.PointingHandCursor if self.isEnabled()
+                           else Qt.CursorShape.ForbiddenCursor)
+        super().changeEvent(event)
 
 
 class LocksmithInvertedButton(QPushButton):

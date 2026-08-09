@@ -54,10 +54,11 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import Qt, QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
-    QAbstractItemView, QFormLayout, QHeaderView, QLabel, QTableWidget,
-    QTableWidgetItem, QVBoxLayout, QWidget,
+    QAbstractItemView, QFormLayout, QHBoxLayout, QHeaderView, QLabel,
+    QTableWidget, QTableWidgetItem, QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -65,6 +66,12 @@ from keri import help
 from locksmith.core.branding import brand, egf_local_dir
 from locksmith.core.serviceaid_bridge import ServiceaidIssueDoer
 from locksmith.ui import colors
+from locksmith.ui.toolkit.widgets.buttons import (
+    LocksmithCopyButton,
+    LocksmithInvertedButton,
+)
+from locksmith.ui.toolkit.widgets.dialogs import LocksmithDialog
+from locksmith.ui.styles import get_monospace_font_family
 from locksmith.ui.toolkit.widgets import LocksmithButton
 
 logger = help.ogler.getLogger(__name__)
@@ -83,7 +90,46 @@ PRODUCT_BUNDLE_SCHEMA_SAID = "EK4y4AX2Uo1d_Y20fyIeg3cZj09RjlvDUzkqXCf2xTL-"
 #: on the next pass rather than needing to be told.
 _SCAN_POLL_MS = 1000
 
-_TABLE_HEADERS = ["Attestation", "Issuer", "Mandate", "Manifest SAID", "Version", "Action"]
+_TABLE_HEADERS = ["Attestation", "Issuer", "Mandate", "Manifest SAID", "Version",
+                  "Retention"]
+#: Columns holding a SAID or an AID -- shortened, monospaced, and tooltipped with
+#: the full value. Everything else is prose or a short token.
+_IDENTIFIER_COLUMNS = frozenset({0, 1, 2, 3})
+#: Per-column starting widths. NOT `Stretch` for all six: that gave a 28px version
+#: string and a 34px status word 181px each while four 44-character SAIDs got 182px
+#: -- and, because Stretch fills the viewport exactly, it made a horizontal
+#: scrollbar structurally IMPOSSIBLE. Measured: every identifier rendered ~21 of 44
+#: characters, elided right (hiding the discriminating tail), with no recovery at
+#: any window width below ~2140px.
+_COLUMN_WIDTHS = (200, 200, 200, 200, 90, 110)
+
+#: The primary's resting label, before a set is known.
+_ASSEMBLE_IDLE = "Assemble Bundle"
+#: The blocker line speaks in every state. Naming the upstream persona is the
+#: house pattern here -- `_mandate_blocker` already does it for the four
+#: verification bail-outs, and these three complete the set.
+_BLOCKER_NOTHING_RECEIVED = (
+    "Nothing to assemble yet. Rate programs appear here once an actuary attests "
+    "one against a mandate and sends it to you.")
+_BLOCKER_NOTHING_SELECTED = (
+    "Select a rate program. Assembling takes every program you have received "
+    "under that program's mandate, not just the row you click.")
+_BLOCKER_READY = (
+    "Ready: {count} program(s) share this mandate and will go into one bundle.")
+
+
+def short_said(value: str, head: int = 8, tail: int = 4) -> str:
+    """`EAttest0k…jK0` — head 8, tail 4, middle elided.
+
+    Head-8 keeps the derivation code plus enough entropy to tell members of a
+    list apart (the git short-hash instinct); tail-4 is what lets a human
+    eye-match against a value already on their clipboard. Values short enough to
+    render whole are returned untouched.
+    """
+    value = str(value or "")
+    if len(value) <= head + tail + 1:
+        return value
+    return f"{value[:head]}…{value[-tail:]}"
 
 
 class ProductDesignerPage(QWidget):
@@ -104,6 +150,9 @@ class ProductDesignerPage(QWidget):
         self._received: dict[str, dict] = {}
         self._row_saids: list[str] = []          # table row index -> attestation SAID
         self._selected_said: str | None = None
+        #: The open assembly read-back, or None. Public so devctl and tests
+        #: can reach it by name, as `CuoMandatePage.review_dialog` is.
+        self.confirm_dialog = None
 
         self.setObjectName("designerPage")
 
@@ -124,15 +173,20 @@ class ProductDesignerPage(QWidget):
             "Publishing and completeness are handled elsewhere."
         )
         description.setWordWrap(True)
+        # TEXT_SECONDARY (#6E7074) measures 4.48:1 on this surface -- under the
+        # 4.5:1 ui-conventions.md:73 requires of normal text. Five labels on this
+        # page failed by the same hair, all fixed by the same token swap.
         description.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+            f"color: {colors.TEXT_PRIMARY}; font-size: 13px;")
         outer.addWidget(description)
 
         self._error_banner = QLabel("")
         self._error_banner.setObjectName("designerPage.errorBanner")
         self._error_banner.setWordWrap(True)
         self._error_banner.setStyleSheet(
-            f"color: {colors.DANGER}; background-color: {colors.BACKGROUND_ERROR}; "
+            # DANGER on BACKGROUND_ERROR measures 4.22:1; DANGER_HOVER is the
+            # darker step of the same token pair and clears the floor.
+            f"color: {colors.DANGER_HOVER}; background-color: {colors.BACKGROUND_ERROR}; "
             "border-radius: 6px; padding: 8px 12px;")
         self._error_banner.setVisible(False)
         outer.addWidget(self._error_banner)
@@ -146,8 +200,54 @@ class ProductDesignerPage(QWidget):
         self._received_table = QTableWidget(0, len(_TABLE_HEADERS))
         self._received_table.setObjectName("designerPage.receivedPrograms")
         self._received_table.setHorizontalHeaderLabels(_TABLE_HEADERS)
-        self._received_table.horizontalHeader().setSectionResizeMode(
-            QHeaderView.ResizeMode.Stretch)
+        header = self._received_table.horizontalHeader()
+        for col, width in enumerate(_COLUMN_WIDTHS):
+            header.setSectionResizeMode(col, QHeaderView.ResizeMode.Interactive)
+            self._received_table.setColumnWidth(col, width)
+        header.setStretchLastSection(False)
+        # A scrollbar is the recovery path Stretch removed. ux-patterns.md:93
+        # ("Never clip table content" / overflow-x: auto) is not satisfiable
+        # without one.
+        self._received_table.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        # Middle, not right: these are SAIDs, and the right-hand end is the part
+        # that distinguishes two of them.
+        self._received_table.setTextElideMode(Qt.TextElideMode.ElideMiddle)
+        # An empty gutter whose width shifts with the row count, nudging every
+        # column boundary as rows arrive.
+        self._received_table.verticalHeader().setVisible(False)
+        # The selected row was distinguishable from an unselected one at 1.54:1,
+        # and the token fill alone computes 1.25:1 on white -- under the 3:1
+        # ui-conventions.md:76 requires of a non-text indicator. The 3px bar is
+        # the compliance; the fill is the comfort. PRIMARY_HOVER rather than
+        # PRIMARY: measured 3.92:1 vs 2.51:1, and it is a brand token, so it
+        # still tracks `apply_theme_overrides` instead of freezing one brand's
+        # teal into plugin code.
+        self._received_table.setStyleSheet(f"""
+            QTableWidget {{
+                background-color: {colors.WHITE};
+                border: 1px solid {colors.BORDER_TABLE};
+                border-radius: 6px;
+                gridline-color: {colors.BORDER_TABLE};
+            }}
+            QTableWidget::item {{ padding: 6px 8px; }}
+            QTableWidget::item:hover {{
+                background-color: {colors.BACKGROUND_TABLE_ROW_HOVER};
+            }}
+            QTableWidget::item:selected {{
+                background-color: {colors.BACKGROUND_TABLE_ROW_SELECTED};
+                color: {colors.TEXT_PRIMARY};
+                border-left: 3px solid {colors.PRIMARY_HOVER};
+            }}
+            QHeaderView::section {{
+                background-color: {colors.BACKGROUND_TABLE_HEADER};
+                color: {colors.TEXT_SECONDARY};
+                border: none;
+                border-bottom: 1px solid {colors.BORDER_TABLE};
+                padding: 8px;
+                font-size: 12px; font-weight: 600;
+            }}
+        """)
         self._received_table.setSelectionBehavior(
             QAbstractItemView.SelectionBehavior.SelectRows)
         self._received_table.setEditTriggers(
@@ -162,7 +262,7 @@ class ProductDesignerPage(QWidget):
         self._selected_label = QLabel("No program selected.")
         self._selected_label.setObjectName("designerPage.selectedProgram")
         self._selected_label.setWordWrap(True)
-        self._selected_label.setStyleSheet(f"color: {colors.TEXT_SECONDARY};")
+        self._selected_label.setStyleSheet(f"color: {colors.TEXT_PRIMARY};")
         outer.addWidget(self._selected_label)
 
         # -- Pane 2: assemble ---------------------------------------------------------
@@ -187,13 +287,21 @@ class ProductDesignerPage(QWidget):
         self._assemble_blocker = QLabel("")
         self._assemble_blocker.setObjectName("designerPage.assembleBlocker")
         self._assemble_blocker.setWordWrap(True)
-        self._assemble_blocker.setStyleSheet(f"color: {colors.TEXT_SECONDARY};")
+        self._assemble_blocker.setStyleSheet(f"color: {colors.TEXT_PRIMARY};")
         self._assemble_blocker.setVisible(False)
         form.addRow(self._assemble_blocker)
 
         self._bundle_said = QLabel("")
         self._bundle_said.setObjectName("designerPage.bundleSaid")
         self._bundle_said.setWordWrap(True)
+        # The artifact this whole page exists to mint could not be copied: the
+        # label was not even selectable, so 44 base64 characters could leave the
+        # app only by being retyped. Mono because a SAID in a proportional face
+        # cannot be checked against a clipboard value character by character.
+        self._bundle_said.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse
+            | Qt.TextInteractionFlag.TextSelectableByKeyboard)
+        self._bundle_said.setFont(QFont(get_monospace_font_family()))
         # Hidden until a bundle is actually assembled (mirrors ActuaryPage's
         # attestedBanner / CuoMandatePage's declaredBanner) -- NOT visible-but-
         # empty like ActuaryPage's manifestSaid/workbookDigest labels, because
@@ -201,9 +309,26 @@ class ProductDesignerPage(QWidget):
         # (`wait_for ... condition=visible`), and an always-visible label would
         # make that wait a no-op that returns before assembly ever completes.
         self._bundle_said.setVisible(False)
-        form.addRow("Bundle SAID", self._bundle_said)
+        # Selectable is the floor; a copy button is the verb. Getting a SAID onto
+        # the clipboard is the primary action in a content-addressed UI, and the
+        # page's own docstring calls this value the product's identity.
+        said_row = QHBoxLayout()
+        said_row.setContentsMargins(0, 0, 0, 0)
+        said_row.addWidget(self._bundle_said, 1)
+        self._bundle_copy = LocksmithCopyButton(
+            copy_content="", tooltip="Copy the bundle SAID", icon_size=18)
+        self._bundle_copy.setObjectName("designerPage.bundleSaidCopy")
+        self._bundle_copy.setVisible(False)
+        said_row.addWidget(self._bundle_copy)
+        form.addRow("Bundle SAID", said_row)
 
         outer.addStretch(1)
+
+        # Paint the gate BEFORE the first scan. Without this the blocker line is
+        # empty and hidden on first show -- which is the empty page a designer
+        # meets before anything has ever been received, and the one state the
+        # explanation matters most in.
+        self._refresh_assemble_gate()
 
         # -- scan loop ----------------------------------------------------------------
         self._scan_timer = QTimer(self)
@@ -336,11 +461,23 @@ class ProductDesignerPage(QWidget):
         self._row_saids = [r["attestation_said"] for r in rows]
         table = self._received_table
         table.setRowCount(len(rows))
+        mono = QFont(get_monospace_font_family())
+        mono.setPointSize(QFont().pointSize())
         for i, row in enumerate(rows):
             for col, key in enumerate(
                 ("attestation_said", "issuer", "mandate_said",
                  "manifest_said", "version", "action")):
-                table.setItem(i, col, QTableWidgetItem(str(row.get(key, ""))))
+                full = str(row.get(key, ""))
+                item = QTableWidgetItem(
+                    short_said(full) if col in _IDENTIFIER_COLUMNS else full)
+                # The ONLY recovery path for a value the column cannot hold.
+                # Every tooltip on this table was the empty string, so a
+                # truncated SAID was simply gone -- and `short_said` truncates on
+                # purpose, which makes this not optional.
+                item.setToolTip(f"{_TABLE_HEADERS[col]}\n{full}" if full else "")
+                if col in _IDENTIFIER_COLUMNS:
+                    item.setFont(mono)
+                table.setItem(i, col, item)
 
     def _on_row_clicked(self, row: int, _col: int) -> None:
         if row < 0 or row >= len(self._row_saids):
@@ -406,6 +543,21 @@ class ProductDesignerPage(QWidget):
             return f"Cannot yet verify mandate {short}."
         return None
 
+    def _programs_for_selected(self) -> list[str]:
+        """Every received program sharing the selected row's mandate.
+
+        THE set assembly acts on. Extracted so the button label, the blocker line
+        and `assemble()` cannot disagree about it -- the interface indicated a
+        ROW while the mint took a SET, and nothing on screen named the
+        difference.
+        """
+        said = self._selected_said
+        if not said or said not in self._received:
+            return []
+        mandate = self._received[said].get("mandate_said", "")
+        return sorted(s for s, record in self._received.items()
+                      if record.get("mandate_said") == mandate)
+
     def _refresh_assemble_gate(self) -> None:
         """Set the button's enabled state and the blocker text from the currently
         selected row. Called on selection AND on every scan tick, so a mandate that
@@ -413,16 +565,111 @@ class ProductDesignerPage(QWidget):
         of making the user re-click."""
         said = self._selected_said
         if not said or said not in self._received:
+            # ALWAYS visible. This used to early-return with the blocker HIDDEN,
+            # so the empty page -- the first thing a designer ever sees -- showed
+            # a live-looking primary above no explanation at all. The best
+            # chain-position writing on the page was suppressed in exactly the
+            # state that needed it.
             self._assemble.setEnabled(False)
-            self._assemble_blocker.setVisible(False)
+            self._assemble.setText(_ASSEMBLE_IDLE)
+            self._assemble_blocker.setText(
+                _BLOCKER_NOTHING_RECEIVED if not self._received
+                else _BLOCKER_NOTHING_SELECTED)
+            self._assemble_blocker.setVisible(True)
             return
         blocker = self._mandate_blocker(
             self._received[said].get("mandate_said", ""))
         self._assemble.setEnabled(blocker is None)
-        self._assemble_blocker.setText(blocker or "")
-        self._assemble_blocker.setVisible(blocker is not None)
+        # The scope of an irreversible mint, stated on the control that performs
+        # it. Assembly is per-MANDATE, not per-row: every received program under
+        # the selected row's mandate goes in, and the row highlight never said so.
+        count = len(self._programs_for_selected())
+        # The count shows whenever a row is selected, blocked or not: the SCOPE of
+        # the mint is worth knowing while you are waiting for the gate, and the
+        # blocker line beside it already says why the button is dead.
+        self._assemble.setText(
+            f"Assemble {count} program{'s' if count != 1 else ''} into a bundle")
+        self._assemble_blocker.setText(blocker or _BLOCKER_READY.format(count=count))
+        self._assemble_blocker.setVisible(True)
 
     # -- assemble / issuance --------------------------------------------------------
+
+    def _confirm_assembly(self, mandate_said: str,
+                          rate_program_saids: list[str]) -> None:
+        """Read back the set, then mint on confirmation.
+
+        NON-MODAL, deliberately. The first version used `QMessageBox.exec()` and
+        both designer integration arcs went red: a modal `exec()` blocks the Qt
+        main-thread stack that `locksmith-ui-tester`'s devctl server dispatches
+        every command on, so the page becomes undrivable and Principle VII stops
+        holding for this surface. `tests/integration/roles/conftest.py` already
+        documents that deadlock for the accept-grant dialogs.
+
+        So this follows `CuoMandatePage`'s read-back instead: build, `open()`,
+        and do the work in the confirm handler.
+        """
+        lines = []
+        for said in rate_program_saids:
+            record = self._received.get(said, {})
+            lines.append(f"{short_said(said)}   v{record.get('version', '?')}"
+                         f"   {record.get('action', '')}")
+
+        body = QWidget()
+        column = QVBoxLayout(body)
+        column.setContentsMargins(0, 8, 0, 0)
+        column.setSpacing(10)
+        for text, mono, colour in (
+            (f"Assembling {len(rate_program_saids)} rate program"
+             f"{'s' if len(rate_program_saids) != 1 else ''} into one bundle.",
+             False, colors.TEXT_PRIMARY),
+            (f"Mandate\n{mandate_said}", True, colors.TEXT_PRIMARY),
+            ("Programs\n" + "\n".join(lines), True, colors.TEXT_PRIMARY),
+            ("The bundle's SAID becomes the product's identity. It cannot be "
+             "edited afterwards — a different set of programs is a different "
+             "bundle.", False, colors.WARNING_TEXT),
+        ):
+            label = QLabel(text)
+            label.setWordWrap(True)
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            if mono:
+                label.setFont(QFont(get_monospace_font_family()))
+            label.setStyleSheet(f"color: {colour}; font-size: 13px;")
+            column.addWidget(label)
+
+        buttons = QHBoxLayout()
+        cancel = LocksmithInvertedButton("Cancel")
+        cancel.setObjectName("designerPage.confirmCancel")
+        proceed = LocksmithButton("Assemble bundle")
+        proceed.setObjectName("designerPage.confirmAssemble")
+        buttons.addWidget(cancel)
+        buttons.addStretch(1)
+        buttons.addWidget(proceed)
+
+        dialog = LocksmithDialog(parent=self.window(),
+                                 title="Assemble this bundle?",
+                                 content=body, buttons=buttons,
+                                 show_close_button=False)
+        dialog.setObjectName("designerPage.confirmAssembly")
+        dialog.setMinimumWidth(560)
+        # The safe choice takes the default and the focus, so no single Return
+        # mints a permanent credential.
+        cancel.setDefault(True)
+        cancel.setAutoDefault(True)
+        proceed.setDefault(False)
+        proceed.setAutoDefault(False)
+        cancel.clicked.connect(dialog.close)
+        proceed.clicked.connect(
+            lambda: self._on_assembly_confirmed(dialog, mandate_said,
+                                                rate_program_saids))
+        self.confirm_dialog = dialog
+        dialog.open()
+        cancel.setFocus()
+
+    def _on_assembly_confirmed(self, dialog, mandate_said: str,
+                               rate_program_saids: list[str]) -> None:
+        dialog.close()
+        self.confirm_dialog = None
+        self._do_assemble(mandate_said, rate_program_saids)
 
     def assemble(self, *_qt_args) -> None:
         """Issue the `product_bundle` ACDC over every received program that shares
@@ -458,9 +705,34 @@ class ProductDesignerPage(QWidget):
         # different set of programs is a different bundle with a different SAID,
         # so this always gathers everything currently on the desk for the scope,
         # rather than growing an existing one.
-        rate_program_saids = sorted(
-            said for said, record in self._received.items()
-            if record.get("mandate_said") == mandate_said)
+        rate_program_saids = self._programs_for_selected()
+
+        # The one irreversible act on this page had less ceremony than a CRUD
+        # delete: a single click minted a permanent credential whose SAID becomes
+        # the product's identity, with no statement of WHAT went in. And the set
+        # is not the row -- it is every program under the mandate -- so the thing
+        # being confirmed is exactly the thing the row highlight never showed.
+        #
+        # The mint itself happens in `_do_assemble`, from the dialog's confirm
+        # handler. `assemble()` therefore VALIDATES and asks; it no longer mints.
+        self._confirm_assembly(mandate_said, rate_program_saids)
+
+    def _do_assemble(self, mandate_said: str,
+                     rate_program_saids: list[str]) -> None:
+        """Mint the bundle. Reached only from a confirmed read-back.
+
+        Re-derives vault and hab rather than closing over the ones `assemble()`
+        had: a dialog sits open across an arbitrary stretch of wall-clock, and
+        the vault can be locked or swapped in that window.
+        """
+        if self._app is None or getattr(self._app, "vault", None) is None:
+            self._show_error("No open vault — cannot assemble.")
+            return
+        vault = self._app.vault
+        hab = self._designer_hab(vault)
+        if hab is None:
+            self._show_error("No identifier available to assemble from.")
+            return
 
         try:
             self._ensure_schema_pinned(vault.hby, PRODUCT_BUNDLE_SCHEMA_SAID)
@@ -546,3 +818,5 @@ class ProductDesignerPage(QWidget):
         # identity, not a truncated banner (see the module docstring).
         self._bundle_said.setText(said)
         self._bundle_said.setVisible(True)
+        self._bundle_copy.set_copy_content(said)
+        self._bundle_copy.setVisible(True)
