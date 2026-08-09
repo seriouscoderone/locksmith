@@ -183,6 +183,11 @@ class LocksmithButton(QPushButton):
             QPushButton:pressed {{
                 background-color: {colors.PRIMARY_HOVER};
             }}
+            QPushButton:disabled {{
+                background-color: {colors.BACKGROUND_DISABLED};
+                color: {colors.TEXT_SUBTLE};
+                border: 1px solid {colors.BORDER_NEUTRAL};
+            }}
         """)
 
 

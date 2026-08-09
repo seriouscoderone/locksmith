@@ -162,6 +162,14 @@ class ActuaryPage(QWidget):
 
         # attest state
         self._selected_mandate_said: str | None = None
+        # One-shot guard: an attestation is under way. `attest()` reaches
+        # `vault.extend` with no natural barrier, so without this a double-click
+        # schedules TWO `ServiceaidIssueDoer`s and mints two permanent, public
+        # credentials for one rate program -- and the second listener replaces
+        # the first, so a single banner covers both and the actuary never learns
+        # there are two. `CuoMandatePage` carries the same guard (`_anchoring`)
+        # for the same reason; this page was the one irreversible mint without it.
+        self._attesting = False
         self._parse_manifest: dict | None = None
         self._parse_manifest_said: str | None = None
 
@@ -229,6 +237,15 @@ class ActuaryPage(QWidget):
         self._parse_dir = LocksmithLineEdit(
             placeholder_text="path to a real ipd-parse output directory")
         self._parse_dir.setObjectName("actuaryPage.parseDir")
+        # A loaded parse belongs to the path it was loaded FROM. Without this the
+        # actuary could load directory A, edit the field to directory B, and
+        # attest -- minting a permanent, public credential that binds directory
+        # A's manifest SAID and workbook digest while the screen displayed B.
+        # Nothing else caught it: `attest()` reads `_parse_manifest_said`, never
+        # the field, so the UI behaved exactly as designed and the ARTEFACT was
+        # wrong. The one defect on this page where the credential itself is
+        # incorrect rather than merely hard to read.
+        self._parse_dir.textChanged.connect(self._invalidate_parse)
         form.addRow("Parse directory", self._parse_dir)
 
         self._load_parse = LocksmithButton("Load Parse")
@@ -556,9 +573,40 @@ class ActuaryPage(QWidget):
         self._workbook_digest_label.setText(manifest["workbook_digest"])
         self._update_attest_enabled()
 
+    def _release_attest(self) -> None:
+        """Drop the in-flight guard once issuance has resolved, either way.
+
+        BOTH outcomes, not just success: a guard that only lifts on
+        `credential_issued` turns one failed attestation into a permanently dead
+        button, which is the trap the sibling read-back shipped with for a commit
+        (its "Signing..." modal survived its own success). The re-enable still
+        goes through `_update_attest_enabled`, so a parse invalidated mid-flight
+        does not come back armed.
+        """
+        self._attesting = False
+        self._update_attest_enabled()
+
+    def _invalidate_parse(self, *_qt_args) -> None:
+        """Forget the loaded parse the moment the path it came from changes.
+
+        Clears the displayed evidence too, not just the internal state: leaving a
+        manifest SAID and workbook digest on screen under a path that no longer
+        produced them is the same lie in a quieter font.
+        """
+        if self._parse_manifest_said is None and self._parse_manifest is None:
+            return
+        self._parse_manifest = None
+        self._parse_manifest_said = None
+        self._manifest_said_label.setText("")
+        self._workbook_digest_label.setText("")
+        self._attested_banner.setVisible(False)
+        self._update_attest_enabled()
+
     def _update_attest_enabled(self) -> None:
         self._attest.setEnabled(
-            bool(self._selected_mandate_said) and self._parse_manifest_said is not None)
+            bool(self._selected_mandate_said)
+            and self._parse_manifest_said is not None
+            and not self._attesting)
 
     # -- attest / issuance --------------------------------------------------------
 
@@ -567,6 +615,8 @@ class ActuaryPage(QWidget):
         mandate. See the module docstring for the issuance mechanic; mirrors
         `CuoMandatePage.submit` (retire-listener / vault.extend, subscribing to
         the doer's EMITTED source name `"IssueCredentialDoer"`, the legacy one)."""
+        if self._attesting:
+            return
         self._error_banner.setVisible(False)
         if self._app is None or getattr(self._app, "vault", None) is None:
             self._show_error("No open vault — cannot attest.")
@@ -622,6 +672,12 @@ class ActuaryPage(QWidget):
             },
         }
 
+        # Armed HERE, not at the top: every `return` above is a refusal that
+        # leaves the actuary free to try again, and latching the guard before
+        # them would disable the button permanently on a typo'd path.
+        self._attesting = True
+        self._update_attest_enabled()
+
         signals = vault.signals
         schema_said = RATE_PROGRAM_ATTESTATION_SCHEMA_SAID
 
@@ -635,11 +691,13 @@ class ActuaryPage(QWidget):
                 return
             if event_type == "credential_issuance_failed":
                 self._retire_listener(_on_issue_event)
+                self._release_attest()
                 self._show_error(data.get("error", "Attestation failed."))
                 return
             if event_type != "credential_issued":
                 return
             self._retire_listener(_on_issue_event)
+            self._release_attest()
             self._show_attested(data.get("said", ""))
 
         self._pending_listener = _on_issue_event
