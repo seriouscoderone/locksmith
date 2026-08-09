@@ -10,7 +10,13 @@ from types import SimpleNamespace
 import pytest
 from PySide6.QtCore import QEvent
 from PySide6.QtGui import QFocusEvent
-from PySide6.QtWidgets import QApplication, QComboBox, QLabel, QWidget
+from PySide6.QtWidgets import (
+    QApplication,
+    QComboBox,
+    QLabel,
+    QVBoxLayout,
+    QWidget,
+)
 
 from locksmith.plugins.cuo import mandate_copy as copy
 from locksmith.plugins.cuo.page import CuoMandatePage
@@ -295,6 +301,62 @@ def test_a_failed_anchor_leaves_the_form_editable_and_says_why(page):
     assert page.build_payload()["thesis"] == "One sentence of intent."
     page.submit()
     assert page.review_dialog is not None, "the CUO must be able to retry"
+
+
+def test_no_help_text_is_painted_over_its_own_control(qtbot):
+    """Found by LOOKING at the rendered page; every assertion above passed while
+    the help text sat on top of the control above it.
+
+    A word-wrapped QLabel reports a one-line MINIMUM height however many lines it
+    will paint, so the layout squeezed each field group ~40px below what it
+    needed -- and Qt still honoured each control's own `setMinimumHeight(50)`, so
+    the control painted over the help text beneath it. Measured at 1280x700 and
+    1280x1024, with and without errors: a persistent 43px squeeze, 14px of
+    overlap on the jurisdiction help and 37px on the thesis.
+
+    Builds its own shell rather than using the `page` fixture, because that
+    fixture's parent has NO layout: the page is never given a real geometry
+    there, so any assertion about position or size would be vacuous.
+    """
+    shell = QWidget()
+    qtbot.addWidget(shell)
+    layout = QVBoxLayout(shell)
+    layout.setContentsMargins(0, 0, 0, 0)
+    page = CuoMandatePage(app=None, parent=shell)
+    layout.addWidget(page)
+    shell.resize(1280, 700)           # the window's own minimum height
+    shell.show()
+    qtbot.waitExposed(shell)
+    page.submit()                     # errors visible: the tallest state
+    qtbot.wait(50)                    # let the relayout the errors trigger run
+
+    for name, control in page._controls.items():
+        group = control.widget.parentWidget()
+        control_bottom = control.widget.y() + control.widget.height()
+        for label in group.children():
+            if not isinstance(label, QLabel) or not label.isVisible():
+                continue
+            if label.y() <= control.widget.y():
+                continue              # the field label, above the control
+            assert label.y() >= control_bottom, (
+                f"{name}: {label.text()[:32]!r} starts at y={label.y()} but the "
+                f"control runs to y={control_bottom}")
+        assert group.height() >= group.sizeHint().height(), (
+            f"{name} was squeezed: {group.height()} < {group.sizeHint().height()}")
+
+    # "One bounded column, 640px" (design §3.1). Left to a maximum width and an
+    # alignment flag the column takes its sizeHint instead -- measured at 546,
+    # varying with the longest label.
+    from locksmith.plugins.cuo import page as page_module
+
+    column = page._controls["thesis"].widget.parentWidget().parentWidget()
+    assert column.width() == page_module._COLUMN_WIDTH
+    assert page._controls["thesis"].widget.parentWidget().width() == (
+        page_module._COLUMN_WIDTH)
+    paired = page._controls["window_opens"].widget.parentWidget().width()
+    assert paired < page_module._COLUMN_WIDTH // 2 + page_module._ROW_SPACING, (
+        "the window's two ends share one row")
+    shell.hide()
 
 
 def test_a_schema_field_the_form_cannot_render_fails_loudly(page, monkeypatch):

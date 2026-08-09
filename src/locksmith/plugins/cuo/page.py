@@ -74,6 +74,7 @@ from PySide6.QtWidgets import (
     QHBoxLayout,
     QLabel,
     QLineEdit,
+    QSizePolicy,
     QVBoxLayout,
     QWidget,
 )
@@ -116,6 +117,7 @@ PRODUCT_MANDATE_SCHEMA_SAID = "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
 _PAGE_NAME = "cuoMandatePage"
 
 _COLUMN_WIDTH = 640
+_ROW_SPACING = 16
 _THESIS_ROWS = 3
 _ICON = ":/assets/material-icons/balance.svg"
 
@@ -181,6 +183,14 @@ def _canonical(value: str, pattern: str | None) -> str:
     if folded and prefix and not folded.startswith(prefix):
         folded = f"{prefix}{folded}"
     return folded
+
+
+def _fit(label: QLabel) -> None:
+    """Make a wrapping label's MINIMUM height match what it will actually paint.
+
+    Call after every text change: the hint depends on the text, and a stale
+    minimum is what lets the layout squeeze the group again."""
+    label.setMinimumHeight(label.sizeHint().height() if label.text() else 0)
 
 
 def _split_tokens(text: str) -> list[str]:
@@ -299,43 +309,71 @@ class CuoMandatePage(LocksmithFormPage):
                 f"mandate_copy.FIELD_ORDER does not render")
 
         column = QWidget()
-        column.setMaximumWidth(_COLUMN_WIDTH)
+        # FIXED, not merely capped. Every wrapping label in this column is given
+        # that same width explicitly (see `_wrapped`), because a word-wrapped
+        # QLabel with a free width reports a one-line minimum: inside
+        # `LocksmithFormPage`'s `setWidgetResizable(True)` scroll area, the layout
+        # then SQUEEZES the field groups below their real height instead of
+        # scrolling, and the help text is painted over the control above it.
+        # Measured -- every group came out ~40px shorter than its own sizeHint.
+        # The window's minimum is 1280 wide (`ui/window.py:73`), so a fixed 640
+        # column cannot be clipped.
+        column.setFixedWidth(_COLUMN_WIDTH)
+        # ...and unsqueezable vertically, for the same reason. The scroll area
+        # sizes its content to `max(viewport, minimum)`, and a column that can
+        # report a smaller minimum than it needs gets compressed instead of
+        # scrolled -- which is what the overlap above actually looked like.
+        # `Fixed` makes the layout honour sizeHint exactly, and sizeHint GROWS
+        # when an error label appears, so the scrollbar arrives on cue.
+        column.setSizePolicy(QSizePolicy.Policy.Fixed, QSizePolicy.Policy.Fixed)
         body = QVBoxLayout(column)
         body.setContentsMargins(0, 0, 0, 0)
         body.setSpacing(20)
 
         for paragraph in copy.PAGE_INTRO:
-            intro = QLabel(paragraph)
-            intro.setWordWrap(True)
-            intro.setStyleSheet(
-                f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
-            body.addWidget(intro)
+            body.addWidget(self._wrapped(paragraph, _COLUMN_WIDTH))
 
         body.addWidget(self._build_declared_banner())
 
-        pending_row: list[QWidget] = []
+        def flush_row(buffered: list[FieldConstraints]) -> None:
+            """Lay out fields that share one row -- the window's two ends."""
+            if not buffered:
+                return
+            if len(buffered) == 1:
+                body.addWidget(self._build_group(buffered[0], width=_COLUMN_WIDTH))
+                return
+            helps = {copy.FIELD_HELP[c.name] for c in buffered}
+            # One decision, two controls -- and when the copy gives them the
+            # SAME help (it does: both dates carry the window's one rule), it is
+            # written once beneath the row. Rendering that sentence twice, side
+            # by side, reads as a mistake.
+            shared = len(helps) == 1
+            span = _ROW_SPACING * (len(buffered) - 1)
+            width = (_COLUMN_WIDTH - span) // len(buffered)
+            row = QWidget()
+            row_layout = QHBoxLayout(row)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(_ROW_SPACING)
+            for member in buffered:
+                row_layout.addWidget(
+                    self._build_group(member, width=width, with_help=not shared))
+            row_layout.addStretch(0)
+            body.addWidget(row)
+            if shared:
+                body.addWidget(self._wrapped(helps.pop(), _COLUMN_WIDTH))
+
+        buffered: list[FieldConstraints] = []
         for name in copy.FIELD_ORDER:
             constraints = self._schema.fields.get(name)
             if constraints is None:
                 continue
-            group = self._build_group(constraints)
-            # One decision, two controls: the window's ends share a row.
             if constraints.fmt == "date":
-                pending_row.append(group)
-                if len(pending_row) < 2:
-                    continue
-                row = QWidget()
-                row_layout = QHBoxLayout(row)
-                row_layout.setContentsMargins(0, 0, 0, 0)
-                row_layout.setSpacing(16)
-                for member in pending_row:
-                    row_layout.addWidget(member, 1)
-                pending_row = []
-                body.addWidget(row)
+                buffered.append(constraints)
                 continue
-            body.addWidget(group)
-        for orphan in pending_row:            # an odd number of date fields
-            body.addWidget(orphan)
+            flush_row(buffered)
+            buffered = []
+            body.addWidget(self._build_group(constraints, width=_COLUMN_WIDTH))
+        flush_row(buffered)
 
         body.addWidget(self._build_footer())
 
@@ -379,9 +417,8 @@ class CuoMandatePage(LocksmithFormPage):
         row.setContentsMargins(0, 0, 0, 0)
         row.setSpacing(8)
 
-        self._declared = QLabel("")
+        self._declared = self._wrapped("", _COLUMN_WIDTH - 40)
         self._declared.setObjectName(f"{_PAGE_NAME}.declaredBanner")
-        self._declared.setWordWrap(True)
         self._declared.setTextFormat(Qt.TextFormat.PlainText)
         self._declared.setStyleSheet(
             f"color: {colors.SUCCESS_TEXT};"
@@ -421,10 +458,33 @@ class CuoMandatePage(LocksmithFormPage):
         layout.addWidget(self._submit)
         return footer
 
-    def _build_group(self, constraints: FieldConstraints) -> QWidget:
+    def _wrapped(self, text: str, width: int, *,
+                 color: str | None = None, size: int = 13) -> QLabel:
+        """A word-wrapped label whose height is honest.
+
+        Two halves, and both are needed. The explicit width makes `sizeHint()`
+        exact -- a wrapping label sized by the layout has no single answer. And
+        `_fit` copies that hint into the MINIMUM height, because a wrapping
+        QLabel's `minimumSizeHint()` is one line however many it will paint: with
+        the truthful minimum missing, the field groups were allotted ~20-40px
+        less than they needed, and Qt honoured each control's own
+        `setMinimumHeight(50)` anyway -- so the control painted straight over the
+        help text below it. Measured; look at the rendered page, not the tests.
+        """
+        label = QLabel(text)
+        label.setWordWrap(True)
+        label.setFixedWidth(width)
+        label.setStyleSheet(
+            f"color: {color or colors.TEXT_SECONDARY}; font-size: {size}px;")
+        _fit(label)
+        return label
+
+    def _build_group(self, constraints: FieldConstraints, *, width: int,
+                     with_help: bool = True) -> QWidget:
         """One field: label above, control, help beneath, error beneath that."""
         name = constraints.name
         group = QWidget()
+        group.setFixedWidth(width)
         layout = QVBoxLayout(group)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(6)
@@ -439,21 +499,17 @@ class CuoMandatePage(LocksmithFormPage):
             label.setToolTip(copy.required_error(name))
         layout.addWidget(label)
 
-        error = QLabel("")
+        error = self._wrapped("", width, color=colors.DANGER, size=12)
         error.setObjectName(f"{_PAGE_NAME}.{_camel(name)}Error")
-        error.setWordWrap(True)
         error.setVisible(False)
-        error.setStyleSheet(f"color: {colors.DANGER}; font-size: 12px;")
 
         control = self._build_control(constraints, error)
         self._controls[name] = control
         layout.addWidget(control.widget)
 
-        help_text = QLabel(copy.FIELD_HELP[name])
-        help_text.setWordWrap(True)
-        help_text.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
-        layout.addWidget(help_text)
+        if with_help:
+            layout.addWidget(
+                self._wrapped(copy.FIELD_HELP[name], width, size=12))
         layout.addWidget(error)
         return group
 
@@ -737,6 +793,7 @@ class CuoMandatePage(LocksmithFormPage):
                          errors: Iterable[FieldError]) -> None:
         message = " ".join(error.message for error in errors)
         control.error.setText(message)
+        _fit(control.error)
         control.error.setVisible(bool(message))
         control.paint(bool(message))
 
@@ -968,5 +1025,6 @@ class CuoMandatePage(LocksmithFormPage):
         self._close_review()
         self._declared.setText(
             f"Mandate declared. {said}" if said else "Mandate declared.")
+        _fit(self._declared)
         self._declared_copy.set_copy_content(said)
         self._declared_row.setVisible(True)
