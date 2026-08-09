@@ -111,9 +111,22 @@ from locksmith.ui.toolkit.widgets.text_list import LocksmithTextListWidget
 logger = help.ogler.getLogger(__name__)
 
 # Registry-name convention: registry_name == schema_said (Amendment C §14.1).
-# Pin verified against the bundled schema by
-# tests/plugins/roles/test_pin_regression.py; the schema's own $id is the
-# source of truth (brands/usurance/egf/EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5.json).
+#
+# This is a pinned literal, and a WRONG one fails quietly in the direction that
+# matters: `existing_mandates()` reads `reger.schms` with it, and a SAID no
+# credential was ever filed under returns an empty list -- indistinguishable from
+# a vault that holds no mandates, so the overlap gate simply stops gating. (The
+# anchor path fails loudly: `_ensure_mandate_schema_pinned` raises when no
+# bundled schema SAIDifies to this value.)
+#
+# Verified against the EGF's own provenance chain by
+# tests/plugins/roles/test_pin_regression.py::
+# test_the_mandate_schema_pin_is_the_one_the_egf_declares -- EGF doc ->
+# micro_apps[role_id="cuo"].said -> that template ->
+# commands[id="declare_product_mandate"].mints_credential_id ->
+# credentials.exports[...].schema.schema_said -- and against the bundled schema
+# file's computed SAID by the test beside it. An earlier version of this comment
+# named that file while the test itself checked only the three ROLE SAIDs.
 PRODUCT_MANDATE_SCHEMA_SAID = "EFYdgrOvpXpxTkVSVl6dRs1lueELnH9cqxpctqwqpVr5"
 
 #: devctl's contract. Every control's objectName is `cuoMandatePage.<camelCase>` of
