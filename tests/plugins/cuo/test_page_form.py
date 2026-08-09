@@ -922,3 +922,49 @@ def test_the_timeout_does_not_claim_the_mandate_failed(page):
     assert "may or may not" in text
     for lie in ("failed", "was not signed", "did not sign", "no mandate"):
         assert lie not in text, f"ANCHOR_TIMEOUT asserts {lie!r} without knowing"
+
+
+def test_enter_commits_a_coverage_and_leaves_the_caret_where_it_was(qtbot):
+    """Reported from the live app: "I could type a coverage, hit enter and type
+    the next one without re-selecting the Coverages field."
+
+    `_add_item` already called `self.text_input.setFocus()` -- but `text_input` is
+    a QWidget WRAPPER around the real QLineEdit, so focus landed on the container
+    and the caret went nowhere. Measured before the fix: `line_edit.hasFocus()`
+    False and `QApplication.focusWidget()` pointing at the wrapper.
+
+    Typed with real keystrokes, not `setText`: a wrapper that swallows focus is
+    invisible to a programmatic setter, which is how this shipped.
+
+    Builds its own shown, activated window rather than using the `page` fixture:
+    `hasFocus()` is False for a widget whose window was never exposed, so the
+    fixture's off-window page reports "focus left the box" no matter what the
+    code does. Measured -- this test failed against the FIXED source until the
+    window was real."""
+    shell = QWidget()
+    qtbot.addWidget(shell)
+    layout = QVBoxLayout(shell)
+    layout.setContentsMargins(0, 0, 0, 0)
+    page = CuoMandatePage(app=None, parent=shell)
+    layout.addWidget(page)
+    shell.resize(1280, 700)
+    shell.show()
+    qtbot.waitExposed(shell)
+    shell.activateWindow()
+
+    line = _coverages_input(page)
+    line.setFocus()
+    # `activateWindow()` is asynchronous, so focus has not necessarily landed yet.
+    # Waiting for the PRECONDITION rather than sleeping also means a future
+    # regression fails on the assertion below and not here.
+    qtbot.waitUntil(line.hasFocus, timeout=2000)
+
+    for code in ("BI", "PD", "COMP"):
+        qtbot.keyClicks(line, code)
+        qtbot.keyClick(line, Qt.Key.Key_Return)
+        qtbot.wait(50)
+        assert line.hasFocus(), (
+            f"focus left the box after committing {code}; the CUO has to click "
+            "back in before every code")
+    assert page._controls["coverages"].widget.get_items() == ["BI", "PD", "COMP"]
+    assert line.text() == ""

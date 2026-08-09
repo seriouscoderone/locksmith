@@ -344,6 +344,16 @@ class FloatingLabelLineEdit(QWidget):
 
         layout.addWidget(self.line_edit)
 
+        # This class is a QWidget WRAPPER around the real QLineEdit, so
+        # `widget.setFocus()` focused the container and the caret went nowhere.
+        # Measured: after Enter committed a coverage code,
+        # `LocksmithTextListWidget._add_item`'s own `self.text_input.setFocus()`
+        # left `line_edit.hasFocus()` False and `QApplication.focusWidget()`
+        # pointing at this wrapper -- so the CUO had to click back into the box
+        # between every code. A focus proxy makes setFocus, focusWidget, tab order
+        # and click-to-focus all resolve to the line edit, for every consumer.
+        self.setFocusProxy(self.line_edit)
+
         # Calculate label starting position based on whether there's a leading icon
         label_x_pos = 44 if self._has_leading_icon else 12
 
