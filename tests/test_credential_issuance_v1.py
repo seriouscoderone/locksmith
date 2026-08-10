@@ -1,11 +1,18 @@
 """KERI v2 v1-hold (Task 6): credential issuance yields a v1 ACDC carrying the
 v1 `ri` registry field.
 
-keripy's v2 ACDC issuance is stubbed upstream — ``proving.credential`` still
-hardcodes the v1 ``ri`` field, which the v2 ``SerderACDC`` rejects. Locksmith
-issues via the fork's additive ``Credentialer.create(version=Vrsn_1_0)`` seam,
-producing a valid v1 ``ACDC10JSON`` credential. The registry ``vcp``/``iss`` are
-already v1 (the VDR stack is v1-pinned upstream), so only the ACDC needs the pin.
+Locksmith issues via the fork's additive ``Credentialer.create(version=Vrsn_1_0)``
+seam, producing a valid v1 ``ACDC10JSON`` credential to match the registry
+``vcp``/``iss``, which are still v1 (the VDR stack is v1-pinned upstream).
+
+The pin's ORIGINAL justification was that v2 ACDC issuance was stubbed upstream:
+``proving.credential`` hardcoded ``ri`` and the v2 ``SerderACDC`` rejected it
+with ``SerializeError``. That is no longer the case — the current keri pin
+issues a real v2 ACDC (``rd``) when unpinned, which
+``test_unpinned_create_now_yields_a_v2_acdc`` characterizes. The v1 hold remains
+because a v2 ACDC in a v1 registry is incoherent, not because v2 issuance is
+broken. See
+``backlog/2026-08-10-v2-acdc-issuance-is-live-revisit-the-v1-hold.md``.
 
 This exercises the real keripy ``Credentialer.create`` (the seam Locksmith calls
 at credentialing.py) with a real registry; ``validate`` is stubbed because schema
@@ -13,10 +20,9 @@ resolution is orthogonal to the version behavior under test.
 """
 import contextlib
 
-import pytest
 from keri.app import habbing
 from keri.core import eventing as ke
-from keri.kering import Vrsn_1_0, SerializeError
+from keri.kering import Vrsn_1_0
 from keri.vdr import credentialing, verifying
 from keri.vdr.credentialing import Registrar
 
@@ -48,12 +54,22 @@ def test_registry_vcp_is_v1():
             f"registry vcp must be v1, got {registry.vcp.sad['v']}"
 
 
-def test_credential_create_default_rejects_ri_on_v2():
-    """Without the v1 pin the v2 SerderACDC rejects the hardcoded `ri` field."""
+def test_unpinned_create_now_yields_a_v2_acdc():
+    """Without the v1 pin, issuance produces a v2 ACDC with `rd`, not `ri`.
+
+    This is what makes the pin load-bearing rather than a workaround: the
+    unpinned default is a perfectly valid credential that simply does not match
+    the v1 registry it would be issued into. It used to raise ``SerializeError``
+    instead; if this ever starts raising again, the keri pin has moved backwards.
+    """
     with _issuer_with_registry() as (hab, _registry, credentialer):
-        with pytest.raises(SerializeError):
-            credentialer.create(regname="reg", recp=hab.pre, schema=_SCHEMA,
-                                 source=None, rules=None, data=_DATA)
+        creder = credentialer.create(regname="reg", recp=hab.pre, schema=_SCHEMA,
+                                     source=None, rules=None, data=_DATA)
+        assert not creder.sad["v"].startswith("ACDC10"), \
+            f"unpinned create produced a v1 ACDC ({creder.sad['v']}) — the pin " \
+            "is now redundant and the v1 hold should be re-examined"
+        assert "rd" in creder.sad and "ri" not in creder.sad, \
+            f"expected a v2 registry field `rd`, got keys {sorted(creder.sad)}"
 
 
 def test_credential_create_v1_pin_yields_v1_acdc_with_ri():

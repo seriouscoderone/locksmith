@@ -40,7 +40,7 @@ dependencies = [
     # Baser.current), so relabeling it bricks every existing keystore/vault. The
     # fork identity is surfaced Locksmith-side (build_info.KERIPY_COMMIT), not by
     # editing keri's version.
-    "keri @ git+https://github.com/seriouscoderone/keripy.git@1c127b5938c5c2901dfd3cc9c62174c16ba6f860",
+    "keri @ git+https://github.com/seriouscoderone/keripy.git@dc88ea0d1b7c310341242f679cc1c498b07cac4e",
     "qtawesome>=1.4.0",
     "mnemonic==0.21",
     "multicommand==1.0.0",

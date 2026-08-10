@@ -408,13 +408,21 @@ class IssueCredentialDoer(doing.DoDoer):
             edges_block = build_edges_block(self.edges)
 
             # TRANSITIONAL (KERI v2 v1-hold): pin the ACDC to v1 via the fork's
-            # additive Credentialer.create(version=) seam. keripy's v2 ACDC
-            # issuance is stubbed upstream — proving.credential still hardcodes
-            # the v1 `ri` registry field, which the v2 SerderACDC rejects
-            # (SerializeError: Unallowed extra field 'ri'). version=Vrsn_1_0
-            # yields a valid v1 ACDC (ACDC10JSON, ri). The registry vcp/iss are
-            # already v1 (VDR stack v1-pinned upstream). Lift as a unit with
-            # serviceaid when upstream ships v2 ACDC issuance (grep TRANSITIONAL).
+            # additive Credentialer.create(version=) seam, yielding a valid v1
+            # ACDC (ACDC10JSON, `ri`).
+            #
+            # The ORIGINAL reason was that v2 ACDC issuance was stubbed upstream:
+            # proving.credential hardcoded the v1 `ri` field and the v2
+            # SerderACDC rejected it (SerializeError: Unallowed extra field
+            # 'ri'). That is no longer true as of the current keri pin —
+            # unpinned create() now yields a real v2 ACDC carrying `rd`.
+            #
+            # The pin therefore stays for the REMAINING reason: the registry
+            # vcp/iss are still v1 (VDR stack v1-pinned upstream), and issuing a
+            # v2 ACDC into a v1 registry is the incoherence this prevents. Lift
+            # as a unit with serviceaid when the VDR stack goes v2 (grep
+            # TRANSITIONAL) — see
+            # backlog/2026-08-10-v2-acdc-issuance-is-live-revisit-the-v1-hold.md
             creder = credentialer.create(regname=registry_name,
                                          recp=self.recipient_pre,
                                          schema=self.schema_said,
