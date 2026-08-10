@@ -29,6 +29,13 @@ appcast_windows_xml = "https://releases.keri.host/usurance/appcast/v1/windows.xm
 primary         = "#2AABB3"
 primary_hover   = "#1E8E95"
 primary_pressed = "#17838A"
+# The FILLED-BUTTON ramp, deliberately darker than the accent above. White label
+# text on Teal 600 measures 2.77:1 and fails WCAG AA; these clear it -- 4.52:1,
+# 6.24:1, 8.40:1. Teal 600 remains the accent for links, focus rings, avatars and
+# badges, where the 3:1 graphical-object floor is the applicable rule.
+primary_button         = "#17838A"
+primary_button_hover   = "#126B71"
+primary_button_pressed = "#0E565B"
 toolbar_dark    = "#1A202C"
 
 [org]

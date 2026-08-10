@@ -47,9 +47,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import Qt, QTimer
+from PySide6.QtCore import QDate, Qt, QTimer
 from PySide6.QtWidgets import (
-    QFormLayout, QLabel, QListWidget, QListWidgetItem, QVBoxLayout, QWidget,
+    QComboBox, QDateEdit, QFormLayout, QHBoxLayout, QLabel, QListWidget,
+    QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -58,8 +59,11 @@ from keri.kering import Ilks
 
 from locksmith.core.branding import brand, egf_local_dir
 from locksmith.core.serviceaid_bridge import ServiceaidIssueDoer
+from locksmith.plugins.actuary.attest_drawer import AttestReviewDrawer
 from locksmith.ui import colors
+from locksmith.ui.styles import get_monospace_font_family
 from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 
 logger = help.ogler.getLogger(__name__)
@@ -86,10 +90,29 @@ _WATCH_POLL_MS = 1000
 #: mistaken for parser output.
 _WORKBOOK_SIDECAR_NAME = ".workbook_source.json"
 
+#: The attestation schema's own enum for `action` -- the IPD retention contract.
+#: Read from the schema at load time would be better; pinned here because this
+#: page already pins the schema SAID and a drifted enum fails loudly at issuance.
+_ACTION_VALUES = ("Publish", "Sandbox")
+
 _TEL_STATE_LABELS = {
     Ilks.iss: "issued", Ilks.bis: "issued",
     Ilks.rev: "revoked", Ilks.brv: "revoked",
 }
+
+
+def _mono_css() -> str:
+    """A monospace `font-family` value that survives the font not being loaded.
+
+    QUOTED and with a real fallback, matching `styles.py`'s own global rule. The
+    bare form has two silent failure modes: the loaded family is "Source Code
+    Pro", whose space breaks an unquoted CSS family name, and the module default
+    is the literal string "monospace", which is NOT a registered family on macOS
+    -- measured, it resolves to .AppleSystemUIFont with fixedPitch False and `I`
+    at 3px against `W` at 12px. Proportional, on the two 44-character digests
+    this page exists to make proof-readable.
+    """
+    return f'"{get_monospace_font_family()}", Menlo, monospace'
 
 
 def _digest(raw: bytes) -> str:
@@ -162,6 +185,15 @@ class ActuaryPage(QWidget):
 
         # attest state
         self._selected_mandate_said: str | None = None
+        self.attest_drawer: AttestReviewDrawer | None = None
+        # One-shot guard: an attestation is under way. `attest()` reaches
+        # `vault.extend` with no natural barrier, so without this a double-click
+        # schedules TWO `ServiceaidIssueDoer`s and mints two permanent, public
+        # credentials for one rate program -- and the second listener replaces
+        # the first, so a single banner covers both and the actuary never learns
+        # there are two. `CuoMandatePage` carries the same guard (`_anchoring`)
+        # for the same reason; this page was the one irreversible mint without it.
+        self._attesting = False
         self._parse_manifest: dict | None = None
         self._parse_manifest_said: str | None = None
 
@@ -169,7 +201,11 @@ class ActuaryPage(QWidget):
 
         outer = QVBoxLayout(self)
         outer.setContentsMargins(48, 48, 48, 48)
-        outer.setSpacing(16)
+        # 24px between blocks, and 32px before each section heading (added at the
+        # heading itself). The two jobs on this page ARE its meaning, and at a
+        # uniform 16px the boundary between them was drawn at the same strength
+        # as a paragraph gap. Both values are on the suite's 4px scale.
+        outer.setSpacing(24)
 
         heading = QLabel("Observe a Mandate, Attest a Rate Program")
         heading.setStyleSheet(
@@ -183,8 +219,14 @@ class ActuaryPage(QWidget):
             "observed. No rates are shown here; Excel is the rate UI."
         )
         description.setWordWrap(True)
+        # 14px, not 13: 13 is not a step on the suite's scale
+        # (11·12·14·16·18·20·24·30). TEXT_SUBTLE, not TEXT_SECONDARY: measured
+        # 4.483:1 for #6E7074 on this page's #F2F3FA, just under the 4.5:1 floor
+        # ui-conventions.md:74 sets. Fixed page-locally rather than by darkening
+        # the shared token, whose blast radius is the whole app and whose value
+        # is not brandable (colors.py) -- that is an owner call, not mine.
         description.setStyleSheet(
-            f"color: {colors.TEXT_SECONDARY}; font-size: 13px;")
+            f"color: {colors.TEXT_SUBTLE}; font-size: 14px;")
         outer.addWidget(description)
 
         self._error_banner = QLabel("")
@@ -197,9 +239,13 @@ class ActuaryPage(QWidget):
         outer.addWidget(self._error_banner)
 
         # -- Pane 1: observed mandates -------------------------------------------
+        outer.addSpacing(8)
         observed_heading = QLabel("Observed mandates")
+        # design-system.md:260 "Section header | text-lg font-semibold | 16px
+        # semibold". These set weight and NO size, so they inherited 12px and
+        # differed from body text by weight alone.
         observed_heading.setStyleSheet(
-            f"font-weight: 600; color: {colors.TEXT_PRIMARY};")
+            f"font-size: 16px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
         outer.addWidget(observed_heading)
 
         self._observed_list = QListWidget()
@@ -209,7 +255,56 @@ class ActuaryPage(QWidget):
         # devctl (and every real mouse click, which clicked() also fires for)
         # actually emits, not the item-based convenience signal.
         self._observed_list.clicked.connect(self._on_mandate_clicked)
+        # KEYBOARD. `clicked` fires for mouse and for devctl, and for nothing
+        # else -- so arrow keys moved the highlight while `_selected_mandate_said`
+        # stayed put, and Attest went on refusing with no explanation. The whole
+        # attest flow was mouse-only. Both connections are kept: `clicked` is
+        # devctl's contract, `currentItemChanged` is the keyboard's.
+        self._observed_list.currentItemChanged.connect(self._on_mandate_current)
+        self._observed_list.setStyleSheet(f"""
+            QListWidget {{
+                background-color: {colors.BACKGROUND_CONTENT};
+                border: 1px solid {colors.BORDER_DARK};
+                border-radius: 4px;
+                padding: 4px;
+                font-size: 14px;
+            }}
+            QListWidget::item {{
+                padding: 8px 12px;
+                border-radius: 4px;
+                color: {colors.TEXT_PRIMARY};
+            }}
+            QListWidget::item:hover {{
+                background-color: {colors.BACKGROUND_TABLE_ROW_HOVER};
+            }}
+            QListWidget::item:selected {{
+                background-color: {colors.BACKGROUND_TABLE_ROW_SELECTED};
+                color: {colors.TEXT_PRIMARY};
+                border-left: 3px solid {colors.PRIMARY_PRESSED};
+            }}
+        """)
         outer.addWidget(self._observed_list)
+
+        # THE EMPTY STATE. Measured before this: the list interior was 1080x188
+        # with ZERO non-background pixels and one distinct colour -- so "watching,
+        # nothing declared yet" and "the watch is broken" were pixel-identical,
+        # and this is the state the actuary sits in front of most.
+        #
+        # No CTA, deliberately departing from ux-patterns.md:161 ("illustration +
+        # message + primary action"): there is no action to offer. A mandate
+        # arrives because a CUO declares one somewhere else; the only honest
+        # thing this page can do is say what it is doing and prove it is still
+        # doing it.
+        self._empty_state = QLabel("")
+        self._empty_state.setObjectName("actuaryPage.observedEmpty")
+        self._empty_state.setWordWrap(True)
+        self._empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self._empty_state.setStyleSheet(
+            f"color: {colors.TEXT_SUBTLE}; font-size: 14px;"
+            f" background-color: {colors.BACKGROUND_CONTENT};"
+            f" border: 1px dashed {colors.BORDER_DARK};"
+            f" border-radius: 4px; padding: 28px 24px;")
+        outer.addWidget(self._empty_state)
 
         self._selected_label = QLabel("No mandate selected.")
         self._selected_label.setObjectName("actuaryPage.selectedMandate")
@@ -218,39 +313,150 @@ class ActuaryPage(QWidget):
         outer.addWidget(self._selected_label)
 
         # -- Pane 2: attest -------------------------------------------------------
+        outer.addSpacing(8)
         attest_heading = QLabel("Attest a rate program")
+        # design-system.md:260 "Section header | text-lg font-semibold | 16px
+        # semibold". These set weight and NO size, so they inherited 12px and
+        # differed from body text by weight alone.
         attest_heading.setStyleSheet(
-            f"font-weight: 600; color: {colors.TEXT_PRIMARY};")
+            f"font-size: 16px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
         outer.addWidget(attest_heading)
 
         form = QFormLayout()
+        # ux-patterns.md:300 "Label position: Always above the field. Never to the
+        # left." A side-label column breaks the single scan line the rest of the
+        # page reads down, and it is what squeezed the parse-directory field to
+        # ~145px in the built page -- narrower than the paths it accepts.
+        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
+        # EXPLICIT, because the default is style-dependent and the two styles
+        # disagree: Fusion (what offscreen tests and every screenshot I take run
+        # under) defaults to AllNonFixedFieldsGrow, while the macOS style defaults
+        # to FieldsStayAtSizeHint. So the parse-directory field rendered full
+        # width in every render I checked and ~150px on the owner's actual Mac --
+        # narrower than the absolute paths it exists to accept.
+        form.setFieldGrowthPolicy(
+            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
+        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
+        form.setHorizontalSpacing(0)
+        form.setVerticalSpacing(8)
         outer.addLayout(form)
 
         self._parse_dir = LocksmithLineEdit(
             placeholder_text="path to a real ipd-parse output directory")
         self._parse_dir.setObjectName("actuaryPage.parseDir")
+        # A loaded parse belongs to the path it was loaded FROM. Without this the
+        # actuary could load directory A, edit the field to directory B, and
+        # attest -- minting a permanent, public credential that binds directory
+        # A's manifest SAID and workbook digest while the screen displayed B.
+        # Nothing else caught it: `attest()` reads `_parse_manifest_said`, never
+        # the field, so the UI behaved exactly as designed and the ARTEFACT was
+        # wrong. The one defect on this page where the credential itself is
+        # incorrect rather than merely hard to read.
+        self._parse_dir.textChanged.connect(self._invalidate_parse)
         form.addRow("Parse directory", self._parse_dir)
 
-        self._load_parse = LocksmithButton("Load Parse")
+        # SECONDARY. Loading a parse is a local, re-runnable directory read; it
+        # carried the exact same filled-teal authority as a permanent public mint
+        # sitting 120px below it, so the page had two primaries and therefore
+        # none. design-system.md:236 allows one.
+        self._load_parse = LocksmithInvertedButton("Load Parse")
         self._load_parse.setObjectName("actuaryPage.loadParse")
         self._load_parse.clicked.connect(self.load_parse)
-        form.addRow(self._load_parse)
+        self._load_parse.setSizePolicy(QSizePolicy.Policy.Maximum,
+                                       QSizePolicy.Policy.Fixed)
+        load_row = QHBoxLayout()
+        load_row.setContentsMargins(0, 0, 0, 0)
+        load_row.addWidget(self._load_parse)
+        load_row.addStretch(1)
+        form.addRow(load_row)
 
-        self._manifest_said_label = QLabel("")
-        self._manifest_said_label.setObjectName("actuaryPage.manifestSaid")
-        self._manifest_said_label.setWordWrap(True)
+        # THE EVIDENCE. These two 44-character digests are the entire content of
+        # the credential this page mints, and they were bare QLabels with no
+        # stylesheet at all -- proportional, palette black, unselectable. In a
+        # proportional face `l`/`I`/`1` and `O`/`0` are the same shape, and an
+        # actuary cannot proof-read what they cannot distinguish. Mono, plain
+        # text, selectable so they can be copied and compared against the
+        # parser's own output. The em dash placeholder says "nothing loaded yet"
+        # instead of leaving an unexplained blank.
+        self._manifest_said_label = self._evidence_label("actuaryPage.manifestSaid")
         form.addRow("Manifest SAID", self._manifest_said_label)
 
-        self._workbook_digest_label = QLabel("")
-        self._workbook_digest_label.setObjectName("actuaryPage.workbookDigest")
-        self._workbook_digest_label.setWordWrap(True)
+        self._workbook_digest_label = self._evidence_label(
+            "actuaryPage.workbookDigest")
         form.addRow("Workbook digest", self._workbook_digest_label)
 
-        self._attest = LocksmithButton("Attest Rate Program")
+        # "Review…", not "Attest": the page primary opens the read-back, and the
+        # commit verb lives on the drawer's own confirm. Two-stage vocabulary,
+        # matching the sibling flow -- the button that mints must be the one that
+        # says so, and it must not be reachable from the page.
+        # THE THREE THE ACTUARY ASSERTS. All three are `required` by the
+        # attestation schema and all three were hardcoded -- `version="1.0"`,
+        # `filing_date=today`, `action="Sandbox"` -- so the app was making
+        # permanent, public assertions on the actuary's behalf that they never
+        # saw. The schema is explicit that they are theirs: version is "a
+        # human-chosen label", filing_date is "the filing date the actuary
+        # recorded at parse time ... an attribute the actuary asserts", and
+        # action is "the IPD retention contract the parse was run under".
+        #
+        # `Sandbox` in particular is a retention CONTRACT, not a test mode -- the
+        # schema says so in capitals -- so defaulting every attestation to it
+        # silently claimed exploratory retention for filed work.
+        self._version = LocksmithLineEdit(placeholder_text="e.g. 2027.1")
+        self._version.setObjectName("actuaryPage.version")
+        self._version.textChanged.connect(lambda _t: self._update_attest_enabled())
+        form.addRow("Rate program version", self._version)
+
+        self._filing_date = QDateEdit()
+        self._filing_date.setObjectName("actuaryPage.filingDate")
+        self._filing_date.setDisplayFormat("MM/dd/yyyy")
+        self._filing_date.setCalendarPopup(True)
+        # Today is a DEFAULT, not an assertion the app makes: the field is
+        # editable, and the read-back shows whatever it holds.
+        self._filing_date.setDate(QDate.currentDate())
+        self._filing_date.setStyleSheet(
+            f"QDateEdit {{ border: 1px solid {colors.BORDER_DARK};"
+            f" border-radius: 6px; padding: 12px; font-size: 14px;"
+            f" color: {colors.TEXT_PRIMARY}; }}")
+        form.addRow("Filing date", self._filing_date)
+
+        self._action = QComboBox()
+        self._action.setObjectName("actuaryPage.action")
+        # From the schema's own enum, not a hand-kept list.
+        self._action.addItems(_ACTION_VALUES)
+        self._action.setStyleSheet(
+            f"QComboBox {{ border: 1px solid {colors.BORDER_DARK};"
+            f" border-radius: 6px; padding: 12px; font-size: 14px;"
+            f" color: {colors.TEXT_PRIMARY}; }}")
+        form.addRow("Retention", self._action)
+
+        self._attest = LocksmithButton("Review attestation…")
         self._attest.setObjectName("actuaryPage.attest")
         self._attest.setEnabled(False)
-        self._attest.clicked.connect(self.attest)
-        outer.addWidget(self._attest)
+        self._attest.clicked.connect(self.review_attestation)
+        self._attest.setSizePolicy(QSizePolicy.Policy.Maximum,
+                                   QSizePolicy.Policy.Fixed)
+
+        # ALWAYS VISIBLE, not a tooltip. "Silently disabled" is the state the
+        # actuary meets most on this page, and a Qt tooltip is unreachable by
+        # keyboard -- so the reason the mint is blocked has to be on the screen,
+        # not one hover away. The tooltip is set too, for the mouse.
+        self._attest_blocker = QLabel("")
+        self._attest_blocker.setObjectName("actuaryPage.attestBlocker")
+        self._attest_blocker.setWordWrap(True)
+        self._attest_blocker.setStyleSheet(
+            f"color: {colors.TEXT_SUBTLE}; font-size: 12px;")
+
+        attest_row = QHBoxLayout()
+        attest_row.setContentsMargins(0, 0, 0, 0)
+        attest_row.addWidget(self._attest_blocker)
+        # An explicit stretch, NOT the blocker's own stretch factor: a hidden
+        # widget is ignored by the layout and surrenders its stretch, so once the
+        # gate cleared and the blocker line disappeared the primary drifted to
+        # the CENTRE of the page. The button's position must not depend on
+        # whether something else is currently visible.
+        attest_row.addStretch(1)
+        attest_row.addWidget(self._attest)
+        outer.addLayout(attest_row)
 
         self._attested_banner = QLabel("")
         self._attested_banner.setObjectName("actuaryPage.attestedBanner")
@@ -264,6 +470,21 @@ class ActuaryPage(QWidget):
         outer.addStretch(1)
 
         # -- watch loop -------------------------------------------------------------
+        self._last_checked: str = ""
+        # Paint the initial gate state: both the placard and the blocker line are
+        # rendered from state, and neither had been asked to render yet, so the
+        # page opened with an empty box and a silently-disabled primary -- the
+        # exact two things this work exists to remove.
+        self._render_empty_state()
+        self._update_attest_enabled()
+
+        # design-system.md:311 "Tab order: Follows visual layout order". Measured
+        # before: parseDir -> loadParse -> attest -> list, so the keyboard reached
+        # step ONE last, after the irreversible step.
+        self.setTabOrder(self._observed_list, self._parse_dir)
+        self.setTabOrder(self._parse_dir, self._load_parse)
+        self.setTabOrder(self._load_parse, self._attest)
+
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(_WATCH_POLL_MS)
         self._watch_timer.timeout.connect(self._scan_for_mandates)
@@ -363,6 +584,13 @@ class ActuaryPage(QWidget):
         return watcher
 
     def _scan_for_mandates(self) -> None:
+        # Stamped on every tick, before the early returns: a scan that cannot run
+        # because there is no vault is still a scan that happened, and an actuary
+        # watching a frozen timestamp learns something true. Format per
+        # ux-patterns.md:390 "Date + time | MM/DD/YYYY h:mm A".
+        self._last_checked = _dt.datetime.now().strftime("%m/%d/%Y %-I:%M %p")
+        if not self._observed:
+            self._render_empty_state()
         if self._app is None or getattr(self._app, "vault", None) is None:
             return
         vault = self._app.vault
@@ -485,27 +713,93 @@ class ActuaryPage(QWidget):
             return False
 
         attrs = creder.sad.get("a", {}) or {}
+        # The whole mandate, not three fields of it. The attestation's edge
+        # asserts "my rate program answers THAT mandate", and until the read-back
+        # existed there was nowhere to show what "that" is: the window and thesis
+        # were never even read, the coverages were stored and rendered nowhere,
+        # and the issuer was dropped entirely -- so two different AIDs declaring
+        # `auto / US-UT` produced indistinguishable rows.
         self._observed[creder.said] = {
             "line_of_business": attrs.get("line_of_business", ""),
             "jurisdiction": attrs.get("jurisdiction", ""),
             "coverages": list(attrs.get("coverages", []) or []),
+            "window_opens": attrs.get("window_opens", ""),
+            "window_closes": attrs.get("window_closes", ""),
+            "thesis": attrs.get("thesis", ""),
+            "issuer": getattr(creder, "issuer", "") or "",
         }
         return True
 
+    def _on_mandate_current(self, current, _previous=None) -> None:
+        """Keyboard selection. Mirrors `_on_mandate_clicked`, which is index-based
+        because that is what devctl emits; this is item-based because that is what
+        arrow keys emit."""
+        if current is None:
+            return
+        self._select_mandate(current.data(Qt.UserRole))
+
     def _refresh_observed_list(self) -> None:
+        self._render_empty_state()
         self._observed_list.clear()
         for said, mandate in self._observed.items():
-            label = (f"{mandate['line_of_business']} / {mandate['jurisdiction']} "
-                     f"— {said[:12]}…")
-            item = QListWidgetItem(label)
+            # Two lines, and the SAID in FULL. `said[:12]…` in a proportional
+            # face is not an identifier an actuary can tell apart from another --
+            # and two AIDs can declare the same line and jurisdiction, so the
+            # SAID is the only thing that distinguishes the rows. The edge this
+            # page mints points at exactly one of them.
+            item = QListWidgetItem(
+                f"{mandate['line_of_business']} / {mandate['jurisdiction']}\n{said}")
             item.setData(Qt.UserRole, said)
+            item.setFont(self._row_font())
             self._observed_list.addItem(item)
+
+    def _row_font(self):
+        """The list row's font. Qt gives a QListWidgetItem no per-line styling, so
+        the whole row goes monospace -- the SAID is the half that needs it, and a
+        mixed row would need a delegate for a gain nobody asked for."""
+        from PySide6.QtGui import QFont
+
+        font = QFont(get_monospace_font_family())
+        # A QFont given a family Qt does not know falls back SILENTLY to the
+        # default proportional face. The style hint is what makes the fallback
+        # itself monospaced.
+        font.setStyleHint(QFont.StyleHint.Monospace)
+        font.setPixelSize(13)
+        return font
+
+    def _render_empty_state(self) -> None:
+        """Show the placard instead of an empty box, and hide it once anything
+        has been observed. The heartbeat is the part that distinguishes a healthy
+        quiet watch from a dead one -- a timestamp that advances is the only
+        evidence a poll is still running that this page can honestly give."""
+        empty = not self._observed
+        self._observed_list.setVisible(not empty)
+        self._empty_state.setVisible(empty)
+        if not empty:
+            return
+        checked = self._last_checked
+        heartbeat = (f"Last checked {checked}." if checked
+                     else "Waiting for the first check…")
+        self._empty_state.setText(
+            "No mandates observed yet.\n\n"
+            "A mandate is never sent here — this watches the CUO's own log and "
+            "picks one up once it has been declared and anchored.\n"
+            f"{heartbeat}")
 
     def _on_mandate_clicked(self, index) -> None:
         item = self._observed_list.item(index.row())
         if item is None:
             return
-        said = item.data(Qt.UserRole)
+        self._select_mandate(item.data(Qt.UserRole))
+
+    def _select_mandate(self, said: str | None) -> None:
+        """The one place selection happens, whichever input caused it.
+
+        Extracted so the mouse path and the keyboard path cannot drift: they were
+        one handler and one signal, and the signal only fired for the mouse.
+        """
+        if not said:
+            return
         self._selected_mandate_said = said
         mandate = self._observed.get(said, {})
         self._selected_label.setText(
@@ -556,17 +850,130 @@ class ActuaryPage(QWidget):
         self._workbook_digest_label.setText(manifest["workbook_digest"])
         self._update_attest_enabled()
 
+    def _release_attest(self) -> None:
+        """Drop the in-flight guard once issuance has resolved, either way.
+
+        BOTH outcomes, not just success: a guard that only lifts on
+        `credential_issued` turns one failed attestation into a permanently dead
+        button, which is the trap the sibling read-back shipped with for a commit
+        (its "Signing..." modal survived its own success). The re-enable still
+        goes through `_update_attest_enabled`, so a parse invalidated mid-flight
+        does not come back armed.
+        """
+        self._attesting = False
+        self._update_attest_enabled()
+
+    def _invalidate_parse(self, *_qt_args) -> None:
+        """Forget the loaded parse the moment the path it came from changes.
+
+        Clears the displayed evidence too, not just the internal state: leaving a
+        manifest SAID and workbook digest on screen under a path that no longer
+        produced them is the same lie in a quieter font.
+        """
+        if self._parse_manifest_said is None and self._parse_manifest is None:
+            return
+        self._parse_manifest = None
+        self._parse_manifest_said = None
+        self._manifest_said_label.setText("—")
+        self._workbook_digest_label.setText("—")
+        self._attested_banner.setVisible(False)
+        self._update_attest_enabled()
+
+    def _evidence_label(self, object_name: str) -> QLabel:
+        """A monospaced, selectable, plain-text value with an em-dash placeholder."""
+        label = QLabel("—")
+        label.setObjectName(object_name)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 14px;"
+            f" font-family: {_mono_css()};")
+        return label
+
+    def _attest_blocker_text(self) -> str:
+        """Why the mint is unavailable, in the actuary's own sequence.
+
+        Returns "" when nothing blocks. Names ONE reason at a time, the first one
+        in the order the page asks for them, so the line reads as the next step
+        rather than as a list of complaints.
+        """
+        if self._attesting:
+            return "Attesting…"
+        if not self._selected_mandate_said:
+            return "Select an observed mandate to attest against."
+        if self._parse_manifest_said is None:
+            return "Load a parse directory to attest."
+        if not self._version.text().strip():
+            # Schema-required, and the one field with no defensible default: it
+            # is the actuary's own label for this rate program.
+            return "Give the rate program a version to attest."
+        return ""
+
     def _update_attest_enabled(self) -> None:
-        self._attest.setEnabled(
-            bool(self._selected_mandate_said) and self._parse_manifest_said is not None)
+        blocked = self._attest_blocker_text()
+        self._attest.setEnabled(not blocked)
+        self._attest.setToolTip(blocked)
+        self._attest_blocker.setText(blocked)
+        self._attest_blocker.setVisible(bool(blocked))
 
     # -- attest / issuance --------------------------------------------------------
+
+    def _attestation_attributes(self) -> dict:
+        """The ACDC attribute block. Built HERE rather than inline in `attest()`
+        so the read-back can show exactly what will be committed -- three of
+        these are asserted on the actuary's behalf and were previously invisible.
+        One source, so the drawer cannot drift from the mint."""
+        return {
+            "manifest_said": self._parse_manifest_said,
+            "version": self._version.text().strip(),
+            "filing_date": self._filing_date.date().toString("yyyy-MM-dd"),
+            "action": self._action.currentText(),
+        }
+
+    def review_attestation(self, *_qt_args) -> None:
+        """Open the read-back. Nothing is minted until its own confirm."""
+        if self._attesting or self.attest_drawer is not None:
+            return
+        if not self._selected_mandate_said or self._parse_manifest_said is None:
+            self._show_error("Select an observed mandate and load a parse first.")
+            return
+
+        drawer = AttestReviewDrawer(
+            mandate_said=self._selected_mandate_said,
+            mandate=self._observed.get(self._selected_mandate_said, {}),
+            manifest_said=self._parse_manifest_said,
+            workbook_digest=(self._parse_manifest or {}).get("workbook_digest", ""),
+            attributes=self._attestation_attributes(),
+            parent=self)
+        self.attest_drawer = drawer
+        drawer.confirm.connect(self.attest)
+        drawer.cancelled.connect(self._forget_drawer)
+        drawer.open_drawer()
+
+    def _forget_drawer(self) -> None:
+        self.attest_drawer = None
+
+    def _close_drawer(self) -> None:
+        drawer, self.attest_drawer = self.attest_drawer, None
+        if drawer is None:
+            return
+        try:
+            # `finish()`, NOT `close_drawer()`: the drawer refuses to close while
+            # an attestation is in flight, so a plain close is ignored and the
+            # read-back survives its own success.
+            drawer.finish()
+        except RuntimeError:                # already destroyed by Qt
+            pass
 
     def attest(self, *_qt_args) -> None:
         """Issue the `rate_program_attestation` ACDC, NI2I-edged to the selected
         mandate. See the module docstring for the issuance mechanic; mirrors
         `CuoMandatePage.submit` (retire-listener / vault.extend, subscribing to
         the doer's EMITTED source name `"IssueCredentialDoer"`, the legacy one)."""
+        if self._attesting:
+            return
         self._error_banner.setVisible(False)
         if self._app is None or getattr(self._app, "vault", None) is None:
             self._show_error("No open vault — cannot attest.")
@@ -599,12 +1006,7 @@ class ActuaryPage(QWidget):
         # so explicitly ("INPUT to the consistency check... deliberately NOT
         # an attestation attribute" -- the manifest_said the ACDC DOES carry
         # is what a consumer re-derives to learn the real coverage set).
-        payload = {
-            "manifest_said": self._parse_manifest_said,
-            "version": "1.0",
-            "filing_date": _dt.date.today().isoformat(),
-            "action": "Sandbox",
-        }
+        payload = self._attestation_attributes()
         # NI2I: the mandate is untargeted, and per the ACDC spec an edge to an
         # untargeted far node MUST NOT be I2I/DI2I. "NI2I" (not "references",
         # the micro-app-template's own authoring-layer vocabulary for this
@@ -622,6 +1024,12 @@ class ActuaryPage(QWidget):
             },
         }
 
+        # Armed HERE, not at the top: every `return` above is a refusal that
+        # leaves the actuary free to try again, and latching the guard before
+        # them would disable the button permanently on a typo'd path.
+        self._attesting = True
+        self._update_attest_enabled()
+
         signals = vault.signals
         schema_said = RATE_PROGRAM_ATTESTATION_SCHEMA_SAID
 
@@ -635,11 +1043,15 @@ class ActuaryPage(QWidget):
                 return
             if event_type == "credential_issuance_failed":
                 self._retire_listener(_on_issue_event)
+                self._release_attest()
+                self._close_drawer()
                 self._show_error(data.get("error", "Attestation failed."))
                 return
             if event_type != "credential_issued":
                 return
             self._retire_listener(_on_issue_event)
+            self._release_attest()
+            self._close_drawer()
             self._show_attested(data.get("said", ""))
 
         self._pending_listener = _on_issue_event
@@ -666,6 +1078,18 @@ class ActuaryPage(QWidget):
         self._error_banner.setVisible(True)
 
     def _show_attested(self, said: str) -> None:
+        # IN FULL. `said[:12]…` is not a handle: an actuary cannot go and find
+        # what they just published from a twelfth of its identifier, and this
+        # credential is the artefact the whole page exists to produce. Monospaced
+        # and selectable for the same reason the evidence values are.
+        self._attested_banner.setTextFormat(Qt.TextFormat.PlainText)
+        self._attested_banner.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        self._attested_banner.setStyleSheet(
+            f"color: {colors.SUCCESS_TEXT};"
+            f" background-color: {colors.BACKGROUND_SUCCESS};"
+            f" border-radius: 6px; padding: 8px 12px; font-size: 14px;"
+            f" font-family: {_mono_css()};")
         self._attested_banner.setText(
-            f"Rate program attested ({said[:12]}…)." if said else "Rate program attested.")
+            f"Rate program attested. {said}" if said else "Rate program attested.")
         self._attested_banner.setVisible(True)
