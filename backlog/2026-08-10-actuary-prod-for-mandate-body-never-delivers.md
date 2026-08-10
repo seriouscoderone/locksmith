@@ -1,6 +1,24 @@
-# The actuary's prod for a mandate body never reaches the CUO
+# The actuary's prod for a mandate body never reaches the CUO — cause UNDETERMINED
 
-**Status:** backlog · **Raised:** 2026-08-10 · **Priority:** high (a shipped role cannot fetch the credential body it is meant to attest against)
+**Status:** backlog · **Raised:** 2026-08-10 · **Priority:** medium — see "Why this is not a shipping blocker"
+
+## Why this is not a shipping blocker
+
+Two facts, established after this item was first written, argue the product is
+probably fine and the TEST's premise is not met:
+
+* `test_the_admin_issues_and_grants_both_roles_live` **passes** — live IPEX
+  issue → grant → admit between two real wallets over peer TCP. Delivery to a
+  reachable wallet demonstrably works.
+* This test fails on the **old** keri pin too, so nothing in v0.4.0 caused it.
+
+And the decisive gap: **`direct_transport` logs no bind/listen event at all**
+(its whole vocabulary is `no_hab` / `paired` / `pair_failed` /
+`refresh_failed` / `repaired`). So the logs CANNOT distinguish
+"delivery is broken" from "the fixture's responder was never accepting on the
+port it advertised". The original version of this item asserted the former;
+that was not supported by the evidence. Fix the observability first (below),
+then re-read the failure.
 
 ## What fails
 
@@ -35,27 +53,38 @@ Broken down by peer, most of that is expected fixture noise:
 |---|---|---|---|
 | `EGjm-X1JMz-y` | `tcp://192.168.1.162:5621` | 77 | expected — the real Usurance authority, not running in a test |
 | `EHdNc8llEejN` | `tcp://127.0.0.1:1/` | ~20 | expected — deliberate black-hole sentinel (`conftest.py:424`, "The URL is never dialed") |
-| `EIvIIoCGDPv5` | `tcp://127.0.0.1:63548` | 27 | **THE BUG** — this is the CUO, and it IS running with a bound listener |
+| `EIvIIoCGDPv5` | `tcp://127.0.0.1:63548` | 27 | **the only interesting ones** — this is the CUO, and it is running |
 
-So the real defect is narrow: prods to a live, paired, correctly-addressed peer
-report undelivered. The CUO's advertised eid in the actuary's import
-(`BHpGRZ39d5Q_owzXuODfp0X9HrhXXUeTTqiyeV3F--Q3`) matches the eid the CUO minted,
-so this is not a stale-PeerRecord/wrong-endpoint case.
+So the question is narrow: 27 prods to a live, paired, correctly-addressed peer
+report undelivered. Addressing is definitely right — the CUO logged
+`peer.role.published aid=EIvIIoCGDPv5… url=tcp://127.0.0.1:63548` and the
+actuary dialed exactly that, with a matching listener eid
+(`BHpGRZ39d5Q_owzXuODfp0X9HrhXXUeTTqiyeV3F--Q3`; the harness uses a fixed salt,
+so eids are deterministic across runs). What is NOT established is whether the
+CUO's listener ever accepted on that port — nothing logs it.
 
 ## Two things to fix
 
-1. **The delivery itself.** Start at `peer_sync_doer._queue_*` → the worker that
-   sets `outcome["delivered"]`, and find why a dial to a bound local listener
-   reports undelivered. Confirm the CUO's peer listener is actually accepting on
-   the port it advertised (the harness never asserts this).
+1. **The observability gap, FIRST — it is why the cause is undetermined.**
+   Two holes:
 
-2. **The observability gap that hid it** (cheap, do it first).
-   `peer_sync.undelivered` is `logger.debug` while `peer_sync.queued` beside it
-   is `logger.info`, so at default level a wallet appears to prod forever with
-   no hint the bytes never left the machine. This is the SAME trap the code
-   already documents at `peer_sync_doer.py:316-319` — it used to lie by logging
-   `sent`, and now it simply goes quiet. A peer that has been undelivered N
-   times running deserves an INFO line naming the endpoint.
+   * `direct_transport` never logs that it bound (or failed to bind) a peer
+     listener, so "is the responder actually accepting?" is unanswerable from a
+     log. Add a bind/failed-to-bind line naming host:port. Without it, every
+     future prod-silence investigation stalls exactly here.
+   * `peer_sync.undelivered` is `logger.debug` while `peer_sync.queued` beside it
+     is `logger.info`, so at default level a wallet appears to prod forever with
+     no hint the bytes never left the machine. This is the SAME trap the code
+     already documents at `peer_sync_doer.py:316-319` — it used to lie by logging
+     `sent`, and now it simply goes quiet. A peer undelivered N times running
+     deserves an INFO line naming the endpoint.
+
+2. **Then re-read the failure**, and only if it survives: start at
+   `peer_sync_doer`'s worker that sets `outcome["delivered"]` and find why a dial
+   to a bound local listener reports undelivered. Note the harness never asserts
+   the responder is accepting, so an unmet precondition is the leading
+   hypothesis — the test docstring records EIGHT prior defects in this path,
+   "every one of which produced identical silence on the wire".
 
 ## Fixture noise worth separating
 
