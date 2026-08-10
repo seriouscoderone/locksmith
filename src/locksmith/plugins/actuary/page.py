@@ -299,12 +299,25 @@ class ActuaryPage(QWidget):
         self._empty_state.setObjectName("actuaryPage.observedEmpty")
         self._empty_state.setWordWrap(True)
         self._empty_state.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        self._empty_state.setStyleSheet(
+        self._empty_state_style = (
             f"color: {colors.TEXT_SUBTLE}; font-size: 14px;"
             f" background-color: {colors.BACKGROUND_CONTENT};"
             f" border: 1px dashed {colors.BORDER_DARK};"
             f" border-radius: 4px; padding: 28px 24px;")
+        self._empty_state.setStyleSheet(self._empty_state_style)
         outer.addWidget(self._empty_state)
+
+        self._watch_retry = LocksmithInvertedButton("Try watching again")
+        self._watch_retry.setObjectName("actuaryPage.watchRetry")
+        self._watch_retry.setSizePolicy(QSizePolicy.Policy.Maximum,
+                                        QSizePolicy.Policy.Fixed)
+        self._watch_retry.clicked.connect(self._retry_watch)
+        self._watch_retry.setVisible(False)
+        retry_row = QHBoxLayout()
+        retry_row.setContentsMargins(0, 0, 0, 0)
+        retry_row.addWidget(self._watch_retry)
+        retry_row.addStretch(1)
+        outer.addLayout(retry_row)
 
         self._selected_label = QLabel("No mandate selected.")
         self._selected_label.setObjectName("actuaryPage.selectedMandate")
@@ -429,6 +442,14 @@ class ActuaryPage(QWidget):
             f" color: {colors.TEXT_PRIMARY}; }}")
         form.addRow("Retention", self._action)
 
+        self._loaded_from = QLabel("")
+        self._loaded_from.setObjectName("actuaryPage.loadedFrom")
+        self._loaded_from.setWordWrap(True)
+        self._loaded_from.setStyleSheet(
+            f"color: {colors.SUCCESS_TEXT}; font-size: 12px;")
+        self._loaded_from.setVisible(False)
+        form.addRow(self._loaded_from)
+
         self._attest = LocksmithButton("Review attestation…")
         self._attest.setObjectName("actuaryPage.attest")
         self._attest.setEnabled(False)
@@ -471,6 +492,12 @@ class ActuaryPage(QWidget):
 
         # -- watch loop -------------------------------------------------------------
         self._last_checked: str = ""
+        #: Why watching cannot work, or "" when it can. Three paths used to
+        #: swallow into `logger` and paint as the same empty box, so a page that
+        #: CANNOT observe looked exactly like one with nothing to observe.
+        self._watch_error: str = ""
+        #: One-shot guard for the synchronous manifest build -- see `load_parse`.
+        self._loading_parse = False
         # Paint the initial gate state: both the placard and the blocker line are
         # rendered from state, and neither had been asked to render yet, so the
         # page opened with an empty box and a silently-disabled primary -- the
@@ -529,6 +556,12 @@ class ActuaryPage(QWidget):
             # _scan_for_mandates degrades to "nothing observed yet", which is
             # diagnosable, rather than an unrevealed surface.
             logger.exception("actuary.watch.schema_prepare_failed")
+            # ...and say so on the SCREEN. Degrading to "nothing observed yet"
+            # is diagnosable in a log file and indistinguishable from a healthy
+            # quiet watch on the page, which is where the actuary is looking.
+            self._watch_error = (
+                "The mandate schema could not be prepared, so this vault cannot "
+                "recognise a mandate even if one is declared.")
 
     # -- identifier resolution --------------------------------------------------
 
@@ -563,6 +596,9 @@ class ActuaryPage(QWidget):
                     doc = result[1]
             except Exception:  # noqa: BLE001 -- see _prepare_import_schema
                 logger.exception("actuary.watch.egf_resolve_failed")
+                self._watch_error = (
+                    "The ecosystem governance framework could not be resolved, "
+                    "so an observed mandate cannot be verified against it.")
             self._egf_doc_cache = doc
         return self._egf_doc_cache
 
@@ -775,8 +811,23 @@ class ActuaryPage(QWidget):
         empty = not self._observed
         self._observed_list.setVisible(not empty)
         self._empty_state.setVisible(empty)
+        self._watch_retry.setVisible(empty and bool(self._watch_error))
         if not empty:
             return
+
+        if self._watch_error:
+            # A page that CANNOT observe must not look like one with nothing to
+            # observe. Same placard, different content and a way out.
+            self._empty_state.setStyleSheet(
+                f"color: {colors.DANGER}; font-size: 14px;"
+                f" background-color: {colors.BACKGROUND_ERROR};"
+                f" border: 1px solid {colors.DANGER};"
+                f" border-radius: 4px; padding: 28px 24px;")
+            self._empty_state.setText(
+                f"Watching is not working.\n\n{self._watch_error}")
+            return
+
+        self._empty_state.setStyleSheet(self._empty_state_style)
         checked = self._last_checked
         heartbeat = (f"Last checked {checked}." if checked
                      else "Waiting for the first check…")
@@ -785,6 +836,16 @@ class ActuaryPage(QWidget):
             "A mandate is never sent here — this watches the CUO's own log and "
             "picks one up once it has been declared and anchored.\n"
             f"{heartbeat}")
+
+    def _retry_watch(self, *_qt_args) -> None:
+        """Clear the recorded failure and scan again. The failures are cached --
+        `_egf_doc_cache` in particular -- so the retry has to reset them or it
+        reports the same verdict without having re-tried anything."""
+        self._watch_error = ""
+        self._egf_doc_cache = "unresolved"
+        self._prepare_import_schema()
+        self._scan_for_mandates()
+        self._render_empty_state()
 
     def _on_mandate_clicked(self, index) -> None:
         item = self._observed_list.item(index.row())
@@ -821,9 +882,39 @@ class ActuaryPage(QWidget):
         return path if path.is_file() else None
 
     def load_parse(self, *_qt_args) -> None:
+        # `_build_manifest` rglobs the parse directory, reads EVERY shard and the
+        # whole .xlsm, and Blake3s all of it -- synchronously, on the GUI thread.
+        # With no feedback the natural response to a frozen window is to click
+        # again, which re-runs the entire hash. The guard makes that impossible
+        # and the label says what is happening.
+        if self._loading_parse:
+            return
+        self._loading_parse = True
         self._error_banner.setVisible(False)
         self._attested_banner.setVisible(False)
+        self._enter_loading()
+        try:
+            self._load_parse_inner()
+        finally:
+            self._leave_loading()
 
+    def _enter_loading(self) -> None:
+        self._load_parse.setEnabled(False)
+        self._load_parse.setText("Loading parse…")
+        self._parse_dir.setReadOnly(True)
+        # REPAINT, not just setText: the work below never returns to the event
+        # loop, so without this the new label is queued and painted only after
+        # the hashing finishes -- i.e. never, from the actuary's point of view.
+        self._load_parse.repaint()
+        self._parse_dir.repaint()
+
+    def _leave_loading(self) -> None:
+        self._loading_parse = False
+        self._load_parse.setEnabled(True)
+        self._load_parse.setText("Load Parse")
+        self._parse_dir.setReadOnly(False)
+
+    def _load_parse_inner(self) -> None:
         parse_dir = Path(self._parse_dir.text().strip())
         if not parse_dir.is_dir():
             self._show_error(f"Not a directory: {parse_dir}")
@@ -848,6 +939,11 @@ class ActuaryPage(QWidget):
         self._parse_manifest_said = said
         self._manifest_said_label.setText(said)
         self._workbook_digest_label.setText(manifest["workbook_digest"])
+        # A visible LOADED state. Two digests appearing is evidence something
+        # happened, but not evidence of WHICH directory produced them -- and the
+        # path is editable, so the answer stops being obvious the moment it is.
+        self._loaded_from.setText(f"Loaded from {parse_dir}")
+        self._loaded_from.setVisible(True)
         self._update_attest_enabled()
 
     def _release_attest(self) -> None:
@@ -876,6 +972,7 @@ class ActuaryPage(QWidget):
         self._parse_manifest_said = None
         self._manifest_said_label.setText("—")
         self._workbook_digest_label.setText("—")
+        self._loaded_from.setVisible(False)
         self._attested_banner.setVisible(False)
         self._update_attest_enabled()
 

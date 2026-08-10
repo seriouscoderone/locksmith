@@ -4,6 +4,7 @@
 it could commit bytes the screen was not showing, commit them twice, and look
 armed while it was not. Each test here fails against the pre-fix source.
 """
+import pytest
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from locksmith.plugins.actuary.page import ActuaryPage
@@ -289,4 +290,113 @@ def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
         QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow, (
             "the field growth policy is back to the style default, which is "
             "FieldsStayAtSizeHint on macOS")
+    shell.hide()
+
+
+# --- the states the page could not express -------------------------------------
+
+
+def test_a_broken_watch_does_not_look_like_a_quiet_one(qtbot):
+    """Three failure paths swallowed into `logger` and painted as the same empty
+    box, so a page that CANNOT observe was pixel-identical to one with nothing to
+    observe — and the log is not where the actuary is looking."""
+    shell, page = _page(qtbot)
+    assert "no mandates observed" in page._empty_state.text().lower()
+    assert page._watch_retry.isVisible() is False
+
+    page._watch_error = "The mandate schema could not be prepared."
+    page._render_empty_state()
+
+    text = page._empty_state.text().lower()
+    assert "not working" in text
+    assert "schema could not be prepared" in text
+    assert page._watch_retry.isVisible() is True, "no way out of the failed state"
+    shell.hide()
+
+
+def test_retrying_the_watch_clears_the_cached_verdict(qtbot):
+    """The failures are CACHED — `_egf_doc_cache` in particular — so a retry that
+    does not reset them reports the same verdict without having re-tried
+    anything, which is worse than no retry button at all."""
+    shell, page = _page(qtbot)
+    page._watch_error = "boom"
+    page._egf_doc_cache = None
+    page._render_empty_state()
+    assert page._watch_retry.isVisible() is True
+
+    # A retry against a still-broken environment must RE-REPORT, not clear: this
+    # page has no vault, so watching genuinely cannot work.
+    page._retry_watch()
+    assert page._watch_error != "", "a failed retry silently reported success"
+    assert page._egf_doc_cache == "unresolved", "the cached verdict survived"
+
+    # ...and when the cause is gone, the retry clears it.
+    page._prepare_import_schema = lambda: None
+    page._scan_for_mandates = lambda: None
+    page._retry_watch()
+    assert page._watch_error == ""
+    assert page._watch_retry.isVisible() is False
+    shell.hide()
+
+
+def test_loading_a_parse_cannot_be_re_entered(qtbot):
+    """`_build_manifest` rglobs the directory, reads every shard and the whole
+    .xlsm and Blake3s all of it, synchronously on the GUI thread. With no
+    feedback the natural response to a frozen window is to click again and re-run
+    the entire hash."""
+    shell, page = _page(qtbot)
+    calls = []
+    page._load_parse_inner = lambda: calls.append(1)
+
+    page.load_parse()
+    assert calls == [1]
+
+    page._loading_parse = True
+    page.load_parse()
+    assert calls == [1], "a second click re-ran the whole hash"
+
+    page._loading_parse = False
+    page.load_parse()
+    assert calls == [1, 1]
+    shell.hide()
+
+
+def test_the_loading_state_is_actually_painted(qtbot):
+    """The work never returns to the event loop, so a label set without an
+    explicit repaint is queued and painted only after the hashing finishes —
+    which from the actuary's point of view is never."""
+    shell, page = _page(qtbot)
+    seen = {}
+
+    def spy():
+        seen["text"] = page._load_parse.text()
+        seen["enabled"] = page._load_parse.isEnabled()
+        seen["readonly"] = page._parse_dir.isReadOnly()
+
+    page._load_parse_inner = spy
+    page.load_parse()
+
+    assert "loading" in seen["text"].lower()
+    assert seen["enabled"] is False
+    assert seen["readonly"] is True, "the path can be edited mid-hash"
+    # ...and it must all come back afterwards, including on the failure path.
+    assert page._load_parse.isEnabled() is True
+    assert page._parse_dir.isReadOnly() is False
+    shell.hide()
+
+
+def test_the_loading_state_is_restored_even_when_the_load_raises(qtbot):
+    """A parse directory that disappears mid-read must not leave the button dead."""
+    shell, page = _page(qtbot)
+
+    def boom():
+        raise OSError("the directory went away")
+
+    page._load_parse_inner = boom
+    with pytest.raises(OSError):
+        page.load_parse()
+
+    assert page._loading_parse is False
+    assert page._load_parse.isEnabled() is True
+    assert page._parse_dir.isReadOnly() is False
     shell.hide()
