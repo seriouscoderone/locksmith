@@ -87,7 +87,15 @@ def main(argv: list[str] | None = None) -> int:
     args = ap.parse_args(argv)
 
     feed_url = _brand_feed_url(args.brand)
-    with urllib.request.urlopen(feed_url, timeout=30) as resp:
+    # Fetch under a DISTINCT cache key (a query param CloudFront varies on is
+    # not needed — any unique query string yields its own edge object) so this
+    # preflight cannot warm the canonical URL's edge cache with a copy that is
+    # about to go stale. Without this, running the check immediately before
+    # publishing left the edge serving the OLD appcast at the canonical URL while
+    # S3 already had the new one, and the post-publish verification then failed
+    # on a feed that was actually correct at origin. Observed on the v0.4.0
+    # locksmith promote: macos stale (this check had fetched it), windows fresh.
+    with urllib.request.urlopen(f"{feed_url}?preflight=1", timeout=30) as resp:
         feed = json.loads(resp.read().decode("utf-8"))
     feed_aid = feed.get("publisher_aid", "")
     if not feed_aid:

@@ -44,6 +44,52 @@ BRANDS=(${LOCKSMITH_BRANDS:-locksmith usurance})
 say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
 die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 
+# Invalidate the release CDN's appcast + KEL paths and wait for completion.
+# The distribution is DISCOVERED from the CDN hostname in deploy_config rather
+# than hardcoded, so no distribution id is committed and a config change cannot
+# silently invalidate the wrong distribution.
+invalidate_cdn() {
+    "$PY" - "$CDN" <<'PY'
+import sys, time
+from urllib.parse import urlparse
+try:
+    import boto3
+except Exception as exc:                                  # noqa: BLE001
+    sys.exit(f"boto3 unavailable: {exc}")
+
+host = urlparse(sys.argv[1]).netloc
+cf = boto3.client("cloudfront")
+dist = None
+for page in cf.get_paginator("list_distributions").paginate():
+    for item in (page.get("DistributionList", {}).get("Items") or []):
+        if host in (item.get("Aliases", {}).get("Items") or []):
+            dist = item["Id"]
+            break
+    if dist:
+        break
+if not dist:
+    sys.exit(f"no CloudFront distribution aliases {host}")
+
+paths = ["/appcast/v1/*", "/*/appcast/v1/*", "/publisher/v1/*"]
+inv = cf.create_invalidation(
+    DistributionId=dist,
+    InvalidationBatch={"Paths": {"Quantity": len(paths), "Items": paths},
+                       "CallerReference": f"promote-{time.time_ns()}"},
+)["Invalidation"]["Id"]
+print(f"  cdn       : {dist} invalidation {inv}", flush=True)
+
+deadline = time.time() + 300
+while time.time() < deadline:
+    status = cf.get_invalidation(DistributionId=dist, Id=inv)["Invalidation"]["Status"]
+    if status == "Completed":
+        print("  cdn       : invalidation completed")
+        break
+    time.sleep(10)
+else:
+    sys.exit("invalidation did not complete within 300s")
+PY
+}
+
 # ---- 1. Preflight: the checks that actually caught real failures ----------
 # Per the backlog's own scope caveat: shell ergonomics did NOT prevent the
 # v0.3.x incidents; THESE checks are what catch that class.
@@ -237,11 +283,21 @@ PY
         --macos-sha256 "$DMG_SHA" --windows-sha256 "$MSI_SHA" \
         --out-dir "$ANCHOR_OUT"
 
+    # The appcast is served through CloudFront, so S3 being correct is not the
+    # same as clients seeing it. Invalidate and WAIT before verifying: on the
+    # v0.4.0 locksmith promote the edge served the previous appcast while S3
+    # already had the new one, and verification failed on a feed that was
+    # correct at origin.
+    say "$BRAND: invalidate the CDN edge, then verify"
+    invalidate_cdn || echo "  WARNING: could not invalidate; the edge may lag its TTL"
+
     say "$BRAND: post-publish verification (ENFORCED)"
     "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" \
         || die "$BRAND: published $VERSION does NOT verify against the live feed.
-  The feed is now advertising an update clients will REFUSE. Investigate before
-  promoting to latest — check the artifact's BAKED anchor, not src/."
+  Note what this does and does NOT mean. A StaleAppcastError means the feed has
+  not caught up yet — clients simply are not offered the update, which is benign
+  and clears with the CDN. Any OTHER failure means clients would REFUSE an update
+  the feed advertises: check the artifact's BAKED anchor, not src/."
     echo "  $BRAND: verified against the live feed"
 done
 
