@@ -80,6 +80,7 @@ from PySide6.QtWidgets import (
     QWidget,
 )
 
+from keri import help
 from keri_serviceaid.egf.documents import EgfDocument, Role
 
 from locksmith.ui import colors
@@ -89,6 +90,10 @@ from locksmith.ui.toolkit.pages.base import BasePage
 from locksmith.ui.toolkit.widgets import LocksmithButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.buttons import LocksmithCopyButton
+
+# Always pass __name__: help.ogler.getLogger() with no argument routes every
+# module's lines onto one shared logger, which makes them unfilterable.
+logger = help.ogler.getLogger(__name__)
 
 
 _KIND_GLYPHS = {
