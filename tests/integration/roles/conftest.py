@@ -1392,7 +1392,7 @@ _PARSE_ARGS = ["--line-of-business", "L", "--jurisdiction", "WI",
 #: A parse now answers a SPECIFIC product mandate: `ipd-parse` replaced
 #: `--version` with `--product-mandate <SAID>` and writes to
 #: `<out>/<lob>/<juris>/<said>` instead of `<out>/<lob>/<juris>/<version>`
-#: (ugard `insurance-product/parser/src/ipd/parse_cli.py:14,24`). The harness
+#: (ugard `insurance-product/parser/src/ipd/cli/parse.py`). The harness
 #: still passed `--version 1.0`, so both tests that use `parse_dir` errored
 #: before spawning a single wallet:
 #:     ipd-parse: error: the following arguments are required: --product-mandate
@@ -1439,7 +1439,12 @@ def _run_ipd_parse(out: pathlib.Path,
     if not _WORKBOOK.is_file():
         raise RuntimeError(f"fixture workbook missing: {_WORKBOOK}")
     proc = subprocess.run(
-        [_parser_python(), "-m", "ipd.parse_cli", "--workbook", str(_WORKBOOK),
+        # `ipd.cli.parse`, not the retired `ipd.parse_cli`: ugard moved the CLI
+        # under a `cli/` package (its [project.scripts] is the source of truth:
+        # `ipd-parse = "ipd.cli.parse:main"`). The old path failed as
+        # "No module named ipd.parse_cli" during FIXTURE SETUP, which reads as
+        # an environment problem and hid the whole four-window arc test.
+        [_parser_python(), "-m", "ipd.cli.parse", "--workbook", str(_WORKBOOK),
          *_PARSE_ARGS, "--product-mandate", product_mandate,
          "--out", str(out)],
         capture_output=True, text=True,
