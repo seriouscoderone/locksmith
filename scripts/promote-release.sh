@@ -98,6 +98,50 @@ fi
 [[ -n "${LOCKSMITH_PUBLISHER_BRAN:-}" ]] || die "no bran supplied"
 echo "  bran      : set (${#LOCKSMITH_PUBLISHER_BRAN} chars, never echoed)"
 
+# AWS credentials, checked HERE and not at publish time. `publish` uploads to
+# S3, and on the real v0.4.0 run it died with NoCredentialsError *after* the
+# anchor had already been signed, witnessed and committed to the KEL — leaving a
+# release anchored in the KEL with no feed advertising it. Any environment
+# problem that can stop `publish` must stop the run BEFORE `anchor`.
+#
+# Resolved through boto3, the same path the publisher itself uses, so this cannot
+# pass while the publisher fails (the `aws` CLI can resolve differently).
+S3_BUCKET="$("$PY" - <<'PY'
+import json, pathlib
+for p in ("src/locksmith/release/deploy_config.json",
+          "src/locksmith/release/deploy_config.example.json"):
+    f = pathlib.Path(p)
+    if f.is_file():
+        print(json.loads(f.read_text())["s3_bucket"]); break
+else:
+    raise SystemExit("no deploy_config.json to read s3_bucket from")
+PY
+)"
+AWS_WHO="$("$PY" - "$S3_BUCKET" <<'PY' 2>&1 || true
+import sys
+try:
+    import boto3
+    from botocore.exceptions import BotoCoreError, ClientError
+except Exception as exc:                              # noqa: BLE001
+    sys.exit(f"FAIL boto3 unavailable: {exc}")
+bucket = sys.argv[1]
+try:
+    who = boto3.client("sts").get_caller_identity()
+    boto3.client("s3").head_bucket(Bucket=bucket)
+except (BotoCoreError, ClientError) as exc:
+    sys.exit(f"FAIL {type(exc).__name__}: {exc}")
+print(f"OK {who['Arn']}")
+PY
+)"
+if [[ "$AWS_WHO" != OK* ]]; then
+    die "AWS credentials cannot reach s3://$S3_BUCKET — publish would fail AFTER
+  the anchor is already in the KEL.
+    $AWS_WHO
+  Supply credentials before re-running, e.g.:
+    AWS_PROFILE=personal ./scripts/promote-release.sh $VERSION"
+fi
+echo "  aws       : ${AWS_WHO#OK } → s3://$S3_BUCKET reachable"
+
 STAGE="$(mktemp -d "${TMPDIR:-/tmp%/}/promote-$VERSION.XXXXXX" | sed 's#//*#/#g')"
 echo "  stage     : $STAGE"
 

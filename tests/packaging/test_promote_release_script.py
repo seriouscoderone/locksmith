@@ -214,6 +214,29 @@ def test_dry_run_stops_before_the_keystore():
     assert dry < anchor, "the dry-run bail must precede the anchor invocation"
 
 
+def test_aws_credentials_are_checked_before_anchoring():
+    """`publish` uploads to S3. If credentials are missing, the run must stop
+    BEFORE `anchor` — on the real v0.4.0 promote it died with NoCredentialsError
+    after the anchor was already signed, witnessed and committed to the KEL,
+    leaving a release anchored with no feed advertising it."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    aws = text.index("AWS credentials cannot reach")
+    anchor = text.index('"$PUBLISHER" anchor')
+    assert aws < anchor, "the AWS credential check must precede the anchor"
+    assert "AWS_PROFILE=personal" in text, (
+        "the failure must name a concrete way to supply credentials")
+
+
+def test_the_aws_check_uses_the_same_resolution_path_as_the_publisher():
+    """boto3, not the `aws` CLI — the CLI can resolve credentials the publisher
+    cannot, which would let the preflight pass while publish still fails."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    idx = text.index("AWS credentials cannot reach")
+    preamble = text[:idx]
+    assert "import boto3" in preamble
+    assert "aws sts get-caller-identity" not in preamble
+
+
 def test_promote_to_latest_is_not_automated():
     """Deliberate per the backlog: verification passing is not permission to ship."""
     text = SCRIPT.read_text(encoding="utf-8")
