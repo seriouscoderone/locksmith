@@ -87,6 +87,34 @@ or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceipto
 "push the receipt back on the connection" model and **hangs over HTTP**. Collect receipts with
 `Receiptor` / `vault.receiptor` — which is what `InceptDoer`, `RotateDoer`, and `ConfirmDoer` all do.
 
+## macOS signing + notarization happen ONLY on CI (agents: read before "just building it")
+
+**There are no Apple signing credentials on the developer machine, by design.** Don't go looking
+for them, don't ask the owner for a profile name, and don't try to sign locally — all three have
+burned a session already.
+
+- `KC_PROFILE` is **derived, never chosen**: `release.ci.yml` sets it to the brand's bundle id
+  (`packaging && python -m brandlib id bundle_id` → `host.keri.locksmith` / `com.usurance.wallet`).
+  There is nothing to guess.
+- That keychain profile **does not exist locally**. CI creates it per run with
+  `xcrun notarytool store-credentials "$KC_PROFILE"` from the Apple secrets, and imports the
+  Developer ID `.p12` from `secrets.DEVELOPER_ID_APP_CERT`. Locally,
+  `xcrun notarytool history --keychain-profile <bundle-id>` answers
+  *"No Keychain password item found"* — that is the expected, correct state.
+- A Developer ID identity **being visible in `security find-identity`** does not mean it is usable:
+  `codesign` from a non-interactive agent shell fails `errSecInternalComponent` because it cannot
+  prompt for keychain access. The build still completes and PyInstaller's **ad-hoc** signature
+  stays on the bundle, so `codesign -dv` reports `Signature=adhoc` / `TeamIdentifier=not set`.
+  **Always check that, never assume a build signed.**
+- So the local path is a **test build, not a release build**:
+  `LOCKSMITH_LOCAL_TEST_BUILD=1 bash packaging/build-macos.sh` skips Developer ID signing and
+  notarization and produces everything else identically — PyInstaller bundle, Sparkle.framework,
+  the brand's DMG window. Right for checking a cut; refused by Gatekeeper anywhere else.
+  `scripts/devbuild-macos.sh` is the older, narrower variant (unsigned `.app`, **no DMG**).
+- Real artifacts come from the `release.ci.yml` brand matrix, triggered by **creating a GitHub
+  Release** (not by pushing a tag). Publishing (appcast + KEL anchor) is off-CI and belongs to the
+  owner's long-lived PUBLISHER session.
+
 ## Release publisher + update verification
 
 - The publisher (`tools/publisher/`) is a thin pipeline over keripy **`kli`**: `kli incept` / `kli interact`

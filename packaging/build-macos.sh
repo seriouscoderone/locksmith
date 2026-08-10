@@ -17,8 +17,24 @@ set -euo pipefail
 REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$REPO_ROOT"
 
-: "${DEVELOPER_ID_APP_CERT:?DEVELOPER_ID_APP_CERT must be set}"
-: "${KC_PROFILE:?KC_PROFILE must be set (notarytool keychain profile)}"
+# LOCKSMITH_LOCAL_TEST_BUILD=1 is the LOCAL path: it skips Developer ID signing
+# AND notarization, and produces everything else identically — the PyInstaller
+# bundle, Sparkle.framework, and the brand's DMG window. That is the right
+# artifact for eyeballing a cut before it goes to CI.
+#
+# It exists because a developer machine has NEITHER credential:
+#   * notarytool needs a keychain credential profile that only CI has
+#     (release.ci.yml creates it per run with `notarytool store-credentials`);
+#   * codesign cannot reach the Developer ID private key from a non-interactive
+#     shell — it fails errSecInternalComponent and leaves PyInstaller's ad-hoc
+#     signature in place, which is easy to mistake for a signed build. Check
+#     with `codesign -dv <app>`: "Signature=adhoc" means it did not sign.
+#
+# NEVER right for a release. Release artifacts come from release.ci.yml.
+if [[ "${LOCKSMITH_LOCAL_TEST_BUILD:-0}" != "1" ]]; then
+    : "${DEVELOPER_ID_APP_CERT:?DEVELOPER_ID_APP_CERT must be set (or LOCKSMITH_LOCAL_TEST_BUILD=1 for an unsigned local build)}"
+    : "${KC_PROFILE:?KC_PROFILE must be set (notarytool keychain profile), or LOCKSMITH_LOCAL_TEST_BUILD=1 for an unsigned local build}"
+fi
 CHANNEL="${LOCKSMITH_RELEASE_CHANNEL:-stable}"
 
 # ---- 0. Resolve brand identity (build-time white-label). Default = locksmith.
@@ -87,14 +103,18 @@ else
     echo "build-macos: WARNING — $SPARKLE_SRC not present; in-app updates will be a no-op"
 fi
 
-# ---- 5. Sign nested libsodium dylibs ------------------------------------
-echo "build-macos: signing libsodium dylibs"
-./signLibs.sh
+# ---- 5/6. Sign nested dylibs + the .app (hardened runtime, entitlements) -
+if [[ "${LOCKSMITH_LOCAL_TEST_BUILD:-0}" == "1" ]]; then
+    echo "build-macos: LOCAL TEST BUILD — skipping Developer ID signing"
+    echo "build-macos: the bundle keeps PyInstaller's AD-HOC signature"
+else
+    echo "build-macos: signing libsodium dylibs"
+    ./signLibs.sh
 
-# ---- 6. Sign the .app (entitlements applied, hardened runtime) ----------
-echo "build-macos: signing dist/${APP_NAME}.app"
-APP_BUNDLE="dist/${APP_NAME}.app" ENTITLEMENTS="entitlements.plist" \
-    ./scripts/sign.sh
+    echo "build-macos: signing dist/${APP_NAME}.app"
+    APP_BUNDLE="dist/${APP_NAME}.app" ENTITLEMENTS="entitlements.plist" \
+        ./scripts/sign.sh
+fi
 
 # ---- 7. Build the DMG ---------------------------------------------------
 DMG_NAME="${ARTIFACT_PREFIX}-${VERSION}.dmg"
@@ -134,17 +154,21 @@ create-dmg \
     "$DMG_PATH" \
     "dist/${APP_NAME}.app"
 
-# ---- 8. Sign the DMG ----------------------------------------------------
-echo "build-macos: signing $DMG_PATH"
-codesign --force --timestamp --sign "$DEVELOPER_ID_APP_CERT" "$DMG_PATH"
+# ---- 8/9/10. Sign the DMG, notarize, staple ------------------------------
+if [[ "${LOCKSMITH_LOCAL_TEST_BUILD:-0}" == "1" ]]; then
+    echo "build-macos: WARNING — LOCAL TEST BUILD: $DMG_PATH is UNSIGNED and"
+    echo "build-macos: NOT NOTARIZED. Gatekeeper will refuse it on any other"
+    echo "build-macos: machine. For brand/UI checking only — never publish this."
+else
+    echo "build-macos: signing $DMG_PATH"
+    codesign --force --timestamp --sign "$DEVELOPER_ID_APP_CERT" "$DMG_PATH"
 
-# ---- 9. Notarize --------------------------------------------------------
-echo "build-macos: submitting to notarytool"
-xcrun notarytool submit "$DMG_PATH" --keychain-profile "$KC_PROFILE" --wait
+    echo "build-macos: submitting to notarytool"
+    xcrun notarytool submit "$DMG_PATH" --keychain-profile "$KC_PROFILE" --wait
 
-# ---- 10. Staple ---------------------------------------------------------
-echo "build-macos: stapling ticket to $DMG_PATH"
-xcrun stapler staple "$DMG_PATH"
-xcrun stapler validate "$DMG_PATH"
+    echo "build-macos: stapling ticket to $DMG_PATH"
+    xcrun stapler staple "$DMG_PATH"
+    xcrun stapler validate "$DMG_PATH"
+fi
 
 echo "build-macos: OK — $DMG_PATH ready"
