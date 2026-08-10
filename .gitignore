@@ -241,12 +241,18 @@ packaging/dmg/layout.json
 # MSI shipped Locksmith's triquetra. Kept ignored so it can never come back.
 packaging/wix/banner.png
 packaging/wix/dialog.png
+# DMG mount-window background: brand art (the caption names the app), rendered
+# per brand by packaging/dmg/gen_background.py into the brand's release dir. The
+# old committed image here was shared, so every brand's DMG read "Locksmith —
+# drag to Applications". Kept ignored so it can never come back.
+packaging/dmg/background.png
 # Per-brand generated bundles (assets.rcc, brand.json, wxs, dmg-layout.json, egf/, icons).
 src/locksmith/release/assets.rcc
 src/locksmith/release/Locksmith.wxs
 src/locksmith/release/dmg-layout.json
 src/locksmith/release/banner.png
 src/locksmith/release/dialog.png
+src/locksmith/release/background.png
 src/locksmith/release/license.rtf
 src/locksmith/release/AppIcon.icns
 src/locksmith/release/AppIcon.ico

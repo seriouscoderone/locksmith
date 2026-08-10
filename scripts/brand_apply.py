@@ -13,6 +13,11 @@ tracked paths like assets/custom/ or packaging/:
     its own symbol + [wix] palette (packaging/wix/gen_ui_images.py). These are
     brand art, NOT neutral chrome: a shared committed pair is how the v0.3.6
     Usurance MSI shipped Locksmith's triquetra on its welcome dialog;
+  - background.png: the brand's DMG mount-window background, rendered from its
+    [dmg] palette and the SAME geometry as dmg-layout.json
+    (packaging/dmg/gen_background.py). Same defect class as the WiX pair on the
+    macOS leg — the shared committed image told every brand's user to drag
+    "Locksmith" to Applications;
   - license.rtf: only if the brand ships its own; otherwise the MSI falls back
     to the shared packaging/wix/license.rtf via wix's second -bindpath;
   - AppIcon.icns/.ico: staged as files (not compiled into the rcc);
@@ -39,6 +44,10 @@ _ASSET_FILE_KEYS = ("app_icon_icns", "app_icon_ico")   # staged as files, not co
 _WIX_IMAGES = ("dialog.png", "banner.png")
 _GEN_UI_IMAGES = _THIS.parent.parent / "packaging" / "wix" / "gen_ui_images.py"
 
+# DMG mount-window background rendered per-brand by packaging/dmg/gen_background.py.
+_DMG_IMAGE = "background.png"
+_GEN_DMG_BACKGROUND = _THIS.parent.parent / "packaging" / "dmg" / "gen_background.py"
+
 
 def _find_rcc() -> str | None:
     cand = Path(sys.executable).parent / "pyside6-rcc"
@@ -58,6 +67,18 @@ def _render_wix_images(brand_dir: Path, out: Path) -> None:
     missing = [n for n in _WIX_IMAGES if not (out / n).is_file()]
     if missing:
         raise SystemExit(f"brand_apply: gen_ui_images produced no {missing} in {out}")
+
+
+def _render_dmg_background(brand_dir: Path, out: Path) -> None:
+    """Render the brand's DMG mount-window background into <out>.
+
+    Subprocess for the same reason as _render_wix_images: it initialises Qt.
+    """
+    subprocess.run([sys.executable, str(_GEN_DMG_BACKGROUND),
+                    "--brand-dir", str(brand_dir), "--out", str(out)], check=True)
+    if not (out / _DMG_IMAGE).is_file():
+        raise SystemExit(
+            f"brand_apply: gen_background produced no {_DMG_IMAGE} in {out}")
 
 
 def _compile_rcc(repo_root: Path, brand_dir: Path, manifest: dict, out_rcc: Path) -> None:
@@ -104,6 +125,7 @@ def apply(brand_id: str, repo_root: Path, *, out: Path | None = None, check: boo
     report = {"brand": manifest["brand"]["id"], "out": str(out), "rcc": str(out / "assets.rcc"),
               "staged_icons": staged_icons, "injected": injected,
               "egf_staged": egf_staged, "wix_images": list(_WIX_IMAGES),
+              "dmg_image": _DMG_IMAGE,
               "brand_license": brand_license.is_file(), "check": check}
     if check:
         return report
@@ -117,6 +139,7 @@ def apply(brand_id: str, repo_root: Path, *, out: Path | None = None, check: boo
     (out / "dmg-layout.json").write_text(
         json.dumps(brandlib.render_dmg_layout(manifest), indent=2) + "\n", encoding="utf-8")
     _render_wix_images(brand_dir, out)
+    _render_dmg_background(brand_dir, out)
     if brand_license.is_file():
         shutil.copyfile(brand_license, out / "license.rtf")
     for k in _ASSET_FILE_KEYS:

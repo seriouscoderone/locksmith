@@ -123,7 +123,7 @@ echo "build-macos: creating $DMG_PATH"
 create-dmg \
     --volname "${APP_NAME}" \
     --volicon "$LOCKSMITH_RELEASE/AppIcon.icns" \
-    --background "packaging/dmg/background.png" \
+    --background "$LOCKSMITH_RELEASE/background.png" \
     --window-pos 200 200 \
     --window-size "$WIN_W" "$WIN_H" \
     --icon-size "$ICON_SIZE" \

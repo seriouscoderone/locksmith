@@ -12,7 +12,7 @@ from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parents[2]
 DMG_DIR = REPO_ROOT / "packaging" / "dmg"
-BG = DMG_DIR / "background.png"
+GEN_BG = DMG_DIR / "gen_background.py"
 
 sys.path.insert(0, str(REPO_ROOT / "packaging"))
 import brandlib  # noqa: E402
@@ -31,9 +31,13 @@ def test_layout_renders_a_dict():
     assert data
 
 
-def test_background_exists():
-    assert BG.is_file()
-    assert BG.stat().st_size > 0
+def test_background_is_generated_per_brand_not_committed():
+    # The background carries a caption naming the app, so it is brand art: it
+    # is rendered per brand into the brand release dir, and the old shared
+    # packaging/dmg/background.png is deleted + gitignored. Full cover lives in
+    # tests/packaging/test_dmg_brand_background.py.
+    assert GEN_BG.is_file(), "the per-brand DMG background generator is missing"
+    assert _layout()["background"] == "background.png"
 
 
 def test_layout_has_window_size():

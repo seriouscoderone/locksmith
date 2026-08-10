@@ -68,6 +68,15 @@ full_logo_black   = "FullLogoBlack.svg"
 [icon]
 plate = "#FFFFFF"
 
+# DMG mount-window background (packaging/dmg/gen_background.py). Near-white
+# surface with the Teal 600 primary as the drag arrow, so the installer window
+# reads as Usurance rather than Locksmith's neutral gray. Same reason as [icon]
+# and [wix]: NOT under [assets], which check-brand-complete treats as filenames.
+[dmg]
+bg     = "#F4F9F9"
+accent = "#2AABB3"
+text   = "#4A5568"
+
 # Windows installer chrome (packaging/wix/gen_ui_images.py renders banner.png +
 # dialog.png per brand into its release dir). Locksmith's cream is wrong here:
 # white surfaces + Teal 600 are the Usurance design-system pair, so the welcome

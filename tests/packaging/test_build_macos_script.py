@@ -57,12 +57,15 @@ def test_script_reads_version_from_pyproject():
 
 
 def test_script_uses_dmg_layout():
-    # dmg-layout.json is brand-generated (scripts/brand_apply.py) into the
-    # brand release dir, not the retired packaging/dmg/layout.json; the
-    # background art stays neutral in packaging/dmg/.
+    # dmg-layout.json AND background.png are both brand-generated
+    # (scripts/brand_apply.py) into the brand release dir. The background is
+    # brand art, not neutral chrome: its caption names the app, so the old
+    # shared packaging/dmg/background.png told every brand's user to drag
+    # "Locksmith" to Applications.
     s = SCRIPT.read_text()
     assert "LOCKSMITH_RELEASE" in s and "dmg-layout.json" in s
-    assert "packaging/dmg/background.png" in s
+    assert '--background "$LOCKSMITH_RELEASE/background.png"' in s
+    assert "packaging/dmg/background.png" not in s
 
 
 def test_script_applies_brand_before_packaging():
