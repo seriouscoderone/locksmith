@@ -1,0 +1,178 @@
+#!/usr/bin/env bash
+#
+# scripts/promote-release.sh <version> — anchor + publish an already-BUILT
+# release, for every brand, off-CI.
+#
+# This replaces the per-version `/tmp/promote-<version>/promote.sh` that was
+# hand-`sed`-ed from the previous cut every time. That pattern put the version
+# in a *copy of the script*, which is how the v0.3.1 cut ran
+# `/tmp/promote-0.3.0/promote.sh` by mistake and added two junk events to the
+# publisher KEL. Here the version is an ARGUMENT and every other value is
+# derived: artifact names from the brand manifests, digests from the bytes S3
+# actually serves. See
+# backlog/2026-07-25-committed-promote-release-script.md.
+#
+# What it does NOT do, deliberately:
+#   * it never touches CI — the publisher keystore and passphrase stay local;
+#   * it never promotes to "latest" for you. Verify, then decide.
+#
+# Usage:
+#   read -rs LOCKSMITH_PUBLISHER_BRAN; echo; export LOCKSMITH_PUBLISHER_BRAN
+#   ./scripts/promote-release.sh 0.4.0
+#
+# The bran comes from $LOCKSMITH_PUBLISHER_BRAN, else a silent prompt. It is
+# never echoed and never passed on a command line (the publisher reads the env
+# var named by --bran-env).
+#
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+cd "$REPO_ROOT"
+
+VERSION="${1:-}"
+if [[ -z "$VERSION" ]]; then
+    echo "usage: $0 <version>   e.g. $0 0.4.0" >&2
+    exit 2
+fi
+
+PUB_NAME="${LOCKSMITH_PUBLISHER_NAME:-publisher}"
+PUB_BASE="${LOCKSMITH_PUBLISHER_BASE:-publisher}"
+PY="${LOCKSMITH_PY:-$REPO_ROOT/.venv/bin/python}"
+PUBLISHER="${LOCKSMITH_PUBLISHER_BIN:-$REPO_ROOT/.venv/bin/locksmith-publisher}"
+BRANDS=(${LOCKSMITH_BRANDS:-locksmith usurance})
+
+say() { printf '\n\033[1m== %s\033[0m\n' "$*"; }
+die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
+
+# ---- 1. Preflight: the checks that actually caught real failures ----------
+# Per the backlog's own scope caveat: shell ergonomics did NOT prevent the
+# v0.3.x incidents; THESE checks are what catch that class.
+
+say "preflight"
+
+[[ -x "$PUBLISHER" ]] || die "locksmith-publisher not found at $PUBLISHER.
+  A plain \`pip install -e .\` does NOT install tools/publisher. Restore it:
+    pip install -e tools/publisher --no-deps
+    pip install click boto3 fido2 requests
+  (--no-deps matters: its unpinned UPSTREAM keri would clobber the pinned fork.)"
+
+# The version must be the one that was actually cut. Three-way assertion so
+# this can never anchor a version that does not exist as a build.
+PYPROJECT_VERSION="$("$PY" -c '
+import tomllib
+with open("pyproject.toml","rb") as f: print(tomllib.load(f)["project"]["version"])')"
+[[ "$PYPROJECT_VERSION" == "$VERSION" ]] || die \
+    "pyproject version is $PYPROJECT_VERSION but you asked to promote $VERSION"
+
+git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null \
+    || die "no tag v$VERSION — promote only what was cut and built"
+git tag -v "v$VERSION" >/dev/null 2>&1 \
+    || echo "  WARNING: tag v$VERSION is not signed (or its key is unavailable)"
+
+echo "  publisher : $PUBLISHER"
+echo "  keystore  : name=$PUB_NAME base=$PUB_BASE"
+echo "  version   : $VERSION (matches pyproject + tag v$VERSION)"
+echo "  brands    : ${BRANDS[*]}"
+
+# Bran: env var, else silent prompt. Exported for the publisher to read.
+if [[ -z "${LOCKSMITH_PUBLISHER_BRAN:-}" ]]; then
+    read -rs -p "  Publisher bran (not echoed): " LOCKSMITH_PUBLISHER_BRAN
+    echo
+    export LOCKSMITH_PUBLISHER_BRAN
+fi
+[[ -n "${LOCKSMITH_PUBLISHER_BRAN:-}" ]] || die "no bran supplied"
+echo "  bran      : set (${#LOCKSMITH_PUBLISHER_BRAN} chars, never echoed)"
+
+STAGE="$(mktemp -d "${TMPDIR:-/tmp}/promote-$VERSION.XXXXXX")"
+echo "  stage     : $STAGE"
+
+# ---- 2. Per brand: fetch from S3, verify, anchor, publish, verify ---------
+
+CDN="$("$PY" - <<'PY'
+import json, pathlib
+for p in ("src/locksmith/release/deploy_config.json",
+          "src/locksmith/release/deploy_config.example.json"):
+    f = pathlib.Path(p)
+    if f.is_file():
+        print(json.loads(f.read_text())["releases_cdn_base"]); break
+else:
+    raise SystemExit("no deploy_config.json to read releases_cdn_base from")
+PY
+)"
+echo "  cdn       : $CDN"
+
+for BRAND in "${BRANDS[@]}"; do
+    say "brand: $BRAND"
+
+    PREFIX="$(cd packaging && LOCKSMITH_BRAND="$BRAND" python -m brandlib id artifact_prefix)"
+    RELPATH="$(cd packaging && LOCKSMITH_BRAND="$BRAND" python -m brandlib id release_prefix)"
+    DMG="$STAGE/${PREFIX}-${VERSION}.dmg"
+    MSI="$STAGE/${PREFIX}-${VERSION}.msi"
+
+    # Download the bytes S3 actually SERVES — never trust whatever is staged
+    # locally. This is what closes the "did I verify the bytes I am anchoring?"
+    # gap: the digests below are computed from these downloads.
+    for pair in "$DMG:dmg" "$MSI:msi"; do
+        dest="${pair%:*}"; ext="${pair##*:}"
+        url="$CDN/$RELPATH/$VERSION/${PREFIX}-${VERSION}.${ext}"
+        echo "  fetching $url"
+        curl -fsSL --retry 3 -o "$dest" "$url" \
+            || die "could not fetch $url — did CI finish uploading $BRAND?"
+    done
+
+    DMG_SHA="$(shasum -a 256 "$DMG" | cut -d' ' -f1)"
+    MSI_SHA="$(shasum -a 256 "$MSI" | cut -d' ' -f1)"
+    echo "  dmg sha256: $DMG_SHA"
+    echo "  msi sha256: $MSI_SHA"
+
+    # Pre-publish gate: does the artifact's BAKED anchor match the AID that
+    # signs the live feed? A stale CI anchor secret is invisible from the local
+    # source anchor and blocked Sparkle for an entire release (v0.2.21).
+    # Expected to fail its "is $VERSION on the feed" leg before publishing —
+    # advisory here, enforced after.
+    echo "  pre-publish anchor check (advisory until the feed carries $VERSION):"
+    "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" 2>&1 \
+        | sed 's/^/    /' || echo "    (expected pre-publish; enforced below)"
+
+    say "$BRAND: anchor $VERSION"
+    ANCHOR_OUT="$STAGE/anchor-$BRAND"
+    LOCKSMITH_BRAND="$BRAND" "$PUBLISHER" anchor \
+        --name "$PUB_NAME" --base "$PUB_BASE" \
+        --version "$VERSION" \
+        --macos "$DMG" --windows "$MSI" \
+        --out-dir "$ANCHOR_OUT" | tee "$STAGE/anchor-$BRAND.log"
+
+    # The publisher prints a progress line before the JSON, so take the object.
+    ANCHOR_SAID="$("$PY" - "$STAGE/anchor-$BRAND.log" <<'PY'
+import json, sys
+t = open(sys.argv[1]).read()
+d = json.loads(t[t.index("{"):t.rindex("}") + 1])
+print(d.get("anchor_said") or d["release_sad"]["d"])
+PY
+)"
+    [[ -n "$ANCHOR_SAID" ]] || die "$BRAND: could not read anchor_said from the anchor output"
+    echo "  anchor said: $ANCHOR_SAID"
+
+    say "$BRAND: publish $VERSION"
+    LOCKSMITH_BRAND="$BRAND" "$PUBLISHER" publish \
+        --name "$PUB_NAME" --base "$PUB_BASE" \
+        --version "$VERSION" \
+        --anchor-said "$ANCHOR_SAID" \
+        --macos-sha256 "$DMG_SHA" --windows-sha256 "$MSI_SHA" \
+        --out-dir "$ANCHOR_OUT"
+
+    say "$BRAND: post-publish verification (ENFORCED)"
+    "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" \
+        || die "$BRAND: published $VERSION does NOT verify against the live feed.
+  The feed is now advertising an update clients will REFUSE. Investigate before
+  promoting to latest — check the artifact's BAKED anchor, not src/."
+    echo "  $BRAND: verified against the live feed"
+done
+
+say "done"
+cat <<EOF
+Both brands anchored, published and verified for $VERSION.
+
+Promote-to-latest is deliberately NOT automated — it stays a conscious decision.
+Staged artifacts and anchor logs: $STAGE
+EOF
