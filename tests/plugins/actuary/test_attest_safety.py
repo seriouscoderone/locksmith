@@ -268,10 +268,10 @@ def test_the_evidence_values_are_monospaced_and_not_truncated(qtbot):
     shell.hide()
 
 
-def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
-    """A defect no offscreen render could show.
+def test_no_form_layout_can_reintroduce_the_style_dependent_field_width(qtbot):
+    """A defect no offscreen render could show, now removed by construction.
 
-    `QFormLayout.fieldGrowthPolicy` has a STYLE-DEPENDENT default, and the two
+    `QFormLayout.fieldGrowthPolicy` has a STYLE-DEPENDENT default and the two
     styles disagree: Fusion — which the offscreen platform selects, so every test
     and every screenshot runs under it — defaults to `AllNonFixedFieldsGrow`,
     while the macOS style defaults to `FieldsStayAtSizeHint`. Measured under the
@@ -279,17 +279,24 @@ def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
     than the absolute paths it exists to accept, while every render I checked
     showed it full width.
 
-    Asserts the POLICY, not a rendered width: the width is style-dependent by
-    definition, so a width assertion would pass here and still ship the bug.
+    The page now builds label-above-field blocks in `QVBoxLayout`s, which have no
+    such default and cannot regress this way. So this asserts the CONSTRUCT is
+    gone rather than that one instance is configured correctly — a policy
+    assertion only guards the form layouts that exist today, and the next one
+    added would arrive with the style default again.
     """
     from PySide6.QtWidgets import QFormLayout
 
     shell, page = _page(qtbot)
-    form = next(child for child in page.findChildren(QFormLayout))
-    assert form.fieldGrowthPolicy() == \
-        QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow, (
-            "the field growth policy is back to the style default, which is "
-            "FieldsStayAtSizeHint on macOS")
+    assert page.findChildren(QFormLayout) == [], (
+        "a QFormLayout is back; either set fieldGrowthPolicy explicitly on it or "
+        "use _field_block, because its default is FieldsStayAtSizeHint on macOS")
+
+    # And the field really does take the column, under whatever style is active.
+    column = page.findChild(QWidget, "actuaryPage.column")
+    assert page._parse_dir.width() > column.width() * 0.9, (
+        f"the parse field is {page._parse_dir.width()}px of a "
+        f"{column.width()}px column")
     shell.hide()
 
 

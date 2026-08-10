@@ -964,7 +964,20 @@ def test_a_scan_with_no_vault_still_stamps_the_clock(qtbot, monkeypatch):
 
     assert first == "11/04/2026 9:15 AM"
     assert page._last_checked == "11/04/2026 9:16 AM", "the heartbeat is frozen"
-    assert "Last checked 11/04/2026 9:16 AM" in page._empty_state.text()
+    # In its OWN label, not the last line of the placard. Inside it, the
+    # timestamp read as part of the explanation of what a mandate is -- and it
+    # disappeared entirely once a mandate arrived and the placard was hidden,
+    # which is when a stalled poll matters most.
+    assert "Last checked 11/04/2026 9:16 AM" in page._heartbeat.text()
+    assert "Last checked" not in page._empty_state.text()
+
+    # ...and it keeps reporting once there is something to show.
+    page._observed = {"E" + "z" * 43: {"line_of_business": "auto",
+                                       "jurisdiction": "US-UT", "coverages": []}}
+    page._render_empty_state()
+    assert page._empty_state.isVisible() is False
+    assert "Last checked" in page._heartbeat.text(), (
+        "the only liveness signal vanished as soon as the placard did")
 
 
 def test_a_wallet_with_a_peer_kel_and_no_identifier_of_its_own_scans_cleanly(

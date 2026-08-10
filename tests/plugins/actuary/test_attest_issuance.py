@@ -167,6 +167,14 @@ def _loaded(page):
     page._refresh_observed_list()
     page._parse_manifest = {"workbook_digest": _DIGEST}
     page._parse_manifest_said = _MANIFEST
+    # The two attributes that now arrive FROM the parse rather than from a
+    # control. A loaded state without them is not a loaded state: `attest()`
+    # would commit empty strings for two schema-required fields.
+    page._parse_filing_date = _PARSE_FILING_DATE
+    page._parse_action = _PARSE_ACTION
+    page._parse_mandate_said = _MANDATE_SAID
+    page._filing_date_label.setText(_PARSE_FILING_DATE)
+    page._action_label.setText(_PARSE_ACTION)
     page._manifest_said_label.setText(_MANIFEST)
     page._workbook_digest_label.setText(_DIGEST)
     page._selected_mandate_said = _MANDATE_SAID
@@ -224,8 +232,31 @@ def _bundled_attestation_schema() -> dict:
 #: stand-in cannot tell a correct manifest from one built with `ensure_ascii=True`
 #: or a top-level-only walk, which is precisely what the end-to-end test below
 #: has to be able to see.
+#: `index.json`'s product coordinate, as `ipd/emit.py::write_index` writes it.
+#: The page reads THREE of its four attested attributes out of this file, so a
+#: fixture carrying only `lineOfBusiness` -- which is what this was -- is a
+#: simplified stand-in for the artefact under test. `productMandate` matches the
+#: mandate these tests select, because a parse naming a different one is refused.
+_PARSE_FILING_DATE = "2027-03-15"
+_PARSE_ACTION = "Sandbox"
+
+
+def _index_json(mandate: str = None, action: str = _PARSE_ACTION) -> bytes:
+    return json.dumps({
+        "product": {
+            "lineOfBusiness": "auto",
+            "jurisdiction": "US-UT",
+            "productMandate": _MANDATE_SAID if mandate is None else mandate,
+            "filingDate": _PARSE_FILING_DATE,
+            "action": action,
+        },
+        "files": [],
+        "report": "parse-report.jsonl",
+    }, separators=(",", ":")).encode()
+
+
 _REAL_SHARDS: tuple[tuple[str, bytes], ...] = (
-    ("index.json", b'{"product":{"lineOfBusiness":"auto"},"files":[]}'),
+    ("index.json", _index_json()),
     ("coverages.jsonl", b'{"record":"coverage","coverage":"BI"}\n'),
     ("parse-report.jsonl", b""),
     ("mappings/Terr_Map.jsonl", b'{"record":"mapping","name":"Terr_Map"}\n'),
@@ -244,13 +275,14 @@ def _write_workbook(path, marker: bytes = b"rev-a"):
     return path
 
 
-def _real_parse_fixture(tmp_path):
+def _real_parse_fixture(tmp_path, *, mandate=None, action=_PARSE_ACTION):
     """A parse directory, its source workbook, and the sidecar that ties them."""
     parse_dir = tmp_path / "parse"
     for rel, body in _REAL_SHARDS:
         target = parse_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(body)
+        target.write_bytes(
+            _index_json(mandate, action) if rel == "index.json" else body)
     workbook = _write_workbook(tmp_path / "ut-auto.xlsm")
     (parse_dir / page_module._WORKBOOK_SIDECAR_NAME).write_text(
         json.dumps({"workbook_path": str(workbook)}))
@@ -266,6 +298,49 @@ def _issued(said=_CRED_SAID):
 
 
 # --- what gets signed --------------------------------------------------------------
+
+
+def test_attest_refuses_a_parse_that_answers_a_different_mandate(
+        qtbot, vault, mint):
+    """The gate disables a button; this method is reachable from the drawer's
+    confirm signal, so the refusal has to live HERE too.
+
+    `index.json`'s `productMandate` is the parse's own answer to which mandate it
+    is for. Minting an edge from a rate program to a mandate its own parse says it
+    does not answer produces a permanent, public, WRONG artefact -- the same shape
+    as attesting directory A's digests under directory B's path.
+    """
+    other = "EOtherMandate" + "C" * 31
+    shell, page = _armed(qtbot, vault)
+    page._parse_mandate_said = other
+
+    page.attest()
+
+    assert mint.doers == [], "an attestation was scheduled over a mandate conflict"
+    assert page._error_banner.isVisible() is True
+    assert other in page._error_banner.text()
+    assert _MANDATE_SAID in page._error_banner.text(), (
+        "the message names neither side of the disagreement")
+    # A refusal, not a latch: the actuary can select the right mandate and retry.
+    assert page._attesting is False
+    shell.hide()
+
+
+def test_the_minted_retention_and_filing_date_come_from_the_parse(
+        qtbot, vault, mint):
+    """The two attributes that used to be controls. Nothing on the page can
+    change them now, and the fixture's retention is `Sandbox` -- deliberately NOT
+    `_ACTION_VALUES[0]`, so a hardcode of the old combo default would fail here.
+    """
+    shell, page = _armed(qtbot, vault)
+    page.attest()
+
+    attributes = mint.doers[0].kwargs["attributes"]
+    assert attributes["filing_date"] == _PARSE_FILING_DATE
+    assert attributes["action"] == _PARSE_ACTION == "Sandbox"
+    assert attributes["action"] != page_module._ACTION_VALUES[0], (
+        "the fixture no longer distinguishes a real read from the old default")
+    shell.hide()
 
 
 def test_the_edge_operator_is_the_wire_value_the_bundled_schema_demands(

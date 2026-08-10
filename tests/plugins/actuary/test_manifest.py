@@ -50,8 +50,37 @@ _SHEET = b'<?xml version="1.0"?><workbook xmlns="x"><sheets/></workbook>'
 #: three table kinds under their own directories. `parse-report.jsonl` is
 #: written EMPTY on purpose — `ipd.manifest._digest`'s docstring names it as the
 #: shard that must digest rather than raise.
+#: The product coordinate `ipd/emit.py::write_index` actually writes. The old
+#: fixture recorded only `lineOfBusiness`, which was a simplified stand-in for
+#: the file the page now READS three of its four attested attributes out of --
+#: exactly the fixture shape that has let defects through here before. `action`
+#: is capitalised because `api.py::parse` capitalises it into the index.
+_PARSE_FILING_DATE = "2027-03-15"
+_PARSE_ACTION = "Publish"
+
+
+def _index_json(mandate: str) -> bytes:
+    """`index.json` as the parser emits it, for one mandate coordinate.
+
+    `files` is left empty and that is a DECLARED simplification: the real writer
+    accumulates the shard list there, and nothing this page does reads it (the
+    manifest walks the directory itself). Every key the page DOES read is real.
+    """
+    return json.dumps({
+        "product": {
+            "lineOfBusiness": "auto",
+            "jurisdiction": "US-UT",
+            "productMandate": mandate,
+            "filingDate": _PARSE_FILING_DATE,
+            "action": _PARSE_ACTION,
+        },
+        "files": [],
+        "report": "parse-report.jsonl",
+    }, separators=(",", ":")).encode()
+
+
 _SHARDS: tuple[tuple[str, bytes], ...] = (
-    ("index.json", b'{"product":{"lineOfBusiness":"auto"},"files":[],"report":"parse-report.jsonl"}'),
+    ("index.json", _index_json(_MANDATE)),
     ("metadata.jsonl", b'{"record":"metadata","key":"Program","value":"UT Auto"}\n'),
     ("defaults.jsonl", b'{"record":"default","attribute":"Territory","value":"001"}\n'),
     ("coverages.jsonl", b'{"record":"coverage","coverage":"BI"}\n{"record":"coverage","coverage":"PD"}\n'),
@@ -109,14 +138,20 @@ def _write_workbook(path: Path, marker: bytes = b"rev-a") -> Path:
     return path
 
 
-def _write_parse_dir(parse_dir: Path, *, reverse: bool = False) -> Path:
-    """The real shard layout on disk. `reverse` flips CREATION order only."""
+def _write_parse_dir(parse_dir: Path, *, reverse: bool = False,
+                     mandate: str = _MANDATE) -> Path:
+    """The real shard layout on disk. `reverse` flips CREATION order only.
+
+    `mandate` is the coordinate the parse records in its own `index.json`. The
+    default matches the mandate these tests select, because a parse that names a
+    DIFFERENT mandate is refused -- see the conflict test.
+    """
     parse_dir.mkdir(parents=True, exist_ok=True)
     shards = list(reversed(_SHARDS)) if reverse else list(_SHARDS)
     for rel, body in shards:
         target = parse_dir / rel
         target.parent.mkdir(parents=True, exist_ok=True)
-        target.write_bytes(body)
+        target.write_bytes(_index_json(mandate) if rel == "index.json" else body)
     return parse_dir
 
 
@@ -127,8 +162,10 @@ def _write_sidecar(parse_dir: Path, workbook: Path) -> Path:
 
 
 def _parse_fixture(tmp_path: Path, name: str = "parse", *, sidecar: bool = True,
-                   reverse: bool = False) -> tuple[Path, Path]:
-    parse_dir = _write_parse_dir(tmp_path / name, reverse=reverse)
+                   reverse: bool = False,
+                   mandate: str = _MANDATE) -> tuple[Path, Path]:
+    parse_dir = _write_parse_dir(tmp_path / name, reverse=reverse,
+                                 mandate=mandate)
     workbook = _write_workbook(tmp_path / f"{name}-source.xlsm")
     if sidecar:
         _write_sidecar(parse_dir, workbook)
@@ -658,24 +695,143 @@ def test_loading_a_real_parse_directory_publishes_the_evidence_and_arms_attest(
         "two digests are evidence something happened, not evidence of WHICH "
         "directory produced them")
 
+    # The two attributes that are READ rather than asked. The raw value is what
+    # gets attested; the screen shows the suite's MM/DD/YYYY.
+    assert page._parse_filing_date == _PARSE_FILING_DATE
+    assert page._parse_action == _PARSE_ACTION
+    assert page._filing_date_label.text() == "03/15/2027"
+    assert page._action_label.text() == _PARSE_ACTION
+    committed = page._attestation_attributes()
+    assert committed["filing_date"] == _PARSE_FILING_DATE, (
+        "the display format reached the credential")
+    assert committed["action"] == _PARSE_ACTION
+
     assert page._attest.isEnabled() is True
     assert page._attest_blocker.text() == ""
     shell.hide()
 
 
-@pytest.mark.xfail(strict=True, reason=(
-    "SOURCE DEFECT, not fixed here: `Path('')` is `Path('.')` and `.is_dir()` is "
-    "True, so an empty parse-directory field walks the process's CURRENT WORKING "
-    "DIRECTORY instead of being refused. Fix is in page.py:918-920 (reject an "
-    "empty field before `Path(...)`), which this file may not make."))
+def test_the_filing_date_and_retention_are_not_editable_controls(tmp_path, qtbot):
+    """They were a date picker defaulting to TODAY and a combo defaulting to
+    Publish. Both are facts `ipd-parse` recorded (`--filing-date`, `--action` ->
+    `index.json`), and the schema's own tense says so: "recorded AT PARSE TIME",
+    "the parse WAS RUN UNDER". Offering them as choices invited the actuary to
+    assert something that contradicts the bytes being attested.
+
+    ux-patterns.md:241: "Read-only | Plain text (not a disabled input) ... Never
+    render as a greyed-out input."
+    """
+    from PySide6.QtWidgets import QComboBox, QDateEdit, QLineEdit
+
+    shell, page = _page(qtbot)
+    assert not hasattr(page, "_action") and not hasattr(page, "_filing_date"), (
+        "the controls are back")
+    assert page.findChildren(QComboBox) == [], "a retention combo is on the page"
+    assert page.findChildren(QDateEdit) == [], "a filing-date picker is on the page"
+    # The ONE thing the actuary types, and the parse path. Nothing else.
+    assert len(page.findChildren(QLineEdit)) == 2, (
+        "a third text input appeared; only the parse path and the version are typed")
+    shell.hide()
+
+
+def test_a_parse_that_answers_a_different_mandate_is_refused(tmp_path, qtbot):
+    """`index.json`'s `productMandate` is the parse's OWN answer to "which
+    mandate is this for". Binding a rate program to a mandate its own parse says
+    it does not answer is the same class of defect as attesting directory A's
+    digests under directory B's path: a permanent, public, wrong artefact with the
+    UI behaving exactly as designed.
+    """
+    other = "EOtherMandate" + "B" * 31
+    shell, page = _page(qtbot)
+    parse_dir, _wb = _parse_fixture(tmp_path, mandate=other)
+    page._selected_mandate_said = _MANDATE
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(parse_dir))
+
+    page.load_parse()
+
+    assert page._parse_manifest_said is not None, "the load itself should succeed"
+    assert page._mandate_conflict() is True
+    assert page._attest.isEnabled() is False
+    assert other[:12] in page._attest_blocker.text()
+    # The refusal inside `attest()` itself -- reachable from the drawer's confirm
+    # signal, so a disabled button is not the guarantee -- needs a vault, and is
+    # asserted in test_attest_issuance.py where one exists.
+    shell.hide()
+
+
+def test_a_parse_that_names_no_mandate_is_not_a_conflict(tmp_path, qtbot):
+    """Absent is not disagreement. The parser's own model calls `productMandate`
+    a coordinate it records and "never parsed or compared", so a parse produced
+    before anyone filled it in has nothing to contradict."""
+    shell, page = _page(qtbot)
+    parse_dir, _wb = _parse_fixture(tmp_path, mandate="")
+    page._selected_mandate_said = _MANDATE
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(parse_dir))
+
+    page.load_parse()
+
+    assert page._mandate_conflict() is False
+    assert page._attest.isEnabled() is True
+    shell.hide()
+
+
+def test_a_parse_directory_with_no_index_is_refused_by_name(tmp_path, qtbot):
+    """Three of the four attested attributes come out of `index.json`, so a
+    directory without one cannot be attested at all — and the message has to say
+    which file is missing, because "could not load" strands the actuary in front
+    of a directory that looks fine."""
+    shell, page = _page(qtbot)
+    parse_dir, _wb = _parse_fixture(tmp_path)
+    (parse_dir / "index.json").unlink()
+    page._parse_dir.setText(str(parse_dir))
+
+    page.load_parse()
+
+    assert page._parse_manifest_said is None
+    text = page._error_banner.text()
+    assert "index.json" in text
+    assert "ipd-parse" in text, "does not say what kind of directory this must be"
+    shell.hide()
+
+
+@pytest.mark.parametrize("action", ["publish", "Prod", "", "PUBLISH"])
+def test_a_retention_value_outside_the_schemas_enum_is_refused(tmp_path, qtbot, action):
+    """The enum is `Publish | Sandbox` and `api.py::parse` capitalises into it, so
+    a lower-case or foreign value means the index was not written by a parser this
+    page understands. Refusing at load is the difference between a banner and an
+    issuance failure after the actuary has confirmed an irreversible mint.
+
+    `"publish"` is the sharp case: it is the CLI's own `choices` spelling, one
+    `.capitalize()` short of valid, and would sail through a truthiness check.
+    """
+    shell, page = _page(qtbot)
+    parse_dir, _wb = _parse_fixture(tmp_path)
+    index = json.loads((parse_dir / "index.json").read_text())
+    index["product"]["action"] = action
+    (parse_dir / "index.json").write_text(json.dumps(index))
+    page._parse_dir.setText(str(parse_dir))
+
+    page.load_parse()
+
+    assert page._parse_manifest_said is None
+    assert repr(action) in page._error_banner.text() or "no filing date" in \
+        page._error_banner.text()
+    assert page._attest.isEnabled() is False
+    shell.hide()
+
+
 def test_an_empty_parse_directory_field_is_refused_not_read_as_the_cwd(
         tmp_path, qtbot, monkeypatch):
-    """Clicking Load Parse on an untouched page should say "no directory", and
-    instead the page rglobs wherever the process happens to be running. Today it
-    reports a missing sidecar — a message about the cwd, phrased as if it were
+    """Was a strict xfail; the source defect is FIXED and this now holds.
+
+    `Path("".strip())` is `Path(".")` and its `.is_dir()` is True, so an empty
+    field used to rglob and hash wherever the process happened to be running and
+    then report a missing sidecar — a message about the cwd phrased as if it were
     about a parse directory the actuary never named. Worse in the case that
     matters: launch the app FROM a parse directory, which is the natural thing to
-    do, and an empty field hashes it and mints against it.
+    do, and an empty field hashed it and armed the mint over it.
     """
     shell, page = _page(qtbot)
     monkey_cwd = tmp_path / "cwd-parse"

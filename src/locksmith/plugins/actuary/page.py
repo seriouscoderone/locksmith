@@ -47,10 +47,10 @@ import json
 from pathlib import Path
 from typing import Any
 
-from PySide6.QtCore import QDate, Qt, QTimer
+from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QComboBox, QDateEdit, QFormLayout, QHBoxLayout, QLabel, QListWidget,
-    QListWidgetItem, QSizePolicy, QVBoxLayout, QWidget,
+    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QSizePolicy,
+    QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -93,7 +93,21 @@ _WORKBOOK_SIDECAR_NAME = ".workbook_source.json"
 #: The attestation schema's own enum for `action` -- the IPD retention contract.
 #: Read from the schema at load time would be better; pinned here because this
 #: page already pins the schema SAID and a drifted enum fails loudly at issuance.
+#: This page no longer OFFERS these as a choice -- `ipd-parse` recorded which one
+#: the parse was run under -- but it still validates what it reads against them.
 _ACTION_VALUES = ("Publish", "Sandbox")
+
+#: `ipd-parse`'s own manifest of the parse, and the source of three of the four
+#: attributes this page attests. `emit.py::write_index` writes
+#: `{"product": {"lineOfBusiness", "jurisdiction", "productMandate",
+#: "filingDate", "action"}, "files": [...], "report": ...}`, and `action` is
+#: already capitalised into the schema's enum by `api.py::parse`.
+_PARSE_INDEX_NAME = "index.json"
+
+#: The reading column's cap. Wide enough for a 44-character monospaced digest
+#: (~370px at 14px) and an absolute path, narrow enough that the lede does not
+#: run past a comfortable measure.
+_CONTENT_MAX_WIDTH = 720
 
 _TEL_STATE_LABELS = {
     Ilks.iss: "issued", Ilks.bis: "issued",
@@ -148,6 +162,19 @@ def _manifest_said(manifest: dict) -> str:
     return _digest(raw)
 
 
+def _display_date(iso: str) -> str:
+    """`MM/DD/YYYY` for the screen (ux-patterns.md:385's format standard).
+
+    The RAW value is what gets attested -- this is display only. An unparseable
+    value is shown verbatim rather than blanked: it came out of the parse, and
+    hiding it would hide the problem.
+    """
+    try:
+        return _dt.date.fromisoformat(iso).strftime("%m/%d/%Y")
+    except ValueError:
+        return iso
+
+
 class ActuaryPage(QWidget):
     """The actuary's surface: observe a watched mandate, attest a rate program.
 
@@ -196,11 +223,29 @@ class ActuaryPage(QWidget):
         self._attesting = False
         self._parse_manifest: dict | None = None
         self._parse_manifest_said: str | None = None
+        #: The three facts `ipd-parse` ALREADY recorded, read from the parse
+        #: directory's own `index.json` rather than re-typed here. See
+        #: `_read_parse_index`.
+        self._parse_filing_date: str = ""
+        self._parse_action: str = ""
+        self._parse_mandate_said: str = ""
 
         self.setObjectName("actuaryPage")
 
-        outer = QVBoxLayout(self)
-        outer.setContentsMargins(48, 48, 48, 48)
+        # A BOUNDED reading column. Measured on the owner's 1180px-wide window:
+        # the lede ran ~160 characters and the two-value Retention control was
+        # ~1560px, so a date and a two-member enum were as wide as the page.
+        # ux-patterns.md:773 caps even a placeholder's prose at `max-w-md`.
+        root = QHBoxLayout(self)
+        root.setContentsMargins(48, 48, 48, 48)
+        root.setSpacing(0)
+        column = QWidget()
+        column.setObjectName("actuaryPage.column")
+        column.setMaximumWidth(_CONTENT_MAX_WIDTH)
+        root.addWidget(column, 1)
+
+        outer = QVBoxLayout(column)
+        outer.setContentsMargins(0, 0, 0, 0)
         # 24px between blocks, and 32px before each section heading (added at the
         # heading itself). The two jobs on this page ARE its meaning, and at a
         # uniform 16px the boundary between them was drawn at the same strength
@@ -319,6 +364,12 @@ class ActuaryPage(QWidget):
         retry_row.addStretch(1)
         outer.addLayout(retry_row)
 
+        self._heartbeat = QLabel("")
+        self._heartbeat.setObjectName("actuaryPage.heartbeat")
+        self._heartbeat.setStyleSheet(
+            f"color: {colors.TEXT_SUBTLE}; font-size: 12px;")
+        outer.addWidget(self._heartbeat)
+
         self._selected_label = QLabel("No mandate selected.")
         self._selected_label.setObjectName("actuaryPage.selectedMandate")
         self._selected_label.setWordWrap(True)
@@ -335,24 +386,25 @@ class ActuaryPage(QWidget):
             f"font-size: 16px; font-weight: 600; color: {colors.TEXT_PRIMARY};")
         outer.addWidget(attest_heading)
 
-        form = QFormLayout()
+        # EXPLICIT FIELD BLOCKS, not a QFormLayout.
+        #
         # ux-patterns.md:300 "Label position: Always above the field. Never to the
-        # left." A side-label column breaks the single scan line the rest of the
-        # page reads down, and it is what squeezed the parse-directory field to
-        # ~145px in the built page -- narrower than the paths it accepts.
-        form.setRowWrapPolicy(QFormLayout.RowWrapPolicy.WrapAllRows)
-        # EXPLICIT, because the default is style-dependent and the two styles
-        # disagree: Fusion (what offscreen tests and every screenshot I take run
-        # under) defaults to AllNonFixedFieldsGrow, while the macOS style defaults
-        # to FieldsStayAtSizeHint. So the parse-directory field rendered full
-        # width in every render I checked and ~150px on the owner's actual Mac --
-        # narrower than the absolute paths it exists to accept.
-        form.setFieldGrowthPolicy(
-            QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow)
-        form.setLabelAlignment(Qt.AlignmentFlag.AlignLeft)
-        form.setHorizontalSpacing(0)
-        form.setVerticalSpacing(8)
-        outer.addLayout(form)
+        # left", and :297 `gap-4` (16px) between fields. QFormLayout cannot
+        # express both: under `WrapAllRows` its ONE vertical spacing applies both
+        # between a label and its own field and between rows, so 8px read as
+        # crammed (measured: "Filing date" sat 8px under the version field it did
+        # not belong to, indistinguishable from that field's own help position)
+        # and 16px would pull every label away from the field it names.
+        #
+        # It also retires the `fieldGrowthPolicy` trap for good: that default is
+        # STYLE-DEPENDENT -- Fusion, which every offscreen test and screenshot
+        # runs under, grows fields; the macOS style does not, and the parse-
+        # directory field rendered 1084px in my renders and 151px on the owner's
+        # Mac. A QVBoxLayout has no such default and cannot regress that way.
+        fields = QVBoxLayout()
+        fields.setContentsMargins(0, 0, 0, 0)
+        fields.setSpacing(16)
+        outer.addLayout(fields)
 
         self._parse_dir = LocksmithLineEdit(
             placeholder_text="path to a real ipd-parse output directory")
@@ -366,7 +418,8 @@ class ActuaryPage(QWidget):
         # wrong. The one defect on this page where the credential itself is
         # incorrect rather than merely hard to read.
         self._parse_dir.textChanged.connect(self._invalidate_parse)
-        form.addRow("Parse directory", self._parse_dir)
+        fields.addWidget(self._field_block("Parse directory", self._parse_dir,
+                                          required=True))
 
         # SECONDARY. Loading a parse is a local, re-runnable directory read; it
         # carried the exact same filled-teal authority as a permanent public mint
@@ -381,7 +434,29 @@ class ActuaryPage(QWidget):
         load_row.setContentsMargins(0, 0, 0, 0)
         load_row.addWidget(self._load_parse)
         load_row.addStretch(1)
-        form.addRow(load_row)
+        fields.addLayout(load_row)
+
+        # Moved ABOVE the evidence it describes: "loaded from X" is the caption
+        # for the four values below, and it sat under them, after two controls
+        # that are not evidence at all.
+        self._loaded_from = QLabel("")
+        self._loaded_from.setObjectName("actuaryPage.loadedFrom")
+        self._loaded_from.setWordWrap(True)
+        self._loaded_from.setStyleSheet(
+            f"color: {colors.SUCCESS_TEXT}; font-size: 12px;")
+        self._loaded_from.setVisible(False)
+        fields.addWidget(self._loaded_from)
+
+        # WHY THESE FOUR ARE NOT CONTROLS. Said once, over the group, rather
+        # than as a help line under each one.
+        evidence_caption = QLabel(
+            "From the parse — `ipd-parse` recorded these and this page attests "
+            "them as they stand. Nothing here is chosen.")
+        evidence_caption.setWordWrap(True)
+        evidence_caption.setTextFormat(Qt.TextFormat.PlainText)
+        evidence_caption.setStyleSheet(
+            f"color: {colors.TEXT_SUBTLE}; font-size: 12px;")
+        fields.addWidget(evidence_caption)
 
         # THE EVIDENCE. These two 44-character digests are the entire content of
         # the credential this page mints, and they were bare QLabels with no
@@ -392,64 +467,58 @@ class ActuaryPage(QWidget):
         # parser's own output. The em dash placeholder says "nothing loaded yet"
         # instead of leaving an unexplained blank.
         self._manifest_said_label = self._evidence_label("actuaryPage.manifestSaid")
-        form.addRow("Manifest SAID", self._manifest_said_label)
+        fields.addWidget(self._field_block("Manifest SAID",
+                                          self._manifest_said_label))
 
         self._workbook_digest_label = self._evidence_label(
             "actuaryPage.workbookDigest")
-        form.addRow("Workbook digest", self._workbook_digest_label)
+        fields.addWidget(self._field_block("Workbook digest",
+                                          self._workbook_digest_label))
+
+        # FILING DATE AND RETENTION ARE READ, NOT ASKED.
+        #
+        # Both were editable controls -- a date picker defaulting to TODAY and a
+        # combo defaulting to Publish -- and both are facts `ipd-parse` already
+        # recorded. Read the schema's own tense: filing_date is "the filing date
+        # the actuary recorded AT PARSE TIME", action is "the IPD retention
+        # contract the parse WAS RUN UNDER". Past tense, both. They arrive as
+        # `--filing-date` and `--action` arguments to `ipd-parse` (`api.py:33`)
+        # and are written to `index.json` (`emit.py:158`), with `action` already
+        # capitalised into this schema's enum.
+        #
+        # So the page was asking the actuary to re-type facts the artefact
+        # already states, with defaults that can silently CONTRADICT the bytes
+        # being attested. That is the hardcoded-attribute defect wearing a
+        # control: worse, because a wrong value now looks chosen.
+        #
+        # Plain text, NOT a disabled input -- ux-patterns.md:241 is explicit:
+        # "Read-only | Plain text (not a disabled input) | Data the user cannot
+        # edit. Never render as a greyed-out input."
+        self._filing_date_label = self._fact_label("actuaryPage.filingDate")
+        fields.addWidget(self._field_block("Filing date",
+                                          self._filing_date_label))
+
+        self._action_label = self._fact_label("actuaryPage.action")
+        fields.addWidget(self._field_block("Retention", self._action_label))
+
+        # THE ONE THING THE ACTUARY TYPES. `version` is the only one of the four
+        # required attributes that is a judgement rather than a record: the
+        # schema calls it "The rate program's own version, on the actuary's axis
+        # -- not the mandate's and not the product's ... A human-chosen label."
+        # Nothing in `index.json` carries it, which is the same answer arrived at
+        # from the other direction.
+        self._version = LocksmithLineEdit(placeholder_text="e.g. 2027.1")
+        self._version.setObjectName("actuaryPage.version")
+        self._version.textChanged.connect(lambda _t: self._update_attest_enabled())
+        fields.addWidget(self._field_block(
+            "Rate program version", self._version, required=True,
+            help_text="Your own label for this program, on your axis — not the "
+                      "mandate's and not the product's."))
 
         # "Review…", not "Attest": the page primary opens the read-back, and the
         # commit verb lives on the drawer's own confirm. Two-stage vocabulary,
         # matching the sibling flow -- the button that mints must be the one that
         # says so, and it must not be reachable from the page.
-        # THE THREE THE ACTUARY ASSERTS. All three are `required` by the
-        # attestation schema and all three were hardcoded -- `version="1.0"`,
-        # `filing_date=today`, `action="Sandbox"` -- so the app was making
-        # permanent, public assertions on the actuary's behalf that they never
-        # saw. The schema is explicit that they are theirs: version is "a
-        # human-chosen label", filing_date is "the filing date the actuary
-        # recorded at parse time ... an attribute the actuary asserts", and
-        # action is "the IPD retention contract the parse was run under".
-        #
-        # `Sandbox` in particular is a retention CONTRACT, not a test mode -- the
-        # schema says so in capitals -- so defaulting every attestation to it
-        # silently claimed exploratory retention for filed work.
-        self._version = LocksmithLineEdit(placeholder_text="e.g. 2027.1")
-        self._version.setObjectName("actuaryPage.version")
-        self._version.textChanged.connect(lambda _t: self._update_attest_enabled())
-        form.addRow("Rate program version", self._version)
-
-        self._filing_date = QDateEdit()
-        self._filing_date.setObjectName("actuaryPage.filingDate")
-        self._filing_date.setDisplayFormat("MM/dd/yyyy")
-        self._filing_date.setCalendarPopup(True)
-        # Today is a DEFAULT, not an assertion the app makes: the field is
-        # editable, and the read-back shows whatever it holds.
-        self._filing_date.setDate(QDate.currentDate())
-        self._filing_date.setStyleSheet(
-            f"QDateEdit {{ border: 1px solid {colors.BORDER_DARK};"
-            f" border-radius: 6px; padding: 12px; font-size: 14px;"
-            f" color: {colors.TEXT_PRIMARY}; }}")
-        form.addRow("Filing date", self._filing_date)
-
-        self._action = QComboBox()
-        self._action.setObjectName("actuaryPage.action")
-        # From the schema's own enum, not a hand-kept list.
-        self._action.addItems(_ACTION_VALUES)
-        self._action.setStyleSheet(
-            f"QComboBox {{ border: 1px solid {colors.BORDER_DARK};"
-            f" border-radius: 6px; padding: 12px; font-size: 14px;"
-            f" color: {colors.TEXT_PRIMARY}; }}")
-        form.addRow("Retention", self._action)
-
-        self._loaded_from = QLabel("")
-        self._loaded_from.setObjectName("actuaryPage.loadedFrom")
-        self._loaded_from.setWordWrap(True)
-        self._loaded_from.setStyleSheet(
-            f"color: {colors.SUCCESS_TEXT}; font-size: 12px;")
-        self._loaded_from.setVisible(False)
-        form.addRow(self._loaded_from)
-
         self._attest = LocksmithButton("Review attestation…")
         self._attest.setObjectName("actuaryPage.attest")
         self._attest.setEnabled(False)
@@ -812,6 +881,9 @@ class ActuaryPage(QWidget):
         self._observed_list.setVisible(not empty)
         self._empty_state.setVisible(empty)
         self._watch_retry.setVisible(empty and bool(self._watch_error))
+        # BEFORE the early return: the poll keeps running after a mandate
+        # arrives, and its liveness is exactly as informative then.
+        self._render_heartbeat()
         if not empty:
             return
 
@@ -828,14 +900,29 @@ class ActuaryPage(QWidget):
             return
 
         self._empty_state.setStyleSheet(self._empty_state_style)
-        checked = self._last_checked
-        heartbeat = (f"Last checked {checked}." if checked
-                     else "Waiting for the first check…")
+        # HEADLINE + SUPPORTING TEXT, the two halves ux-patterns.md:161 asks of an
+        # empty state (there is no third -- see the no-CTA note above). The
+        # headline carries the weight so the state is legible at a glance instead
+        # of as a paragraph.
         self._empty_state.setText(
-            "No mandates observed yet.\n\n"
+            "<div style='font-size:14px; font-weight:600;'>"
+            "No mandates observed yet.</div>"
+            "<div style='font-size:14px; margin-top:6px;'>"
             "A mandate is never sent here — this watches the CUO's own log and "
-            "picks one up once it has been declared and anchored.\n"
-            f"{heartbeat}")
+            "picks one up once it has been declared and anchored.</div>")
+
+    def _render_heartbeat(self) -> None:
+        """The poll's own liveness, OUTSIDE the placard.
+
+        It was the last line inside it, which read as part of the explanation of
+        what a mandate is. It is not that: it is the only evidence this page can
+        honestly give that the watch is still running, and it keeps advancing
+        after a mandate arrives and the placard is gone.
+        """
+        checked = self._last_checked
+        self._heartbeat.setText(
+            f"Last checked {checked}." if checked
+            else "Waiting for the first check…")
 
     def _retry_watch(self, *_qt_args) -> None:
         """Clear the recorded failure and scan again. The failures are cached --
@@ -914,11 +1001,65 @@ class ActuaryPage(QWidget):
         self._load_parse.setText("Load Parse")
         self._parse_dir.setReadOnly(False)
 
+    def _read_parse_index(self, parse_dir: Path) -> tuple[str, str, str] | None:
+        """`(filing_date, action, mandate_said)` out of the parse's own index.json.
+
+        Returns None -- having said why on screen -- when the index is absent,
+        unreadable, or records an `action` outside the schema's enum. All three
+        mean this directory cannot be attested at all: three of the four required
+        attributes come from here, and nothing on this page can substitute for
+        them now that it no longer invents them.
+        """
+        index_path = parse_dir / _PARSE_INDEX_NAME
+        if not index_path.is_file():
+            self._show_error(
+                f"No {_PARSE_INDEX_NAME} in {parse_dir} — this is not an "
+                "ipd-parse output directory, or the parse did not finish.")
+            return None
+        try:
+            product = json.loads(index_path.read_text())["product"]
+            filing_date = str(product["filingDate"])
+            action = str(product["action"])
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            self._show_error(
+                f"{_PARSE_INDEX_NAME} does not name this parse's product "
+                f"coordinate ({exc}). Its filing date and retention contract are "
+                "two of the four attributes an attestation must carry.")
+            return None
+        if action not in _ACTION_VALUES:
+            self._show_error(
+                f"{_PARSE_INDEX_NAME} records the retention contract as "
+                f"{action!r}, which is not one of "
+                f"{' or '.join(_ACTION_VALUES)}. The attestation schema would "
+                "reject it at issuance.")
+            return None
+        if not filing_date:
+            self._show_error(
+                f"{_PARSE_INDEX_NAME} records no filing date, which the "
+                "attestation schema requires.")
+            return None
+        return filing_date, action, str(product.get("productMandate") or "")
+
     def _load_parse_inner(self) -> None:
-        parse_dir = Path(self._parse_dir.text().strip())
+        raw_path = self._parse_dir.text().strip()
+        if not raw_path:
+            # `Path("")` is `Path(".")`, whose `is_dir()` is True -- so an
+            # untouched field used to rglob and hash the process's CURRENT
+            # WORKING DIRECTORY and then report a missing sidecar: a message
+            # about the cwd phrased as one about a parse directory the actuary
+            # never named. Launching the app from a parse directory is the
+            # natural thing to do, which is what made it reachable.
+            self._show_error("Give the parse directory a path first.")
+            return
+        parse_dir = Path(raw_path)
         if not parse_dir.is_dir():
             self._show_error(f"Not a directory: {parse_dir}")
             return
+
+        recorded = self._read_parse_index(parse_dir)
+        if recorded is None:
+            return          # _read_parse_index has already said why
+        filing_date, action, parse_mandate = recorded
 
         workbook_path = self._resolve_workbook(parse_dir)
         if workbook_path is None:
@@ -937,8 +1078,13 @@ class ActuaryPage(QWidget):
         said = _manifest_said(manifest)
         self._parse_manifest = manifest
         self._parse_manifest_said = said
+        self._parse_filing_date = filing_date
+        self._parse_action = action
+        self._parse_mandate_said = parse_mandate
         self._manifest_said_label.setText(said)
         self._workbook_digest_label.setText(manifest["workbook_digest"])
+        self._filing_date_label.setText(_display_date(filing_date))
+        self._action_label.setText(action)
         # A visible LOADED state. Two digests appearing is evidence something
         # happened, but not evidence of WHICH directory produced them -- and the
         # path is editable, so the answer stops being obvious the moment it is.
@@ -970,11 +1116,70 @@ class ActuaryPage(QWidget):
             return
         self._parse_manifest = None
         self._parse_manifest_said = None
+        self._parse_filing_date = ""
+        self._parse_action = ""
+        self._parse_mandate_said = ""
         self._manifest_said_label.setText("—")
         self._workbook_digest_label.setText("—")
+        # The filing date and retention are as stale as the digests are: they
+        # came out of the directory that is no longer named above.
+        self._filing_date_label.setText("—")
+        self._action_label.setText("—")
         self._loaded_from.setVisible(False)
         self._attested_banner.setVisible(False)
         self._update_attest_enabled()
+
+    def _field_block(self, label_text: str, widget, *, required: bool = False,
+                     help_text: str = "") -> QWidget:
+        """One label-above-field unit: 4px inside, 16px between (the caller's
+        spacing). Replaces `QFormLayout`, whose single vertical spacing could not
+        be both -- see the construction comment.
+
+        `required` renders the asterisk ux-patterns.md:198 asks for, with the
+        tooltip it names. Help text sits BELOW the field per :299.
+        """
+        block = QWidget()
+        box = QVBoxLayout(block)
+        box.setContentsMargins(0, 0, 0, 0)
+        box.setSpacing(4)
+
+        label = QLabel(f"{label_text} *" if required else label_text)
+        label.setStyleSheet(
+            f"color: {colors.TEXT_SECONDARY}; font-size: 12px;")
+        if required:
+            label.setToolTip("This field is required.")
+        # So a screen reader reaches the field by its label, and so the label
+        # click focuses the field (ux-patterns has no rule for this; Qt gives it
+        # away for free once the relationship is declared).
+        label.setBuddy(widget)
+        widget.setAccessibleName(label_text)
+        box.addWidget(label)
+        box.addWidget(widget)
+
+        if help_text:
+            hint = QLabel(help_text)
+            hint.setWordWrap(True)
+            hint.setStyleSheet(
+                f"color: {colors.TEXT_SUBTLE}; font-size: 12px;")
+            box.addWidget(hint)
+        return block
+
+    def _fact_label(self, object_name: str) -> QLabel:
+        """A read-only value that is NOT a digest: plain proportional text.
+
+        Deliberately not `_evidence_label` -- monospace earns its place on a
+        44-character SAID, where `l`/`I`/`1` must be distinguishable, and costs
+        legibility on a date or the word "Publish".
+        """
+        label = QLabel("—")
+        label.setObjectName(object_name)
+        label.setWordWrap(True)
+        label.setTextFormat(Qt.TextFormat.PlainText)
+        label.setTextInteractionFlags(
+            Qt.TextInteractionFlag.TextSelectableByMouse)
+        label.setStyleSheet(
+            f"color: {colors.TEXT_PRIMARY}; font-size: 14px;")
+        return label
 
     def _evidence_label(self, object_name: str) -> QLabel:
         """A monospaced, selectable, plain-text value with an em-dash placeholder."""
@@ -1002,11 +1207,31 @@ class ActuaryPage(QWidget):
             return "Select an observed mandate to attest against."
         if self._parse_manifest_said is None:
             return "Load a parse directory to attest."
+        if self._mandate_conflict():
+            # The parse names its own mandate (`index.json`'s `productMandate`),
+            # and binding a parse to a mandate the parse itself says it does not
+            # answer is the same class of defect as attesting directory A's
+            # digests under directory B's path -- a permanent, public, WRONG
+            # artefact with the UI behaving exactly as designed.
+            return (f"This parse answers mandate {self._parse_mandate_said[:12]}…, "
+                    "not the one selected above.")
         if not self._version.text().strip():
             # Schema-required, and the one field with no defensible default: it
             # is the actuary's own label for this rate program.
             return "Give the rate program a version to attest."
         return ""
+
+    def _mandate_conflict(self) -> bool:
+        """True when the parse names a DIFFERENT mandate than the one selected.
+
+        Absent is not a conflict: `productMandate` is a §I.3 coordinate the
+        parser records and, in its own words, "never parsed or compared" -- so a
+        parse produced before anyone was filling it in has nothing to disagree
+        with. A parse that DOES name one is the artefact's own answer, and it
+        wins over a list selection.
+        """
+        return bool(self._parse_mandate_said and self._selected_mandate_said
+                    and self._parse_mandate_said != self._selected_mandate_said)
 
     def _update_attest_enabled(self) -> None:
         blocked = self._attest_blocker_text()
@@ -1025,8 +1250,11 @@ class ActuaryPage(QWidget):
         return {
             "manifest_said": self._parse_manifest_said,
             "version": self._version.text().strip(),
-            "filing_date": self._filing_date.date().toString("yyyy-MM-dd"),
-            "action": self._action.currentText(),
+            # VERBATIM from index.json, not re-formatted: what a consumer
+            # re-derives against is what `ipd-parse` wrote, and a display format
+            # (`MM/DD/YYYY`) is for the screen only -- see `_display_date`.
+            "filing_date": self._parse_filing_date,
+            "action": self._parse_action,
         }
 
     def review_attestation(self, *_qt_args) -> None:
@@ -1077,6 +1305,17 @@ class ActuaryPage(QWidget):
             return
         if not self._selected_mandate_said or self._parse_manifest_said is None:
             self._show_error("Select an observed mandate and load a parse first.")
+            return
+        # Re-checked HERE and not only in the gate: the gate disables a button,
+        # and this method is reachable from the drawer's confirm signal and from
+        # a test. A refusal that lives only in `_update_attest_enabled` is a
+        # disabled control, not a guarantee about the artefact.
+        if self._mandate_conflict():
+            self._show_error(
+                f"This parse records mandate {self._parse_mandate_said} — not "
+                f"{self._selected_mandate_said}, which is selected. Attesting "
+                "would bind a rate program to a mandate its own parse says it "
+                "does not answer.")
             return
 
         vault = self._app.vault
