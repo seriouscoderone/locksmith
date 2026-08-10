@@ -167,6 +167,7 @@ for BRAND in "${BRANDS[@]}"; do
 
     say "$BRAND: anchor $VERSION"
     ANCHOR_OUT="$STAGE/anchor-$BRAND"
+    mkdir -p "$ANCHOR_OUT"
     LOCKSMITH_BRAND="$BRAND" "$PUBLISHER" anchor \
         --name "$PUB_NAME" --base "$PUB_BASE" \
         --version "$VERSION" \

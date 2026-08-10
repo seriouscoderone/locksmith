@@ -105,13 +105,27 @@ def anchor_release(*, name, alias, bran, base, version, brand,
         hab = hby.habByName(alias)
 
         # Create the interaction event in-process (v2-native — matches the v2
-        # hab). Idempotent: skip if the latest event already carries this release
-        # seal, so a re-run after a receipt-collection failure reuses the ixn
-        # instead of appending a duplicate anchor.
-        latest = hab.kever.serder
-        already = latest.ked.get("t") == "ixn" and any(
-            isinstance(s, dict) and s.get("ver") == version and s.get("brand") == brand
-            for s in latest.ked.get("a", []))
+        # hab). Idempotent: skip if this release seal is ALREADY ANYWHERE in the
+        # KEL, so a re-run after a failure reuses the ixn instead of appending a
+        # duplicate anchor.
+        #
+        # This scans the whole KEL, not just the latest event. A multi-brand cut
+        # anchors each brand in turn (locksmith at sn=N, usurance at sn=N+1), so
+        # a latest-only check sees usurance's seal on top, concludes locksmith is
+        # unanchored, and appends a DUPLICATE locksmith seal on any re-run. That
+        # is exactly the permanent-KEL-growth-for-zero-value the v0.3.1 incident
+        # produced (backlog/2026-07-25-committed-promote-release-script.md).
+        already = False
+        for sn in range(hab.kever.sn + 1):
+            found, _sigers, _duple = hab.getOwnEvent(sn=sn)
+            if found.ked.get("t") != "ixn":
+                continue
+            if any(isinstance(s, dict) and s.get("ver") == version
+                   and s.get("brand") == brand for s in found.ked.get("a", [])):
+                already = True
+                print(f"anchor: {brand} {version} already anchored at sn={sn}; "
+                      f"reusing it instead of appending a duplicate")
+                break
         if not already:
             hab.interact(data=[seal], framed=True)
 
@@ -149,6 +163,14 @@ def anchor_release(*, name, alias, bran, base, version, brand,
         pre = hab.pre
     finally:
         hby.close()
+
+    # Create the output dir before writing. Without this the whole anchor —
+    # signing, witness receipt collection, KEL export — completes and THEN dies
+    # with FileNotFoundError on the first write, which is the worst possible
+    # place to fail: the KEL event is already committed and receipted, so the
+    # operator is left thinking the anchor failed when in fact only its export
+    # did. (Hit on the real v0.4.0 promote run, out_dir a fresh staging path.)
+    Path(out_dir).mkdir(parents=True, exist_ok=True)
 
     kel_path = Path(out_dir) / f"{pre}-kel.cesr"
     kel_path.write_bytes(bytes(kel))
