@@ -149,6 +149,15 @@ def _page(qtbot, app=None):
     layout.addWidget(page)
     shell.show()
     qtbot.waitExposed(shell)
+    # Nothing in this file tests the poll, and leaving it running is a trap for
+    # whoever mutates this file next: the `vault` fixture closes its Habery at
+    # teardown, so a surviving page ticks `_scan_for_mandates` over a closed
+    # LMDB and pytest-qt bills the resulting `AttributeError: 'NoneType' object
+    # has no attribute 'begin'` to whichever test is at SETUP next. Measured:
+    # 14-17 spurious ERRORs per run, attributed to innocent tests. Production is
+    # safe -- `apping.py` sets `vault = None` on close and `_scan_for_mandates`
+    # guards on that -- so this is a harness leak, not a shipped defect.
+    page._watch_timer.stop()
     return shell, page
 
 
@@ -207,6 +216,45 @@ def _bundled_attestation_schema() -> dict:
     assert egf_dir is not None, "the usurance brand is not active"
     path = egf_dir / f"{RATE_PROGRAM_ATTESTATION_SCHEMA_SAID}.json"
     return json.loads(path.read_text())
+
+
+#: A parse directory the way `ipd/pipeline.py` writes one: `index.json`, shards
+#: at the top level and under the three table directories, one legitimately
+#: EMPTY shard, and a non-ASCII table name. Not decoration -- a flat ASCII
+#: stand-in cannot tell a correct manifest from one built with `ensure_ascii=True`
+#: or a top-level-only walk, which is precisely what the end-to-end test below
+#: has to be able to see.
+_REAL_SHARDS: tuple[tuple[str, bytes], ...] = (
+    ("index.json", b'{"product":{"lineOfBusiness":"auto"},"files":[]}'),
+    ("coverages.jsonl", b'{"record":"coverage","coverage":"BI"}\n'),
+    ("parse-report.jsonl", b""),
+    ("mappings/Terr_Map.jsonl", b'{"record":"mapping","name":"Terr_Map"}\n'),
+    ("risk-value-tables/Prämie_Zöne.jsonl",
+     b'{"record":"risk_value_table","name":"Pr\\u00e4mie_Z\\u00f6ne"}\n'),
+)
+
+
+def _write_workbook(path, marker: bytes = b"rev-a"):
+    """A real zip, because a .xlsm is one."""
+    import zipfile
+
+    with zipfile.ZipFile(path, "w") as zf:
+        zf.writestr("[Content_Types].xml", '<?xml version="1.0"?><Types/>')
+        zf.writestr("docProps/custom.xml", marker.decode())
+    return path
+
+
+def _real_parse_fixture(tmp_path):
+    """A parse directory, its source workbook, and the sidecar that ties them."""
+    parse_dir = tmp_path / "parse"
+    for rel, body in _REAL_SHARDS:
+        target = parse_dir / rel
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_bytes(body)
+    workbook = _write_workbook(tmp_path / "ut-auto.xlsm")
+    (parse_dir / page_module._WORKBOOK_SIDECAR_NAME).write_text(
+        json.dumps({"workbook_path": str(workbook)}))
+    return parse_dir, workbook
 
 
 def _emit(vault, event_type, data, doer_name=EMITTED_DOER_NAME):
@@ -403,6 +451,64 @@ def test_the_read_back_shows_the_values_that_are_actually_minted(
     shell.hide()
 
 
+def test_the_minted_manifest_said_is_derived_from_the_bytes_on_disk(
+        qtbot, vault, mint, tmp_path):
+    """The one join nothing else in this package makes.
+
+    `test_manifest.py` proves the SAID is computed correctly over a real parse
+    directory. This file proves the payload carries `_parse_manifest_said`. But
+    every `_loaded()` in here installs a HAND-TYPED 44-character string, so the
+    `manifest_said` in a minted payload had never once come from actual bytes --
+    and it is the only substantive attribute the credential has. A consumer
+    re-derives that one string from the parse they were given; nothing else in
+    the ACDC describes the rate program at all.
+
+    So this runs the whole route on real artefacts: a real parse directory laid
+    out the way `ipd/pipeline.py` lays one out (subdirectories, an empty shard,
+    a non-ASCII table name), a real .xlsm (a zip, because that is what one is),
+    the sidecar naming it, `load_parse()`, then `attest()`. The minted value is
+    then checked twice: re-derived from the same bytes, and verified through
+    `keri.core.sealing.verifySealedBody` -- the CONSUMER's own verifier, which
+    re-serializes independently of this page's `_manifest_said`.
+    """
+    from keri.core.sealing import verifySealedBody
+
+    parse_dir, workbook = _real_parse_fixture(tmp_path)
+    shell, page = _page(qtbot, app=SimpleNamespace(vault=vault))
+    page._observed = {_MANDATE_SAID: dict(_MANDATE)}
+    page._refresh_observed_list()
+    page._selected_mandate_said = _MANDATE_SAID
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(parse_dir))
+
+    page.load_parse()
+
+    assert page._error_banner.isVisible() is False, page._error_banner.text()
+    computed = page._parse_manifest_said
+    assert computed and computed != _MANIFEST, (
+        "the page is still holding the hand-typed stand-in, not a derived SAID")
+
+    page.attest()
+
+    minted = mint.doers[0].kwargs["attributes"]["manifest_said"]
+    assert minted == computed
+    assert minted == page_module._manifest_said(
+        page_module._build_manifest(parse_dir, workbook)), (
+            "the minted SAID does not re-derive from the directory it was "
+            "loaded from")
+    assert verifySealedBody({"d": minted}, page._parse_manifest) is True, (
+        "the consumer's own verifier refuses the manifest this credential "
+        "commits to")
+
+    # ... and it is genuinely about THESE bytes: one changed byte in the
+    # workbook is a different rate program, and the seal must stop verifying.
+    moved = _write_workbook(tmp_path / "moved.xlsm", marker=b"rev-b")
+    other = page_module._build_manifest(parse_dir, moved)
+    assert page_module._manifest_said(other) != minted
+    assert verifySealedBody({"d": minted}, other) is False
+    shell.hide()
+
+
 # --- the guard: armed only after every refusal ------------------------------------
 
 
@@ -575,6 +681,51 @@ def test_another_schemas_issuance_does_not_end_this_attestation(qtbot, vault, mi
     assert page._attested_banner.isVisible() is False
     assert page._error_banner.isVisible() is False
     assert _listener_count(vault) == 1
+    shell.hide()
+
+
+def test_an_event_type_this_listener_does_not_answer_to_is_stepped_over(
+        qtbot, vault, mint):
+    """The third filter, after the doer name and the schema: `credential_issued`
+    or nothing.
+
+    `doer_event` is an application-wide bus -- twenty-odd doers emit on it and
+    the page's closure is called for every one of them while an attestation is
+    in flight. The name and the schema narrow that to this doer's own
+    vocabulary; the event type is what keeps a NON-terminal member of that
+    vocabulary from being read as "done". Without it, one such event retires the
+    listener, releases the guard, closes the read-back mid-flight and prints
+    "Rate program attested." with no SAID after it -- and the real issuance,
+    when it lands, is heard by nobody.
+
+    Measured: mutating this guard to a sentinel left the package at 114 passed.
+    Note plainly what the corpus does and does not have -- TODAY the two
+    emitters under this name (credentialing.py:485/505 and serviceaid's
+    providers/issue.py:151 + serviceaid_bridge.py:251) emit exactly the two
+    types this listener handles, so no third type is reachable in the shipped
+    app. This pins the contract for the next one, which is the whole reason a
+    guard is written before it is needed.
+    """
+    shell, page = _armed(qtbot, vault)
+    drawer = _confirm_through_the_drawer(qtbot, page)
+
+    for stray in ("credential_issuance_started", "credential_registered",
+                  "progress"):
+        _emit(vault, stray, _issued())
+
+    assert page._attesting is True, "a non-terminal event released the guard"
+    assert page.attest_drawer is drawer
+    assert drawer.isVisible() is True, "the read-back was closed mid-flight"
+    assert page._attested_banner.isVisible() is False, (
+        "the page announced an attestation that had not happened")
+    assert page._error_banner.isVisible() is False
+    assert _listener_count(vault) == 1, "the listener retired before its own event"
+
+    # ... and the real one still lands, which is what the retirement would have
+    # cost: the credential mints either way, the actuary just never hears of it.
+    _emit(vault, "credential_issued", _issued())
+    assert page._attesting is False
+    assert page._attested_banner.text() == f"Rate program attested. {_CRED_SAID}"
     shell.hide()
 
 

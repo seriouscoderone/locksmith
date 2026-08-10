@@ -151,13 +151,33 @@ def test_the_gate_demands_an_active_chain_verified_actuary_role(qapp):
     chain-verified, opens the surface, and each single-field deviation closes it.
     Escrowed-but-not-verified is the one that matters most -- it is the state a
     credential is in while it is still arriving.
+
+    The three declaration fields are asserted against the BUNDLED EGF, not
+    against the constants the declaration is built from. `req.schema_said ==
+    ACTUARY_ROLE_SCHEMA_SAID` and `USURANCE_ADMIN_AID in req.issuer_aids` were
+    `X == X` -- both sides are the same imported literal, so drifting the pin
+    moved both sides together and nothing went red. `required_state` is NOT
+    asserted here at all: "active" is the dataclass default
+    (credential_gate.py:37), so the assertion held with the kwarg deleted --
+    measured. What the field DECIDES is pinned by the `state="revoked"` row
+    below, which is the only honest form the claim has.
     """
     req = ActuaryPlugin.required_credential
     assert isinstance(req, RequiredCredential)
-    assert req.schema_said == ACTUARY_ROLE_SCHEMA_SAID
+
+    egf = _bundled_egf_sad()
+    catalog = {c["id"]: c for c in egf["credentials"]}
+    entry = catalog[req.credential_id]      # KeyError if the gate names no entry
     assert req.credential_id == "actuary_role"
-    assert req.required_state == "active"
-    assert USURANCE_ADMIN_AID in req.issuer_aids
+    assert req.schema_said == entry["schema_said"], (
+        "the gate demands a schema the ecosystem's own catalog does not give "
+        "actuary_role -- no issued role credential can ever match it")
+    issuer_aids = {a["aid"] for a in egf["authorities"]
+                   if a["role_id"] == entry["issuer_role"]}
+    assert issuer_aids, "the premise is empty: the EGF names no issuer for this role"
+    assert issuer_aids & set(req.issuer_aids), (
+        f"the compiled-in fallback issuers {req.issuer_aids} include none of the "
+        f"AIDs the bundled EGF trusts to issue actuary_role ({sorted(issuer_aids)})")
 
     def held(**over):
         base = dict(schema_said=ACTUARY_ROLE_SCHEMA_SAID,

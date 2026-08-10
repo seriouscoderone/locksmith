@@ -41,7 +41,8 @@ import types
 from pathlib import Path
 
 import pytest
-from PySide6.QtWidgets import QVBoxLayout, QWidget
+from PySide6.QtCore import Qt
+from PySide6.QtWidgets import QListWidgetItem, QVBoxLayout, QWidget
 
 from keri.app import habbing
 from keri.app.anchoring import AnchorWatcher
@@ -330,6 +331,51 @@ def revoked_party(_isolated_home):
 
 
 @pytest.fixture
+def aliased_party(_isolated_home):
+    """A wallet holding no role credential whose habs are named "default" and
+    something else, so "the brand's configured alias" and "the literal
+    "default"" are two DIFFERENT identifiers.
+
+    Function-scoped and its own Habery: the brand is monkeypatched over these
+    tests, and a module-scoped fixture would carry the extra hab into every
+    `party`-based test's `_known_peer_pres` and hab-iteration order.
+    """
+    with habbing.openHby(name="actuary-watch-alias", temp=True,
+                         version=Vrsn_1_0) as hby:
+        default_hab = hby.makeHab(name="default", transferable=True, wits=[],
+                                  toad=0, version=Vrsn_1_0)
+        aliased_hab = hby.makeHab(name="attesting", transferable=True, wits=[],
+                                  toad=0, version=Vrsn_1_0)
+        rgy = credentialing.Regery(hby=hby, name="actuary-watch-alias", temp=True)
+        yield _Vault(hby, rgy), default_hab, aliased_hab
+        rgy.close()
+
+
+@pytest.fixture
+def watching_only_vault(_isolated_home):
+    """A wallet that has been paired with a peer and has NOT yet incepted an
+    identifier of its own: a real peer KEL in `kevers`, `habs` empty.
+
+    Not contrived -- it is the state between "the OOBI resolved" and "the user
+    made their first AID", and the page's 1s poll runs throughout it.
+    """
+    with habbing.openHby(name="actuary-watch-hably", temp=True,
+                         version=Vrsn_1_0) as hby:
+        with habbing.openHby(name="actuary-watch-hably-far", temp=True,
+                             version=Vrsn_1_0) as far_hby:
+            far = far_hby.makeHab(name="far", transferable=True, wits=[], toad=0,
+                                  version=Vrsn_1_0)
+            kvy = core_eventing.Kevery(db=hby.db, lax=True, local=False)
+            parsing.Parser(kvy=kvy, version=Vrsn_1_0).parse(
+                ims=bytearray(far.replay()), kvy=kvy)
+        rgy = credentialing.Regery(hby=hby, name="actuary-watch-hably", temp=True)
+        assert hby.habs == {}, "the premise is gone: this wallet owns an identifier"
+        assert far.pre in hby.kevers, "the peer KEL never landed"
+        yield _Vault(hby, rgy), far.pre
+        rgy.close()
+
+
+@pytest.fixture
 def bare_hby(_isolated_home):
     """A Habery with nothing pinned in `db.schema`."""
     with habbing.openHby(name="actuary-watch-bare", temp=True,
@@ -479,25 +525,58 @@ def test_the_attesting_hab_is_the_one_holding_the_actuary_role(qtbot, party, vau
         "first in iteration order, so 'the first hab' would pass vacuously")
 
 
-def test_the_attesting_hab_falls_back_to_the_brands_default_alias(
-        qtbot, party):
+def test_the_attesting_hab_falls_back_to_the_alias_the_brand_configures(
+        qtbot, aliased_party, monkeypatch):
     """A vault holding no role credential at all still has to name SOMETHING to
     attest from, or the button refuses with "No identifier available" and the
     actuary has no way to act. The fallback is the brand's own configured alias
-    (`default_aid_alias`), read from the brand rather than hardcoded."""
+    (`default_aid_alias`) -- which is the whole point, because a brand that
+    calls its primary identifier anything else would otherwise attest from
+    nothing.
+
+    This test used to be unable to fail. It ran against the usurance brand,
+    whose `default_aid_alias` IS the literal "default", so both halves of
+    `brand().default_aid_alias or "default"` gave the same string: replacing the
+    line with `alias = "default"` -- deleting the brand read the docstring says
+    is the point -- left the file at 28 passed. Measured. So the brand here
+    names something the fallback literal cannot reach.
+    """
     from locksmith.core.branding import brand
 
-    # The side registry's store holds the mandates' twin but no role credential.
-    empty_vault = _Vault(party.hby, party.side_rgy)
+    vault, default_hab, aliased_hab = aliased_party
+    assert brand().default_aid_alias != "attesting", (
+        "the active brand already configures this alias, so the monkeypatch "
+        "below changes nothing and the test is vacuous again")
+
+    # Patched AFTER construction: the page reads the real brand while it builds.
     _shell, page = _page(qtbot)
+    monkeypatch.setattr(page_mod, "brand",
+                        lambda: types.SimpleNamespace(default_aid_alias="attesting"))
 
-    hab = page._actuary_hab(empty_vault)
+    hab = page._actuary_hab(vault)
 
-    assert brand().default_aid_alias == "default", (
-        "the usurance brand no longer configures this alias; the fallback below "
-        "would be asserting the hardcoded literal instead")
-    assert hab is not None
-    assert hab.pre == party.default_hab.pre
+    assert hab is not None, "no identifier to attest from"
+    assert hab.pre == aliased_hab.pre
+    assert hab.pre != default_hab.pre, (
+        "the hardcoded literal was used, not the alias the brand configures")
+
+
+def test_a_brand_that_configures_no_alias_still_names_an_identifier(
+        qtbot, aliased_party, monkeypatch):
+    """`default_aid_alias` is optional, and `or "default"` is what stops an
+    unset one becoming `habByName(None)`. Without the fallback the Attest button
+    refuses with "No identifier available to attest from" on a wallet that has a
+    perfectly good identifier -- and nothing raises to say why."""
+    vault, default_hab, aliased_hab = aliased_party
+    _shell, page = _page(qtbot)
+    monkeypatch.setattr(page_mod, "brand",
+                        lambda: types.SimpleNamespace(default_aid_alias=None))
+
+    hab = page._actuary_hab(vault)
+
+    assert hab is not None, "an unset brand alias left the actuary unable to attest"
+    assert hab.pre == default_hab.pre
+    assert hab.pre != aliased_hab.pre
 
 
 # --- the EGF document --------------------------------------------------------
@@ -886,6 +965,137 @@ def test_a_scan_with_no_vault_still_stamps_the_clock(qtbot, monkeypatch):
     assert first == "11/04/2026 9:15 AM"
     assert page._last_checked == "11/04/2026 9:16 AM", "the heartbeat is frozen"
     assert "Last checked 11/04/2026 9:16 AM" in page._empty_state.text()
+
+
+def test_a_wallet_with_a_peer_kel_and_no_identifier_of_its_own_scans_cleanly(
+        qtbot, watching_only_vault):
+    """`_watcher_for` needs a hab to read the peer's KEL through -- it is the
+    `hab.db` inside `AnchorWatcher.since` -- and a wallet paired before it
+    incepts anything has a peer in `kevers` and nothing in `habs`.
+
+    So the early return is not defensive: without it the very first tick after
+    an OOBI resolves builds `AnchorWatcher(hab=None, ...)` and dies on
+    `None.db`, out of a QTimer slot, once a second. The artefact is that no
+    watcher was built at all.
+    """
+    vault, peer_pre = watching_only_vault
+    _shell, page = _watched_page(qtbot, vault)
+    assert peer_pre in page._known_peer_pres(vault), (
+        "the premise is gone: this wallet has no peer to be tempted by")
+
+    page._scan_for_mandates()          # must not raise
+
+    assert page._watchers == {}, "a watcher was built with no hab to read through"
+    assert page._observed == {}
+    assert page._last_checked, "the heartbeat did not stamp"
+    assert page._empty_state.isVisible() is True
+
+
+# --- selection: which mandate the edge will name -----------------------------
+
+
+def test_a_click_selects_the_row_that_was_clicked_not_the_first_one(
+        qtbot, party, vault):
+    """The one step in the attest flow that decides WHICH mandate a permanent
+    public credential answers, and it was reached by nothing.
+
+    Everything downstream is exhaustively covered -- the NI2I edge, the far
+    node's SAID, the read-back -- but all of it takes `_selected_mandate_said`
+    as given. Measured: replacing this handler's body with `item = None` left
+    the package at 114 passed. So a hardcoded first row, or an off-by-one,
+    would mint an edge naming a mandate the actuary never chose, and the label
+    on screen would agree with it.
+
+    Driven by EMITTING the signal the page is connected to: devctl's
+    `click_list_item` and a real mouse both fire
+    `QAbstractItemView.clicked(QModelIndex)`, not `itemClicked` (page.py:250).
+    """
+    _shell, page = _watched_page(qtbot, vault)
+    page._scan_for_mandates()
+    rows = [page._observed_list.item(i).data(Qt.UserRole)
+            for i in range(page._observed_list.count())]
+    assert rows == [party.m1, party.m2], (
+        f"the two-row premise has drifted: {rows} -- row 1 must not be row 0")
+
+    page._observed_list.clicked.emit(page._observed_list.model().index(1, 0))
+
+    assert page._selected_mandate_said == party.m2, (
+        "the second mandate was clicked and the first was selected")
+    label = page._selected_label.text()
+    assert party.m2 in label, f"the label does not name the selection: {label}"
+    assert party.m1 not in label
+    assert "auto / US-UT" in label
+
+
+def test_a_click_delivered_against_a_row_that_has_gone_leaves_the_choice_alone(
+        qtbot, party, vault):
+    """`_refresh_observed_list` `clear()`s the widget on every scan that changed
+    something, and a `QModelIndex` is not a persistent index -- it goes on
+    reporting row 1 after the model has emptied. `item(1)` then answers None,
+    and the next line reads `.data()` off it.
+
+    The row that matters is not the crash: it is that a click arriving in that
+    window must not silently blank the mandate the edge is about to name.
+    """
+    _shell, page = _watched_page(qtbot, vault)
+    page._scan_for_mandates()
+    index = page._observed_list.model().index(1, 0)
+    page._observed_list.clicked.emit(index)
+    assert page._selected_mandate_said == party.m2
+
+    page._observed_list.clear()
+    page._on_mandate_clicked(index)        # the slot Qt would call; must not raise
+
+    assert page._selected_mandate_said == party.m2, (
+        "a click on a row that no longer exists changed the selection")
+    assert party.m2 in page._selected_label.text()
+
+
+def test_the_list_emptying_under_a_selected_row_does_not_take_the_page_down(
+        qtbot, party, vault):
+    """`currentItemChanged` is connected for the keyboard, and Qt fires it with
+    `current=None` when the widget is cleared -- which is exactly what a scan
+    that observed a new mandate does, once a second, under whatever row the
+    actuary had arrowed onto.
+
+    So `current is None` is the ordinary case, not a defensive one, and without
+    the guard it is `None.data(Qt.UserRole)` inside a timer-driven slot.
+    """
+    _shell, page = _watched_page(qtbot, vault)
+    page._scan_for_mandates()
+    page._observed_list.setCurrentRow(1)
+    assert page._selected_mandate_said == party.m2
+
+    page._observed_list.clear()
+    page._on_mandate_current(None, None)    # the slot Qt would call; must not raise
+
+    assert page._selected_mandate_said == party.m2, (
+        "clearing the list forgot which mandate the actuary had chosen")
+
+
+def test_a_row_that_names_no_mandate_cannot_blank_the_actuarys_choice(
+        qtbot, party, vault):
+    """Both input paths hand `_select_mandate` whatever `Qt.UserRole` holds, and
+    that is `None` for any row `_refresh_observed_list` did not build -- the
+    placard rows this list has carried before, and anything a later revision
+    adds.
+
+    Blanking the selection there is worse than ignoring it: the row stays
+    highlighted, so the page looks like a mandate is chosen while `attest()`
+    refuses, and the label reads "Selected: None — / ".
+    """
+    _shell, page = _watched_page(qtbot, vault)
+    page._scan_for_mandates()
+    page._observed_list.clicked.emit(page._observed_list.model().index(0, 0))
+    assert page._selected_mandate_said == party.m1
+
+    page._observed_list.addItem(QListWidgetItem("a row with no mandate behind it"))
+    page._observed_list.clicked.emit(page._observed_list.model().index(2, 0))
+
+    assert page._selected_mandate_said == party.m1, (
+        "a row carrying no SAID blanked the mandate the edge names")
+    assert "None" not in page._selected_label.text()
+    assert party.m1 in page._selected_label.text()
 
 
 def test_a_seal_the_watcher_has_already_stepped_past_is_still_retried_first(

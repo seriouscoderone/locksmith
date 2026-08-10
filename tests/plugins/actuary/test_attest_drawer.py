@@ -237,23 +237,77 @@ def test_the_actuary_chooses_the_three_required_attributes(qtbot):
     "Sandbox" — so the app made permanent public assertions the actuary never
     saw. The schema is explicit that they are the actuary's: version is "a
     human-chosen label", filing_date is "an attribute the actuary asserts", and
-    action is "the IPD retention contract the parse was run under"."""
+    action is "the IPD retention contract the parse was run under".
+
+    `action` is driven to the NON-default value, because this test re-tests the
+    exact defect class it was written for and used to catch only half of it:
+    `Publish` is `_ACTION_VALUES[0]`, so it is both the combo's own starting
+    text and the literal a hardcode would most naturally take. Measured against
+    a mutated source — writing `"action": "Sandbox"` into the payload turned
+    this test red, writing `"action": "Publish"` left the whole package green.
+    """
     from PySide6.QtCore import QDate
 
     shell, page = _armed_page(qtbot)
+    assert page._action.currentText() == "Publish", (
+        "the premise has drifted: Sandbox below is no longer the non-default, "
+        "so this test is back to agreeing with a hardcode")
+
     page._version.setText("2027.2")
     page._filing_date.setDate(QDate(2027, 3, 15))
-    page._action.setCurrentText("Publish")
+    page._action.setCurrentText("Sandbox")
 
     committed = page._attestation_attributes()
     assert committed["version"] == "2027.2"
     assert committed["filing_date"] == "2027-03-15"
-    assert committed["action"] == "Publish"
+    assert committed["action"] == "Sandbox"
 
     page.review_attestation()
     shown = _text(page.attest_drawer)
-    for value in ("2027.2", "2027-03-15", "Publish"):
+    for value in ("2027.2", "2027-03-15", "Sandbox"):
         assert value in shown, f"{value} is committed but not shown"
+    shell.hide()
+
+
+def test_the_retention_contract_travels_in_both_directions(qtbot):
+    """`action` is a permanent public claim about how the parse is RETAINED —
+    the schema says in capitals that Sandbox is a retention contract, "emphatically
+    NOT a separate environment, not a test mode". A payload that carries whatever
+    the actuary chose in one direction only is not carrying her choice; it is
+    agreeing with her half the time.
+
+    Both values are round-tripped through the same accessor `attest()` reads, so
+    neither a hardcoded `Publish` nor a hardcoded `Sandbox` survives.
+    """
+    shell, page = _armed_page(qtbot)
+
+    page._action.setCurrentText("Sandbox")
+    assert page._attestation_attributes()["action"] == "Sandbox"
+
+    page._action.setCurrentText("Publish")
+    assert page._attestation_attributes()["action"] == "Publish"
+    shell.hide()
+
+
+def test_a_version_typed_with_stray_whitespace_is_not_committed_with_it(qtbot):
+    """A version is typed, and typed text carries whatever the actuary's
+    keyboard and clipboard put there. `" 2027.2 "` and `"2027.2"` are two
+    different permanent public labels for the same rate program, and a consumer
+    matching on the string sees two different programs.
+
+    The blocker reads the same trimmed value, so the pair is asserted together:
+    a field holding nothing but spaces is not a version, and must not arm the
+    only irreversible button on this page.
+    """
+    shell, page = _armed_page(qtbot)
+
+    page._version.setText("  2027.2\t")
+    assert page._attestation_attributes()["version"] == "2027.2"
+
+    page._version.setText("   ")
+    assert page._attest.isEnabled() is False, (
+        "three spaces armed the mint as a rate program version")
+    assert "version" in page._attest_blocker.text().lower()
     shell.hide()
 
 
@@ -264,6 +318,28 @@ def test_retention_offers_exactly_the_schemas_enum(qtbot):
     shell, page = _armed_page(qtbot)
     values = [page._action.itemText(i) for i in range(page._action.count())]
     assert values == ["Publish", "Sandbox"]
+    shell.hide()
+
+
+def test_an_untouched_page_mints_publish_as_its_retention_contract(qtbot):
+    """What the actuary gets for doing NOTHING is itself a permanent public
+    claim, and it was the one nothing in this package stated.
+
+    Every other `action` assertion here is preceded by an explicit
+    `setCurrentText(...)`, so all of them agree with whatever the control
+    happens to start on. Measured: reordering `_ACTION_VALUES` to
+    `("Sandbox", "Publish")` -- which silently flips the retention contract
+    every actuary mints by default -- turned the package red only on the combo's
+    item-list ordering and on a premise canary in a neighbouring test. Nothing
+    that inspects a MINTED payload noticed the claim had changed.
+
+    Asserted through `_attestation_attributes()`, the accessor `attest()` itself
+    reads, so it is the committed value rather than the rendered one.
+    """
+    shell, page = _armed_page(qtbot)
+    assert page._attestation_attributes()["action"] == "Publish", (
+        "an actuary who never touches the control now mints a different "
+        "retention contract than the one this page shipped with")
     shell.hide()
 
 
