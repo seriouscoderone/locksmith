@@ -165,6 +165,55 @@ def test_the_bran_is_never_passed_on_a_command_line():
     assert "read -rs" in text, "the prompt fallback must be silent"
 
 
+def test_no_bare_python_is_invoked():
+    """It runs in the OPERATOR's shell, which has no venv active.
+
+    A bare `python` died at "python: command not found" on the first real run —
+    macOS ships no `python`, only `python3`, and the operator's shell is the one
+    holding the bran, not an activated venv.
+    """
+    import re
+    text = SCRIPT.read_text(encoding="utf-8")
+    offenders = [
+        line for line in text.splitlines()
+        if re.search(r'(^|[|&;(]|\$\()\s*(LOCKSMITH_BRAND="\$BRAND"\s+)?python\b', line)
+        and not line.lstrip().startswith("#")
+    ]
+    assert not offenders, (
+        "promote-release.sh invokes a bare `python`; use \"$PY\" so it works in a "
+        f"shell with no venv activated:\n" + "\n".join(offenders))
+
+
+def test_a_signed_tag_is_not_reported_as_unsigned():
+    """SSH-signed tags fail `git tag -v` without allowedSignersFile configured.
+
+    Conflating "unsigned" with "unverifiable" printed a false alarm on a
+    correctly signed tag during the v0.4.0 promote.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "BEGIN (SSH|PGP) SIGNATURE" in text, (
+        "the script must test for signature PRESENCE separately from validity")
+    assert "allowedSignersFile" in text, (
+        "when a signature is present but unverifiable, say why")
+
+
+def test_a_dry_run_never_claims_it_published():
+    """The closing summary must not say "anchored, published and verified" after
+    a dry run — that sentence fired on a run that touched nothing."""
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert "NOTHING WAS PUBLISHED" in text
+    claim = text.index("Both brands anchored, published and verified")
+    guard = text.index("LOCKSMITH_PROMOTE_DRY_RUN:-0}\" == \"1\" ]]; then\n    cat <<EOF")
+    assert guard < claim, "the dry-run summary must be chosen before the real one"
+
+
+def test_dry_run_stops_before_the_keystore():
+    text = SCRIPT.read_text(encoding="utf-8")
+    dry = text.index("DRY RUN: stopping before anchor")
+    anchor = text.index('"$PUBLISHER" anchor')
+    assert dry < anchor, "the dry-run bail must precede the anchor invocation"
+
+
 def test_promote_to_latest_is_not_automated():
     """Deliberate per the backlog: verification passing is not permission to ship."""
     text = SCRIPT.read_text(encoding="utf-8")

@@ -66,8 +66,23 @@ with open("pyproject.toml","rb") as f: print(tomllib.load(f)["project"]["version
 
 git rev-parse -q --verify "refs/tags/v$VERSION" >/dev/null \
     || die "no tag v$VERSION — promote only what was cut and built"
-git tag -v "v$VERSION" >/dev/null 2>&1 \
-    || echo "  WARNING: tag v$VERSION is not signed (or its key is unavailable)"
+
+# Signature presence and signature VALIDITY are different questions, and
+# conflating them produced a scary "tag is not signed" warning on a tag that was
+# correctly signed: this repo signs with SSH (gpg.format=ssh), and `git tag -v`
+# cannot verify an SSH signature without gpg.ssh.allowedSignersFile configured.
+# So report the two separately and never imply an unsigned tag when one is
+# present.
+if git cat-file tag "v$VERSION" 2>/dev/null | grep -qE "BEGIN (SSH|PGP) SIGNATURE"; then
+    if git tag -v "v$VERSION" >/dev/null 2>&1; then
+        echo "  tag       : v$VERSION (signed, signature verified)"
+    else
+        echo "  tag       : v$VERSION (signed; not verifiable here — configure"
+        echo "              gpg.ssh.allowedSignersFile to check it locally)"
+    fi
+else
+    echo "  WARNING: tag v$VERSION carries NO signature"
+fi
 
 echo "  publisher : $PUBLISHER"
 echo "  keystore  : name=$PUB_NAME base=$PUB_BASE"
@@ -83,7 +98,7 @@ fi
 [[ -n "${LOCKSMITH_PUBLISHER_BRAN:-}" ]] || die "no bran supplied"
 echo "  bran      : set (${#LOCKSMITH_PUBLISHER_BRAN} chars, never echoed)"
 
-STAGE="$(mktemp -d "${TMPDIR:-/tmp}/promote-$VERSION.XXXXXX")"
+STAGE="$(mktemp -d "${TMPDIR:-/tmp%/}/promote-$VERSION.XXXXXX" | sed 's#//*#/#g')"
 echo "  stage     : $STAGE"
 
 # ---- 2. Per brand: fetch from S3, verify, anchor, publish, verify ---------
@@ -104,8 +119,11 @@ echo "  cdn       : $CDN"
 for BRAND in "${BRANDS[@]}"; do
     say "brand: $BRAND"
 
-    PREFIX="$(cd packaging && LOCKSMITH_BRAND="$BRAND" python -m brandlib id artifact_prefix)"
-    RELPATH="$(cd packaging && LOCKSMITH_BRAND="$BRAND" python -m brandlib id release_prefix)"
+    # "$PY", never a bare `python`: this runs in the operator's own shell (the
+    # one holding the bran), which has no venv activated and on macOS may have
+    # no `python` on PATH at all.
+    PREFIX="$(cd packaging && LOCKSMITH_BRAND="$BRAND" "$PY" -m brandlib id artifact_prefix)"
+    RELPATH="$(cd packaging && LOCKSMITH_BRAND="$BRAND" "$PY" -m brandlib id release_prefix)"
     DMG="$STAGE/${PREFIX}-${VERSION}.dmg"
     MSI="$STAGE/${PREFIX}-${VERSION}.msi"
 
@@ -139,6 +157,13 @@ for BRAND in "${BRANDS[@]}"; do
   that cannot verify the feed — Sparkle finds the update, the KERI gate refuses
   it. This is the v0.2.21 failure. Fix the CI LOCKSMITH_PUBLISHER_ANCHOR secret
   and rebuild; do NOT publish."
+
+    if [[ "${LOCKSMITH_PROMOTE_DRY_RUN:-0}" == "1" ]]; then
+        echo "  DRY RUN: stopping before anchor. Everything above is verified:"
+        echo "    artifacts fetched from the CDN, digests computed, baked anchor"
+        echo "    matches this brand's live feed. Nothing has touched the KEL."
+        continue
+    fi
 
     say "$BRAND: anchor $VERSION"
     ANCHOR_OUT="$STAGE/anchor-$BRAND"
@@ -176,9 +201,22 @@ PY
 done
 
 say "done"
-cat <<EOF
+if [[ "${LOCKSMITH_PROMOTE_DRY_RUN:-0}" == "1" ]]; then
+    cat <<EOF
+DRY RUN complete for $VERSION — NOTHING WAS PUBLISHED.
+
+Verified for every brand: the artifacts exist on the CDN and were fetched, their
+digests were computed from those bytes, and the anchor baked into each build
+matches the AID signing that brand's own feed.
+
+Re-run without LOCKSMITH_PROMOTE_DRY_RUN to anchor and publish.
+Staged artifacts: $STAGE
+EOF
+else
+    cat <<EOF
 Both brands anchored, published and verified for $VERSION.
 
 Promote-to-latest is deliberately NOT automated — it stays a conscious decision.
 Staged artifacts and anchor logs: $STAGE
 EOF
+fi
