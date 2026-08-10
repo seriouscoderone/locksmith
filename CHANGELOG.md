@@ -9,6 +9,32 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
+## 0.4.0
+
+- Usurance roles now have real working surfaces. The **CUO** declares a product
+  mandate on a form built from the ecosystem's own schema; the **actuary**
+  attests against the mandate it actually observed, asserting version, filing
+  date and retention; the **product designer** assembles the product, and
+  Assemble stays disabled until the chain behind it is verifiable — with the
+  reason shown instead of a dead button.
+- Every one of those signing steps now shows a read-back first: exactly what
+  you are about to sign, in plain language, before anything is anchored.
+- Roles are now requested and granted, rather than assumed. A workspace asks
+  for the role it needs, the administrator issues it, and the wallet opens on
+  that role instead of always landing on Home.
+- Making a vault the default is now a named action you choose, not a checkbox
+  hidden in a dialog.
+- Peer connections recover when an address changes: a peer that moved is
+  re-dialed at its new address, changing your port re-publishes your endpoint,
+  and your own peer OOBI can be read (not just copied) from Settings.
+- A peer that is merely unreachable is no longer reported as one that refused.
+- Installers now wear the right brand. The Usurance MSI no longer shows
+  Locksmith's mark on its welcome screen, and the macOS disk-image window no
+  longer tells you to drag "Locksmith" to Applications regardless of which app
+  you downloaded.
+- Diagnostic logs are per-brand, and unreachable advertised addresses are named
+  in them rather than failing silently.
+
 ## 0.3.6
 
 - Peer connections now advertise a reachable network address instead of assuming
