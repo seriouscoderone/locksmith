@@ -125,14 +125,20 @@ for BRAND in "${BRANDS[@]}"; do
     echo "  dmg sha256: $DMG_SHA"
     echo "  msi sha256: $MSI_SHA"
 
-    # Pre-publish gate: does the artifact's BAKED anchor match the AID that
-    # signs the live feed? A stale CI anchor secret is invisible from the local
-    # source anchor and blocked Sparkle for an entire release (v0.2.21).
-    # Expected to fail its "is $VERSION on the feed" leg before publishing —
-    # advisory here, enforced after.
-    echo "  pre-publish anchor check (advisory until the feed carries $VERSION):"
-    "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" 2>&1 \
-        | sed 's/^/    /' || echo "    (expected pre-publish; enforced below)"
+    # Pre-publish gate (ENFORCED): does the AID baked into this artifact match
+    # the AID that signs the brand's live feed? A stale CI anchor secret is
+    # invisible from the local source anchor and blocked Sparkle for the whole
+    # of v0.2.21. This is deliberately NARROWER than
+    # verify-release-artifact.py — it compares publisher AIDs only, so it works
+    # BEFORE the feed carries $VERSION. Catching this after publishing would
+    # mean the bad feed is already live.
+    echo "  pre-publish: baked anchor vs live feed publisher_aid"
+    "$PY" scripts/check-baked-anchor.py --dmg "$DMG" --brand "$BRAND" \
+        || die "$BRAND: the anchor baked into the artifact does NOT match the AID
+  signing the live feed. Every client from this build would bake a trust root
+  that cannot verify the feed — Sparkle finds the update, the KERI gate refuses
+  it. This is the v0.2.21 failure. Fix the CI LOCKSMITH_PUBLISHER_ANCHOR secret
+  and rebuild; do NOT publish."
 
     say "$BRAND: anchor $VERSION"
     ANCHOR_OUT="$STAGE/anchor-$BRAND"

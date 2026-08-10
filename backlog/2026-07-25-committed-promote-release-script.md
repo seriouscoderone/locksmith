@@ -1,5 +1,7 @@
 # Replace the per-version /tmp promote script with a committed `scripts/promote-release.sh`
 
+**Status: DONE (2026-08-10), with one Verify item still open — see the bottom of this file.**
+
 **Filed:** 2026-07-25 (after the v0.3.2 cut)
 **Domain:** release tooling (off-CI publish path; `tools/publisher/` + `scripts/`)
 **Severity:** process. Nothing is broken, but the current shape has already caused one
@@ -59,6 +61,39 @@ actually catch that class of failure. Prioritize those checks over shell ergonom
 3. Negative: with a deliberately mismatched baked anchor, the preflight refuses to publish.
 4. A unit/integration test covers the version-assertion and artifact-name derivation logic
    (the S3/KEL parts stay manual).
+
+## Resolution (2026-08-10, during the v0.4.0 cut)
+
+Implemented as `scripts/promote-release.sh <version>` plus a new
+`scripts/check-baked-anchor.py`, covered by
+`tests/packaging/test_promote_release_script.py` (14 tests).
+
+Against this file's own Verify list:
+
+1. **Full both-brand cut with no /tmp script** — *NOT yet verified.* The script
+   was written during the v0.4.0 cut but the anchor/publish legs were not run by
+   the author; a wrong-passphrase attempt or partial anchor writes to the real
+   KEL. First real use of the script IS this verify item. Watch for the v2
+   `kli oobi resolve` trap (a 120s "0/1 receipts" stall is a config error, not a
+   network fault).
+2. **`9.9.9` fails fast without touching the KEL** — done, and asserted:
+   `test_a_version_that_was_never_cut_is_refused` plus
+   `test_refusal_happens_before_anything_touches_the_keystore`.
+3. **Mismatched baked anchor → preflight refuses** — done. `check-baked-anchor.py`
+   mounts the DMG, reads the anchor the app will actually use, and compares its
+   `publisher_aid` to the one signing that brand's own feed (read from
+   `brand.toml`, never the shared `deploy_config.json`). Deliberately narrower
+   than `verify-release-artifact.py` so it can run BEFORE the feed carries the
+   new version — catching this afterwards means the bad feed is already live.
+   Verified positive against both real v0.4.0 CI artifacts: baked and feed AID
+   both `EGh4o0WbHIFhPIpTEQHe7DGSlI-_ht5olO_gruxc0VrC`.
+4. **Test covering version assertion + name derivation** — done, plus tests that
+   the bran never reaches a command line and that promote-to-latest stays manual.
+
+Honouring this file's own scope caveat, the preflight checks were prioritised
+over shell ergonomics: the CLI-present check carries the
+`pip install -e tools/publisher --no-deps` recipe in its error text, and the
+baked-anchor gate is the one that would have caught the v0.2.21 incident.
 
 ## Related
 - `scripts/verify-release-artifact.py` — the guard this should invoke (added 2026-07-25,
