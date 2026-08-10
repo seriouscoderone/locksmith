@@ -32,6 +32,15 @@ def _loaded(page):
     page._parse_manifest_said = _MANIFEST
     page._manifest_said_label.setText(_MANIFEST)
     page._workbook_digest_label.setText("EWorkbookDigest")
+    # `_load_parse_inner` sets these three ATOMICALLY with the manifest -- it
+    # refuses the directory outright if index.json does not carry them -- so a
+    # helper that sets the manifest without them describes a state the page
+    # cannot actually be in.
+    page._parse_filing_date = "2027-03-15"
+    page._parse_action = "Sandbox"
+    page._parse_mandate_said = _MANDATE
+    page._filing_date_label.setText("03/15/2027")
+    page._action_label.setText("Sandbox")
     page._selected_mandate_said = _MANDATE
     # Schema-required and the actuary's own label, so the gate holds without it.
     page._version.setText("2027.1")
@@ -406,4 +415,82 @@ def test_the_loading_state_is_restored_even_when_the_load_raises(qtbot):
     assert page._loading_parse is False
     assert page._load_parse.isEnabled() is True
     assert page._parse_dir.isReadOnly() is False
+    shell.hide()
+
+
+# --- the layout defects the owner saw, and I did not ------------------------------
+
+
+def test_no_field_is_compressed_below_the_height_it_asked_for(qtbot):
+    """Measured at 1180x940 on the macOS style: the parse-directory field was
+    clipped through its own bottom border and the version field's help text was
+    drawn ON TOP of its input.
+
+    Every widget was configured correctly — a QVBoxLayout simply squeezes children
+    past their size hints when it runs out of room, and this page's tallest
+    element (the observed-mandates list) only grows. The page is inside a
+    QScrollArea now, so it scrolls instead of crushing. Asserted as
+    height >= sizeHint rather than as a pixel count, because the hint is what the
+    widget asked for under whatever style is active.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    shell, page = _page(qtbot)
+    shell.resize(900, 560)              # deliberately too short for the content
+    qtbot.wait(60)
+
+    assert page.findChild(QScrollArea, "actuaryPage.scroll") is not None, (
+        "no scroll area; a page taller than its window will compress its fields")
+    for field in (page._parse_dir, page._version):
+        assert field.height() >= field.sizeHint().height(), (
+            f"{field.objectName()} is {field.height()}px against a "
+            f"{field.sizeHint().height()}px hint — it is being clipped")
+    shell.hide()
+
+
+def test_the_four_values_from_the_parse_are_grouped_apart_from_the_one_input(qtbot):
+    """The boundary between "read from the artefact" and "typed by the actuary"
+    is the whole point of this screen's shape, so it is drawn, not just stated in
+    a caption."""
+    shell, page = _page(qtbot)
+    card = page.findChild(QWidget, "actuaryEvidence")
+    assert card is not None, "the evidence group is gone"
+
+    for label in (page._manifest_said_label, page._workbook_digest_label,
+                  page._filing_date_label, page._action_label):
+        assert card.isAncestorOf(label), (
+            f"{label.objectName()} is outside the read-from-the-parse group")
+    assert not card.isAncestorOf(page._version), (
+        "the one field the actuary types is inside the group that says nothing "
+        "here is chosen")
+    shell.hide()
+
+
+def test_no_visible_label_shows_raw_markdown(qtbot):
+    """A backtick is markdown, and a QLabel renders it as a backtick. The
+    evidence caption shipped `ipd-parse` with the quotes visible on screen."""
+    from PySide6.QtWidgets import QLabel
+
+    shell, page = _page(qtbot)
+    offenders = [(w.objectName(), w.text()) for w in page.findChildren(QLabel)
+                 if "`" in w.text() or "**" in w.text()]
+    assert offenders == [], f"raw markdown on screen: {offenders}"
+    shell.hide()
+
+
+def test_the_mandate_list_does_not_reserve_a_row_it_has_nothing_to_put_in(qtbot):
+    """One mandate sat above ~90px of empty box, which reads as a pane that
+    failed to load rather than a list with one entry. The list is hidden entirely
+    when there is nothing to show, so there is no first-arrival jump to smooth
+    over — the placard is what fills that space."""
+    shell, page = _page(qtbot)
+    page._observed = {_MANDATE: {"line_of_business": "auto",
+                                 "jurisdiction": "US-UT", "coverages": ["BI"]}}
+    page._refresh_observed_list()
+    qtbot.wait(50)
+
+    row = page._observed_list.sizeHintForRow(0)
+    assert row > 0
+    assert page._observed_list.height() < 2 * row, (
+        f"the list is {page._observed_list.height()}px for one {row}px row")
     shell.hide()

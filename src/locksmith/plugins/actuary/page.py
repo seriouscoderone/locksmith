@@ -49,8 +49,8 @@ from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QSizePolicy,
-    QVBoxLayout, QWidget,
+    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QScrollArea,
+    QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -103,6 +103,13 @@ _ACTION_VALUES = ("Publish", "Sandbox")
 #: "filingDate", "action"}, "files": [...], "report": ...}`, and `action` is
 #: already capitalised into the schema's enum by `api.py::parse`.
 _PARSE_INDEX_NAME = "index.json"
+
+#: The observed-mandates list sizes to its rows, up to this many. Beyond it the
+#: list scrolls, so a busy desk cannot push the attest section off the page.
+_OBSERVED_MAX_VISIBLE_ROWS = 5
+#: Row height before any row exists to measure -- a two-line item at 14px with
+#: 8px of padding.
+_OBSERVED_ROW_FALLBACK_PX = 44
 
 #: The reading column's cap. Wide enough for a 44-character monospaced digest
 #: (~370px at 14px) and an absolute path, narrow enough that the lede does not
@@ -236,13 +243,35 @@ class ActuaryPage(QWidget):
         # the lede ran ~160 characters and the two-value Retention control was
         # ~1560px, so a date and a two-member enum were as wide as the page.
         # ux-patterns.md:773 caps even a placeholder's prose at `max-w-md`.
+        # SCROLLED, because this page can be taller than the window and Qt's
+        # answer to that is to COMPRESS. Measured at 1180x940 before this: the
+        # parse-directory field was clipped through its own bottom border and the
+        # version field's help text was drawn ON TOP of its input. Every widget
+        # was correctly configured -- a box layout simply squeezes children past
+        # their size hints when it runs out of room, and the observed-mandates
+        # list only grows.
         root = QHBoxLayout(self)
-        root.setContentsMargins(48, 48, 48, 48)
+        root.setContentsMargins(0, 0, 0, 0)
         root.setSpacing(0)
+        scroll = QScrollArea()
+        scroll.setObjectName("actuaryPage.scroll")
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        scroll.setHorizontalScrollBarPolicy(
+            Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        scroll.setStyleSheet("QScrollArea { background: transparent; }")
+        root.addWidget(scroll)
+
+        holder = QWidget()
+        holder.setObjectName("actuaryPage.holder")
+        scroll.setWidget(holder)
+        bounds = QHBoxLayout(holder)
+        bounds.setContentsMargins(48, 48, 48, 48)
+        bounds.setSpacing(0)
         column = QWidget()
         column.setObjectName("actuaryPage.column")
         column.setMaximumWidth(_CONTENT_MAX_WIDTH)
-        root.addWidget(column, 1)
+        bounds.addWidget(column, 1)
 
         outer = QVBoxLayout(column)
         outer.setContentsMargins(0, 0, 0, 0)
@@ -447,16 +476,31 @@ class ActuaryPage(QWidget):
         self._loaded_from.setVisible(False)
         fields.addWidget(self._loaded_from)
 
+        # ONE CARD for the four values that come out of the parse, so the
+        # boundary between "read" and "typed" is visible and not merely stated.
+        # The objectName carries no dot: a `#id` QSS selector cannot match one,
+        # and a bare `QWidget { }` rule would repaint every child.
+        evidence = QWidget()
+        evidence.setObjectName("actuaryEvidence")
+        evidence.setStyleSheet(
+            f"#actuaryEvidence {{ background-color: {colors.BACKGROUND_CONTENT};"
+            f" border: 1px solid {colors.BORDER_DARK}; border-radius: 6px; }}")
+        evidence_box = QVBoxLayout(evidence)
+        evidence_box.setContentsMargins(16, 16, 16, 16)
+        evidence_box.setSpacing(16)
+        fields.addWidget(evidence)
+
         # WHY THESE FOUR ARE NOT CONTROLS. Said once, over the group, rather
-        # than as a help line under each one.
+        # than as a help line under each one. No backticks: they are markdown in
+        # a plain-text label and rendered as literal characters on screen.
         evidence_caption = QLabel(
-            "From the parse — `ipd-parse` recorded these and this page attests "
-            "them as they stand. Nothing here is chosen.")
+            "Recorded by ipd-parse in this directory. Attested as they stand — "
+            "nothing here is chosen.")
         evidence_caption.setWordWrap(True)
         evidence_caption.setTextFormat(Qt.TextFormat.PlainText)
         evidence_caption.setStyleSheet(
             f"color: {colors.TEXT_SUBTLE}; font-size: 12px;")
-        fields.addWidget(evidence_caption)
+        evidence_box.addWidget(evidence_caption)
 
         # THE EVIDENCE. These two 44-character digests are the entire content of
         # the credential this page mints, and they were bare QLabels with no
@@ -467,13 +511,13 @@ class ActuaryPage(QWidget):
         # parser's own output. The em dash placeholder says "nothing loaded yet"
         # instead of leaving an unexplained blank.
         self._manifest_said_label = self._evidence_label("actuaryPage.manifestSaid")
-        fields.addWidget(self._field_block("Manifest SAID",
-                                          self._manifest_said_label))
+        evidence_box.addWidget(self._field_block("Manifest SAID",
+                                                 self._manifest_said_label))
 
         self._workbook_digest_label = self._evidence_label(
             "actuaryPage.workbookDigest")
-        fields.addWidget(self._field_block("Workbook digest",
-                                          self._workbook_digest_label))
+        evidence_box.addWidget(self._field_block("Workbook digest",
+                                                 self._workbook_digest_label))
 
         # FILING DATE AND RETENTION ARE READ, NOT ASKED.
         #
@@ -495,11 +539,11 @@ class ActuaryPage(QWidget):
         # "Read-only | Plain text (not a disabled input) | Data the user cannot
         # edit. Never render as a greyed-out input."
         self._filing_date_label = self._fact_label("actuaryPage.filingDate")
-        fields.addWidget(self._field_block("Filing date",
-                                          self._filing_date_label))
+        evidence_box.addWidget(self._field_block("Filing date",
+                                                 self._filing_date_label))
 
         self._action_label = self._fact_label("actuaryPage.action")
-        fields.addWidget(self._field_block("Retention", self._action_label))
+        evidence_box.addWidget(self._field_block("Retention", self._action_label))
 
         # THE ONE THING THE ACTUARY TYPES. `version` is the only one of the four
         # required attributes that is a judgement rather than a record: the
@@ -572,6 +616,7 @@ class ActuaryPage(QWidget):
         # page opened with an empty box and a silently-disabled primary -- the
         # exact two things this work exists to remove.
         self._render_empty_state()
+        self._size_observed_list()
         self._update_attest_enabled()
 
         # design-system.md:311 "Tab order: Follows visual layout order". Measured
@@ -857,6 +902,7 @@ class ActuaryPage(QWidget):
             item.setData(Qt.UserRole, said)
             item.setFont(self._row_font())
             self._observed_list.addItem(item)
+        self._size_observed_list()
 
     def _row_font(self):
         """The list row's font. Qt gives a QListWidgetItem no per-line styling, so
@@ -910,6 +956,26 @@ class ActuaryPage(QWidget):
             "<div style='font-size:14px; margin-top:6px;'>"
             "A mandate is never sent here — this watches the CUO's own log and "
             "picks one up once it has been declared and anchored.</div>")
+
+    def _size_observed_list(self) -> None:
+        """Height from the rows it holds, up to five of them.
+
+        A default-sized QListWidget showed one two-line mandate above ~90px of
+        empty box, which reads as a pane that failed to finish loading rather
+        than as a list with one entry. Capped rather than unbounded so a busy
+        desk does not push the attest section off the screen; beyond the cap it
+        scrolls, which is what a list is for.
+
+        No floor above one row: the list is HIDDEN when there is nothing to show
+        (the placard takes its place), so reserving a second row only ever draws
+        an empty one under the single mandate an actuary actually has.
+        """
+        rows = self._observed_list.count()
+        row_height = (self._observed_list.sizeHintForRow(0) if rows
+                      else _OBSERVED_ROW_FALLBACK_PX)
+        visible = min(max(rows, 1), _OBSERVED_MAX_VISIBLE_ROWS)
+        self._observed_list.setFixedHeight(
+            visible * row_height + 2 * self._observed_list.frameWidth() + 8)
 
     def _render_heartbeat(self) -> None:
         """The poll's own liveness, OUTSIDE the placard.
