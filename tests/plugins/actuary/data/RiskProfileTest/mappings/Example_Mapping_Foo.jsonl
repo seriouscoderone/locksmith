@@ -1,0 +1,7 @@
+{"name": "Example_Mapping_Foo", "subject": "Foo", "inputs": ["Risk Attr One"], "outputs": ["Risk Attr Two"], "record": "mapping"}
+{"inp": ["A"], "out": [1], "record": "row"}
+{"inp": ["B"], "out": [2], "record": "row"}
+{"inp": ["C"], "out": [3], "record": "row"}
+{"inp": ["D"], "out": [4], "record": "row"}
+{"inp": ["E"], "out": [5], "record": "row"}
+{"inp": ["F"], "out": [6], "record": "row"}

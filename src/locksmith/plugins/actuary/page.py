@@ -33,6 +33,17 @@ canonicalization matching `keri.core.sealing.verifySealedBody`'s opaque-blob pat
 a designer re-deriving with the parser's own tool would get a different answer than
 this page computed.
 
+That byte-identity is an INTENTION, not a tested fact, and one divergence is
+already measured: this module excludes `.workbook_source.json` from the shard walk
+and `ipd/manifest.py` does not, so the same directory yields two different SAIDs
+whenever the sidecar is present -- which the sidecar convention guarantees. The
+live cross-repo differential was removed while `ipd` is under active development;
+what runs now is a vendored snapshot of real parser output with a frozen manifest
+and SAID, plus a byte-level drift check against the parser's golden when the
+sibling checkout is present. See `tests/plugins/actuary/data/PROVENANCE.md` and
+`ugard/backlog/2026-08-09-actuary-page-remaining.md`. Do not read the three
+"byte-identical" notes below as guarantees.
+
 **Render no rate table** — Excel is the rate UI (owner ruling). The manifest SAID and
 the workbook digest are shown as EVIDENCE that a specific set of bytes was attested,
 never the rates themselves.
@@ -137,7 +148,7 @@ def _mono_css() -> str:
 
 
 def _digest(raw: bytes) -> str:
-    """qb64 digest of raw bytes -- byte-identical to `ipd.manifest._digest`
+    """qb64 digest of raw bytes -- INTENDED byte-identical to `ipd.manifest._digest`
     and to keripy's own `Diger(ser=raw)` default, including on an empty
     `ser` (`Diger.__init__`'s ser-fallback re-raises on falsy `ser`; the real
     parser emits at least one legitimately empty shard, so this must not)."""
@@ -146,7 +157,8 @@ def _digest(raw: bytes) -> str:
 
 
 def _build_manifest(parse_dir: Path, workbook: Path) -> dict:
-    """Byte-identical to `ipd.manifest.build_manifest` -- see the module
+    """INTENDED byte-identical to `ipd.manifest.build_manifest` (not tested
+    across repos, and it already diverges on the sidecar) -- see the module
     docstring for why this is reimplemented rather than imported."""
     shards = sorted(
         (
@@ -164,7 +176,8 @@ def _build_manifest(parse_dir: Path, workbook: Path) -> dict:
 
 
 def _manifest_said(manifest: dict) -> str:
-    """Byte-identical to `ipd.manifest.manifest_said` -- see the module docstring."""
+    """INTENDED byte-identical to `ipd.manifest.manifest_said`; not tested across
+    repos -- see the module docstring."""
     raw = json.dumps(manifest, separators=(",", ":"), ensure_ascii=False).encode()
     return _digest(raw)
 

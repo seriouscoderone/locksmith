@@ -1,0 +1,3 @@
+{"name": "Derived_Risk_Attribute_Mapping_Foo", "subject": "Foo", "inputs": ["Input Risk Attribute One", "Input Risk Attribute Two"], "outputs": ["Output Risk Attribute One", "Output Risk Attribute Two"], "record": "mapping"}
+{"inp": ["A", 1], "out": ["A11", "A12"], "record": "row"}
+{"inp": ["B", 2], "out": ["B21", "B22"], "record": "row"}

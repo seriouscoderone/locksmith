@@ -1,0 +1,88 @@
+{
+  "ExampleIssue": {
+    "action": "Sandbox",
+    "filing_date": "2027-03-15",
+    "manifest": {
+      "kind": "rate_program_manifest",
+      "shards": [
+        {
+          "digest": "EBdeZkyKUqLBQeE9qkl2hFDVQe1hy3Emz6HtMQobIbL_",
+          "name": "calculation-order.jsonl"
+        },
+        {
+          "digest": "EK8TSbn1-aGmoEBN6jbcyUmbyyXJrcESt8yak8rkHzJi",
+          "name": "coverages.jsonl"
+        },
+        {
+          "digest": "EMlzlHNoIC2pxmw-I6gIyGlrrFp-xkB2SH2pSEiitiEW",
+          "name": "defaults.jsonl"
+        },
+        {
+          "digest": "EJ2X58sfybMKGnKAUxzwbXWyfL2XZ3tffVpc3RdJzEg2",
+          "name": "index.json"
+        },
+        {
+          "digest": "EBvpGUIjZNhDoaPOUiRS22mMwaEQI91_hlrDNhLq1GXv",
+          "name": "mappings/Example_Mapping_RiskSubjA.jsonl"
+        },
+        {
+          "digest": "EH3NLVS-21Eml5R5A6ox1HfHOXV82eu9_M6LDpR3yQX2",
+          "name": "metadata.jsonl"
+        }
+      ],
+      "workbook_digest": "ENLINA3E7r7P6hv-6MqytgBwsp926FscXPoD30roTodr"
+    },
+    "product_mandate": "EGoGTCEKbaG42R_igvrt2O2YCtZOX8FT6pJTvGO5mr4X",
+    "said": "ECSH1CSh5vWLDIVH-tRKGrpIie4Dw6fnGVL2XPNe8plG",
+    "workbook": "ExampleIssue.xlsx"
+  },
+  "RiskProfileTest": {
+    "action": "Publish",
+    "filing_date": "2027-06-01",
+    "manifest": {
+      "kind": "rate_program_manifest",
+      "shards": [
+        {
+          "digest": "ED5RnTvHW6gw_tkdRqlE2rb3kmSigyo_W20wAscz9bMT",
+          "name": "calculation-order.jsonl"
+        },
+        {
+          "digest": "ECfavJlYKag_bWjUZ9FcnDgcrrVOy7WDDbxjH5fpZfAO",
+          "name": "coverages.jsonl"
+        },
+        {
+          "digest": "ELhpYPGkLzNHy4O6dR-5L1NpmnUi6w3ysNnPQry6uKo-",
+          "name": "defaults.jsonl"
+        },
+        {
+          "digest": "EKQp98W8ts6zHN91wCqd5nmGc3TNHU7xOjurkfAk-p1c",
+          "name": "index.json"
+        },
+        {
+          "digest": "EJoSkFjlGuxTcSjokqOKdsG7piYVgWJJ4xVfnOTHhPpl",
+          "name": "mappings/Derived_Risk_Attribute_Mapping_Foo.jsonl"
+        },
+        {
+          "digest": "ENK9bjj4zX76MPXzDdhfl7y9NKJFFOTmIHyO6irHVM2C",
+          "name": "mappings/Example_Mapping_Foo.jsonl"
+        },
+        {
+          "digest": "EBpo15ote2xLicQjAf2q6eUHZsuQO-GOD0-kubBunmiN",
+          "name": "matrices/Derived_Float_Matrix_Risk_Attribute_Map_Foo_Matrix_MatrixRiskAttributeFour.jsonl"
+        },
+        {
+          "digest": "EK_aqMo92L4PN1RTRBh9t7uz7oBXtHne96bbE4qLsTin",
+          "name": "matrices/Derived_Matrix_Risk_Attribute_Map_Foo_Matrix_MatrixRiskAttributeTwo.jsonl"
+        },
+        {
+          "digest": "EFIzoDMPRKd_XAO47ayr2E2QB1rWK-lCbu-mzUtriYw6",
+          "name": "risk-value-tables/Example_Risk_Factor.jsonl"
+        }
+      ],
+      "workbook_digest": "EK6bch-VaOyHnVXBeVN5_n31qe6LI6MVB4ehVq9rtt6-"
+    },
+    "product_mandate": "EGoGTCEKbaG42R_igvrt2O2YCtZOX8FT6pJTvGO5mr4X",
+    "said": "EFDBXXvX-eTg4n4WNt3mADaVjuOSI4V_A7etVAyQyGn3",
+    "workbook": "RiskProfileTest.xlsx"
+  }
+}

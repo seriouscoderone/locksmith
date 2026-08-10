@@ -1,0 +1,2 @@
+{"subject": null, "steps": ["Foo Calculator", "Example_Risk_Factor"], "scope": "global", "blocks": [{"sheet": "ROC", "col": 2, "row_start": 3, "row_end": 4, "steps": ["Foo Calculator", "Example_Risk_Factor"]}], "record": "calc_order"}
+{"subject": "Foo", "steps": ["Example_Risk_Factor"], "scope": "subject", "blocks": [{"sheet": "ROC", "col": 2, "row_start": 4, "row_end": 4, "steps": ["Example_Risk_Factor"]}], "record": "calc_order"}

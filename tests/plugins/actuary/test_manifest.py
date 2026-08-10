@@ -30,6 +30,7 @@ lays them out (`index.json`, top-level `.jsonl` shards, `mappings/`,
 """
 import json
 import os
+import shutil
 import unicodedata
 import zipfile
 from pathlib import Path
@@ -182,58 +183,129 @@ def _names(manifest: dict) -> list[str]:
     return _nfc([shard["name"] for shard in manifest["shards"]])
 
 
-def _ipd_manifest():
-    """The parser's own implementation, or a LOUD skip naming what is missing.
+#: Real `ipd-parse` output, vendored. See data/PROVENANCE.md for the source
+#: commit, what in there is ours rather than the parser's, and when to refresh.
+DATA = Path(__file__).parent / "data"
 
-    The claim under test is about a file in the sibling `ugard` repo. Nothing
-    here vendors it, so a checkout without `ugard` cannot run the differential —
-    but it must say so rather than pass. `test_the_manifest_said_is_what_the_
-    consumers_own_verifier_re_derives` is the backstop that never skips.
+
+def _golden() -> dict:
+    return json.loads((DATA / "parse-golden.json").read_text())
+
+
+def _vendored(tmp_path: Path, name: str) -> tuple[Path, Path, dict]:
+    """A writable copy of one vendored tree, its workbook, and its golden vector.
+
+    Copied to `tmp_path` because the page needs a `.workbook_source.json` sidecar
+    naming an ABSOLUTE path, which cannot be checked in. The sidecar is excluded
+    from the shard walk by name, so writing it does not move the SAID.
     """
-    import sys
+    entry = _golden()[name]
+    tree = tmp_path / name
+    shutil.copytree(DATA / name, tree)
+    workbook = DATA / entry["workbook"]
+    _write_sidecar(tree, workbook)
+    return tree, workbook, entry
 
+
+# --- the cross-repo claim, now pinned against a vendored snapshot -----------------
+
+
+@pytest.mark.parametrize("name", ["ExampleIssue", "RiskProfileTest"])
+def test_a_real_parse_tree_produces_the_manifest_and_said_recorded_for_it(
+        tmp_path, qtbot, name):
+    """Driven through the widget over REAL `ipd-parse` output, against a frozen
+    answer — not over the synthetic fixture the rest of this file uses.
+
+    This replaces a live differential that put the parser's `src` on `sys.path`
+    and imported `ipd.manifest`. `ipd` is under active development, so that test
+    coupled this page's suite to a moving package and skipped itself whenever the
+    sibling checkout was absent — a skip that reads as coverage. What is asserted
+    now is narrower and honest: the manifest this page computes over a real tree
+    is the one recorded, and the SAID is what the CONSUMER's own verifier
+    re-derives from it. Cross-repo byte-identity is no longer claimed as a tested
+    fact; see data/PROVENANCE.md, which also records the divergence already
+    measured.
+
+    `ExampleIssue` carries a genuinely 0-byte `coverages.jsonl` — the parser's
+    own, not one invented here — so the `Diger(ser=b"")` trap is exercised over
+    real output.
+
+    Regenerate the vectors with (from the repo root):
+
+        .venv/bin/python -c "
+        import json, sys; sys.path.insert(0, 'src')
+        from pathlib import Path
+        from locksmith.plugins.actuary.page import _build_manifest, _manifest_said
+        D = Path('tests/plugins/actuary/data')
+        g = json.loads((D / 'parse-golden.json').read_text())
+        for n, e in g.items():
+            m = _build_manifest(D / n, D / e['workbook'])
+            e['manifest'], e['said'] = m, _manifest_said(m)
+        (D / 'parse-golden.json').write_text(
+            json.dumps(g, indent=2, ensure_ascii=False, sort_keys=True) + chr(10))"
+    """
+    from keri.core.sealing import verifySealedBody
+
+    tree, _workbook, entry = _vendored(tmp_path, name)
+    shell, page = _page(qtbot)
+    page._selected_mandate_said = entry["product_mandate"]
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(tree))
+
+    page.load_parse()
+
+    assert page._error_banner.isVisible() is False, page._error_banner.text()
+    assert page._parse_manifest == entry["manifest"], (
+        "the manifest over real parse output moved")
+    assert page._parse_manifest_said == entry["said"]
+    assert verifySealedBody({"d": entry["said"]}, page._parse_manifest) is True, (
+        "the recorded SAID is not what the consumer re-derives")
+
+    # The two attributes read out of the tree's own index.json.
+    assert page._parse_filing_date == entry["filing_date"]
+    assert page._parse_action == entry["action"]
+    assert page._mandate_conflict() is False
+    assert page._attest.isEnabled() is True
+    shell.hide()
+
+
+def test_the_vendored_snapshot_still_matches_the_parsers_golden():
+    """The signal for when to come back to this, and the only remaining link to
+    `ugard` — a byte comparison, NOT an import, so the parser churning internally
+    cannot break it. Only its OUTPUT moving does, which is the thing worth hearing
+    about.
+
+    Skips loudly without the sibling checkout. `index.json` is excluded because it
+    is ours, not the parser's (PROVENANCE.md says why).
+    """
     root = Path(os.environ.get("UGARD_ROOT", Path.home() / "code" / "ugard"))
-    src = root / "insurance-product" / "parser" / "src"
-    if not (src / "ipd" / "manifest.py").is_file():
+    golden_root = root / "insurance-product" / "parser" / "tests" / "golden"
+    if not golden_root.is_dir():
         pytest.skip(
-            f"the parser's own manifest.py is not at {src / 'ipd' / 'manifest.py'} — "
-            "set UGARD_ROOT to the ugard checkout to run the differential")
-    if str(src) not in sys.path:
-        sys.path.insert(0, str(src))
-    import ipd.manifest as ipd_manifest
-    return ipd_manifest
+            f"the parser's golden output is not at {golden_root} — set UGARD_ROOT "
+            "to the ugard checkout to check the vendored snapshot for drift")
 
-
-# --- the cross-repo claim ----------------------------------------------------------
-
-
-def test_the_manifest_and_said_match_the_parsers_own_implementation(tmp_path):
-    """The docstring claim "byte-identical to `ipd.manifest.build_manifest` /
-    `manifest_said`" is a doctrine row about a file in ANOTHER repo, and rows
-    like it drift silently — nothing in either repo's tests compares them.
-
-    Made executable rather than trusted. Both implementations run over the same
-    real parse directory (sidecar-free, so the one deliberate divergence is not
-    in play — see `test_the_workbook_sidecar_is_never_hashed_into_the_shards`).
-    The two cross-serializations at the end isolate the SERIALIZER from the
-    BUILDER: if only `_manifest_said` drifted, `mine == theirs` would still hold
-    and only those two lines would fail.
-    """
-    ipd_manifest = _ipd_manifest()
-    parse_dir, workbook = _parse_fixture(tmp_path, sidecar=False)
-
-    mine = actuary_page._build_manifest(parse_dir, workbook)
-    theirs = ipd_manifest.build_manifest(parse_dir, workbook)
-
-    assert mine == theirs
-    assert list(mine) == list(theirs), (
-        "same content, different key order — the SAID is over the serialization, "
-        "so this alone changes what a consumer re-derives")
-    assert [list(s) for s in mine["shards"]] == [list(s) for s in theirs["shards"]]
-    assert actuary_page._manifest_said(mine) == ipd_manifest.manifest_said(theirs)
-    # Serializer isolated: same input dict through each side's json.dumps.
-    assert actuary_page._manifest_said(theirs) == ipd_manifest.manifest_said(mine)
-    assert actuary_page._digest(b"a shard") == ipd_manifest._digest(b"a shard")
+    drifted = []
+    for name in _golden():
+        theirs = golden_root / _golden()[name]["workbook"].replace(".xlsx", ".xlsx")
+        for mine in sorted((DATA / name).rglob("*")):
+            if not mine.is_file() or mine.name == "index.json":
+                continue
+            rel = mine.relative_to(DATA / name)
+            other = theirs / rel
+            if not other.is_file():
+                drifted.append(f"{name}/{rel}: gone from the parser's golden")
+            elif other.read_bytes() != mine.read_bytes():
+                drifted.append(f"{name}/{rel}: bytes differ")
+        for other in sorted(theirs.rglob("*")):
+            if other.is_file() and not (DATA / name / other.relative_to(theirs)).exists():
+                drifted.append(
+                    f"{name}/{other.relative_to(theirs)}: new in the parser's golden")
+    assert drifted == [], (
+        "the vendored snapshot is stale — ipd's output moved:\n  "
+        + "\n  ".join(drifted)
+        + "\n\nRefresh it and re-instate the live differential; see "
+          "tests/plugins/actuary/data/PROVENANCE.md")
 
 
 def test_the_manifest_said_is_what_the_consumers_own_verifier_re_derives(tmp_path):

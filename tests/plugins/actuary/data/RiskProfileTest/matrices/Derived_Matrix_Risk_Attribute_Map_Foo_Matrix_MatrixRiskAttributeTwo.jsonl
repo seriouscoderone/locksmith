@@ -1,0 +1,3 @@
+{"name": "Derived_Matrix_Risk_Attribute_Map\\Foo\\Matrix_MatrixRiskAttributeTwo", "subject": "Foo", "output_attribute": "Derived_Matrix_Risk_Attribute", "row_axis_attribute": "Matrix Risk Attribute One", "col_axis_attribute": "MatrixRiskAttributeTwo", "col_values": ["U", "V"], "record": "matrix"}
+{"row_value": "X", "cells": ["XU", "XV"], "record": "row"}
+{"row_value": "Y", "cells": ["YU", "YV"], "record": "row"}
