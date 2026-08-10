@@ -68,6 +68,23 @@ full_logo_black   = "FullLogoBlack.svg"
 [icon]
 plate = "#FFFFFF"
 
+# Windows installer chrome (packaging/wix/gen_ui_images.py renders banner.png +
+# dialog.png per brand into its release dir). Locksmith's cream is wrong here:
+# white surfaces + Teal 600 are the Usurance design-system pair, so the welcome
+# dialog gets a teal art panel carrying the REVERSED (white) eye+globe, and the
+# text areas WixUI draws over — the dialog's right ~329 px and the banner — stay
+# white. Colors are NOT under [assets] (check-brand-complete treats every
+# [assets] value as a filename).
+# Both marks are the WORDLESS, tightly-cropped eye+globe: the color lockup
+# (symbol_logo) carries the "USURANCE" wordmark, which is illegible mush at the
+# banner's 44 px.
+[wix]
+dialog_bg     = "#FFFFFF"
+panel_bg      = "#2AABB3"
+banner_bg     = "#FFFFFF"
+panel_symbol  = "symbol_logo_white"
+banner_symbol = "symbol_logo_black"
+
 # Same publisher as Locksmith: Usurance reuses the shared keri.host publisher
 # trust anchor + deploy config, build-injected exactly like Locksmith (not
 # shipped in this brand dir). No separate Usurance publisher AID.

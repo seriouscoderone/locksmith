@@ -9,6 +9,12 @@ tracked paths like assets/custom/ or packaging/:
     canonical :/assets/custom/* paths the UI expects (see generate_qrc.py);
   - brand.json: the runtime subset consumed by locksmith.core.branding;
   - Locksmith.wxs / dmg-layout.json: brand-parameterized packaging config;
+  - banner.png / dialog.png: the brand's WiX installer chrome, rendered from
+    its own symbol + [wix] palette (packaging/wix/gen_ui_images.py). These are
+    brand art, NOT neutral chrome: a shared committed pair is how the v0.3.6
+    Usurance MSI shipped Locksmith's triquetra on its welcome dialog;
+  - license.rtf: only if the brand ships its own; otherwise the MSI falls back
+    to the shared packaging/wix/license.rtf via wix's second -bindpath;
   - AppIcon.icns/.ico: staged as files (not compiled into the rcc);
   - publisher_anchor.json / deploy_config.json: the brand's trust material,
     if present;
@@ -29,10 +35,29 @@ import generate_qrc      # noqa: E402
 
 _ASSET_FILE_KEYS = ("app_icon_icns", "app_icon_ico")   # staged as files, not compiled
 
+# WiX installer chrome rendered per-brand by packaging/wix/gen_ui_images.py.
+_WIX_IMAGES = ("dialog.png", "banner.png")
+_GEN_UI_IMAGES = _THIS.parent.parent / "packaging" / "wix" / "gen_ui_images.py"
+
 
 def _find_rcc() -> str | None:
     cand = Path(sys.executable).parent / "pyside6-rcc"
     return str(cand) if cand.exists() else shutil.which("pyside6-rcc")
+
+
+def _render_wix_images(brand_dir: Path, out: Path) -> None:
+    """Render the brand's banner/dialog PNGs into <out>.
+
+    Runs gen_ui_images.py in a SUBPROCESS on purpose: it initialises Qt, and
+    Qt's application object is a process-wide singleton whose *type* is
+    order-dependent (see tests/unit/branding/conftest.py). brand_apply is
+    imported by non-Qt tests, so it must never create one itself.
+    """
+    subprocess.run([sys.executable, str(_GEN_UI_IMAGES),
+                    "--brand-dir", str(brand_dir), "--out", str(out)], check=True)
+    missing = [n for n in _WIX_IMAGES if not (out / n).is_file()]
+    if missing:
+        raise SystemExit(f"brand_apply: gen_ui_images produced no {missing} in {out}")
 
 
 def _compile_rcc(repo_root: Path, brand_dir: Path, manifest: dict, out_rcc: Path) -> None:
@@ -74,9 +99,12 @@ def apply(brand_id: str, repo_root: Path, *, out: Path | None = None, check: boo
     egf_src = brand_dir / "egf"
     egf_staged = sorted(p.name for p in egf_src.glob("*.json")) if egf_src.is_dir() else []
 
+    brand_license = brand_dir / "license.rtf"
+
     report = {"brand": manifest["brand"]["id"], "out": str(out), "rcc": str(out / "assets.rcc"),
               "staged_icons": staged_icons, "injected": injected,
-              "egf_staged": egf_staged, "check": check}
+              "egf_staged": egf_staged, "wix_images": list(_WIX_IMAGES),
+              "brand_license": brand_license.is_file(), "check": check}
     if check:
         return report
 
@@ -88,6 +116,9 @@ def apply(brand_id: str, repo_root: Path, *, out: Path | None = None, check: boo
         brandlib.render_wxs(manifest, wxs_tmpl.read_text(encoding="utf-8")), encoding="utf-8")
     (out / "dmg-layout.json").write_text(
         json.dumps(brandlib.render_dmg_layout(manifest), indent=2) + "\n", encoding="utf-8")
+    _render_wix_images(brand_dir, out)
+    if brand_license.is_file():
+        shutil.copyfile(brand_license, out / "license.rtf")
     for k in _ASSET_FILE_KEYS:
         fn = assets.get(k)
         if fn and (brand_dir / fn).is_file():

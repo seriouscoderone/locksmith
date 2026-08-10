@@ -64,9 +64,11 @@ existing per-platform packaging pipeline (which reads that bundle).
    `<x>/` subdir): `assets.rcc` (compiled Qt resources — neutral assets +
    that brand's logos/splash), `brand.json` (runtime config, including the
    `[bootstrap]` table), `Locksmith.wxs` + `dmg-layout.json` (rendered from
-   `brands/usurance/brand.toml`'s `[identity]`), staged `AppIcon.icns`/`.ico`,
-   and `egf/` if the brand has one. Nothing tracked is touched — the working
-   tree stays clean:
+   `brands/usurance/brand.toml`'s `[identity]`), `banner.png` + `dialog.png`
+   (the Windows installer's WiX chrome, rendered from the brand's symbol and
+   its optional `[wix]` palette), staged `AppIcon.icns`/`.ico`, the brand's own
+   `license.rtf` if it ships one, and `egf/` if the brand has one. Nothing
+   tracked is touched — the working tree stays clean:
 
    ```bash
    python scripts/brand_apply.py --brand usurance

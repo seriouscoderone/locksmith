@@ -93,6 +93,27 @@ def test_brand_apply_usurance_renders_wix_and_dmg_identity(tmp_path):
     assert layout["volume_name"] == "Usurance"
 
 
+def test_brand_apply_usurance_renders_its_own_wix_chrome(tmp_path):
+    """The MSI's welcome dialog + banner must come out of THIS brand's bundle.
+
+    v0.3.6 shipped a Usurance MSI wearing Locksmith's triquetra because the
+    chrome was a single committed pair under packaging/wix/. brand_apply now
+    renders it per brand, so the bytes must differ from locksmith's.
+    """
+    repo = _fake_repo(tmp_path)
+    out = _out(repo)
+
+    report = brand_apply.apply("usurance", repo, out=out, check=False)
+    assert set(report["wix_images"]) == {"dialog.png", "banner.png"}
+
+    lock_out = repo / "src" / "locksmith" / "release"
+    brand_apply.apply("locksmith", repo, out=lock_out, check=False)
+    for name in ("dialog.png", "banner.png"):
+        assert (out / name).is_file(), f"usurance bundle missing {name}"
+        assert (out / name).read_bytes() != (lock_out / name).read_bytes(), (
+            f"usurance {name} is byte-identical to locksmith's")
+
+
 def test_brand_apply_usurance_stages_egf_bundle(tmp_path):
     repo = _fake_repo(tmp_path)
     out = _out(repo)
