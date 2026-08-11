@@ -11,13 +11,17 @@ sidecar. Each one still yields a plausible 44-character `E...`, still renders,
 still mints. The credential is simply about a different set of bytes than the
 one the actuary looked at.
 
-Two claims in `page.py` are load-bearing doctrine and are checked here rather
-than trusted:
+How the cross-repo claim is handled — it CHANGED on 2026-08-10:
 
 * `_build_manifest`/`_manifest_said` say "byte-identical to
   `ipd.manifest.build_manifest`/`manifest_said`" — a row about a file in a
-  DIFFERENT repo. Made executable: the parser's `src` goes on `sys.path` and
-  both implementations run over the same real directory.
+  DIFFERENT repo. That used to be executable here: the parser's `src` went on
+  `sys.path` and both implementations ran over the same directory. `ipd` is under
+  active development and out of scope for this page, so the import is GONE. What
+  replaces it: a vendored snapshot of the parser's own golden output with a
+  frozen manifest and SAID, plus a byte-level drift check against the parser's
+  golden when `UGARD_ROOT` is present. See `data/PROVENANCE.md` — including the
+  divergence already measured, which is an owner decision, not a defect here.
 * The module docstring says the serialization matches
   `keri.core.sealing.verifySealedBody`'s opaque-blob path — that is the actual
   consumer, so it is called, not paraphrased.
@@ -36,6 +40,7 @@ import zipfile
 from pathlib import Path
 
 import pytest
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from locksmith.plugins.actuary import page as actuary_page
@@ -916,4 +921,127 @@ def test_an_empty_parse_directory_field_is_refused_not_read_as_the_cwd(
     assert page._parse_manifest_said is None
     assert actuary_page._WORKBOOK_SIDECAR_NAME not in page._error_banner.text(), (
         "the empty field was read as the current working directory")
+    shell.hide()
+
+
+# --- choosing the directory rather than typing it ---------------------------------
+
+
+def test_the_parse_directory_can_be_chosen_with_the_folder_button(tmp_path, qtbot):
+    """The owner asked for this and the UX panel had it as row 25; I filed it low.
+
+    Wrong call: this field is the ONLY source of three of the four attested
+    attributes — the digests, the filing date and the retention contract all come
+    out of the directory it names — so it is the worst field on the page to
+    require a hand-typed absolute path in front of an irreversible public mint.
+
+    The dialog itself is native and blocks the event loop until a human clicks it,
+    so `_choose_directory` is the seam; what is under test is everything that
+    happens to the field around it.
+    """
+    tree, _workbook, _entry = _vendored(tmp_path, "RiskProfileTest")
+    shell, page = _page(qtbot)
+    page._choose_directory = lambda start: str(tree)
+
+    page.browse_for_parse_dir()
+
+    assert page._parse_dir.text() == str(tree)
+    # Focus lands on the next step rather than nowhere: choosing names the
+    # directory, Load Parse reads it, and it is not auto-loaded because
+    # `_build_manifest` hashes the whole tree synchronously on the GUI thread.
+    # NOT `hasFocus()`: that is False whenever the window is inactive, which it
+    # always is offscreen, so it would fail against correct code.
+    assert page.focusWidget() is page._load_parse
+    assert page._parse_manifest_said is None, "choosing a directory hashed it"
+    shell.hide()
+
+
+def test_cancelling_the_folder_dialog_does_not_discard_a_loaded_parse(tmp_path, qtbot):
+    """The trap in the obvious implementation. `setText("")` on cancel would run
+    `textChanged` -> `_invalidate_parse` and throw away a loaded parse because the
+    actuary opened a dialog and changed their mind."""
+    tree, _workbook, entry = _vendored(tmp_path, "RiskProfileTest")
+    shell, page = _page(qtbot)
+    page._selected_mandate_said = entry["product_mandate"]
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(tree))
+    page.load_parse()
+    assert page._parse_manifest_said == entry["said"]
+
+    page._choose_directory = lambda start: ""        # the user pressed Cancel
+    page.browse_for_parse_dir()
+
+    assert page._parse_dir.text() == str(tree), "cancel cleared the path"
+    assert page._parse_manifest_said == entry["said"], (
+        "cancel discarded the loaded parse")
+    assert page._attest.isEnabled() is True
+    shell.hide()
+
+
+def test_the_folder_dialog_opens_where_the_actuary_already_is(tmp_path, qtbot):
+    """Starting at `$HOME` every time makes the button useless on the second use.
+    An existing valid path is the start directory; anything else falls back."""
+    tree, _workbook, _entry = _vendored(tmp_path, "RiskProfileTest")
+    shell, page = _page(qtbot)
+    seen = []
+    page._choose_directory = lambda start: (seen.append(start), "")[1]
+
+    page.browse_for_parse_dir()
+    assert seen[-1] == str(Path.home()), "an empty field should start at home"
+
+    page._parse_dir.setText(str(tree))
+    page.browse_for_parse_dir()
+    assert seen[-1] == str(tree)
+
+    page._parse_dir.setText("/no/such/directory/anywhere")
+    page.browse_for_parse_dir()
+    assert seen[-1] == str(Path.home()), "a bogus path should not be the start dir"
+    shell.hide()
+
+
+def test_the_folder_button_is_reachable_and_named(tmp_path, qtbot):
+    """Icon-only, so a tooltip is not enough: Qt tooltips are unreachable by
+    keyboard, and devctl selects by accessible name.
+
+    The page is ARMED first, and that is not incidental: Qt skips disabled
+    widgets in the tab chain, so on a fresh page the sequence wraps from the
+    version field straight back to the parse path and the mint is simply not
+    reachable by keyboard at all -- which is correct, and means a tab-order
+    assertion made against the default state would be measuring the wrong page.
+    """
+    tree, _workbook, entry = _vendored(tmp_path, "RiskProfileTest")
+    shell, page = _page(qtbot)
+    page._selected_mandate_said = entry["product_mandate"]
+    page._version.setText("2027.1")
+    page._parse_dir.setText(str(tree))
+    page.load_parse()
+    assert page._attest.isEnabled() is True, "the fixture did not arm the mint"
+    assert page._browse.accessibleName() != ""
+    assert "director" in page._browse.toolTip().lower()
+    assert page._browse.icon().isNull() is False, (
+        "browse.svg did not resolve — a missing Qt resource yields a NULL QIcon "
+        "silently, so the button renders blank")
+    # Tab order: the path, then the button that fills it, then the read, then the
+    # mint. The keyboard must not reach the irreversible step early.
+    # RELATIVE order, not an exact sequence. The QScrollArea takes a tab stop of
+    # its own -- deliberately kept, so a keyboard user can scroll the evidence
+    # into view before the irreversible step -- and asserting an exact chain would
+    # break on any such intermediate without saying anything about the
+    # requirement. What matters (design-system.md:311, tab order follows visual
+    # order) is that the controls come in screen order and the MINT comes last.
+    wanted = [page._parse_dir, page._browse, page._load_parse, page._version,
+              page._attest]
+    page._parse_dir.setFocus()
+    seen, guard = [], 0
+    while len(seen) < len(wanted) and guard < 40:
+        current = page.focusWidget()
+        if current in wanted and (not seen or seen[-1] is not current):
+            seen.append(current)
+        qtbot.keyClick(page, Qt.Key.Key_Tab)
+        guard += 1
+
+    assert seen == wanted, (
+        "tab order is "
+        + " -> ".join(w.objectName() for w in seen)
+        + "; expected " + " -> ".join(w.objectName() for w in wanted))
     shell.hide()

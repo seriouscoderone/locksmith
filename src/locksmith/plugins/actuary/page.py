@@ -60,8 +60,8 @@ from typing import Any
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem, QScrollArea,
-    QSizePolicy, QVBoxLayout, QWidget,
+    QFileDialog, QFrame, QHBoxLayout, QLabel, QListWidget, QListWidgetItem,
+    QScrollArea, QSizePolicy, QVBoxLayout, QWidget,
 )
 
 from keri import help
@@ -74,7 +74,8 @@ from locksmith.plugins.actuary.attest_drawer import AttestReviewDrawer
 from locksmith.ui import colors
 from locksmith.ui.styles import get_monospace_font_family
 from locksmith.ui.toolkit.widgets import LocksmithButton
-from locksmith.ui.toolkit.widgets.buttons import LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets.buttons import (
+    LocksmithIconButton, LocksmithInvertedButton)
 from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 
 logger = help.ogler.getLogger(__name__)
@@ -460,8 +461,40 @@ class ActuaryPage(QWidget):
         # wrong. The one defect on this page where the credential itself is
         # incorrect rather than merely hard to read.
         self._parse_dir.textChanged.connect(self._invalidate_parse)
-        fields.addWidget(self._field_block("Parse directory", self._parse_dir,
-                                          required=True))
+
+        # BROWSE. This field is the only source of three of the four attributes
+        # this page attests -- the manifest digests, the filing date and the
+        # retention contract all come out of the directory it names -- and it was
+        # a bare text input. A hand-typed absolute path in front of an
+        # irreversible public mint is the single worst place on this page to
+        # require typing, and a mistyped one reports "not a directory" rather
+        # than anything the actuary can act on.
+        #
+        # `LocksmithIconButton` with `browse.svg` is the app's OWN idiom for this
+        # -- remotes/add.py:89, credentials/received/accept.py:90,
+        # credentials/issued/grant.py:163 and credentials/schema/add.py:89 all do
+        # exactly this. Nothing here is invented; this page simply had not used it.
+        self._browse = LocksmithIconButton(
+            ":/assets/material-icons/browse.svg",
+            tooltip="Choose an ipd-parse output directory", icon_size=24)
+        self._browse.setObjectName("actuaryPage.browse")
+        # 48 to match the field's own height, and the size the four sibling call
+        # sites use. At 44 it sat 4px short of the input it belongs to.
+        self._browse.setFixedSize(48, 48)
+        # Icon-only, so it needs a name for the screen reader and for devctl --
+        # the tooltip alone is unreachable by keyboard.
+        self._browse.setAccessibleName("Choose an ipd-parse output directory")
+        self._browse.clicked.connect(self.browse_for_parse_dir)
+
+        parse_row = QWidget()
+        parse_row_box = QHBoxLayout(parse_row)
+        parse_row_box.setContentsMargins(0, 0, 0, 0)
+        parse_row_box.setSpacing(8)
+        parse_row_box.addWidget(self._parse_dir, 1)
+        parse_row_box.addWidget(self._browse, 0)
+        fields.addWidget(self._field_block(
+            "Parse directory", parse_row, required=True,
+            buddy=self._parse_dir))
 
         # SECONDARY. Loading a parse is a local, re-runnable directory read; it
         # carried the exact same filled-teal authority as a permanent public mint
@@ -636,8 +669,15 @@ class ActuaryPage(QWidget):
         # before: parseDir -> loadParse -> attest -> list, so the keyboard reached
         # step ONE last, after the irreversible step.
         self.setTabOrder(self._observed_list, self._parse_dir)
-        self.setTabOrder(self._parse_dir, self._load_parse)
-        self.setTabOrder(self._load_parse, self._attest)
+        self.setTabOrder(self._parse_dir, self._browse)
+        self.setTabOrder(self._browse, self._load_parse)
+        # ...through the version field, which sits between them on screen.
+        # Chaining loadParse -> attest directly did NOT skip it (Qt falls back
+        # to tree order for widgets left out of the chain) but it did assert an
+        # order the page does not have, and the next widget added between them
+        # would have inherited that lie.
+        self.setTabOrder(self._load_parse, self._version)
+        self.setTabOrder(self._version, self._attest)
 
         self._watch_timer = QTimer(self)
         self._watch_timer.setInterval(_WATCH_POLL_MS)
@@ -1036,6 +1076,37 @@ class ActuaryPage(QWidget):
 
     # -- parse loading --------------------------------------------------------------
 
+    def _choose_directory(self, start: str) -> str:
+        """The native modal, isolated on its own seam.
+
+        A test cannot dismiss a native directory dialog -- it blocks the event
+        loop until a human clicks it -- so `browse_for_parse_dir` is driven in
+        tests by patching THIS, which keeps the interesting half (what happens to
+        the field, and what happens on cancel) under test.
+        """
+        return QFileDialog.getExistingDirectory(
+            self, "Choose an ipd-parse output directory", start,
+            QFileDialog.Option.ShowDirsOnly)
+
+    def browse_for_parse_dir(self, *_qt_args) -> None:
+        """Pick the parse directory instead of typing an absolute path."""
+        current = self._parse_dir.text().strip()
+        start = current if current and Path(current).is_dir() else str(Path.home())
+        chosen = self._choose_directory(start)
+        if not chosen:
+            # Cancelled. Must NOT clear what was already there: `textChanged`
+            # runs `_invalidate_parse`, so blanking the field on cancel would
+            # throw away a loaded parse because the actuary opened a dialog and
+            # changed their mind.
+            return
+        self._parse_dir.setText(chosen)
+        # NOT auto-loaded. `_build_manifest` rglobs the directory and Blake3s
+        # every shard plus the whole workbook, synchronously on the GUI thread --
+        # so a directory click would freeze the window with no warning at all.
+        # Choosing names the directory; Load Parse reads it. Focus moves there so
+        # the next step is one keystroke away rather than a hunt.
+        self._load_parse.setFocus()
+
     def _resolve_workbook(self, parse_dir: Path) -> Path | None:
         sidecar = parse_dir / _WORKBOOK_SIDECAR_NAME
         if not sidecar.is_file():
@@ -1209,7 +1280,7 @@ class ActuaryPage(QWidget):
         self._update_attest_enabled()
 
     def _field_block(self, label_text: str, widget, *, required: bool = False,
-                     help_text: str = "") -> QWidget:
+                     help_text: str = "", buddy=None) -> QWidget:
         """One label-above-field unit: 4px inside, 16px between (the caller's
         spacing). Replaces `QFormLayout`, whose single vertical spacing could not
         be both -- see the construction comment.
@@ -1229,9 +1300,12 @@ class ActuaryPage(QWidget):
             label.setToolTip("This field is required.")
         # So a screen reader reaches the field by its label, and so the label
         # click focuses the field (ux-patterns has no rule for this; Qt gives it
-        # away for free once the relationship is declared).
-        label.setBuddy(widget)
-        widget.setAccessibleName(label_text)
+        # away for free once the relationship is declared). `buddy` is for the
+        # rows whose `widget` is a CONTAINER -- buddying the container would
+        # focus the row rather than the input inside it.
+        target = buddy if buddy is not None else widget
+        label.setBuddy(target)
+        target.setAccessibleName(label_text)
         box.addWidget(label)
         box.addWidget(widget)
 
