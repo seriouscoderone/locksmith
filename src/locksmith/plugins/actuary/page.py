@@ -80,6 +80,23 @@ from locksmith.ui.toolkit.widgets.fields import LocksmithLineEdit
 
 logger = help.ogler.getLogger(__name__)
 
+
+def _stamp(now: _dt.datetime) -> str:
+    """``MM/DD/YYYY h:mm A`` (ux-patterns.md:390) on every platform.
+
+    The hour is built by hand rather than with ``%-I`` because that
+    no-zero-padding modifier is a glibc/BSD extension: Windows' CRT rejects it
+    outright with ``ValueError: Invalid format string``. This ran on every tick
+    of ``_scan_for_mandates``, which runs from ``__init__``, so the exception
+    escaped through ``get_pages`` and the whole actuary page failed to
+    construct -- ``plugin.role_gate.activate_failed``. The role still read
+    ACTIVE (that comes from the credential) but registered no page, so its
+    workspace had no Open button and never appeared in the sidebar. macOS and
+    Linux accept ``%-I``, so this was invisible outside Windows.
+    """
+    return f"{now:%m/%d/%Y} {now.hour % 12 or 12}:{now:%M %p}"
+
+
 # Registry-name convention: registry_name == schema_said (Amendment C §14.1),
 # mirroring cuo/page.py. Pins verified against the bundled schemas by
 # tests/plugins/roles/test_pin_regression.py.
@@ -791,7 +808,7 @@ class ActuaryPage(QWidget):
         # because there is no vault is still a scan that happened, and an actuary
         # watching a frozen timestamp learns something true. Format per
         # ux-patterns.md:390 "Date + time | MM/DD/YYYY h:mm A".
-        self._last_checked = _dt.datetime.now().strftime("%m/%d/%Y %-I:%M %p")
+        self._last_checked = _stamp(_dt.datetime.now())
         if not self._observed:
             self._render_empty_state()
         if self._app is None or getattr(self._app, "vault", None) is None:

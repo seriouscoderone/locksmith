@@ -33,6 +33,7 @@ used:
   pass is itself a claim worth pinning.
 """
 import dataclasses
+import datetime as _dt
 import importlib
 import json
 import logging
@@ -939,21 +940,48 @@ def test_one_unreadable_anchor_does_not_kill_the_rest_of_the_scan(
 # --- _scan_for_mandates ------------------------------------------------------
 
 
+@pytest.mark.parametrize("when,expected", [
+    (_dt.datetime(2026, 11, 4, 9, 15), "11/04/2026 9:15 AM"),
+    (_dt.datetime(2026, 11, 4, 13, 5), "11/04/2026 1:05 PM"),
+    (_dt.datetime(2026, 11, 4, 0, 30), "11/04/2026 12:30 AM"),   # midnight -> 12
+    (_dt.datetime(2026, 11, 4, 12, 0), "11/04/2026 12:00 PM"),   # noon -> 12
+    (_dt.datetime(2026, 1, 4, 23, 59), "01/04/2026 11:59 PM"),
+])
+def test_the_heartbeat_stamp_is_platform_independent(when, expected):
+    """`MM/DD/YYYY h:mm A` with an unpadded hour, built without `%-I`.
+
+    `%-I` is a glibc/BSD extension. Windows' CRT rejects it with `ValueError:
+    Invalid format string`, and because this stamp runs from `_scan_for_mandates`
+    -- which `__init__` calls -- the exception propagated out of `get_pages` and
+    the actuary page never constructed on Windows (`plugin.role_gate.
+    activate_failed`). The role still showed ACTIVE, since that is derived from
+    the credential, but had no page to open. Shipped in 0.4.0.
+
+    The zero-padded date and the unpadded hour are asserted together on purpose:
+    the obvious "fix" of stripping leading zeros from the whole string turns
+    01/04 into 1/4.
+    """
+    assert page_mod._stamp(when) == expected
+
+
 def test_a_scan_with_no_vault_still_stamps_the_clock(qtbot, monkeypatch):
     """The heartbeat is the only evidence this page can honestly give that the
     poll is alive, and a scan that cannot run because there is no vault is still
     a scan that happened. Stamping after the early return would freeze the
     timestamp at "Waiting for the first check…" on exactly the page that most
     needs to say something."""
-    ticks = iter(["11/04/2026 9:15 AM", "11/04/2026 9:16 AM"])
-
-    class _Now:
-        def strftime(self, _fmt):
-            return next(ticks)
-
+    # Real datetimes, deliberately. This mock used to be a stub whose
+    # `strftime(self, _fmt)` threw the format string away and returned a canned
+    # tick, so the actual format was never executed by any test on any platform
+    # -- which is how `%-I` (a glibc/BSD extension Windows' CRT rejects) shipped
+    # in 0.4.0 and took the whole actuary page down with `ValueError: Invalid
+    # format string`. A fake that skips the code under test cannot fail.
+    ticks = iter([_dt.datetime(2026, 11, 4, 9, 15),
+                  _dt.datetime(2026, 11, 4, 9, 16)])
     monkeypatch.setattr(page_mod, "_dt",
                         types.SimpleNamespace(
-                            datetime=types.SimpleNamespace(now=lambda: _Now())))
+                            datetime=types.SimpleNamespace(
+                                now=lambda: next(ticks))))
     _shell, page = _page(qtbot)
     assert page._app is None
     assert page._last_checked == ""
