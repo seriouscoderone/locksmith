@@ -942,7 +942,26 @@ def submit_mandate_form_via_ui(devctl, sock) -> None:
     assert r.get("ok"), f"the mandate never finished issuing after confirm: {r}"
 
 
-def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
+def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:   # noqa: C901
+    """`parse_dir` may be a PATH or a callable `(mandate_said) -> path`.
+
+    The callable form exists because `ActuaryPage` now refuses a parse whose own
+    `index.json` names a DIFFERENT mandate than the one selected -- the parse
+    directory records `productMandate` (`ipd/emit.py::write_index`), and binding a
+    rate program to a mandate its own parse says it does not answer produces a
+    permanently wrong public credential.
+
+    The session `parse_dir` fixture is built BEFORE any wallet starts, so it
+    cannot know the SAID the CUO is about to declare and passes
+    `_PLACEHOLDER_MANDATE_SAID`. That was invisible until the page started
+    checking. `test_admin_grants_to_hoas_via_ui.py:242` already had it right --
+    `_run_ipd_parse(..., product_mandate=mandate_said)` -- and passes a plain path
+    for that reason; the two fixture-based callers pass the factory instead.
+
+    NOTE the comment on `_PLACEHOLDER_MANDATE_SAID` claiming "the four-window arc
+    passes the SAID the CUO actually declared" was STALE: both it and the
+    standalone test took the placeholder fixture.
+    """
     """The actuary loads a REAL `ipd-parse` output tree against the mandate it is
     ALREADY watching, and attests. Extracted from Task 5's own test body
     (`test_actuary_observes_and_attests_via_ui.py`) so Task 8's four-app arc can
@@ -995,6 +1014,24 @@ def attest_rate_program_via_ui(devctl, sock, parse_dir) -> None:
     r = devctl(sock, "click_list_item", target="actuaryPage.observedMandates",
                text=items[0]["text"])
     assert r.get("ok"), r
+
+    # The page stores the mandate SAID as the item's UserRole data
+    # (`ActuaryPage._refresh_observed_list`), and devctl hands it back as "data".
+    # A parse that names a different mandate is refused, so resolve the tree
+    # against the SAID that was just selected rather than one chosen before the
+    # mandate existed.
+    mandate_said = items[0].get("data") or ""
+    assert mandate_said, f"the observed item carries no mandate SAID: {items[0]}"
+    if callable(parse_dir):
+        parse_dir = parse_dir(mandate_said)
+
+    # Fail HERE rather than at a mysteriously-disabled Attest button 20 lines
+    # down: the guard's whole point is that these two agree.
+    recorded = json.loads(
+        (pathlib.Path(parse_dir) / "index.json").read_text())["product"]
+    assert recorded["productMandate"] in ("", mandate_said), (
+        f"the parse at {parse_dir} records mandate {recorded['productMandate']!r} "
+        f"but the actuary selected {mandate_said!r}; ActuaryPage will refuse it")
 
     # a real ipd-parse output directory, not a synthetic stand-in
     r = devctl(sock, "type", target="actuaryPage.parseDir", text=str(parse_dir))
@@ -1396,8 +1433,12 @@ _PARSE_ARGS = ["--line-of-business", "L", "--jurisdiction", "WI",
 #: still passed `--version 1.0`, so both tests that use `parse_dir` errored
 #: before spawning a single wallet:
 #:     ipd-parse: error: the following arguments are required: --product-mandate
-#: Standalone callers pass this placeholder; the four-window arc passes the SAID
-#: the CUO actually declared, which is the point of the CLI change.
+#: STALE until 2026-08-10 -- this claimed the four-window arc passed the SAID
+#: the CUO actually declared, and it did not: both it and the standalone test
+#: took the placeholder session fixture. Invisible until ActuaryPage began
+#: refusing a parse that names a different mandate. Callers that watch a real
+#: declaration now use the `parse_dir_for` factory; this placeholder is only
+#: for the session fixture, which exists before any mandate does.
 _PLACEHOLDER_MANDATE_SAID = "EAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
 _WORKBOOK_SIDECAR_NAME = ".workbook_source.json"  # must match actuary/page.py's own
 
@@ -1470,6 +1511,27 @@ def parse_dir(tmp_path_factory):
     what a top-level-only directory scan would silently miss.
     """
     return _run_ipd_parse(tmp_path_factory.mktemp("parse"))
+
+
+@pytest.fixture(scope="session")
+def parse_dir_for(tmp_path_factory):
+    """`(mandate_said) -> parse directory`, one real `ipd-parse` run per SAID.
+
+    The session `parse_dir` fixture cannot know the mandate SAID: it is built
+    before any wallet starts, and the CUO declares the mandate at runtime. Since
+    `ActuaryPage` refuses a parse whose `index.json` names a different mandate,
+    the tests that watch a real declaration have to parse against THAT SAID.
+    Cached, so the four-app arc and the two-wallet test each pay one subprocess.
+    """
+    cache: dict[str, pathlib.Path] = {}
+
+    def _for(mandate_said: str) -> pathlib.Path:
+        if mandate_said not in cache:
+            cache[mandate_said] = _run_ipd_parse(
+                tmp_path_factory.mktemp("parse"), product_mandate=mandate_said)
+        return cache[mandate_said]
+
+    return _for
 
 
 # ---------------------------------------------------------------------------
