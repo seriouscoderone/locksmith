@@ -49,7 +49,7 @@ die() { printf '\nERROR: %s\n' "$*" >&2; exit 1; }
 # than hardcoded, so no distribution id is committed and a config change cannot
 # silently invalidate the wrong distribution.
 invalidate_cdn() {
-    "$PY" - "$CDN" <<'PY'
+    "$PY" - "$CDN" "$1" <<'PY'
 import sys, time
 from urllib.parse import urlparse
 try:
@@ -70,7 +70,13 @@ for page in cf.get_paginator("list_distributions").paginate():
 if not dist:
     sys.exit(f"no CloudFront distribution aliases {host}")
 
-paths = ["/appcast/v1/*", "/*/appcast/v1/*", "/publisher/v1/*"]
+# The brand's OWN appcast prefix, passed in and derived from brandlib
+# (`appcast_prefix`), plus the shared publisher KEL. Explicit beats a mid-path
+# wildcard like "/*/appcast/v1/*": CloudFront's matching rules for a `*` that is
+# not the trailing character are easy to get wrong, and a silently non-matching
+# invalidation looks exactly like a slow one.
+appcast_prefix = sys.argv[2].strip("/")
+paths = [f"/{appcast_prefix}/v1/*", "/publisher/v1/*"]
 inv = cf.create_invalidation(
     DistributionId=dist,
     InvalidationBatch={"Paths": {"Quantity": len(paths), "Items": paths},
@@ -214,6 +220,7 @@ for BRAND in "${BRANDS[@]}"; do
     # no `python` on PATH at all.
     PREFIX="$(cd packaging && LOCKSMITH_BRAND="$BRAND" "$PY" -m brandlib id artifact_prefix)"
     RELPATH="$(cd packaging && LOCKSMITH_BRAND="$BRAND" "$PY" -m brandlib id release_prefix)"
+    APPCAST_PREFIX="$(cd packaging && LOCKSMITH_BRAND="$BRAND" "$PY" -m brandlib id appcast_prefix)"
     DMG="$STAGE/${PREFIX}-${VERSION}.dmg"
     MSI="$STAGE/${PREFIX}-${VERSION}.msi"
 
@@ -289,15 +296,40 @@ PY
     # already had the new one, and verification failed on a feed that was
     # correct at origin.
     say "$BRAND: invalidate the CDN edge, then verify"
-    invalidate_cdn || echo "  WARNING: could not invalidate; the edge may lag its TTL"
+    invalidate_cdn "$APPCAST_PREFIX" \
+        || echo "  WARNING: could not invalidate; the edge may lag its TTL"
 
+    # RETRY, because a stale feed is a TRANSIENT condition. CloudFront reporting
+    # an invalidation "Completed" does not mean every POP has finished: on the
+    # 0.4.1 usurance promote the verifier read the old appcast seconds after
+    # completion, and the very same check passed unchanged a minute later. A
+    # single attempt therefore fails runs that are actually fine — while a feed
+    # that is STILL stale after several tries is a genuine problem worth failing
+    # on. Only staleness is retried; any other verification failure is fatal
+    # immediately, because that is the class where clients refuse an advertised
+    # update and waiting cannot help.
     say "$BRAND: post-publish verification (ENFORCED)"
-    "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" \
-        || die "$BRAND: published $VERSION does NOT verify against the live feed.
-  Note what this does and does NOT mean. A StaleAppcastError means the feed has
-  not caught up yet — clients simply are not offered the update, which is benign
-  and clears with the CDN. Any OTHER failure means clients would REFUSE an update
-  the feed advertises: check the artifact's BAKED anchor, not src/."
+    verify_log="$STAGE/verify-$BRAND.log"
+    verified=0
+    for attempt in 1 2 3 4 5; do
+        if "$PY" scripts/verify-release-artifact.py --dmg "$DMG" --msi "$MSI" \
+                2>&1 | tee "$verify_log"; then
+            verified=1
+            break
+        fi
+        if ! grep -q "StaleAppcastError" "$verify_log"; then
+            die "$BRAND: published $VERSION does NOT verify against the live feed,
+  and NOT because the feed is stale. Clients would REFUSE an update the feed
+  advertises. Check the artifact's BAKED anchor, never src/ — see
+  scripts/check-baked-anchor.py and the v0.2.21 incident. Output: $verify_log"
+        fi
+        echo "  $BRAND: feed still stale at the edge (attempt $attempt/5); waiting 30s"
+        sleep 30
+    done
+    [[ "$verified" == 1 ]] || die "$BRAND: the $VERSION feed was STILL stale after
+  5 attempts over ~2.5 minutes. S3 has the new appcast but the CDN is not serving
+  it, so clients will not be offered the update. Check the CloudFront
+  invalidation actually covered this brand's appcast prefix. Output: $verify_log"
     echo "  $BRAND: verified against the live feed"
 done
 

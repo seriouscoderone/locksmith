@@ -152,10 +152,35 @@ def test_the_baked_anchor_check_runs_before_publishing_and_is_enforced():
 
 
 def test_the_full_verifier_is_enforced_after_publishing():
+    """Verification must be able to fail the run — never advisory."""
     text = SCRIPT.read_text(encoding="utf-8")
-    idx = text.rindex("verify-release-artifact.py")
-    assert "|| die" in text[idx:idx + 400], (
-        "the post-publish verification must fail the run, not just warn")
+    assert "verify-release-artifact.py" in text
+    assert 'verified" == 1 ]] || die' in text, (
+        "exhausting the verification attempts must fail the run, not just warn")
+
+
+def test_only_staleness_is_retried_and_other_failures_are_fatal_at_once():
+    """A stale feed is transient CDN propagation; anything else is not.
+
+    CloudFront reporting an invalidation "Completed" does not mean every POP has
+    caught up — the 0.4.1 usurance promote read the old appcast seconds after
+    completion and passed unchanged a minute later. So staleness retries. But the
+    other failure class means clients would REFUSE an advertised update, and
+    waiting cannot help, so it must abort immediately rather than burn the
+    retries and report a misleading "still stale" at the end.
+    """
+    text = SCRIPT.read_text(encoding="utf-8")
+    assert 'grep -q "StaleAppcastError"' in text, (
+        "the retry must distinguish staleness from every other failure")
+    stale_branch = text.index('grep -q "StaleAppcastError"')
+    # The non-stale branch must abort, and must do so INSIDE the retry loop —
+    # i.e. immediately after the grep, before the sleep.
+    after = text[stale_branch:stale_branch + 600]
+    assert "die " in after, "a non-stale verification failure must abort immediately"
+    assert after.index("die ") < after.index("sleep 30"), (
+        "the non-stale abort must come before the retry sleep, or a refused-update "
+        "failure burns all the retries and then reports a misleading 'still stale'")
+    assert "and NOT because the feed is stale" in text
 
 
 def test_the_bran_is_never_passed_on_a_command_line():
