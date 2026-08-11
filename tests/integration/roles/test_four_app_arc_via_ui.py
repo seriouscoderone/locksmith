@@ -74,7 +74,7 @@ from tests.integration.roles.conftest import (
 
 
 @pytest.mark.integration
-def test_the_four_applications_complete_the_arc(four_wallets, parse_dir):
+def test_the_four_applications_complete_the_arc(four_wallets, parse_dir_for):
     devctl = four_wallets["devctl"]
     cuo, actuary, designer = (four_wallets[k] for k in ("cuo", "actuary", "designer"))
 
@@ -90,7 +90,7 @@ def test_the_four_applications_complete_the_arc(four_wallets, parse_dir):
     # ipd-parse run.
     open_vault_holding_actuary_role(devctl, actuary["sock"])
     watch_cuo_mandate_via_peer(devctl, {"a": cuo, "b": actuary})
-    attest_rate_program_via_ui(devctl, actuary["sock"], parse_dir)
+    attest_rate_program_via_ui(devctl, actuary["sock"], parse_dir_for)
     r = devctl(actuary["sock"], "screenshot", path="/tmp/four-app-actuary.png")
     assert r.get("ok"), r
 

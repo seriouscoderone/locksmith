@@ -4,6 +4,7 @@
 it could commit bytes the screen was not showing, commit them twice, and look
 armed while it was not. Each test here fails against the pre-fix source.
 """
+import pytest
 from PySide6.QtWidgets import QVBoxLayout, QWidget
 
 from locksmith.plugins.actuary.page import ActuaryPage
@@ -31,6 +32,15 @@ def _loaded(page):
     page._parse_manifest_said = _MANIFEST
     page._manifest_said_label.setText(_MANIFEST)
     page._workbook_digest_label.setText("EWorkbookDigest")
+    # `_load_parse_inner` sets these three ATOMICALLY with the manifest -- it
+    # refuses the directory outright if index.json does not carry them -- so a
+    # helper that sets the manifest without them describes a state the page
+    # cannot actually be in.
+    page._parse_filing_date = "2027-03-15"
+    page._parse_action = "Sandbox"
+    page._parse_mandate_said = _MANDATE
+    page._filing_date_label.setText("03/15/2027")
+    page._action_label.setText("Sandbox")
     page._selected_mandate_said = _MANDATE
     # Schema-required and the actuary's own label, so the gate holds without it.
     page._version.setText("2027.1")
@@ -267,10 +277,10 @@ def test_the_evidence_values_are_monospaced_and_not_truncated(qtbot):
     shell.hide()
 
 
-def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
-    """A defect no offscreen render could show.
+def test_no_form_layout_can_reintroduce_the_style_dependent_field_width(qtbot):
+    """A defect no offscreen render could show, now removed by construction.
 
-    `QFormLayout.fieldGrowthPolicy` has a STYLE-DEPENDENT default, and the two
+    `QFormLayout.fieldGrowthPolicy` has a STYLE-DEPENDENT default and the two
     styles disagree: Fusion — which the offscreen platform selects, so every test
     and every screenshot runs under it — defaults to `AllNonFixedFieldsGrow`,
     while the macOS style defaults to `FieldsStayAtSizeHint`. Measured under the
@@ -278,15 +288,209 @@ def test_the_parse_field_grows_regardless_of_the_platform_style(qtbot):
     than the absolute paths it exists to accept, while every render I checked
     showed it full width.
 
-    Asserts the POLICY, not a rendered width: the width is style-dependent by
-    definition, so a width assertion would pass here and still ship the bug.
+    The page now builds label-above-field blocks in `QVBoxLayout`s, which have no
+    such default and cannot regress this way. So this asserts the CONSTRUCT is
+    gone rather than that one instance is configured correctly — a policy
+    assertion only guards the form layouts that exist today, and the next one
+    added would arrive with the style default again.
     """
     from PySide6.QtWidgets import QFormLayout
 
     shell, page = _page(qtbot)
-    form = next(child for child in page.findChildren(QFormLayout))
-    assert form.fieldGrowthPolicy() == \
-        QFormLayout.FieldGrowthPolicy.AllNonFixedFieldsGrow, (
-            "the field growth policy is back to the style default, which is "
-            "FieldsStayAtSizeHint on macOS")
+    assert page.findChildren(QFormLayout) == [], (
+        "a QFormLayout is back; either set fieldGrowthPolicy explicitly on it or "
+        "use _field_block, because its default is FieldsStayAtSizeHint on macOS")
+
+    # And the field really does take the column, under whatever style is active.
+    column = page.findChild(QWidget, "actuaryPage.column")
+    assert page._parse_dir.width() > column.width() * 0.9, (
+        f"the parse field is {page._parse_dir.width()}px of a "
+        f"{column.width()}px column")
+    shell.hide()
+
+
+# --- the states the page could not express -------------------------------------
+
+
+def test_a_broken_watch_does_not_look_like_a_quiet_one(qtbot):
+    """Three failure paths swallowed into `logger` and painted as the same empty
+    box, so a page that CANNOT observe was pixel-identical to one with nothing to
+    observe — and the log is not where the actuary is looking."""
+    shell, page = _page(qtbot)
+    assert "no mandates observed" in page._empty_state.text().lower()
+    assert page._watch_retry.isVisible() is False
+
+    page._watch_error = "The mandate schema could not be prepared."
+    page._render_empty_state()
+
+    text = page._empty_state.text().lower()
+    assert "not working" in text
+    assert "schema could not be prepared" in text
+    assert page._watch_retry.isVisible() is True, "no way out of the failed state"
+    shell.hide()
+
+
+def test_retrying_the_watch_clears_the_cached_verdict(qtbot):
+    """The failures are CACHED — `_egf_doc_cache` in particular — so a retry that
+    does not reset them reports the same verdict without having re-tried
+    anything, which is worse than no retry button at all."""
+    shell, page = _page(qtbot)
+    page._watch_error = "boom"
+    page._egf_doc_cache = None
+    page._render_empty_state()
+    assert page._watch_retry.isVisible() is True
+
+    # A retry against a still-broken environment must RE-REPORT, not clear: this
+    # page has no vault, so watching genuinely cannot work.
+    page._retry_watch()
+    assert page._watch_error != "", "a failed retry silently reported success"
+    assert page._egf_doc_cache == "unresolved", "the cached verdict survived"
+
+    # ...and when the cause is gone, the retry clears it.
+    page._prepare_import_schema = lambda: None
+    page._scan_for_mandates = lambda: None
+    page._retry_watch()
+    assert page._watch_error == ""
+    assert page._watch_retry.isVisible() is False
+    shell.hide()
+
+
+def test_loading_a_parse_cannot_be_re_entered(qtbot):
+    """`_build_manifest` rglobs the directory, reads every shard and the whole
+    .xlsm and Blake3s all of it, synchronously on the GUI thread. With no
+    feedback the natural response to a frozen window is to click again and re-run
+    the entire hash."""
+    shell, page = _page(qtbot)
+    calls = []
+    page._load_parse_inner = lambda: calls.append(1)
+
+    page.load_parse()
+    assert calls == [1]
+
+    page._loading_parse = True
+    page.load_parse()
+    assert calls == [1], "a second click re-ran the whole hash"
+
+    page._loading_parse = False
+    page.load_parse()
+    assert calls == [1, 1]
+    shell.hide()
+
+
+def test_the_loading_state_is_actually_painted(qtbot):
+    """The work never returns to the event loop, so a label set without an
+    explicit repaint is queued and painted only after the hashing finishes —
+    which from the actuary's point of view is never."""
+    shell, page = _page(qtbot)
+    seen = {}
+
+    def spy():
+        seen["text"] = page._load_parse.text()
+        seen["enabled"] = page._load_parse.isEnabled()
+        seen["readonly"] = page._parse_dir.isReadOnly()
+
+    page._load_parse_inner = spy
+    page.load_parse()
+
+    assert "loading" in seen["text"].lower()
+    assert seen["enabled"] is False
+    assert seen["readonly"] is True, "the path can be edited mid-hash"
+    # ...and it must all come back afterwards, including on the failure path.
+    assert page._load_parse.isEnabled() is True
+    assert page._parse_dir.isReadOnly() is False
+    shell.hide()
+
+
+def test_the_loading_state_is_restored_even_when_the_load_raises(qtbot):
+    """A parse directory that disappears mid-read must not leave the button dead."""
+    shell, page = _page(qtbot)
+
+    def boom():
+        raise OSError("the directory went away")
+
+    page._load_parse_inner = boom
+    with pytest.raises(OSError):
+        page.load_parse()
+
+    assert page._loading_parse is False
+    assert page._load_parse.isEnabled() is True
+    assert page._parse_dir.isReadOnly() is False
+    shell.hide()
+
+
+# --- the layout defects the owner saw, and I did not ------------------------------
+
+
+def test_no_field_is_compressed_below_the_height_it_asked_for(qtbot):
+    """Measured at 1180x940 on the macOS style: the parse-directory field was
+    clipped through its own bottom border and the version field's help text was
+    drawn ON TOP of its input.
+
+    Every widget was configured correctly — a QVBoxLayout simply squeezes children
+    past their size hints when it runs out of room, and this page's tallest
+    element (the observed-mandates list) only grows. The page is inside a
+    QScrollArea now, so it scrolls instead of crushing. Asserted as
+    height >= sizeHint rather than as a pixel count, because the hint is what the
+    widget asked for under whatever style is active.
+    """
+    from PySide6.QtWidgets import QScrollArea
+
+    shell, page = _page(qtbot)
+    shell.resize(900, 560)              # deliberately too short for the content
+    qtbot.wait(60)
+
+    assert page.findChild(QScrollArea, "actuaryPage.scroll") is not None, (
+        "no scroll area; a page taller than its window will compress its fields")
+    for field in (page._parse_dir, page._version):
+        assert field.height() >= field.sizeHint().height(), (
+            f"{field.objectName()} is {field.height()}px against a "
+            f"{field.sizeHint().height()}px hint — it is being clipped")
+    shell.hide()
+
+
+def test_the_four_values_from_the_parse_are_grouped_apart_from_the_one_input(qtbot):
+    """The boundary between "read from the artefact" and "typed by the actuary"
+    is the whole point of this screen's shape, so it is drawn, not just stated in
+    a caption."""
+    shell, page = _page(qtbot)
+    card = page.findChild(QWidget, "actuaryEvidence")
+    assert card is not None, "the evidence group is gone"
+
+    for label in (page._manifest_said_label, page._workbook_digest_label,
+                  page._filing_date_label, page._action_label):
+        assert card.isAncestorOf(label), (
+            f"{label.objectName()} is outside the read-from-the-parse group")
+    assert not card.isAncestorOf(page._version), (
+        "the one field the actuary types is inside the group that says nothing "
+        "here is chosen")
+    shell.hide()
+
+
+def test_no_visible_label_shows_raw_markdown(qtbot):
+    """A backtick is markdown, and a QLabel renders it as a backtick. The
+    evidence caption shipped `ipd-parse` with the quotes visible on screen."""
+    from PySide6.QtWidgets import QLabel
+
+    shell, page = _page(qtbot)
+    offenders = [(w.objectName(), w.text()) for w in page.findChildren(QLabel)
+                 if "`" in w.text() or "**" in w.text()]
+    assert offenders == [], f"raw markdown on screen: {offenders}"
+    shell.hide()
+
+
+def test_the_mandate_list_does_not_reserve_a_row_it_has_nothing_to_put_in(qtbot):
+    """One mandate sat above ~90px of empty box, which reads as a pane that
+    failed to load rather than a list with one entry. The list is hidden entirely
+    when there is nothing to show, so there is no first-arrival jump to smooth
+    over — the placard is what fills that space."""
+    shell, page = _page(qtbot)
+    page._observed = {_MANDATE: {"line_of_business": "auto",
+                                 "jurisdiction": "US-UT", "coverages": ["BI"]}}
+    page._refresh_observed_list()
+    qtbot.wait(50)
+
+    row = page._observed_list.sizeHintForRow(0)
+    assert row > 0
+    assert page._observed_list.height() < 2 * row, (
+        f"the list is {page._observed_list.height()}px for one {row}px row")
     shell.hide()

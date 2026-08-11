@@ -1,0 +1,4 @@
+{"name": "Example_Risk_Factor", "kind": "factor", "modifier": "base", "key_columns": ["Risk Attr Two"], "coverages": ["Risk Value"], "embed_attr": null, "embed_value": null, "split_declared": true, "record": "table"}
+{"key": ["1..3"], "values": {"Risk Value": 0.5}, "record": "row"}
+{"key": [4], "values": {"Risk Value": 1}, "record": "row"}
+{"key": ["5..6"], "values": {"Risk Value": 1.5}, "record": "row"}

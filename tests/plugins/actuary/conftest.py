@@ -45,5 +45,12 @@ def usurance_brand(monkeypatch):
     monkeypatch.setenv(branding.BRAND_CONFIG_ENV_VAR, str(brand_json))
     branding._reset_cache_for_tests()
     branding.brand()                      # populates _brand_source_dir
+    # REGISTER the compiled resources too, not just activate the brand. Without
+    # this every `:/assets/...` path resolves to nothing and Qt hands back a NULL
+    # QIcon SILENTLY -- so an icon-only button renders blank and any test that
+    # asserted on the icon path string would still pass. Measured: the parse
+    # directory's browse button had `icon().isNull() is True` under this fixture
+    # while it drew correctly in the running app, which registers them.
+    branding.register_brand_resources()
     yield
-    branding._reset_cache_for_tests()
+    branding._reset_cache_for_tests()     # also unregisters

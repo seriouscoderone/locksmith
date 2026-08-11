@@ -36,7 +36,7 @@ from tests.integration.roles.conftest import (
 
 
 @pytest.mark.integration
-def test_the_actuary_sees_a_watched_mandate_and_can_attest(two_wallets, parse_dir):
+def test_the_actuary_sees_a_watched_mandate_and_can_attest(two_wallets, parse_dir_for):
     devctl = two_wallets["devctl"]
     a, b = two_wallets["a"], two_wallets["b"]
 
@@ -47,4 +47,6 @@ def test_the_actuary_sees_a_watched_mandate_and_can_attest(two_wallets, parse_di
     # the mandate arrives by WATCHING, so the assertion is on the actuary's list
     # filling without B ever being handed anything — attest_rate_program_via_ui's
     # own preconditions match exactly what the three calls above just set up.
-    attest_rate_program_via_ui(devctl, b["sock"], parse_dir)
+    # the FACTORY, not the session fixture: the parse must name the mandate the
+    # CUO just declared, or ActuaryPage refuses it (see the driver's docstring)
+    attest_rate_program_via_ui(devctl, b["sock"], parse_dir_for)

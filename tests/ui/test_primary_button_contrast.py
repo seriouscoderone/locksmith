@@ -124,3 +124,54 @@ def test_the_button_actually_paints_the_fill_token(qtbot):
         assert count > image.width() * image.height() * 0.5
     finally:
         importlib.reload(module)
+
+
+def test_a_focused_button_is_visibly_focused(qtbot):
+    """design-system.md:305 — "2px solid outline in Teal 600 (`#2AABB3`) with 2px
+    offset" and :308 "Focus indicators are never removed". Measured before:
+    focusing the primary changed ZERO pixels, so a keyboard user could not tell
+    when they had arrived on the control that mints a permanent public credential.
+
+    Two measurement traps this test exists on the far side of:
+    * `clearFocus()` on the only focusable widget in an active window bounces
+      straight back, so both grabs are "focused" and the diff is 0. Focus is
+      parked on a QLineEdit instead.
+    * grabbing the HOST drowns the ring in whatever the parked widget's own
+      focus change paints. Grab the button's own rect.
+
+    Reads pixels, not the stylesheet: an unsupported QSS property leaves the
+    string perfectly correct and paints nothing.
+    """
+    from PySide6.QtWidgets import QLineEdit, QVBoxLayout, QWidget
+
+    from locksmith.ui.toolkit.widgets.buttons import (
+        LocksmithButton, LocksmithInvertedButton)
+
+    host = QWidget()
+    qtbot.addWidget(host)
+    host.resize(340, 240)
+    layout = QVBoxLayout(host)
+    layout.setContentsMargins(30, 30, 30, 30)
+    layout.setSpacing(20)
+    park = QLineEdit()
+    primary = LocksmithButton("Attest and publish")
+    secondary = LocksmithInvertedButton("Keep reviewing")
+    for widget in (park, primary, secondary):
+        layout.addWidget(widget)
+    host.show()
+    qtbot.waitExposed(host)
+
+    for button in (primary, secondary):
+        park.setFocus()
+        qtbot.wait(70)
+        unfocused = button.grab().toImage()
+        button.setFocus()
+        qtbot.wait(90)
+        focused = button.grab().toImage()
+
+        changed = sum(1 for y in range(unfocused.height())
+                      for x in range(unfocused.width())
+                      if unfocused.pixelColor(x, y) != focused.pixelColor(x, y))
+        assert changed > 0, (
+            f"{button.text()!r} paints nothing on focus; a keyboard user cannot "
+            "tell where they are")

@@ -188,10 +188,8 @@ class LocksmithButton(QPushButton):
                 color: {colors.TEXT_SUBTLE};
                 border: 1px solid {colors.BORDER_NEUTRAL};
             }}
-            QPushButton:disabled {{
-                background-color: {colors.BACKGROUND_DISABLED};
-                color: {colors.TEXT_MUTED};
-                border: 1px solid {colors.BORDER_NEUTRAL};
+            QPushButton:focus {{
+                outline: 2px solid {colors.PRIMARY};
             }}
         """)
         # An inline sheet that names QPushButton at all overrides Qt's disabled
@@ -248,6 +246,9 @@ class LocksmithInvertedButton(QPushButton):
                 background-color: {colors.BACKGROUND_HOVER};
                 color: {colors.PRIMARY_HOVER};
                 border: 1px solid {colors.PRIMARY_HOVER};
+            }}
+            QPushButton:focus {{
+                outline: 2px solid {colors.PRIMARY};
             }}
             QPushButton:pressed {{
                 background-color: {colors.DIVIDER};

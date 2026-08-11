@@ -16,6 +16,12 @@ from locksmith.plugins.actuary.page import ActuaryPage
 _MANDATE_SAID = "EGoGTCEKbaG42R_igvrt2O2YCtZOX8FT6pJTvGO5mr4X"
 _ISSUER = "EKTRx0wK8UL-hQ2vJmDpLnYcRtWqZbXsAeFgHiJkLmNo"
 _MANIFEST = "EMf3fJk9LmQ2xR7vB4nT8cY1pZaWeRtYuIoPaSdFgHjK"
+
+#: What `ipd-parse` recorded in the parse directory's `index.json` and this page
+#: therefore attests without asking. `Sandbox` on purpose: the value a hardcode
+#: would take is `_ACTION_VALUES[0]`, i.e. `Publish`.
+_PARSE_FILING_DATE = "2027-03-15"
+_PARSE_ACTION = "Sandbox"
 _DIGEST = "EWb9kLmQ2xR7vB4nT8cY1pZaWeRtYuIoPaSdFgHjKlZx"
 _THESIS = "Grow teen-driver share in Utah."
 _MANDATE = {
@@ -41,6 +47,14 @@ def _armed_page(qtbot):
     page._selected_mandate_said = _MANDATE_SAID
     page._parse_manifest = {"workbook_digest": _DIGEST}
     page._parse_manifest_said = _MANIFEST
+    # What `_load_parse_inner` reads out of the parse's own index.json. Retention
+    # is deliberately `Sandbox` -- NOT `_ACTION_VALUES[0]` -- so a hardcode of the
+    # value a default would most naturally take cannot pass.
+    page._parse_filing_date = _PARSE_FILING_DATE
+    page._parse_action = _PARSE_ACTION
+    page._parse_mandate_said = _MANDATE_SAID
+    page._filing_date_label.setText(_PARSE_FILING_DATE)
+    page._action_label.setText(_PARSE_ACTION)
     page._version.setText("2027.1")
     page._update_attest_enabled()
     return shell, page
@@ -228,42 +242,120 @@ def test_the_backdrop_goes_the_moment_the_drawer_starts_closing(qtbot):
     shell.hide()
 
 
-# --- the three the app used to assert on the actuary's behalf ---------------------
+# --- what the actuary chooses, and what the parse already answered --------------
 
 
-def test_the_actuary_chooses_the_three_required_attributes(qtbot):
-    """`version`, `filing_date` and `action` are all `required` by the
-    attestation schema, and all three were hardcoded — "1.0", today, and
-    "Sandbox" — so the app made permanent public assertions the actuary never
-    saw. The schema is explicit that they are the actuary's: version is "a
-    human-chosen label", filing_date is "an attribute the actuary asserts", and
-    action is "the IPD retention contract the parse was run under"."""
-    from PySide6.QtCore import QDate
+def test_the_actuary_types_the_version_and_the_parse_supplies_the_rest(qtbot):
+    """`version`, `filing_date` and `action` are all `required` by the attestation
+    schema, and all three were once hardcoded — "1.0", today, and "Sandbox" — so
+    the app made permanent public assertions the actuary never saw.
 
+    The first fix made all three editable, which was half right. Two of them are
+    not choices at all: the schema says `filing_date` is "the filing date the
+    actuary recorded AT PARSE TIME" and `action` is "the retention contract the
+    parse WAS RUN UNDER" — past tense, and `ipd-parse` writes both into
+    `index.json`. Asking for them again invited a value that contradicts the bytes
+    being attested. `version` is the only one the schema puts on a judgement: "a
+    human-chosen label ... on the actuary's axis".
+    """
     shell, page = _armed_page(qtbot)
+
     page._version.setText("2027.2")
-    page._filing_date.setDate(QDate(2027, 3, 15))
-    page._action.setCurrentText("Publish")
-
     committed = page._attestation_attributes()
-    assert committed["version"] == "2027.2"
-    assert committed["filing_date"] == "2027-03-15"
-    assert committed["action"] == "Publish"
+    assert committed["version"] == "2027.2", "the one field she types"
+    assert committed["filing_date"] == _PARSE_FILING_DATE
+    assert committed["action"] == _PARSE_ACTION
 
+    # And all three are on the read-back, however they got there.
     page.review_attestation()
     shown = _text(page.attest_drawer)
-    for value in ("2027.2", "2027-03-15", "Publish"):
+    for value in ("2027.2", _PARSE_FILING_DATE, _PARSE_ACTION):
         assert value in shown, f"{value} is committed but not shown"
     shell.hide()
 
 
-def test_retention_offers_exactly_the_schemas_enum(qtbot):
-    """`Sandbox` is a retention CONTRACT, not a test mode — the schema says so in
-    capitals — so a value outside the enum, or a missing choice, is a permanent
-    misstatement about how the parse is retained."""
+def test_the_retention_contract_travels_whichever_one_the_parse_recorded(qtbot):
+    """`action` is a permanent public claim about how the parse is RETAINED — the
+    schema says in capitals that Sandbox is a retention contract, "emphatically
+    NOT a separate environment, not a test mode". Both enum values must reach the
+    payload, so neither a hardcoded `Publish` nor a hardcoded `Sandbox` survives.
+    """
     shell, page = _armed_page(qtbot)
-    values = [page._action.itemText(i) for i in range(page._action.count())]
-    assert values == ["Publish", "Sandbox"]
+
+    for recorded in ("Sandbox", "Publish"):
+        page._parse_action = recorded
+        page._action_label.setText(recorded)
+        assert page._attestation_attributes()["action"] == recorded
+        assert page._action_label.text() == recorded, (
+            "the screen and the payload disagree about the retention contract")
+    shell.hide()
+
+
+def test_an_unloaded_page_invents_no_retention_and_no_filing_date(qtbot):
+    """The replacement for "what does an untouched page default to": nothing.
+
+    There is no default any more, and that is the point — a default is exactly
+    how `action` came to claim exploratory retention for filed work. With no
+    parse loaded the two values are empty, the screen says so with the em dash,
+    and the gate refuses before any of it can be minted.
+    """
+    shell = QWidget()
+    qtbot.addWidget(shell)
+    layout = QVBoxLayout(shell)
+    page = ActuaryPage(app=None, parent=shell)
+    layout.addWidget(page)
+    shell.show()
+    qtbot.waitExposed(shell)
+
+    assert page._parse_action == ""
+    assert page._parse_filing_date == ""
+    assert page._action_label.text() == "—"
+    assert page._filing_date_label.text() == "—"
+    assert page._attest.isEnabled() is False
+    shell.hide()
+
+
+def test_the_pinned_retention_enum_is_the_bundled_schemas_own(qtbot):
+    """The page no longer OFFERS these values, but it still validates what it
+    reads against them and refuses a parse recording anything else. So the pin has
+    to match the schema on disk — against the file, not a literal, because a
+    literal goes on agreeing with a re-SAIDed schema that changed underneath it.
+    """
+    import json
+
+    from locksmith.core.branding import egf_local_dir
+    from locksmith.plugins.actuary.page import (
+        RATE_PROGRAM_ATTESTATION_SCHEMA_SAID, _ACTION_VALUES)
+
+    egf_dir = egf_local_dir()
+    assert egf_dir is not None, "the usurance brand fixture did not activate"
+    schema = json.loads(
+        (egf_dir / f"{RATE_PROGRAM_ATTESTATION_SCHEMA_SAID}.json").read_text())
+    node = schema["properties"]["a"]["oneOf"][-1]
+    assert set(_ACTION_VALUES) == set(node["properties"]["action"]["enum"])
+    assert "action" in node["required"], (
+        "no longer required — this page reads it from the parse on that premise")
+
+
+def test_a_version_typed_with_stray_whitespace_is_not_committed_with_it(qtbot):
+    """A version is typed, and typed text carries whatever the actuary's
+    keyboard and clipboard put there. `" 2027.2 "` and `"2027.2"` are two
+    different permanent public labels for the same rate program, and a consumer
+    matching on the string sees two different programs.
+
+    The blocker reads the same trimmed value, so the pair is asserted together:
+    a field holding nothing but spaces is not a version, and must not arm the
+    only irreversible button on this page.
+    """
+    shell, page = _armed_page(qtbot)
+
+    page._version.setText("  2027.2\t")
+    assert page._attestation_attributes()["version"] == "2027.2"
+
+    page._version.setText("   ")
+    assert page._attest.isEnabled() is False, (
+        "three spaces armed the mint as a rate program version")
+    assert "version" in page._attest_blocker.text().lower()
     shell.hide()
 
 

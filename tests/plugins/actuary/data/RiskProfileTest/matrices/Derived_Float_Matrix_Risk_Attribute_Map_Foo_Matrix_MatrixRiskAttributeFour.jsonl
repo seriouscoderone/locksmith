@@ -1,0 +1,3 @@
+{"name": "Derived_Float_Matrix_Risk_Attribute_Map\\Foo\\Matrix_MatrixRiskAttributeFour", "subject": "Foo", "output_attribute": "Derived_Float_Matrix_Risk_Attribute", "row_axis_attribute": "Matrix Risk Attribute Three", "col_axis_attribute": "MatrixRiskAttributeFour", "col_values": ["AF1", "AF2"], "record": "matrix"}
+{"row_value": "XY3", "cells": [1, 1.18], "record": "row"}
+{"row_value": "XY4", "cells": [0.98, 1.04], "record": "row"}

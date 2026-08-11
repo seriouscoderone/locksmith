@@ -1,0 +1,2 @@
+{"subject": null, "steps": ["Empty Calculation Step", "none"], "scope": "global", "blocks": [{"sheet": "Sheet1", "col": 9, "row_start": 2, "row_end": 3, "steps": ["Empty Calculation Step", "none"]}], "record": "calc_order"}
+{"subject": "None", "steps": [], "scope": "subject", "blocks": [{"sheet": "Sheet1", "col": 10, "row_start": 2, "row_end": 2, "steps": []}], "record": "calc_order"}
