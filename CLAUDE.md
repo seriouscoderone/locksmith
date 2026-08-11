@@ -87,6 +87,40 @@ or a mailbox SSE poll — **never on the event POST**. `agenting.WitnessReceipto
 "push the receipt back on the connection" model and **hangs over HTTP**. Collect receipts with
 `Receiptor` / `vault.receiptor` — which is what `InceptDoer`, `RotateDoer`, and `ConfirmDoer` all do.
 
+## Publishing a release: there is exactly ONE way (agents: never write a new script)
+
+```bash
+read -rs LOCKSMITH_PUBLISHER_BRAN; echo; export LOCKSMITH_PUBLISHER_BRAN   # owner types this
+AWS_PROFILE=personal ./scripts/promote-release.sh <version>                # both brands, one run
+```
+
+`LOCKSMITH_PROMOTE_DRY_RUN=1` runs everything up to the KEL and touches nothing —
+**use it before handing the real command to anyone.** Full runbook: `/publish`.
+
+**Do not hand-roll a promote script.** Between 0.2.21 and 0.3.6 every cut `sed`-ed a
+new `/tmp/promote-<version>/promote.sh` from the previous one; the 0.3.1 cut ran the
+*wrong copy*, re-anchored 0.3.0 and put two junk events in the publisher KEL
+permanently. `scripts/promote-release.sh` is committed precisely so that class of
+defect gets fixed once. See `backlog/2026-07-25-committed-promote-release-script.md`.
+
+What an agent CANNOT do, and should not try:
+- **The bran is the owner's.** Anchoring signs with the publisher keystore
+  (`--name publisher --base publisher`). Env vars do not survive between an agent's
+  tool calls and there is no interactive stdin, so the owner runs the command — or
+  their long-lived PUBLISHER session does. Suggest `! <cmd>` to run it in-session.
+- **AWS credentials are needed** (`AWS_PROFILE=personal`, account 117870855864).
+  Missing ones are caught in *preflight*, deliberately: see below.
+
+Two rules the script encodes; keep them if you touch it:
+1. **Every environment check runs BEFORE `anchor`.** A publish that fails after the
+   anchor leaves the release committed to the KEL with nothing advertising it, and a
+   naive retry appends duplicate anchors. Idempotency scans the WHOLE KEL, not just
+   the latest event — a multi-brand cut puts brand 2's seal on top of brand 1's.
+2. **S3 being correct is not clients seeing it.** The appcast sits behind CloudFront
+   (discovered from the config hostname, never hardcoded). Invalidate and wait before
+   verifying. A `StaleAppcastError` means the feed has not caught up — benign; any
+   OTHER verify failure means clients would refuse an advertised update.
+
 ## macOS signing + notarization happen ONLY on CI (agents: read before "just building it")
 
 **There are no Apple signing credentials on the developer machine, by design.** Don't go looking
