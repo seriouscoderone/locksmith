@@ -232,25 +232,37 @@ def register_brand_resources() -> Path:
         )
     if not QResource.registerResource(str(rcc)):
         raise RuntimeError(f"Failed to register brand asset bundle: {rcc}")
-    global _registered_rcc
-    _registered_rcc = rcc
+    # Append unconditionally — no de-duplication. Qt stacks registrations, so
+    # registering the SAME file twice needs unregistering twice; recording it
+    # once would leave one live and defeat the whole point.
+    _registered_rccs.append(rcc)
     return rcc
 
 
-_registered_rcc: Path | None = None
+# EVERY bundle registered in this process, not just the most recent one. Qt
+# registration accumulates: registering a second bundle does not replace the
+# first, so a single-slot record cannot undo them all. When this was one
+# ``_registered_rcc`` slot, a second registration made the first permanently
+# undetachable, and ``unregister_brand_resources()`` silently left brand art
+# resolvable — a test that explicitly cleared the brand then still found a
+# splash image. The app registers once and never cares; test isolation does.
+_registered_rccs: list[Path] = []
 
 
 def unregister_brand_resources() -> None:
-    """Detach the bundle registered by register_brand_resources() (test isolation).
+    """Detach EVERY bundle registered by register_brand_resources() (test isolation).
 
     No-op if nothing is registered. The running app never needs this; tests use
-    it to reset between brand switches (Qt resource overlap is first-wins).
+    it to reset between brand switches (Qt resource overlap is first-wins, so a
+    leftover registration wins over the brand a later test selects).
     """
-    global _registered_rcc
-    if _registered_rcc is not None:
-        from PySide6.QtCore import QResource
-        QResource.unregisterResource(str(_registered_rcc))
-        _registered_rcc = None
+    if not _registered_rccs:
+        return
+    from PySide6.QtCore import QResource
+    # Reverse order: unwind the registration stack the way it was built.
+    for rcc in reversed(_registered_rccs):
+        QResource.unregisterResource(str(rcc))
+    _registered_rccs.clear()
 
 
 def _reset_cache_for_tests() -> None:
