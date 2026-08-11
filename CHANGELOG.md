@@ -9,6 +9,13 @@ Format: one `## <version>` heading per release, newest first. The heading text
 must be the bare semver (matching `pyproject.toml`) so the runtime lookup finds
 it. Bullets under it are rendered as Markdown.
 
+## 0.4.1
+
+- Fixed the actuary role on Windows: its workspace failed to load at all, while
+  showing the role as active. The clock on its "Last checked" line used a time
+  format Windows does not accept, and the error stopped the whole page from
+  being built.
+
 ## 0.4.0
 
 - Usurance roles now have real working surfaces. The **CUO** declares a product
