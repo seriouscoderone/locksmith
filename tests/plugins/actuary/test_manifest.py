@@ -531,11 +531,11 @@ def test_a_parse_directory_with_no_sidecar_does_not_guess_a_workbook(tmp_path, q
     shell, page = _page(qtbot)
     parse_dir, _workbook = _parse_fixture(tmp_path, sidecar=False)
 
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
 
     # ...including when something with the sidecar's name is there but is not a file.
     (parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME).mkdir()
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
     shell.hide()
 
 
@@ -550,7 +550,7 @@ def test_a_truncated_sidecar_resolves_nothing_rather_than_raising(tmp_path, qtbo
     (parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME).write_text(
         '{"workbook_path": "' + str(workbook))
 
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
     shell.hide()
 
 
@@ -562,7 +562,7 @@ def test_a_sidecar_with_no_workbook_path_resolves_nothing(tmp_path, qtbot):
     (parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME).write_text(
         json.dumps({"workbook": str(workbook), "kind": "sidecar"}))
 
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
     shell.hide()
 
 
@@ -576,10 +576,10 @@ def test_a_sidecar_that_is_not_an_object_or_names_a_null_resolves_nothing(tmp_pa
     sidecar = parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME
 
     sidecar.write_text(json.dumps([str(workbook)]))
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
 
     sidecar.write_text(json.dumps({"workbook_path": None}))
-    assert page._resolve_workbook(parse_dir) is None
+    assert page._resolve_workbook(parse_dir)[0] is None
     shell.hide()
 
 
@@ -590,7 +590,7 @@ def test_an_unreadable_sidecar_resolves_nothing(tmp_path, qtbot):
     shell, page = _page(qtbot)
     parse_dir, workbook = _parse_fixture(tmp_path)
     sidecar = parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME
-    assert page._resolve_workbook(parse_dir) == workbook, "precondition"
+    assert page._resolve_workbook(parse_dir)[0] == workbook, "precondition"
 
     os.chmod(sidecar, 0o000)
     try:
@@ -602,7 +602,7 @@ def test_an_unreadable_sidecar_resolves_nothing(tmp_path, qtbot):
             pytest.skip("this process can read a 0o000 file; the OSError clause "
                         "cannot be provoked here")
         assert sidecar.is_file(), "the guard above must not be what refuses it"
-        assert page._resolve_workbook(parse_dir) is None
+        assert page._resolve_workbook(parse_dir)[0] is None
     finally:
         os.chmod(sidecar, 0o644)
     shell.hide()
@@ -619,7 +619,86 @@ def test_a_sidecar_naming_a_workbook_that_is_gone_resolves_nothing(tmp_path, qtb
     parse_dir, workbook = _parse_fixture(tmp_path)
     workbook.unlink()
 
-    assert page._resolve_workbook(parse_dir) is None
+    resolved, error = page._resolve_workbook(parse_dir)
+    assert resolved is None
+    # ...and the message must NAME this cause. It used to say "No source workbook
+    # recorded ... expected a sidecar naming it" for a sidecar that was present,
+    # well-formed and naming a real path — just a path from another machine. That
+    # wording sent a debugging session hunting a file that was already there.
+    assert str(workbook) in error, (
+        "the refusal must name the workbook path the sidecar records")
+    assert "not on this machine" in error
+    assert "No source workbook recorded" not in error, (
+        "this is a MISSING WORKBOOK, not a missing sidecar — do not reuse that copy")
+    shell.hide()
+
+
+def test_a_sidecar_written_by_windows_powershell_still_resolves(tmp_path, qtbot):
+    """A UTF-8 BOM must not make a perfectly good sidecar unreadable.
+
+    `Set-Content -Encoding utf8` on Windows PowerShell 5.1 writes EF BB BF ahead
+    of the JSON. `json.loads` raises on that, `_resolve_workbook` swallowed it,
+    and the page reported "no source workbook recorded" for a file that was
+    present, correctly named, and holding a valid local path — verified by
+    Format-Hex on the real Windows box. Any Windows tooling that writes this
+    sidecar hits it, so the read tolerates a BOM.
+    """
+    shell, page = _page(qtbot)
+    parse_dir, workbook = _parse_fixture(tmp_path, sidecar=False)
+    sidecar = parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME
+    sidecar.write_bytes(
+        b"\xef\xbb\xbf" + json.dumps({"workbook_path": str(workbook)}).encode("utf-8"))
+
+    resolved, error = page._resolve_workbook(parse_dir)
+    assert error is None, f"a BOM must not defeat the sidecar: {error}"
+    assert resolved == workbook
+    shell.hide()
+
+
+def test_a_relative_sidecar_path_resolves_against_the_parse_directory(tmp_path, qtbot):
+    """So a parse tree can be MOVED between machines and still work.
+
+    The absolute path a sidecar normally carries is only valid on the machine
+    that wrote it, which is why a tree copied to another computer fails. A
+    relative path is resolved against the parse directory, letting the workbook
+    travel alongside the parse.
+    """
+    shell, page = _page(qtbot)
+    parse_dir, workbook = _parse_fixture(tmp_path, sidecar=False)
+    moved = parse_dir / workbook.name
+    moved.write_bytes(workbook.read_bytes())
+    (parse_dir / actuary_page._WORKBOOK_SIDECAR_NAME).write_text(
+        json.dumps({"workbook_path": workbook.name}))
+
+    resolved, error = page._resolve_workbook(parse_dir)
+    assert error is None, error
+    assert resolved == moved.resolve()
+    shell.hide()
+
+
+def test_each_refusal_gives_a_DIFFERENT_message(tmp_path, qtbot):
+    """The three causes have different fixes, so they must read differently.
+
+    They were one bare `None` and one banner, which is how a BOM and a
+    cross-machine path both presented as "no sidecar".
+    """
+    shell, page = _page(qtbot)
+    messages = {}
+
+    no_sidecar, _ = _parse_fixture(tmp_path / "a", sidecar=False)
+    messages["absent"] = page._resolve_workbook(no_sidecar)[1]
+
+    malformed, wb = _parse_fixture(tmp_path / "b", sidecar=False)
+    (malformed / actuary_page._WORKBOOK_SIDECAR_NAME).write_text("{not json")
+    messages["malformed"] = page._resolve_workbook(malformed)[1]
+
+    gone, wb2 = _parse_fixture(tmp_path / "c")
+    wb2.unlink()
+    messages["missing_workbook"] = page._resolve_workbook(gone)[1]
+
+    assert all(messages.values()), f"every refusal needs a message: {messages}"
+    assert len(set(messages.values())) == 3, (
+        f"two refusals share wording, so they cannot be told apart: {messages}")
     shell.hide()
 
 
@@ -631,7 +710,8 @@ def test_a_sidecar_naming_a_real_workbook_resolves_it(tmp_path, qtbot):
     parse_dir, workbook = _parse_fixture(tmp_path)
     assert workbook.parent != parse_dir, "the fixture stopped testing the real layout"
 
-    resolved = page._resolve_workbook(parse_dir)
+    resolved, error = page._resolve_workbook(parse_dir)
+    assert error is None, error
     assert resolved == workbook
     assert resolved.read_bytes() == workbook.read_bytes()
     shell.hide()

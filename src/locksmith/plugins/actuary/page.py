@@ -1124,16 +1124,57 @@ class ActuaryPage(QWidget):
         # the next step is one keystroke away rather than a hunt.
         self._load_parse.setFocus()
 
-    def _resolve_workbook(self, parse_dir: Path) -> Path | None:
+    def _resolve_workbook(self, parse_dir: Path) -> tuple[Path | None, str | None]:
+        """`(workbook, error)` — exactly one is None.
+
+        Returns a REASON rather than a bare None, because these three failures
+        are different problems with different fixes and used to be
+        indistinguishable on screen:
+
+          * no sidecar at all — ipd-parse does not write one, so this is what a
+            real parse looks like;
+          * a sidecar that cannot be parsed;
+          * a sidecar that names a workbook which is not on THIS machine — the
+            case for any parse tree moved between machines.
+
+        The third one cost a debugging session: the banner said "no sidecar"
+        while the sidecar sat there, correctly named, holding a valid path to a
+        file that only existed on the machine that produced it.
+        """
         sidecar = parse_dir / _WORKBOOK_SIDECAR_NAME
         if not sidecar.is_file():
-            return None
+            return None, (
+                f"No source workbook recorded for this parse directory — expected a "
+                f"{_WORKBOOK_SIDECAR_NAME} sidecar naming it (ipd-parse itself does "
+                f"not preserve the workbook's location in its own output).")
         try:
-            data = json.loads(sidecar.read_text())
+            # utf-8-sig, not the platform default: PowerShell's
+            # `Set-Content -Encoding utf8` writes a BOM on Windows PowerShell 5.1,
+            # and a BOM makes json.loads raise. Any Windows tooling that writes
+            # this sidecar will hit that, so tolerate it here rather than blaming
+            # the file.
+            data = json.loads(sidecar.read_text(encoding="utf-8-sig"))
+            # Path() stays INSIDE the try: `{"workbook_path": null}` raises
+            # TypeError here, and a JSON array raises on the string index. Both
+            # are shapes a generator can plausibly emit, and both must be
+            # refusals rather than a traceback out of load_parse.
             path = Path(data["workbook_path"])
-        except (OSError, ValueError, KeyError, TypeError):
-            return None
-        return path if path.is_file() else None
+        except (OSError, ValueError, KeyError, TypeError) as exc:
+            return None, (
+                f"{_WORKBOOK_SIDECAR_NAME} is present but unreadable "
+                f"({type(exc).__name__}: {exc}). It must be JSON holding a "
+                f'"workbook_path".')
+        # A relative path resolves against the parse directory, which makes a
+        # parse tree portable between machines; an absolute one is honoured as-is.
+        if not path.is_absolute():
+            path = (parse_dir / path).resolve()
+        if not path.is_file():
+            return None, (
+                f"{_WORKBOOK_SIDECAR_NAME} names a workbook that is not on this "
+                f"machine:\n{path}\nThe sidecar records an absolute path, so a parse "
+                f"copied from another computer points at the original location. "
+                f"Repoint it, or put the workbook there.")
+        return path, None
 
     def load_parse(self, *_qt_args) -> None:
         # `_build_manifest` rglobs the parse directory, reads EVERY shard and the
@@ -1228,12 +1269,9 @@ class ActuaryPage(QWidget):
             return          # _read_parse_index has already said why
         filing_date, action, parse_mandate = recorded
 
-        workbook_path = self._resolve_workbook(parse_dir)
+        workbook_path, workbook_error = self._resolve_workbook(parse_dir)
         if workbook_path is None:
-            self._show_error(
-                "No source workbook recorded for this parse directory — expected "
-                f"a {_WORKBOOK_SIDECAR_NAME} sidecar naming it (ipd-parse itself "
-                "does not preserve the workbook's location in its own output).")
+            self._show_error(workbook_error)
             return
 
         try:
